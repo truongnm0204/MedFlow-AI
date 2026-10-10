@@ -1,0 +1,36 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node / Frontend
+node_modules/
+dist/
+coverage/
+*.local
+.env
+.env.*
+!.env.example
+
+# .NET / Backend
+bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+*.trx
+
+# EF Core tools
+*.db
+*.db-shm
+*.db-wal
+
+# Playwright
+tests/e2e/playwright-report/
+tests/e2e/test-results/
+
+# Logs
+*.log
+logs/

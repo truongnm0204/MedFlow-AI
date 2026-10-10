@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MedFlow.API/MedFlow.API.csproj" />
+    <Project Path="src/MedFlow.Application/MedFlow.Application.csproj" />
+    <Project Path="src/MedFlow.Domain/MedFlow.Domain.csproj" />
+    <Project Path="src/MedFlow.Infrastructure/MedFlow.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MedFlow.IntegrationTests/MedFlow.IntegrationTests.csproj" />
+    <Project Path="tests/MedFlow.UnitTests/MedFlow.UnitTests.csproj" />
+  </Folder>
+</Solution>
