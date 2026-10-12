@@ -37,6 +37,22 @@ npm install
 npm run dev
 ```
 
+## Agent coding (Claude Code)
+
+Repo co `.claude/rules/` + `AGENTS.md` (intake lanes, hard rules) + `.mcp.json` (GKG knowledge graph MCP) + `.harness/` + `tasks/` (task state machine cho resume/handoff).
+
+```bash
+# Bat GKG server de agent co impact-analysis tools (chay nen)
+gkg server start
+
+# Re-index sau khi code thay doi lon
+gkg server stop && gkg index . && gkg server start
+
+# Task harness — resume/handoff giua cac session
+pwsh scripts/harness/harness.ps1 status                # liet ke task
+pwsh scripts/harness/harness.ps1 resume -Task TASK-XXXX # JSON: resumeFrom + nextAction
+```
+
 ## Kiểm thử
 
 ```bash

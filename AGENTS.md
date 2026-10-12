@@ -41,7 +41,19 @@ Plan dir naming: `yymmdd-hhmm-{slug}/` containing `plan.md` + `phase-XX-*.md` + 
 
 Retrieval triggers: auth → auth-architecture doc + rules; DB → schema SQL + ef-migration rule; MCP file output → artifact-hygiene rule.
 
-## 4. Hard rules (non-negotiable)
+## 4. Knowledge graph (GKG)
+
+`.mcp.json` khai bao GKG MCP server (`http://localhost:27495/mcp`). Khi `gkg server start` dang chay, agent co 7 tools: `list_projects`, `search_codebase_definitions`, `index_project`, `get_references`, `read_definitions`, `get_definition`, `repo_map`.
+
+Workflow truoc khi edit public symbol:
+1. `search_codebase_definitions("<symbol>")` → lay `definition_id`
+2. `get_references(definition_id)` → blast radius / call sites
+3. HIGH/CRITICAL (nhieu callers, interface Application layer) → canh bao user truoc khi tiep tuc
+4. Sau khi code thay doi lon → `index_project` re-index
+
+Neu GKG server tat (MCP tools fail) → fallback Explore agent `find_referencing_symbols`.
+
+## 5. Hard rules (non-negotiable)
 
 - **Impact before edit**: before modifying a public method/class with multiple callers (e.g. `IAuthService`, `IApplicationDbContext`, domain behaviors), trace references first (GKG query if indexed, else Explore agent `find_referencing_symbols`). HIGH/CRITICAL blast radius → warn user before proceeding.
 - **Two-layer authz**: `[Authorize]` is layer 1 only. Every endpoint touching owned data needs a service-level ownership check (`.claude/rules/authorization-two-layers.md`).
@@ -50,12 +62,24 @@ Retrieval triggers: auth → auth-architecture doc + rules; DB → schema SQL + 
 - **No secrets in repo** — conn strings, JWT secret, SMTP creds via user-secrets/env only.
 - **MCP artifacts**: all tool-generated files go to `.mcp-artifacts/<tool>/` (gitignored). Promote to `docs/assets/` or `plans/<plan>/assets/` only when durable (`.claude/rules/mcp-artifact-hygiene.md`).
 
-## 5. Quality gates
+## 6. Quality gates
 
 Backend: `dotnet build` clean, `dotnet test` pass before push.
 Frontend: `npm run lint` before commit, `npm run test` before push, `tsc -b` clean.
 Files < ~200 lines; split when growing (already enforced in code-standards docs).
 
-## 6. Done definition
+## 7. Done definition
 
 A task is done when: code compiles + tests pass + relevant docs updated (changelog/roadmap) + report file written to scope `plans/reports/` noting files changed, outcome, friction encountered.
+
+## 8. Task state & resume (harness)
+
+`tasks/TASK-XXXX/` is the committed execution source of truth for normal/high-risk work — `task.json` holds the state machine (`draft → ready → implementing → verifying → reviewing → done | blocked`); `brief.md` holds requirements; `handoff.md` holds handoff state. Never maintain a second state copy elsewhere.
+
+Runner: `pwsh scripts/harness/harness.ps1 <verb>` (`new`, `status`, `verify`, `resume`, `finish`, `new-handoff`). Config: `.harness/config.json` (module gates). Schema: `.harness/schemas/task.schema.json`.
+
+- **Session resume**: after a break/compact, run `status` to find open tasks, then `resume -Task TASK-XXXX` → JSON gives `resumeFrom` + `nextAction` + `issues`. Resume from `resumeFrom`, fix listed issues first.
+- **Blocked**: set `status=blocked` + `blockedReason` + `resumeFrom` — schema requires it, and it's what makes resume work.
+- **Finish**: `finish` walks the machine to `done` but refuses while any AC lacks evidence, review is missing, or handoff doesn't exist (policy in `.harness/config.json`).
+- **Gate logs**: `.harness/runs/` is local-only (gitignored); `tasks/` is committed.
+- Pipeline detail: `docs/AGENT_WORKFLOW.md` (local). Coding rules: `docs/CODING_RULES.md` (local).

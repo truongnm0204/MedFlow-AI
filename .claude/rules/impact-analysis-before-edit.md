@@ -4,7 +4,7 @@ GKG 0.25.0 da cai (`gkg` tren PATH) — knowledge graph tuong duong GitNexus. Me
 
 ## Quy tac
 
-1. **Truoc khi edit public method/class/co nhieu callers**: chay GKG query de tim references → bao blast radius. Neu workspace chua index → fallback: dung Explore agent `find_referencing_symbols`.
+1. **Truoc khi edit public method/class/co nhieu callers**: dung GKG MCP tools (`search_codebase_definitions` → `get_references`) de bao blast radius. Neu GKG server tat → fallback: dung Explore agent `find_referencing_symbols`.
 2. **Neu blast radius HIGH/CRITICAL** (nhieu callers, cham contract/interface dung o nhieu noi): canh bao user truoc khi tiep tuc.
 3. **Truoc khi commit**: chay `git status --short` + `git diff --stat` — xem lai toan bo file thay doi, phat hien file lac (artifact, debug leftover).
 4. **Khong bao gio rename bang find-and-replace** voi symbol co callers — dung refactor tool hoac trace references truoc.

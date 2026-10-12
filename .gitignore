@@ -38,6 +38,7 @@ logs/
 # Tooling / artifacts
 .playwright-mcp/
 .mcp-artifacts/
+.harness/runs/
 *.tmp
 
 # Plans (local working documents)

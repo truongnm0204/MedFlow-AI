@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://medflow.local/schemas/task.schema.json",
+  "title": "MedFlowAI harness task",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "type",
+    "risk",
+    "status",
+    "goal",
+    "owner",
+    "scope",
+    "acceptanceCriteria",
+    "evidenceRefs",
+    "reviewRefs",
+    "nextAction",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^TASK-[0-9]{4,}$"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["docs", "feature", "fix", "refactor", "bootstrap", "harness", "chore"]
+    },
+    "risk": {
+      "type": "string",
+      "enum": ["tiny", "normal", "high-risk"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "ready", "implementing", "verifying", "reviewing", "done", "blocked"]
+    },
+    "goal": { "type": "string", "minLength": 1 },
+    "owner": { "type": "string", "minLength": 1 },
+    "modules": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["backend", "frontend"] },
+      "uniqueItems": true
+    },
+    "scope": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "acceptanceCriteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^AC-[0-9]+$" },
+          "text": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "acEvidence": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "$ref": "#/$defs/path" }
+      }
+    },
+    "planPath": { "$ref": "#/$defs/path" },
+    "evidenceRefs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "reviewRefs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "handoffRef": { "$ref": "#/$defs/path" },
+    "nextAction": { "type": "string", "minLength": 1 },
+    "blockedReason": { "type": "string" },
+    "resumeFrom": {
+      "type": "string",
+      "enum": ["plan", "implement", "verify", "review", "document", "handoff"]
+    },
+    "baseCommit": { "type": "string" },
+    "createdAt": { "type": "string" },
+    "updatedAt": { "type": "string" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "blocked" } } },
+      "then": {
+        "required": ["blockedReason", "resumeFrom"],
+        "properties": {
+          "blockedReason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "risk": { "enum": ["normal", "high-risk"] } }
+      },
+      "then": { "required": ["planPath"] }
+    }
+  ],
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/|[A-Za-z]:)(?!.*\\.\\.)(?!.*\\\\)[^:]+$"
+    }
+  }
+}

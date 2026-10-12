@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "profile": "medflow",
+  "modules": {
+    "backend": {
+      "root": "medflow-ai-backend",
+      "manifest": "medflow-ai-backend/MedFlow.slnx",
+      "status": "active",
+      "gates": [
+        {
+          "id": "backend-build",
+          "executable": "dotnet",
+          "args": ["build", "medflow-ai-backend/MedFlow.slnx", "--nologo"],
+          "cwd": ".",
+          "timeoutSeconds": 300
+        },
+        {
+          "id": "backend-test",
+          "executable": "dotnet",
+          "args": ["test", "medflow-ai-backend/MedFlow.slnx", "--nologo"],
+          "cwd": ".",
+          "timeoutSeconds": 300
+        }
+      ]
+    },
+    "frontend": {
+      "root": "medflow-ai-frontend",
+      "manifest": "medflow-ai-frontend/package.json",
+      "status": "active",
+      "gates": [
+        {
+          "id": "frontend-lint",
+          "executable": "npm",
+          "args": ["run", "lint"],
+          "cwd": "medflow-ai-frontend",
+          "timeoutSeconds": 180
+        },
+        {
+          "id": "frontend-test",
+          "executable": "npm",
+          "args": ["test", "--", "--run"],
+          "cwd": "medflow-ai-frontend",
+          "timeoutSeconds": 180
+        }
+      ]
+    }
+  },
+  "policy": {
+    "maxRepairAttempts": 3,
+    "independentReview": true,
+    "requireHandoff": true
+  },
+  "gitnexus": {
+    "enabled": true,
+    "tool": "gkg",
+    "endpoint": "http://localhost:27495/mcp",
+    "fallback": "explore-agent"
+  }
+}

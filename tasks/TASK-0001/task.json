@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "id": "TASK-0001",
+  "type": "bootstrap",
+  "risk": "normal",
+  "status": "done",
+  "goal": "Bootstrap the MedFlowAI agent harness: .harness config/schemas/templates, scripts/harness runner, tasks/ structure, and workflow docs.",
+  "owner": "claude",
+  "modules": [],
+  "scope": [
+    ".harness/",
+    "scripts/harness/",
+    "tasks/",
+    "docs/AGENT_WORKFLOW.md",
+    "docs/CODING_RULES.md",
+    "AGENTS.md",
+    "README.md",
+    ".gitignore"
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "text": ".harness/ contains config.json, task schema, and task/handoff/role-report templates."
+    },
+    {
+      "id": "AC-2",
+      "text": "scripts/harness/harness.ps1 supports new/status/verify/resume/finish/new-handoff and runs under pwsh 7."
+    },
+    {
+      "id": "AC-3",
+      "text": "tasks/README.md documents conventions; TASK-0001 exists as a working seed example."
+    },
+    {
+      "id": "AC-4",
+      "text": "docs/ stays gitignored; .harness/runs/ is ignored; tasks/ and .harness/ are tracked."
+    }
+  ],
+  "acEvidence": {
+    "AC-1": [".harness/config.json", ".harness/schemas/task.schema.json", ".harness/templates/"],
+    "AC-2": ["scripts/harness/harness.ps1"],
+    "AC-3": ["tasks/README.md", "tasks/TASK-0001/"],
+    "AC-4": [".gitignore"]
+  },
+  "planPath": "plans/",
+  "evidenceRefs": [],
+  "reviewRefs": ["tasks/TASK-0001/handoff.md"],
+  "handoffRef": "tasks/TASK-0001/handoff.md",
+  "nextAction": "Use 'new' to open the first real feature task; wire verify gates when running on a machine with dotnet/node.",
+  "createdAt": "2026-10-13T02:30:00+07:00",
+  "updatedAt": "2026-10-13T02:30:00+07:00"
+}
