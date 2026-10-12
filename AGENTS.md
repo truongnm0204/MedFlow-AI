@@ -74,12 +74,12 @@ A task is done when: code compiles + tests pass + relevant docs updated (changel
 
 ## 8. Task state & resume (harness)
 
-`tasks/TASK-XXXX/` is the committed execution source of truth for normal/high-risk work — `task.json` holds the state machine (`draft → ready → implementing → verifying → reviewing → done | blocked`); `brief.md` holds requirements; `handoff.md` holds handoff state. Never maintain a second state copy elsewhere.
+`tasks/TASK-XXXX/` is the execution source of truth for normal/high-risk work (local-only, gitignored) — `task.json` holds the state machine (`draft → ready → implementing → verifying → reviewing → done | blocked`); `brief.md` holds requirements; `handoff.md` holds handoff state. Never maintain a second state copy elsewhere.
 
 Runner: `pwsh scripts/harness/harness.ps1 <verb>` (`new`, `status`, `verify`, `resume`, `finish`, `new-handoff`). Config: `.harness/config.json` (module gates). Schema: `.harness/schemas/task.schema.json`.
 
 - **Session resume**: after a break/compact, run `status` to find open tasks, then `resume -Task TASK-XXXX` → JSON gives `resumeFrom` + `nextAction` + `issues`. Resume from `resumeFrom`, fix listed issues first.
 - **Blocked**: set `status=blocked` + `blockedReason` + `resumeFrom` — schema requires it, and it's what makes resume work.
 - **Finish**: `finish` walks the machine to `done` but refuses while any AC lacks evidence, review is missing, or handoff doesn't exist (policy in `.harness/config.json`).
-- **Gate logs**: `.harness/runs/` is local-only (gitignored); `tasks/` is committed.
+- **Gate logs**: `.harness/runs/` and `tasks/` are local-only (gitignored); the runner itself (`.harness/`, `scripts/harness/`) is committed.
 - Pipeline detail: `docs/AGENT_WORKFLOW.md` (local). Coding rules: `docs/CODING_RULES.md` (local).

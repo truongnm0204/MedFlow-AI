@@ -44,5 +44,8 @@ logs/
 # Plans (local working documents)
 plans/
 
+# Task state (local working documents — kept off GitHub)
+tasks/
+
 # Project docs (local working documents — kept off GitHub)
 docs/
