@@ -1,0 +1,16 @@
+# MedFlow AI — Milestones
+# Create via GitHub REST API:
+#   gh api --method POST "repos/OWNER/REPO/milestones" -f title='...' -f description='...'
+#
+# Spec: docs/MedFlow_GitHub_Milestones_and_Issues.md §3
+
+- title: "M1 - Iteration 1"
+  description: "Foundation & Appointment Booking | Weeks 6-7 | v0.1-iter1"
+  # state: open
+  # due_on: <set after team confirms Week-1 start date>
+
+- title: "M2 - Iteration 2"
+  description: "Reception, Visit, Queue & Basic Consultation | Weeks 8-9 | v0.2-iter2"
+
+- title: "M3 - Iteration 3"
+  description: "Clinical Completion & Release Validation | Weeks 10-13 | v1.0-rc"

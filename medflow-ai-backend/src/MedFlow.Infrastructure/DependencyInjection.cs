@@ -1,3 +1,7 @@
+using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Application.Interfaces.Services;
+using MedFlow.Infrastructure.Identity;
+using MedFlow.Infrastructure.Integrations.Notification;
 using MedFlow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -17,7 +21,12 @@ public static class DependencyInjection
         services.AddDbContext<MedFlowDbContext>(options =>
             options.UseNpgsql(connectionString));
 
-        // TODO: Register repositories, identity, integrations here as features grow.
+        services.AddScoped<IApplicationDbContext>(sp =>
+            sp.GetRequiredService<MedFlowDbContext>());
+
+        services.AddScoped<IJwtTokenService, JwtTokenService>();
+        services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+        services.AddTransient<IEmailSender, SmtpEmailSender>();
 
         return services;
     }
