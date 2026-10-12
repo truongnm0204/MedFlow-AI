@@ -34,3 +34,10 @@ tests/e2e/test-results/
 # Logs
 *.log
 logs/
+
+# Tooling / artifacts
+.playwright-mcp/
+
+# Plans (local working documents)
+plans/
+medflow-ai-frontend/docs/
