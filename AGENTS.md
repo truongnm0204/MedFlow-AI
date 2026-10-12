@@ -2,7 +2,7 @@
 
 Project-level operating rules for coding agents working in this repo.
 Stack: `.NET 10` backend (`medflow-ai-backend/`) + `React 19 + Vite + TS` frontend (`medflow-ai-frontend/`) + PostgreSQL.
-Docs root: `docs/` — read `docs/context-rules.md` FIRST to know what to read for the current task.
+Docs root: `docs/` (local-only, gitignored — khong co tren GitHub). Read `docs/context-rules.md` FIRST to know what to read for the current task. Neu `docs/` khong ton tai, chi can `AGENTS.md` + `.claude/rules/` la du de lam viec.
 
 ## 1. Intake — classify every task before coding
 

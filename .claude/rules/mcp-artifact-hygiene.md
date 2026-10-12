@@ -7,7 +7,7 @@ Moi file do MCP/AI tool (Figma, Playwright, Stitch, ai-multimodal, repomix...) t
 | Loai | Dinh nghia | Vi tri |
 |---|---|---|
 | Ephemeral | File chi phuc vu 1 lan verify/debug, xong bo | `.mcp-artifacts/<tool>/` — **gitignored** |
-| Durable | Asset gan voi docs/plan dai han | `docs/assets/` hoac `plans/<plan-dir>/assets/` — **commit** |
+| Durable | Asset gan voi docs/plan dai han | `docs/assets/` hoac `plans/<plan-dir>/assets/` (ca hai deu local-only, khong commit) |
 
 ## Quy tac
 
