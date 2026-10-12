@@ -1,1 +1,16 @@
-@import "tailwindcss";
+@import '@fontsource-variable/inter';
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+
+  /* MedFlow AI design tokens (Figma Common page) */
+  --color-primary: #0284c7; /* sky-600 — brand chính */
+  --color-primary-dark: #0369a1; /* sky-700 — hover */
+  --color-navy: #0a2540; /* cột brand auth */
+  --color-canvas: #f8fafc; /* nền trang */
+  --color-border: #e2e8f0; /* border chuẩn */
+  --color-ink: #0f172a; /* heading */
+  --color-sub: #49607e; /* text phụ / link nav */
+  --color-danger: #ef4444; /* badge cảnh báo */
+}
