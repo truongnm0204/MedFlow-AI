@@ -37,7 +37,8 @@ logs/
 
 # Tooling / artifacts
 .playwright-mcp/
+.mcp-artifacts/
+*.tmp
 
 # Plans (local working documents)
 plans/
-medflow-ai-frontend/docs/
