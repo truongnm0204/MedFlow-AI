@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom';
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
+import { FamilyProfileListPage } from '@/features/family/pages/family-profile-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
@@ -48,6 +49,8 @@ export function AppRouter() {
       />
       <Route path="/profile" element={<PatientProfilePage />} />
       <Route path="/patient/profile" element={<PatientProfilePage />} />
+      <Route path="/family" element={<FamilyProfileListPage />} />
+      <Route path="/patient/family" element={<FamilyProfileListPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
