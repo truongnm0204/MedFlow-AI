@@ -17,6 +17,7 @@ public class AuthService : IAuthService
     private readonly IRefreshTokenService _refreshService;
     private readonly IConfiguration _configuration;
     private readonly AuthOtpService _otpService;
+    private readonly IAuditLogger _audit;
     private readonly PasswordHasher<User> _passwordHasher = new();
 
     private const int MaxLoginAttempts = 5;
@@ -28,35 +29,29 @@ public class AuthService : IAuthService
         IJwtTokenService jwtService,
         IRefreshTokenService refreshService,
         IConfiguration configuration,
-        AuthOtpService otpService)
+        AuthOtpService otpService,
+        IAuditLogger audit)
     {
         _db = db;
         _jwtService = jwtService;
         _refreshService = refreshService;
         _configuration = configuration;
         _otpService = otpService;
+        _audit = audit;
     }
 
     // ── Register ──────────────────────────────────────────────────────────
     public async Task<RegisterResponse> RegisterAsync(RegisterRequest request, string? ipAddress, CancellationToken ct = default)
     {
-        var emailLower = request.Email.ToLowerInvariant();
-
-        if (await _db.Users.AnyAsync(u => u.Email.ToLower() == emailLower, ct))
-            throw new ValidationException("Email đã được sử dụng");
-
-        var patientRole = await _db.Roles.FirstOrDefaultAsync(r => r.Code == "PATIENT", ct)
-            ?? throw new InvalidOperationException("Role PATIENT not seeded.");
-
-        var otpSecret = AuthCryptoHelpers.GetOtpSecret(_configuration);
-        var otp = AuthCryptoHelpers.GenerateOtp();
-        var otpHash = AuthCryptoHelpers.ComputeHmacHex(otp, otpSecret);
-        var fingerprint = AuthCryptoHelpers.ComputeHmacBytes(emailLower, otpSecret);
+        var email = NormalizeEmail(request.Email);
+        await EnsureEmailNotTakenAsync(email, ct);
+        var patientRole = await GetDefaultRoleAsync(ct);
+        var (otp, challenge) = CreateOtpChallenge(email, ct);
 
         var user = new User
         {
-            Username = emailLower,
-            Email = emailLower,
+            Username = email,
+            Email = email,
             PasswordHash = _passwordHasher.HashPassword(null!, request.Password),
             AuthProvider = "LOCAL",
             AccountStatus = AccountStatus.PENDING,
@@ -69,10 +64,48 @@ public class AuthService : IAuthService
             DateOfBirth = request.DateOfBirth,
             Gender = request.Gender,
             Phone = request.Phone,
-            Email = emailLower,
+            Email = email,
             Status = "ACTIVE",
         };
 
+        await PersistRegisterDataAsync(user, patient, patientRole, challenge, ipAddress, ct);
+        await SendOtpEmailAfterCommitAsync(email, request.FullName, otp, user.Id, ct);
+
+        return new RegisterResponse(user.Id, email);
+    }
+
+    private static string NormalizeEmail(string email) => email.ToLowerInvariant();
+
+    private async Task EnsureEmailNotTakenAsync(string email, CancellationToken ct)
+    {
+        if (await _db.Users.AnyAsync(u => u.Email.ToLower() == email, ct))
+            throw new ValidationException("Email đã được sử dụng");
+    }
+
+    private async Task<Role> GetDefaultRoleAsync(CancellationToken ct)
+        => await _db.Roles.FirstOrDefaultAsync(r => r.Code == "PATIENT", ct)
+            ?? throw new InvalidOperationException("Role PATIENT not seeded.");
+
+    private (string otp, AuthVerificationChallenge challenge) CreateOtpChallenge(string email, CancellationToken ct)
+    {
+        var otpSecret = AuthCryptoHelpers.GetOtpSecret(_configuration);
+        var otp = AuthCryptoHelpers.GenerateOtp();
+        var challenge = new AuthVerificationChallenge
+        {
+            Purpose = ChallengePurpose.REGISTER_EMAIL,
+            Channel = ChallengeChannel.EMAIL,
+            RecipientFingerprint = AuthCryptoHelpers.ComputeHmacBytes(email, otpSecret),
+            SecretHash = AuthCryptoHelpers.ComputeHmacHex(otp, otpSecret),
+            Status = ChallengeStatus.PENDING,
+            ExpiresAt = DateTime.UtcNow.Add(OtpTtl),
+        };
+        return (otp, challenge);
+    }
+
+    private async Task PersistRegisterDataAsync(
+        User user, Patient patient, Role patientRole,
+        AuthVerificationChallenge challenge, string? ipAddress, CancellationToken ct)
+    {
         await using var transaction = await _db.BeginTransactionAsync(ct);
         try
         {
@@ -81,21 +114,12 @@ public class AuthService : IAuthService
 
             patient.UserId = user.Id;
             _db.Patients.Add(patient);
-
             _db.UserRoles.Add(new UserRole { UserId = user.Id, RoleId = patientRole.Id });
 
-            _db.AuthVerificationChallenges.Add(new AuthVerificationChallenge
-            {
-                UserId = user.Id,
-                Purpose = ChallengePurpose.REGISTER_EMAIL,
-                Channel = ChallengeChannel.EMAIL,
-                RecipientFingerprint = fingerprint,
-                SecretHash = otpHash,
-                Status = ChallengeStatus.PENDING,
-                ExpiresAt = DateTime.UtcNow.Add(OtpTtl),
-            });
+            challenge.UserId = user.Id;
+            _db.AuthVerificationChallenges.Add(challenge);
 
-            Audit(user.Id, "REGISTER", "USER", user.Id,
+            _audit.Add(user.Id, "REGISTER", "USER", user.Id,
                 new { user.Email, user.Username }, ipAddress);
 
             await _db.SaveChangesAsync(ct);
@@ -106,11 +130,10 @@ public class AuthService : IAuthService
             await transaction.RollbackAsync(ct);
             throw;
         }
-
-        await _otpService.SendOtpAndAuditAsync(emailLower, request.FullName, otp, user.Id, ct);
-
-        return new RegisterResponse(user.Id, emailLower);
     }
+
+    private Task SendOtpEmailAfterCommitAsync(string email, string fullName, string otp, Guid userId, CancellationToken ct)
+        => _otpService.SendOtpAndAuditAsync(email, fullName, otp, userId, ct);
 
     // ── Login ─────────────────────────────────────────────────────────────
     public async Task<LoginResponse> LoginAsync(LoginRequest request, string? ipAddress, CancellationToken ct = default)
@@ -128,21 +151,13 @@ public class AuthService : IAuthService
         if (user is null || user.AccountStatus != AccountStatus.ACTIVE)
             throw new UnauthorizedAccessException(invalidMsg);
 
-        if (user.LockedUntil.HasValue && user.LockedUntil > DateTime.UtcNow)
-            throw new ValidationException("Tài khoản đang bị khóa, vui lòng thử lại sau");
+        ApplyLockoutRules(user);
 
         var result = _passwordHasher.VerifyHashedPassword(null!, user.PasswordHash!, request.Password);
 
         if (result == PasswordVerificationResult.Failed)
         {
-            user.FailedLoginAttempts++;
-            if (user.FailedLoginAttempts >= MaxLoginAttempts)
-            {
-                user.LockedUntil = DateTime.UtcNow.Add(LockDuration);
-                user.FailedLoginAttempts = 0;
-            }
-            Audit(user.Id, "LOGIN_FAILED", "USER", user.Id, null, ipAddress);
-            await _db.SaveChangesAsync(ct);
+            await RecordFailedLoginAsync(user, ipAddress, ct);
             throw new UnauthorizedAccessException(invalidMsg);
         }
 
@@ -150,21 +165,50 @@ public class AuthService : IAuthService
         user.LockedUntil = null;
         user.LastLoginAt = DateTime.UtcNow;
 
-        var roles = user.UserRoles.Select(ur => ur.Role.Code).ToArray();
-        var accessToken = _jwtService.GenerateAccessToken(user, roles);
-        var refresh = await _refreshService.GenerateAsync(user.Id, ipAddress, ct);
-
-        Audit(user.Id, "LOGIN_SUCCESS", "USER", user.Id, null, ipAddress);
+        var tokens = await IssueTokensAsync(user, ipAddress, ct);
+        _audit.Add(user.Id, "LOGIN_SUCCESS", "USER", user.Id, null, ipAddress);
         await _db.SaveChangesAsync(ct);
 
         return new LoginResponse(
-            accessToken.AccessToken,
-            (int)(accessToken.ExpiresAt - DateTime.UtcNow).TotalSeconds,
-            refresh.RawToken,
+            tokens.AccessToken,
+            tokens.ExpiresInSeconds,
+            tokens.RawRefreshToken,
             GetRefreshExpirySeconds(),
-            new UserDto(user.Id, user.Username, user.Email,
-                user.Patient?.FullName, roles, user.Patient?.PatientCode));
+            BuildUserDto(user, tokens.Roles));
     }
+
+    private void ApplyLockoutRules(User user)
+    {
+        if (user.LockedUntil.HasValue && user.LockedUntil > DateTime.UtcNow)
+            throw new ValidationException("Tài khoản đang bị khóa, vui lòng thử lại sau");
+    }
+
+    private async Task RecordFailedLoginAsync(User user, string? ipAddress, CancellationToken ct)
+    {
+        user.FailedLoginAttempts++;
+        if (user.FailedLoginAttempts >= MaxLoginAttempts)
+        {
+            user.LockedUntil = DateTime.UtcNow.Add(LockDuration);
+            user.FailedLoginAttempts = 0;
+        }
+        _audit.Add(user.Id, "LOGIN_FAILED", "USER", user.Id, null, ipAddress);
+        await _db.SaveChangesAsync(ct);
+    }
+
+    private async Task<(string AccessToken, int ExpiresInSeconds, string RawRefreshToken, string[] Roles)>
+        IssueTokensAsync(User user, string? ipAddress, CancellationToken ct)
+    {
+        var roles = user.UserRoles.Select(ur => ur.Role.Code).ToArray();
+        var accessToken = _jwtService.GenerateAccessToken(user, roles);
+        var refresh = await _refreshService.GenerateAsync(user.Id, ipAddress, ct);
+        return (accessToken.AccessToken,
+            (int)(accessToken.ExpiresAt - DateTime.UtcNow).TotalSeconds,
+            refresh.RawToken, roles);
+    }
+
+    private static UserDto BuildUserDto(User user, string[] roles)
+        => new(user.Id, user.Username, user.Email,
+            user.Patient?.FullName, roles, user.Patient?.PatientCode);
 
     // ── Refresh ───────────────────────────────────────────────────────────
     public async Task<RefreshResponse> RefreshAsync(RefreshRequest request, string? ipAddress, CancellationToken ct = default)
@@ -173,7 +217,7 @@ public class AuthService : IAuthService
 
         if (result.ReuseDetected)
         {
-            Audit(result.User?.Id ?? Guid.Empty, "REFRESH_REUSE_DETECTED", "USER",
+            _audit.Add(result.User?.Id ?? Guid.Empty, "REFRESH_REUSE_DETECTED", "USER",
                 result.User?.Id, null, ipAddress);
             await _db.SaveChangesAsync(ct);
             throw new UnauthorizedAccessException("Refresh token không hợp lệ");
@@ -200,7 +244,7 @@ public class AuthService : IAuthService
     public async Task LogoutAsync(Guid userId, string refreshToken, string? ipAddress, CancellationToken ct = default)
     {
         await _refreshService.RevokeAsync(refreshToken, ipAddress, ct);
-        Audit(userId, "LOGOUT", "USER", userId, null, ipAddress);
+        _audit.Add(userId, "LOGOUT", "USER", userId, null, ipAddress);
         await _db.SaveChangesAsync(ct);
     }
 
@@ -221,8 +265,7 @@ public class AuthService : IAuthService
             ?? throw new NotFoundException("User", userId);
 
         var roles = user.UserRoles.Select(ur => ur.Role.Code).ToArray();
-        return new UserDto(user.Id, user.Username, user.Email,
-            user.Patient?.FullName, roles, user.Patient?.PatientCode);
+        return BuildUserDto(user, roles);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
@@ -237,19 +280,5 @@ public class AuthService : IAuthService
         var code = $"PAT-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
         var exists = await _db.Patients.AnyAsync(p => p.PatientCode == code, ct);
         return exists ? await GeneratePatientCodeAsync(ct) : code;
-    }
-
-    private void Audit(Guid actorId, string action, string entityType,
-        Guid? entityId, object? newValue, string? ipAddress)
-    {
-        _db.AuditLogs.Add(new AuditLog
-        {
-            ActorUserId = actorId == Guid.Empty ? null : actorId,
-            Action = action,
-            EntityType = entityType,
-            EntityId = entityId,
-            NewValue = newValue is null ? null : System.Text.Json.JsonSerializer.Serialize(newValue),
-            IpAddress = System.Net.IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
-        });
     }
 }

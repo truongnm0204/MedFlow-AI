@@ -1,3 +1,4 @@
+using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Auth;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -7,6 +8,7 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
+        services.AddScoped<IAuditLogger, AuditLogger>();
         services.AddScoped<AuthOtpService>();
         services.AddScoped<IAuthService, AuthService>();
         return services;
