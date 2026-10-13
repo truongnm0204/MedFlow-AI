@@ -37,21 +37,21 @@
       "gates": [
         {
           "id": "frontend-format",
-          "executable": "npm",
+          "executable": "npm.cmd",
           "args": ["run", "format:check"],
           "cwd": "medflow-ai-frontend",
           "timeoutSeconds": 120
         },
         {
           "id": "frontend-lint",
-          "executable": "npm",
+          "executable": "npm.cmd",
           "args": ["run", "lint"],
           "cwd": "medflow-ai-frontend",
           "timeoutSeconds": 180
         },
         {
           "id": "frontend-test",
-          "executable": "npm",
+          "executable": "npm.cmd",
           "args": ["test", "--", "--run"],
           "cwd": "medflow-ai-frontend",
           "timeoutSeconds": 180
