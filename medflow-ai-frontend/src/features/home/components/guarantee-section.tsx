@@ -13,7 +13,9 @@ export function GuaranteeSection() {
               Không Phụ Phí Ẩn • Xuất Hóa Đơn VAT Điện Tử Ngay Sau Khám
             </h3>
             <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
-              MedFlowAI phục vụ khám tự nguyện 100% chất lượng cao. Chúng tôi cung cấp đầy đủ bảng kê chi tiết viện phí và hỗ trợ giấy tờ thanh toán bảo hiểm tư nhân (Bảo Việt, PTI, Manulife, Prudential, Liberty...).
+              MedFlowAI phục vụ khám tự nguyện 100% chất lượng cao. Chúng tôi cung cấp đầy đủ bảng
+              kê chi tiết viện phí và hỗ trợ giấy tờ thanh toán bảo hiểm tư nhân (Bảo Việt, PTI,
+              Manulife, Prudential, Liberty...).
             </p>
           </div>
 
@@ -26,5 +28,5 @@ export function GuaranteeSection() {
         </div>
       </div>
     </section>
-  )
+  );
 }

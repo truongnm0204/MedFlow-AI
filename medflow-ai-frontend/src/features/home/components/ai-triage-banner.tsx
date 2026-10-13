@@ -1,25 +1,43 @@
-import { useState } from 'react'
+import { useState } from 'react';
 
 /** Banner trợ lý AI gợi ý chuyên khoa theo triệu chứng. */
 export function AiTriageBanner() {
-  const [symptomInput, setSymptomInput] = useState('')
-  const [triageResult, setTriageResult] = useState<string | null>(null)
+  const [symptomInput, setSymptomInput] = useState('');
+  const [triageResult, setTriageResult] = useState<string | null>(null);
 
   const handleTriageSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!symptomInput.trim()) return
+    e.preventDefault();
+    if (!symptomInput.trim()) return;
 
-    const lower = symptomInput.toLowerCase()
-    if (lower.includes('bụng') || lower.includes('dạ dày') || lower.includes('tiêu hóa') || lower.includes('ợ')) {
-      setTriageResult('Gợi ý AI: Chuyên khoa Nội Tiêu Hóa • Bác sĩ đề xuất: TS. BS Nguyễn Văn Hùng (Còn lịch trống lúc 08:45 hôm nay)')
+    const lower = symptomInput.toLowerCase();
+    if (
+      lower.includes('bụng') ||
+      lower.includes('dạ dày') ||
+      lower.includes('tiêu hóa') ||
+      lower.includes('ợ')
+    ) {
+      setTriageResult(
+        'Gợi ý AI: Chuyên khoa Nội Tiêu Hóa • Bác sĩ đề xuất: TS. BS Nguyễn Văn Hùng (Còn lịch trống lúc 08:45 hôm nay)',
+      );
     } else if (lower.includes('tim') || lower.includes('ngực') || lower.includes('huyết áp')) {
-      setTriageResult('Gợi ý AI: Chuyên khoa Tim Mạch • Bác sĩ đề xuất: BS. CKII Trần Mai Anh (Còn lịch trống lúc 09:15 hôm nay)')
-    } else if (lower.includes('họng') || lower.includes('tai') || lower.includes('mũi') || lower.includes('ho')) {
-      setTriageResult('Gợi ý AI: Chuyên khoa Tai Mũi Họng • Bác sĩ đề xuất: ThS. BS Lê Thu Hà (Còn lịch trống lúc 10:00 hôm nay)')
+      setTriageResult(
+        'Gợi ý AI: Chuyên khoa Tim Mạch • Bác sĩ đề xuất: BS. CKII Trần Mai Anh (Còn lịch trống lúc 09:15 hôm nay)',
+      );
+    } else if (
+      lower.includes('họng') ||
+      lower.includes('tai') ||
+      lower.includes('mũi') ||
+      lower.includes('ho')
+    ) {
+      setTriageResult(
+        'Gợi ý AI: Chuyên khoa Tai Mũi Họng • Bác sĩ đề xuất: ThS. BS Lê Thu Hà (Còn lịch trống lúc 10:00 hôm nay)',
+      );
     } else {
-      setTriageResult('Gợi ý AI: Khám Sức Khỏe Tổng Quát & Định Tuyến Lâm Sàng tại Bàn P.102 (Đang có sẵn khung giờ tiếp nhận)')
+      setTriageResult(
+        'Gợi ý AI: Khám Sức Khỏe Tổng Quát & Định Tuyến Lâm Sàng tại Bàn P.102 (Đang có sẵn khung giờ tiếp nhận)',
+      );
     }
-  }
+  };
 
   return (
     <section className="py-10 bg-white border-b border-slate-200">
@@ -34,7 +52,8 @@ export function AiTriageBanner() {
                 Bạn chưa biết nên khám chuyên khoa nào?
               </h3>
               <p className="text-xs text-slate-600">
-                Nhập ngắn gọn triệu chứng để AI phân luồng chính xác khoa khám và bác sĩ phù hợp trong 3 giây.
+                Nhập ngắn gọn triệu chứng để AI phân luồng chính xác khoa khám và bác sĩ phù hợp
+                trong 3 giây.
               </p>
             </div>
 
@@ -64,5 +83,5 @@ export function AiTriageBanner() {
         </div>
       </div>
     </section>
-  )
+  );
 }

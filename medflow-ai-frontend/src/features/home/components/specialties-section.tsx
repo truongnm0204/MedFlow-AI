@@ -1,4 +1,4 @@
-import { MOCK_SPECIALTIES } from '../data/home-catalog'
+import { MOCK_SPECIALTIES } from '../data/home-catalog';
 
 /** Danh mục chuyên khoa ngoại trú + bảng giá (anchor #specialties). */
 export function SpecialtiesSection() {
@@ -41,7 +41,9 @@ export function SpecialtiesSection() {
 
               <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
                 <div>
-                  <span className="text-[10px] text-slate-400 block font-mono">Giá khám niêm yết:</span>
+                  <span className="text-[10px] text-slate-400 block font-mono">
+                    Giá khám niêm yết:
+                  </span>
                   <span className="text-sm font-bold text-sky-700 font-mono">{spec.price}</span>
                 </div>
                 <a
@@ -56,5 +58,5 @@ export function SpecialtiesSection() {
         </div>
       </div>
     </section>
-  )
+  );
 }

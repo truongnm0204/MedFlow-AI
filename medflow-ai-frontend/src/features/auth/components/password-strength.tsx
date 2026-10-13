@@ -1,24 +1,24 @@
-import { ShieldCheck } from 'lucide-react'
+import { ShieldCheck } from 'lucide-react';
 
-import { passwordStrength } from '../schemas/auth.schemas'
+import { passwordStrength } from '../schemas/auth.schemas';
 
-const LABELS = ['Rất yếu', 'Yếu', 'Trung bình', 'Mạnh', 'Rất an toàn']
-const COLORS = ['bg-rose-500', 'bg-orange-400', 'bg-amber-400', 'bg-lime-500', 'bg-emerald-500']
+const LABELS = ['Rất yếu', 'Yếu', 'Trung bình', 'Mạnh', 'Rất an toàn'];
+const COLORS = ['bg-rose-500', 'bg-orange-400', 'bg-amber-400', 'bg-lime-500', 'bg-emerald-500'];
 const TEXT_COLORS = [
   'text-rose-600',
   'text-orange-500',
   'text-amber-500',
   'text-lime-600',
   'text-emerald-600',
-]
+];
 
 interface PasswordStrengthProps {
-  password: string
+  password: string;
 }
 
 /** Strength meter 4 bar + nhãn theo Figma `1:228`. */
 export function PasswordStrength({ password }: PasswordStrengthProps) {
-  const score = passwordStrength(password)
+  const score = passwordStrength(password);
 
   return (
     <div className="flex w-full flex-col gap-1.5 rounded-lg border border-slate-200/80 bg-canvas p-2.5">
@@ -45,5 +45,5 @@ export function PasswordStrength({ password }: PasswordStrengthProps) {
         ))}
       </div>
     </div>
-  )
+  );
 }

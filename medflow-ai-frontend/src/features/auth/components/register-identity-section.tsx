@@ -1,22 +1,22 @@
-import { Calendar, IdCard, Info, Phone, User } from 'lucide-react'
-import type { Control, FieldErrors, UseFormRegister } from 'react-hook-form'
-import { Controller } from 'react-hook-form'
+import { Calendar, IdCard, Info, Phone, User } from 'lucide-react';
+import type { Control, FieldErrors, UseFormRegister } from 'react-hook-form';
+import { Controller } from 'react-hook-form';
 
-import { Input } from '@/shared/ui'
+import { Input } from '@/shared/ui';
 
-import { FormField } from './form-field'
-import type { RegisterFormValues } from '../schemas/auth.schemas'
+import { FormField } from './form-field';
+import type { RegisterFormValues } from '../schemas/auth.schemas';
 
 const GENDERS = [
   { value: 'MALE', label: 'Nam' },
   { value: 'FEMALE', label: 'Nữ' },
   { value: 'OTHER', label: 'Khác' },
-] as const
+] as const;
 
 interface Props {
-  register: UseFormRegister<RegisterFormValues>
-  control: Control<RegisterFormValues>
-  errors: FieldErrors<RegisterFormValues>
+  register: UseFormRegister<RegisterFormValues>;
+  control: Control<RegisterFormValues>;
+  errors: FieldErrors<RegisterFormValues>;
 }
 
 /** Nhóm 2: định danh cá nhân (tên, ngày sinh, giới tính, SĐT). */
@@ -61,7 +61,12 @@ export function RegisterIdentitySection({ register, control, errors }: Props) {
           name="gender"
           control={control}
           render={({ field }) => (
-            <FormField label="Giới tính" required error={errors.gender?.message} className="col-span-12 sm:col-span-5">
+            <FormField
+              label="Giới tính"
+              required
+              error={errors.gender?.message}
+              className="col-span-12 sm:col-span-5"
+            >
               <div className="flex gap-1.5 rounded-lg border border-slate-200 bg-slate-100 p-1">
                 {GENDERS.map(({ value, label }) => (
                   <button
@@ -97,10 +102,10 @@ export function RegisterIdentitySection({ register, control, errors }: Props) {
       <div className="flex gap-2.5 rounded-lg border border-sky-100 bg-sky-50/70 p-3.5 text-xs leading-relaxed">
         <Info className="h-4 w-4 shrink-0 text-sky-600" />
         <p className="text-slate-600">
-          <span className="font-semibold text-sky-900">Chế độ Khám Ngoại trú Tự nguyện:</span>{' '}
-          Mã hồ sơ bệnh án điện tử cá nhân (PID) sẽ được khởi tạo ngay khi tài khoản được kích hoạt.
+          <span className="font-semibold text-sky-900">Chế độ Khám Ngoại trú Tự nguyện:</span> Mã hồ
+          sơ bệnh án điện tử cá nhân (PID) sẽ được khởi tạo ngay khi tài khoản được kích hoạt.
         </p>
       </div>
     </section>
-  )
+  );
 }

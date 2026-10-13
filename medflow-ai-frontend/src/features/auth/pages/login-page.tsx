@@ -1,27 +1,27 @@
-import { zodResolver } from '@hookform/resolvers/zod'
-import { LifeBuoy, Mail } from 'lucide-react'
-import { useForm } from 'react-hook-form'
-import { Link, useSearchParams } from 'react-router-dom'
+import { zodResolver } from '@hookform/resolvers/zod';
+import { LifeBuoy, Mail } from 'lucide-react';
+import { useForm } from 'react-hook-form';
+import { Link, useSearchParams } from 'react-router-dom';
 
-import { getErrorMessage } from '@/shared/lib/get-error-message'
-import { Alert, Button, Divider, Input, PasswordInput } from '@/shared/ui'
+import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { Alert, Button, Divider, Input, PasswordInput } from '@/shared/ui';
 
-import { AuthLayout } from '../components/auth-layout'
-import { useLogin } from '../hooks/use-auth'
-import { loginSchema, type LoginFormValues } from '../schemas/auth.schemas'
+import { AuthLayout } from '../components/auth-layout';
+import { useLogin } from '../hooks/use-auth';
+import { loginSchema, type LoginFormValues } from '../schemas/auth.schemas';
 
 export function LoginPage() {
-  const [params] = useSearchParams()
-  const verified = params.get('verified') === '1'
-  const login = useLogin()
+  const [params] = useSearchParams();
+  const verified = params.get('verified') === '1';
+  const login = useLogin();
 
   const {
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm<LoginFormValues>({ resolver: zodResolver(loginSchema) })
+  } = useForm<LoginFormValues>({ resolver: zodResolver(loginSchema) });
 
-  const onSubmit = (values: LoginFormValues) => login.mutate(values)
+  const onSubmit = (values: LoginFormValues) => login.mutate(values);
 
   return (
     <AuthLayout>
@@ -41,9 +41,7 @@ export function LoginPage() {
 
         <div className="rounded-2xl bg-white p-8 shadow-xl shadow-slate-200/60 sm:p-10">
           <h1 className="text-2xl font-bold tracking-tight text-ink">Đăng nhập</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Truy cập hồ sơ khám ngoại trú của bạn
-          </p>
+          <p className="mt-1 text-sm text-slate-500">Truy cập hồ sơ khám ngoại trú của bạn</p>
 
           {verified && (
             <Alert tone="success" className="mt-5">
@@ -108,5 +106,5 @@ export function LoginPage() {
         </p>
       </div>
     </AuthLayout>
-  )
+  );
 }

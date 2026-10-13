@@ -1,20 +1,23 @@
-import { forwardRef, type InputHTMLAttributes, type ReactNode } from 'react'
+import { forwardRef, type InputHTMLAttributes, type ReactNode } from 'react';
 
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
-  label?: string
-  error?: string
-  leftIcon?: ReactNode
-  rightSlot?: ReactNode
+  label?: string;
+  error?: string;
+  leftIcon?: ReactNode;
+  rightSlot?: ReactNode;
 }
 
 /** Input theo Figma auth: label uppercase 12px semibold, border #e2e8f0, icon trái pl-10. */
 export const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ label, error, leftIcon, rightSlot, id, className = '', ...props }, ref) => {
-    const inputId = id ?? label?.toLowerCase().replace(/\s+/g, '-')
+    const inputId = id ?? label?.toLowerCase().replace(/\s+/g, '-');
     return (
       <div className="flex w-full flex-col gap-2">
         {label && (
-          <label htmlFor={inputId} className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+          <label
+            htmlFor={inputId}
+            className="text-xs font-semibold uppercase tracking-wide text-slate-700"
+          >
             {label}
           </label>
         )}
@@ -40,7 +43,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         </div>
         {error && <p className="text-xs text-danger">{error}</p>}
       </div>
-    )
+    );
   },
-)
-Input.displayName = 'Input'
+);
+Input.displayName = 'Input';

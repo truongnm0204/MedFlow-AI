@@ -1,15 +1,15 @@
-import { Lock, Mail } from 'lucide-react'
-import type { FieldErrors, UseFormRegister } from 'react-hook-form'
+import { Lock, Mail } from 'lucide-react';
+import type { FieldErrors, UseFormRegister } from 'react-hook-form';
 
-import { Input, PasswordInput } from '@/shared/ui'
+import { Input, PasswordInput } from '@/shared/ui';
 
-import { PasswordStrength } from './password-strength'
-import type { RegisterFormValues } from '../schemas/auth.schemas'
+import { PasswordStrength } from './password-strength';
+import type { RegisterFormValues } from '../schemas/auth.schemas';
 
 interface Props {
-  register: UseFormRegister<RegisterFormValues>
-  errors: FieldErrors<RegisterFormValues>
-  password: string
+  register: UseFormRegister<RegisterFormValues>;
+  errors: FieldErrors<RegisterFormValues>;
+  password: string;
 }
 
 /** Nhóm 1: tài khoản đăng nhập (email, mật khẩu). */
@@ -54,5 +54,5 @@ export function RegisterAccountSection({ register, errors, password }: Props) {
 
       <PasswordStrength password={password} />
     </section>
-  )
+  );
 }

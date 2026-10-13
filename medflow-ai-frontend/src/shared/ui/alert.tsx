@@ -1,7 +1,7 @@
-import type { ReactNode } from 'react'
-import { CheckCircle2, Info, TriangleAlert } from 'lucide-react'
+import type { ReactNode } from 'react';
+import { CheckCircle2, Info, TriangleAlert } from 'lucide-react';
 
-type Tone = 'info' | 'success' | 'error'
+type Tone = 'info' | 'success' | 'error';
 
 const TONES: Record<Tone, { box: string; icon: ReactNode }> = {
   info: {
@@ -16,20 +16,22 @@ const TONES: Record<Tone, { box: string; icon: ReactNode }> = {
     box: 'border-rose-200 bg-rose-50 text-rose-700',
     icon: <TriangleAlert className="h-4 w-4 shrink-0 text-rose-500" />,
   },
-}
+};
 
 interface AlertProps {
-  tone?: Tone
-  className?: string
-  children: ReactNode
+  tone?: Tone;
+  className?: string;
+  children: ReactNode;
 }
 
 export function Alert({ tone = 'info', className = '', children }: AlertProps) {
-  const { box, icon } = TONES[tone]
+  const { box, icon } = TONES[tone];
   return (
-    <div className={`flex items-start gap-2.5 rounded-lg border px-3.5 py-3 text-xs leading-relaxed ${box} ${className}`}>
+    <div
+      className={`flex items-start gap-2.5 rounded-lg border px-3.5 py-3 text-xs leading-relaxed ${box} ${className}`}
+    >
       {icon}
       <div className="min-w-0 flex-1">{children}</div>
     </div>
-  )
+  );
 }

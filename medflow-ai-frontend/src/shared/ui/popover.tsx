@@ -1,11 +1,11 @@
-import { useState, type ReactNode } from 'react'
-import { useClickOutside } from '../hooks/use-click-outside'
+import { useState, type ReactNode } from 'react';
+import { useClickOutside } from '../hooks/use-click-outside';
 
 interface PopoverProps {
   /** Nút/trigger mở menu. */
-  trigger: (open: boolean) => ReactNode
-  children: ReactNode
-  className?: string
+  trigger: (open: boolean) => ReactNode;
+  children: ReactNode;
+  className?: string;
 }
 
 /**
@@ -13,13 +13,17 @@ interface PopoverProps {
  * rounded-12, shadow-lg, đóng khi click ngoài / Esc.
  */
 export function Popover({ trigger, children, className = '' }: PopoverProps) {
-  const [open, setOpen] = useState(false)
-  const ref = useClickOutside<HTMLDivElement>(() => setOpen(false))
+  const [open, setOpen] = useState(false);
+  const ref = useClickOutside<HTMLDivElement>(() => setOpen(false));
 
   return (
     <div ref={ref} className={`relative ${className}`}>
-      <div onClick={() => setOpen((o) => !o)} role="button" tabIndex={0}
-        onKeyDown={(e) => e.key === 'Enter' && setOpen((o) => !o)}>
+      <div
+        onClick={() => setOpen((o) => !o)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === 'Enter' && setOpen((o) => !o)}
+      >
         {trigger(open)}
       </div>
       {open && (
@@ -28,5 +32,5 @@ export function Popover({ trigger, children, className = '' }: PopoverProps) {
         </div>
       )}
     </div>
-  )
+  );
 }

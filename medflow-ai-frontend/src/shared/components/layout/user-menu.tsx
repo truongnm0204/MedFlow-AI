@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router-dom';
 import {
   CalendarCheck,
   ChevronDown,
@@ -8,22 +8,22 @@ import {
   Settings,
   UserRound,
   LogOut,
-} from 'lucide-react'
-import { Popover } from '../../ui/popover'
-import { Avatar } from '../../ui/avatar'
-import { Badge } from '../../ui/badge'
+} from 'lucide-react';
+import { Popover } from '../../ui/popover';
+import { Avatar } from '../../ui/avatar';
+import { Badge } from '../../ui/badge';
 
 export interface UserMenuUser {
-  fullName?: string | null
-  email?: string | null
-  patientCode?: string | null
+  fullName?: string | null;
+  email?: string | null;
+  patientCode?: string | null;
 }
 
 interface UserMenuProps {
-  user: UserMenuUser | null
+  user: UserMenuUser | null;
   /** Số lịch hẹn sắp tới — hiển thị badge trên mục "Lịch hẹn của tôi". */
-  upcomingAppointments?: number
-  onLogout?: () => void
+  upcomingAppointments?: number;
+  onLogout?: () => void;
 }
 
 const ITEMS = [
@@ -33,11 +33,11 @@ const ITEMS = [
   { icon: FolderHeart, label: 'Hồ sơ gia đình', to: '/family' },
   { icon: UserRound, label: 'Thông tin cá nhân', to: '/profile' },
   { icon: Settings, label: 'Cài đặt tài khoản', to: '/settings', divider: true },
-]
+];
 
 /** Menu người dùng theo Figma `10:139` (chip avatar + popover items). */
 export function UserMenu({ user, upcomingAppointments = 0, onLogout }: UserMenuProps) {
-  const displayName = user?.fullName ?? 'Khách'
+  const displayName = user?.fullName ?? 'Khách';
 
   return (
     <Popover
@@ -49,7 +49,9 @@ export function UserMenu({ user, upcomingAppointments = 0, onLogout }: UserMenuP
         >
           <Avatar name={displayName} size="sm" />
           <span className="text-[13px] font-semibold text-navy">{displayName}</span>
-          <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+          <ChevronDown
+            className={`h-3.5 w-3.5 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+          />
         </span>
       )}
     >
@@ -77,9 +79,7 @@ export function UserMenu({ user, upcomingAppointments = 0, onLogout }: UserMenuP
             >
               <Icon className="h-4 w-4 shrink-0" />
               <span className="flex-1">{label}</span>
-              {badge && upcomingAppointments > 0 && (
-                <Badge solid>{upcomingAppointments}</Badge>
-              )}
+              {badge && upcomingAppointments > 0 && <Badge solid>{upcomingAppointments}</Badge>}
             </Link>
           </li>
         ))}
@@ -95,5 +95,5 @@ export function UserMenu({ user, upcomingAppointments = 0, onLogout }: UserMenuP
         </li>
       </ul>
     </Popover>
-  )
+  );
 }
