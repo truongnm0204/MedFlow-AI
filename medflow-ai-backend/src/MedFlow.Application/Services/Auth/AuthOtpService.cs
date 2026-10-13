@@ -17,6 +17,7 @@ public class AuthOtpService
     private readonly IEmailSender _emailSender;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AuthOtpService> _logger;
+    private readonly IAuditLogger _audit;
 
     private static readonly TimeSpan OtpTtl = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan ResendThrottle = TimeSpan.FromSeconds(45);
@@ -25,12 +26,14 @@ public class AuthOtpService
         IApplicationDbContext db,
         IEmailSender emailSender,
         IConfiguration configuration,
-        ILogger<AuthOtpService> logger)
+        ILogger<AuthOtpService> logger,
+        IAuditLogger audit)
     {
         _db = db;
         _emailSender = emailSender;
         _configuration = configuration;
         _logger = logger;
+        _audit = audit;
     }
 
     public async Task<VerifyOtpResponse> VerifyOtpAsync(VerifyOtpRequest request, CancellationToken ct = default)
@@ -42,12 +45,7 @@ public class AuthOtpService
         if (user.AccountStatus == AccountStatus.ACTIVE)
             throw new ValidationException("Tài khoản đã được kích hoạt, vui lòng đăng nhập");
 
-        var challenge = await _db.AuthVerificationChallenges
-            .Where(c => c.UserId == user.Id
-                && c.Purpose == ChallengePurpose.REGISTER_EMAIL
-                && c.Status == ChallengeStatus.PENDING)
-            .OrderByDescending(c => c.CreatedAt)
-            .FirstOrDefaultAsync(ct)
+        var challenge = await GetLatestPendingChallengeAsync(user.Id, ChallengePurpose.REGISTER_EMAIL, ct)
             ?? throw new ValidationException("OTP đã hết hạn hoặc không tồn tại");
 
         if (challenge.ExpiresAt <= DateTime.UtcNow)
@@ -79,7 +77,7 @@ public class AuthOtpService
         user.AccountStatus = AccountStatus.ACTIVE;
         user.EmailVerifiedAt = DateTime.UtcNow;
 
-        Audit(user.Id, "OTP_VERIFY", "USER", user.Id, null, null);
+        _audit.Add(user.Id, "OTP_VERIFY", "USER", user.Id, null, null);
         await _db.SaveChangesAsync(ct);
 
         return new VerifyOtpResponse(user.Id);
@@ -97,12 +95,7 @@ public class AuthOtpService
         if (user.AccountStatus == AccountStatus.ACTIVE)
             throw new ValidationException("Tài khoản đã được kích hoạt, vui lòng đăng nhập");
 
-        var latest = await _db.AuthVerificationChallenges
-            .Where(c => c.UserId == user.Id
-                && c.Purpose == ChallengePurpose.REGISTER_EMAIL
-                && c.Status == ChallengeStatus.PENDING)
-            .OrderByDescending(c => c.CreatedAt)
-            .FirstOrDefaultAsync(ct);
+        var latest = await GetLatestPendingChallengeAsync(user.Id, ChallengePurpose.REGISTER_EMAIL, ct);
 
         if (latest is not null && latest.CreatedAt > DateTime.UtcNow.Subtract(ResendThrottle))
             throw new ValidationException("Vui lòng đợi trước khi gửi lại");
@@ -124,7 +117,7 @@ public class AuthOtpService
             ExpiresAt = DateTime.UtcNow.Add(OtpTtl),
         });
 
-        Audit(user.Id, "OTP_RESEND", "USER", user.Id, null, null);
+        _audit.Add(user.Id, "OTP_RESEND", "USER", user.Id, null, null);
         await _db.SaveChangesAsync(ct);
 
         var patient = await _db.Patients.FirstOrDefaultAsync(p => p.UserId == user.Id, ct);
@@ -139,22 +132,16 @@ public class AuthOtpService
         var sent = await OtpEmailBuilder.SendAsync(_emailSender, _logger, email, fullName, otp, ct);
         if (!sent)
         {
-            Audit(userId, "EMAIL_SEND_FAILED", "USER", userId, null, null);
+            _audit.Add(userId, "EMAIL_SEND_FAILED", "USER", userId, null, null);
             await _db.SaveChangesAsync(ct);
         }
     }
 
-    internal void Audit(Guid actorId, string action, string entityType,
-        Guid? entityId, object? newValue, string? ipAddress)
-    {
-        _db.AuditLogs.Add(new AuditLog
-        {
-            ActorUserId = actorId == Guid.Empty ? null : actorId,
-            Action = action,
-            EntityType = entityType,
-            EntityId = entityId,
-            NewValue = newValue is null ? null : System.Text.Json.JsonSerializer.Serialize(newValue),
-            IpAddress = System.Net.IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
-        });
-    }
+    /// <summary>Latest pending challenge for a user+purpose — user is already resolved by the caller.</summary>
+    private async Task<AuthVerificationChallenge?> GetLatestPendingChallengeAsync(
+        Guid userId, ChallengePurpose purpose, CancellationToken ct)
+        => await _db.AuthVerificationChallenges
+            .Where(c => c.UserId == userId && c.Purpose == purpose && c.Status == ChallengeStatus.PENDING)
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstOrDefaultAsync(ct);
 }
