@@ -31,6 +31,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Check psql
+        run: psql --version
+      - name: Init test database
+        run: bash ../scripts/db/init-test-db.sh "postgresql://postgres:postgres@localhost:5432/medflow_test"
       - run: dotnet restore
       - run: dotnet build --no-restore -c Release
       - run: dotnet test --no-build -c Release
