@@ -47,5 +47,12 @@ plans/
 # Task state (local working documents — kept off GitHub)
 tasks/
 
-# Project docs (local working documents — kept off GitHub)
-docs/
+# Project docs — local by default; whitelist curated files for commit
+docs/*
+!docs/context-rules.md
+!docs/CODING_RULES.md
+!docs/AGENT_WORKFLOW.md
+!docs/system-architecture.md
+!docs/backend-code-standards.md
+!docs/frontend-code-standards.md
+!docs/decisions/
