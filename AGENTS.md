@@ -58,7 +58,7 @@ Neu GKG server tat (MCP tools fail) → fallback Explore agent `find_referencing
 - **Impact before edit**: before modifying a public method/class with multiple callers (e.g. `IAuthService`, `IApplicationDbContext`, domain behaviors), trace references first (GKG query if indexed, else Explore agent `find_referencing_symbols`). HIGH/CRITICAL blast radius → warn user before proceeding.
 - **Two-layer authz**: `[Authorize]` is layer 1 only. Every endpoint touching owned data needs a service-level ownership check (`.claude/rules/authorization-two-layers.md`).
 - **Never edit committed SQL migrations** — new file `database/migrations/NNN_desc.sql` (`.claude/rules/ef-migration-and-schema.md`).
-- **`MedFlow.Application` never references EF Core** — only `IApplicationDbContext`.
+- **`MedFlow.Application` uses EF Core only through `IApplicationDbContext`** — DbSet + async LINQ OK; never `MedFlowDbContext`, `new DbContext`, or connection/options config (those live in Infrastructure).
 - **No secrets in repo** — conn strings, JWT secret, SMTP creds via user-secrets/env only.
 - **MCP artifacts**: all tool-generated files go to `.mcp-artifacts/<tool>/` (gitignored). Promote to `docs/assets/` or `plans/<plan>/assets/` only when durable (`.claude/rules/mcp-artifact-hygiene.md`).
 
