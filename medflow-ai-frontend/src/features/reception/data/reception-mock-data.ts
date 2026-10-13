@@ -1,0 +1,157 @@
+import type {
+  QueueEntry,
+  QuickAction,
+  ReceptionStats,
+  TodayAppointment,
+} from '../types/reception.types';
+
+// Mock data cho M1 role-landing — se duoc thay bang API M2.
+export const RECEPTION_STATS_MOCK: ReceptionStats = {
+  waitingCheckIn: 8,
+  inQueue: 14,
+  inConsultation: 5,
+  completedToday: 32,
+};
+
+export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
+  {
+    id: 'q-001',
+    ticketNo: 'A012',
+    patientName: 'Nguyễn Văn An',
+    patientCode: 'BN-2024-0018',
+    visitType: 'SCHEDULED',
+    room: 'P.102',
+    status: 'IN_PROGRESS',
+    checkedInAt: '08:02',
+    priority: 'NORMAL',
+  },
+  {
+    id: 'q-002',
+    ticketNo: 'A013',
+    patientName: 'Trần Thị Bích',
+    patientCode: 'BN-2024-0042',
+    visitType: 'SCHEDULED',
+    room: 'P.102',
+    status: 'CALLED',
+    checkedInAt: '08:15',
+    priority: 'ELDERLY',
+  },
+  {
+    id: 'q-003',
+    ticketNo: 'A014',
+    patientName: 'Lê Minh Cường',
+    patientCode: 'BN-2024-0071',
+    visitType: 'WALK_IN',
+    room: 'P.103',
+    status: 'WAITING',
+    checkedInAt: '08:22',
+    priority: 'NORMAL',
+  },
+  {
+    id: 'q-004',
+    ticketNo: 'A015',
+    patientName: 'Phạm Thu Dung',
+    patientCode: 'BN-2024-0089',
+    visitType: 'SCHEDULED',
+    room: 'P.102',
+    status: 'WAITING',
+    checkedInAt: '08:31',
+    priority: 'PREGNANT',
+  },
+  {
+    id: 'q-005',
+    ticketNo: 'A016',
+    patientName: 'Hoàng Đức Em',
+    patientCode: 'BN-2024-0103',
+    visitType: 'WALK_IN',
+    room: 'P.104',
+    status: 'WAITING',
+    checkedInAt: '08:40',
+    priority: 'URGENT',
+  },
+  {
+    id: 'q-006',
+    ticketNo: 'A017',
+    patientName: 'Vũ Thị Phương',
+    patientCode: 'BN-2024-0117',
+    visitType: 'SCHEDULED',
+    room: 'P.103',
+    status: 'WAITING',
+    checkedInAt: '08:47',
+    priority: 'NORMAL',
+  },
+];
+
+export const TODAY_APPOINTMENTS_MOCK: TodayAppointment[] = [
+  {
+    id: 'ap-001',
+    time: '09:00',
+    patientName: 'Đỗ Gia Huy',
+    doctorName: 'BS. Trần Khánh',
+    department: 'Nội tổng quát',
+    status: 'CHECKED_IN',
+  },
+  {
+    id: 'ap-002',
+    time: '09:15',
+    patientName: 'Ngô Thị Lan',
+    doctorName: 'BS. Trần Khánh',
+    department: 'Nội tổng quát',
+    status: 'BOOKED',
+  },
+  {
+    id: 'ap-003',
+    time: '09:30',
+    patientName: 'Bùi Quốc Nam',
+    doctorName: 'BS. Lê Hạnh',
+    department: 'Da liễu',
+    status: 'BOOKED',
+  },
+  {
+    id: 'ap-004',
+    time: '09:45',
+    patientName: 'Phan Thảo Nguyên',
+    doctorName: 'BS. Trần Khánh',
+    department: 'Nội tổng quát',
+    status: 'BOOKED',
+  },
+  {
+    id: 'ap-005',
+    time: '10:00',
+    patientName: 'Trịnh Văn Phát',
+    doctorName: 'BS. Đinh Long',
+    department: 'Tai mũi họng',
+    status: 'BOOKED',
+  },
+];
+
+export const QUICK_ACTIONS_MOCK: QuickAction[] = [
+  {
+    id: 'check-in',
+    label: 'Check-in bệnh nhân hẹn',
+    description: 'Quét mã hoặc tìm lịch hẹn để tiếp nhận',
+    icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
+    accent: 'sky',
+  },
+  {
+    id: 'walk-in',
+    label: 'Tạo lượt khám Walk-in',
+    description: 'Bệnh nhân đến trực tiếp không hẹn trước',
+    icon: 'M13 5l7 7-7 7M5 5l7 7-7 7',
+    accent: 'emerald',
+  },
+  {
+    id: 'new-patient',
+    label: 'Tạo hồ sơ bệnh nhân',
+    description: 'Đăng ký hồ sơ mới tại quầy lễ tân',
+    icon: 'M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z',
+    accent: 'rose',
+  },
+  {
+    id: 'search',
+    label: 'Tra cứu bệnh nhân',
+    description: 'Tìm theo mã BN, SĐT hoặc họ tên',
+    icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z',
+    accent: 'amber',
+  },
+];
