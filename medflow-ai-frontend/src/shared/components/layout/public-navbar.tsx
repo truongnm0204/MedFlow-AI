@@ -1,8 +1,8 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { CalendarDays, Menu, X } from 'lucide-react'
-import { MedflowLogo } from './medflow-logo'
-import { Button } from '../../ui/button'
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { CalendarDays, Menu, X } from 'lucide-react';
+import { MedflowLogo } from './medflow-logo';
+import { Button } from '../../ui/button';
 
 const NAV_LINKS = [
   { label: 'Trang chủ', href: '/', active: true },
@@ -10,11 +10,11 @@ const NAV_LINKS = [
   { label: 'Bác sĩ', href: '/#doctors' },
   { label: 'Dịch vụ khám', href: '/#services' },
   { label: 'Giới thiệu', href: '/#about' },
-]
+];
 
 /** Navbar trạng thái khách theo Figma `10:183`. */
 export function PublicNavbar() {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(false);
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border bg-white">
@@ -71,7 +71,10 @@ export function PublicNavbar() {
       </div>
 
       {open && (
-        <nav className="border-t border-border bg-white px-6 py-4 lg:hidden" aria-label="Menu di động">
+        <nav
+          className="border-t border-border bg-white px-6 py-4 lg:hidden"
+          aria-label="Menu di động"
+        >
           <ul className="flex flex-col gap-3 text-sm">
             {NAV_LINKS.map((link) => (
               <li key={link.label}>
@@ -88,11 +91,13 @@ export function PublicNavbar() {
               <Button variant="secondary" size="sm" className="flex-1">
                 <Link to="/login">Đăng nhập / Đăng ký</Link>
               </Button>
-              <Button size="sm" className="flex-1">Đặt lịch khám</Button>
+              <Button size="sm" className="flex-1">
+                Đặt lịch khám
+              </Button>
             </li>
           </ul>
         </nav>
       )}
     </header>
-  )
+  );
 }

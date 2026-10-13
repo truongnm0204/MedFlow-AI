@@ -1,20 +1,20 @@
-import { zodResolver } from '@hookform/resolvers/zod'
-import { ArrowLeft, ChevronRight, Home } from 'lucide-react'
-import { useForm } from 'react-hook-form'
-import { Link } from 'react-router-dom'
+import { zodResolver } from '@hookform/resolvers/zod';
+import { ArrowLeft, ChevronRight, Home } from 'lucide-react';
+import { useForm } from 'react-hook-form';
+import { Link } from 'react-router-dom';
 
-import { getErrorMessage } from '@/shared/lib/get-error-message'
-import { Alert, Button } from '@/shared/ui'
-import { MedflowLogo } from '@/shared/components/layout/medflow-logo'
+import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { Alert, Button } from '@/shared/ui';
+import { MedflowLogo } from '@/shared/components/layout/medflow-logo';
 
-import { FormField } from '../components/form-field'
-import { RegisterAccountSection } from '../components/register-account-section'
-import { RegisterIdentitySection } from '../components/register-identity-section'
-import { useRegister } from '../hooks/use-auth'
-import { registerSchema, type RegisterFormValues } from '../schemas/auth.schemas'
+import { FormField } from '../components/form-field';
+import { RegisterAccountSection } from '../components/register-account-section';
+import { RegisterIdentitySection } from '../components/register-identity-section';
+import { useRegister } from '../hooks/use-auth';
+import { registerSchema, type RegisterFormValues } from '../schemas/auth.schemas';
 
 export function RegisterPage() {
-  const registerMutation = useRegister()
+  const registerMutation = useRegister();
 
   const {
     register,
@@ -25,14 +25,14 @@ export function RegisterPage() {
   } = useForm<RegisterFormValues>({
     resolver: zodResolver(registerSchema),
     defaultValues: { gender: 'MALE' },
-  })
+  });
 
-  const password = watch('password') ?? ''
+  const password = watch('password') ?? '';
 
   const onSubmit = (values: RegisterFormValues) => {
-    const { acceptTerms: _acceptTerms, ...payload } = values
-    registerMutation.mutate(payload)
-  }
+    const { acceptTerms: _acceptTerms, ...payload } = values;
+    registerMutation.mutate(payload);
+  };
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -54,7 +54,10 @@ export function RegisterPage() {
 
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         {/* Breadcrumb */}
-        <nav className="mb-6 flex items-center gap-1.5 text-xs text-slate-500" aria-label="Breadcrumb">
+        <nav
+          className="mb-6 flex items-center gap-1.5 text-xs text-slate-500"
+          aria-label="Breadcrumb"
+        >
           <Link to="/" className="flex items-center gap-1 hover:text-slate-700">
             <Home className="h-3 w-3" />
             Trang chủ
@@ -65,7 +68,9 @@ export function RegisterPage() {
 
         <div className="mx-auto w-full max-w-2xl rounded-xl border border-border bg-white p-6 shadow-sm sm:p-10">
           <div className="mb-8">
-            <h1 className="text-2xl font-bold tracking-tight text-ink">Đăng ký Tài khoản Bệnh nhân</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-ink">
+              Đăng ký Tài khoản Bệnh nhân
+            </h1>
             <p className="mt-1.5 text-sm text-slate-500">
               Tạo tài khoản để đặt lịch khám và quản lý hồ sơ khám bệnh ngoại trú
             </p>
@@ -120,5 +125,5 @@ export function RegisterPage() {
         </div>
       </main>
     </div>
-  )
+  );
 }

@@ -1,12 +1,12 @@
-import { Activity, Clock, HeartPulse, ShieldCheck } from 'lucide-react'
+import { Activity, Clock, HeartPulse, ShieldCheck } from 'lucide-react';
 
-import { MedflowLogo } from '@/shared/components/layout/medflow-logo'
+import { MedflowLogo } from '@/shared/components/layout/medflow-logo';
 
 const METRICS = [
   { icon: Clock, value: '4.2 phút', label: 'Đặt lịch trung bình' },
   { icon: Activity, value: '24/24', label: 'Hỗ trợ trực tuyến' },
   { icon: ShieldCheck, value: '99.8%', label: 'Bảo mật dữ liệu' },
-]
+];
 
 /** Cột trái navy `#0a2540` — branding + metrics (Figma `1:2`). Ẩn trên mobile. */
 export function AuthBrandingPanel() {
@@ -34,8 +34,8 @@ export function AuthBrandingPanel() {
             </span>
           </h1>
           <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">
-            Đặt lịch khám, quản lý hồ sơ bệnh án điện tử và nhận kết quả ngoại trú an toàn —
-            tất cả trong một cổng dịch vụ duy nhất.
+            Đặt lịch khám, quản lý hồ sơ bệnh án điện tử và nhận kết quả ngoại trú an toàn — tất cả
+            trong một cổng dịch vụ duy nhất.
           </p>
         </div>
 
@@ -56,8 +56,7 @@ export function AuthBrandingPanel() {
         </div>
       </div>
 
-      <p className="relative text-[11px] ">
-      </p>
+      <p className="relative text-[11px] "></p>
     </aside>
-  )
+  );
 }

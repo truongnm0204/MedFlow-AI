@@ -8,6 +8,13 @@
       "status": "active",
       "gates": [
         {
+          "id": "backend-format",
+          "executable": "dotnet",
+          "args": ["format", "whitespace", "medflow-ai-backend/MedFlow.slnx", "--verify-no-changes", "--no-restore"],
+          "cwd": ".",
+          "timeoutSeconds": 120
+        },
+        {
           "id": "backend-build",
           "executable": "dotnet",
           "args": ["build", "medflow-ai-backend/MedFlow.slnx", "--nologo"],
@@ -28,6 +35,13 @@
       "manifest": "medflow-ai-frontend/package.json",
       "status": "active",
       "gates": [
+        {
+          "id": "frontend-format",
+          "executable": "npm",
+          "args": ["run", "format:check"],
+          "cwd": "medflow-ai-frontend",
+          "timeoutSeconds": 120
+        },
         {
           "id": "frontend-lint",
           "executable": "npm",

@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest';
 
-import { apiClient } from '../axios'
+import { apiClient } from '../axios';
 
 describe('apiClient', () => {
   it('is configured with /api/v1 base url', () => {
-    expect(apiClient.defaults.baseURL).toBe('/api/v1')
-  })
-})
+    expect(apiClient.defaults.baseURL).toBe('/api/v1');
+  });
+});

@@ -1,4 +1,4 @@
-import { MOCK_DOCTORS } from '../data/home-catalog'
+import { MOCK_DOCTORS } from '../data/home-catalog';
 
 /** Đội ngũ bác sĩ tiêu biểu (anchor #doctors). */
 export function DoctorsSection() {
@@ -69,5 +69,5 @@ export function DoctorsSection() {
         </div>
       </div>
     </section>
-  )
+  );
 }

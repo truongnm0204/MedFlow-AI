@@ -1,15 +1,15 @@
-type Size = 'sm' | 'md' | 'lg'
+type Size = 'sm' | 'md' | 'lg';
 
 const SIZES: Record<Size, string> = {
   sm: 'h-8 w-8 text-xs',
   md: 'h-10 w-10 text-sm',
   lg: 'h-12 w-12 text-base',
-}
+};
 
 interface AvatarProps {
-  name?: string | null
-  size?: Size
-  className?: string
+  name?: string | null;
+  size?: Size;
+  className?: string;
 }
 
 function initials(name: string): string {
@@ -18,7 +18,7 @@ function initials(name: string): string {
     .split(/\s+/)
     .slice(0, 2)
     .map((w) => w[0]?.toUpperCase() ?? '')
-    .join('')
+    .join('');
 }
 
 /** Avatar chữ cái đầu theo Figma `10:106` (nền primary, bo góc 10px). */
@@ -30,5 +30,5 @@ export function Avatar({ name, size = 'sm', className = '' }: AvatarProps) {
     >
       {initials(name ?? '') || '?'}
     </span>
-  )
+  );
 }

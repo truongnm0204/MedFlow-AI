@@ -1,16 +1,16 @@
-import { forwardRef, useState, type InputHTMLAttributes } from 'react'
-import { Eye, EyeOff, Lock } from 'lucide-react'
-import { Input } from './input'
+import { forwardRef, useState, type InputHTMLAttributes } from 'react';
+import { Eye, EyeOff, Lock } from 'lucide-react';
+import { Input } from './input';
 
 export interface PasswordInputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
-  label?: string
-  error?: string
+  label?: string;
+  error?: string;
 }
 
 /** Input password + nút eye toggle (Figma `1:2`). */
 export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
   ({ label, error, ...props }, ref) => {
-    const [visible, setVisible] = useState(false)
+    const [visible, setVisible] = useState(false);
     return (
       <Input
         ref={ref}
@@ -31,7 +31,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
         }
         {...props}
       />
-    )
+    );
   },
-)
-PasswordInput.displayName = 'PasswordInput'
+);
+PasswordInput.displayName = 'PasswordInput';

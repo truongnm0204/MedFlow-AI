@@ -1,29 +1,29 @@
-import { useEffect, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
+import { useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
 
 interface ModalProps {
-  open: boolean
-  onClose: () => void
+  open: boolean;
+  onClose: () => void;
   /** Bề rộng tối đa của panel. */
-  maxWidth?: string
-  children: ReactNode
+  maxWidth?: string;
+  children: ReactNode;
 }
 
 /** Modal đơn giản: overlay mờ + panel trắng, đóng bằng Esc/click nền. */
 export function Modal({ open, onClose, maxWidth = 'max-w-lg', children }: ModalProps) {
   useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    document.addEventListener('keydown', onKey)
-    document.body.style.overflow = 'hidden'
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    document.body.style.overflow = 'hidden';
     return () => {
-      document.removeEventListener('keydown', onKey)
-      document.body.style.overflow = ''
-    }
-  }, [open, onClose])
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = '';
+    };
+  }, [open, onClose]);
 
-  if (!open) return null
+  if (!open) return null;
 
   return createPortal(
     <div
@@ -48,5 +48,5 @@ export function Modal({ open, onClose, maxWidth = 'max-w-lg', children }: ModalP
       </div>
     </div>,
     document.body,
-  )
+  );
 }

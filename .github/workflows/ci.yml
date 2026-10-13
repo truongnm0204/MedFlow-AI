@@ -36,6 +36,7 @@ jobs:
       - name: Init test database
         run: bash ../scripts/db/init-test-db.sh "postgresql://postgres:postgres@localhost:5432/medflow_test"
       - run: dotnet restore
+      - run: dotnet format whitespace MedFlow.slnx --verify-no-changes --no-restore
       - run: dotnet build --no-restore -c Release
       - run: dotnet test --no-build -c Release
         env:
@@ -55,6 +56,7 @@ jobs:
           cache: npm
           cache-dependency-path: medflow-ai-frontend/package-lock.json
       - run: npm ci
+      - run: npm run format:check
       - run: npm run lint
       - run: npm run build
       - run: npm test

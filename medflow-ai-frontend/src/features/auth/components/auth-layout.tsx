@@ -1,9 +1,9 @@
-import type { ReactNode } from 'react'
+import type { ReactNode } from 'react';
 
-import { AuthBrandingPanel } from './auth-branding-panel'
+import { AuthBrandingPanel } from './auth-branding-panel';
 
 interface AuthLayoutProps {
-  children: ReactNode
+  children: ReactNode;
 }
 
 /** Split-screen shell: trái branding navy (ẩn mobile), phải nội dung trên nền canvas. */
@@ -15,5 +15,5 @@ export function AuthLayout({ children }: AuthLayoutProps) {
         {children}
       </main>
     </div>
-  )
+  );
 }

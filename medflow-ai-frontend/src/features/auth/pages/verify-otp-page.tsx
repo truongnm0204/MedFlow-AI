@@ -1,63 +1,71 @@
-import { ArrowLeft, CheckCircle2, Clock, Info, MailCheck, RefreshCw, ShieldCheck } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { Link, Navigate, useSearchParams } from 'react-router-dom'
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Clock,
+  Info,
+  MailCheck,
+  RefreshCw,
+  ShieldCheck,
+} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 
-import { getErrorMessage } from '@/shared/lib/get-error-message'
-import { Alert, Button } from '@/shared/ui'
-import { MedflowLogo } from '@/shared/components/layout/medflow-logo'
+import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { Alert, Button } from '@/shared/ui';
+import { MedflowLogo } from '@/shared/components/layout/medflow-logo';
 
-import { OtpInput } from '../components/otp-input'
-import { useCountdown } from '../hooks/use-countdown'
-import { useResendOtp, useVerifyOtp } from '../hooks/use-auth'
+import { OtpInput } from '../components/otp-input';
+import { useCountdown } from '../hooks/use-countdown';
+import { useResendOtp, useVerifyOtp } from '../hooks/use-auth';
 
-const OTP_TTL_SECONDS = 300 // 5 phút — khớp backend
-const RESEND_COOLDOWN_SECONDS = 45
+const OTP_TTL_SECONDS = 300; // 5 phút — khớp backend
+const RESEND_COOLDOWN_SECONDS = 45;
 
 /** Mask email: `nguyenvana@gmail.com` → `ngu***@gmail.com`. */
 function maskEmail(email: string): string {
-  const [local, domain] = email.split('@')
-  if (!domain) return email
-  const visible = local.slice(0, Math.min(3, local.length))
-  return `${visible}***@${domain}`
+  const [local, domain] = email.split('@');
+  if (!domain) return email;
+  const visible = local.slice(0, Math.min(3, local.length));
+  return `${visible}***@${domain}`;
 }
 
 function formatCountdown(totalSeconds: number): string {
-  const m = Math.floor(totalSeconds / 60)
-  const s = totalSeconds % 60
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 export function VerifyOtpPage() {
-  const [params] = useSearchParams()
-  const email = params.get('email') ?? ''
+  const [params] = useSearchParams();
+  const email = params.get('email') ?? '';
 
-  const [otp, setOtp] = useState('')
-  const verifyOtp = useVerifyOtp()
-  const resendOtp = useResendOtp()
-  const ttl = useCountdown(OTP_TTL_SECONDS)
-  const cooldown = useCountdown(RESEND_COOLDOWN_SECONDS)
+  const [otp, setOtp] = useState('');
+  const verifyOtp = useVerifyOtp();
+  const resendOtp = useResendOtp();
+  const ttl = useCountdown(OTP_TTL_SECONDS);
+  const cooldown = useCountdown(RESEND_COOLDOWN_SECONDS);
 
   // Cooldown resend bắt đầu ngay khi vào trang (vừa gửi OTP lúc register).
   useEffect(() => {
-    cooldown.restart(RESEND_COOLDOWN_SECONDS)
+    cooldown.restart(RESEND_COOLDOWN_SECONDS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, []);
 
-  const masked = useMemo(() => maskEmail(email), [email])
+  const masked = useMemo(() => maskEmail(email), [email]);
 
-  if (!email) return <Navigate to="/register" replace />
+  if (!email) return <Navigate to="/register" replace />;
 
-  const canSubmit = otp.length === 6 && !verifyOtp.isPending
+  const canSubmit = otp.length === 6 && !verifyOtp.isPending;
 
   const handleResend = () => {
     resendOtp.mutate(email, {
       onSuccess: () => {
-        setOtp('')
-        ttl.restart(OTP_TTL_SECONDS)
-        cooldown.restart(RESEND_COOLDOWN_SECONDS)
+        setOtp('');
+        ttl.restart(OTP_TTL_SECONDS);
+        cooldown.restart(RESEND_COOLDOWN_SECONDS);
       },
-    })
-  }
+    });
+  };
 
   return (
     <div className="relative flex min-h-screen flex-col bg-canvas">
@@ -93,7 +101,8 @@ export function VerifyOtpPage() {
             Xác thực Tài khoản Người bệnh
           </h1>
           <p className="mt-2 text-center text-sm leading-relaxed text-slate-600">
-            Mã xác thực kích hoạt 6 chữ số (OTP) đã được gửi tới địa chỉ email đăng ký hồ sơ của bạn.
+            Mã xác thực kích hoạt 6 chữ số (OTP) đã được gửi tới địa chỉ email đăng ký hồ sơ của
+            bạn.
           </p>
 
           {/* Masked email + trạng thái */}
@@ -176,9 +185,9 @@ export function VerifyOtpPage() {
             <div className="flex gap-2.5 rounded-lg border border-slate-200/60 bg-canvas p-3 text-xs leading-relaxed">
               <Info className="h-4 w-4 shrink-0 text-slate-500" />
               <p className="text-slate-600">
-                <span className="font-semibold text-slate-800">Mẹo tiếp nhận:</span> Vui lòng kiểm tra
-                kỹ cả hộp thư <strong className="text-slate-700">Rác (Spam/Junk)</strong> nếu chưa
-                thấy email sau 1 phút hoặc kiểm tra đúng hòm thư đã đăng ký.
+                <span className="font-semibold text-slate-800">Mẹo tiếp nhận:</span> Vui lòng kiểm
+                tra kỹ cả hộp thư <strong className="text-slate-700">Rác (Spam/Junk)</strong> nếu
+                chưa thấy email sau 1 phút hoặc kiểm tra đúng hòm thư đã đăng ký.
               </p>
             </div>
 
@@ -196,10 +205,10 @@ export function VerifyOtpPage() {
       <footer className="relative border-t border-slate-200/80 bg-slate-100/70 px-6 py-3">
         <p className="mx-auto flex max-w-6xl items-center justify-center gap-2 text-center text-xs text-slate-600">
           <ShieldCheck className="h-3.5 w-3.5" />
-          Mã hóa đầu cuối 256-bit chuẩn HL7/FHIR bảo vệ dữ liệu sức khỏe cá nhân. Tuyệt đối không chia
-          sẻ mã xác thực cho bất kỳ ai.
+          Mã hóa đầu cuối 256-bit chuẩn HL7/FHIR bảo vệ dữ liệu sức khỏe cá nhân. Tuyệt đối không
+          chia sẻ mã xác thực cho bất kỳ ai.
         </p>
       </footer>
     </div>
-  )
+  );
 }

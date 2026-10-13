@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useState } from 'react';
 
 /** Hero + thẻ đặt lịch nhanh (Quick-Booking). */
 export function HeroSection() {
-  const [selectedSpecialty, setSelectedSpecialty] = useState('gastro')
-  const [selectedDoctor, setSelectedDoctor] = useState('all')
-  const [selectedDate, setSelectedDate] = useState('today')
+  const [selectedSpecialty, setSelectedSpecialty] = useState('gastro');
+  const [selectedDoctor, setSelectedDoctor] = useState('all');
+  const [selectedDate, setSelectedDate] = useState('today');
 
   return (
     <section className="relative bg-gradient-to-b from-white via-sky-50/30 to-transparent pt-10 pb-16 lg:pt-16 lg:pb-24 border-b border-slate-200/60 overflow-hidden">
@@ -20,12 +20,17 @@ export function HeroSection() {
           </h1>
 
           <p className="text-sm sm:text-base text-slate-600 leading-relaxed max-w-2xl mx-auto">
-            Mô hình khám chữa bệnh tự nguyện 100% chuẩn quốc tế. Định tuyến buồng khám thông minh bằng AI, không giấy tờ, bảng giá niêm yết minh bạch trước khi khám, kết quả cận lâm sàng và đơn thuốc điện tử trả ngay trên điện thoại.
+            Mô hình khám chữa bệnh tự nguyện 100% chuẩn quốc tế. Định tuyến buồng khám thông minh
+            bằng AI, không giấy tờ, bảng giá niêm yết minh bạch trước khi khám, kết quả cận lâm sàng
+            và đơn thuốc điện tử trả ngay trên điện thoại.
           </p>
         </div>
 
         {/* SMART QUICK-BOOKING CARD */}
-        <div id="booking" className="mt-10 max-w-4xl mx-auto bg-white rounded-2xl border border-slate-200 shadow-lg p-5 sm:p-6 space-y-4 scroll-mt-24">
+        <div
+          id="booking"
+          className="mt-10 max-w-4xl mx-auto bg-white rounded-2xl border border-slate-200 shadow-lg p-5 sm:p-6 space-y-4 scroll-mt-24"
+        >
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 rounded-md bg-sky-100 text-sky-700 flex items-center justify-center font-bold text-xs">
@@ -43,7 +48,10 @@ export function HeroSection() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* 1. Chọn Chuyên Khoa */}
             <div>
-              <label htmlFor="specialty-select" className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+              <label
+                htmlFor="specialty-select"
+                className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1"
+              >
                 Chuyên Khoa
               </label>
               <select
@@ -63,7 +71,10 @@ export function HeroSection() {
 
             {/* 2. Chọn Bác Sĩ */}
             <div>
-              <label htmlFor="doctor-select" className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+              <label
+                htmlFor="doctor-select"
+                className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1"
+              >
                 Bác Sĩ Trực Khám
               </label>
               <select
@@ -82,7 +93,10 @@ export function HeroSection() {
 
             {/* 3. Ngày & Khung Giờ */}
             <div>
-              <label htmlFor="date-select" className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+              <label
+                htmlFor="date-select"
+                className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1"
+              >
                 Ngày Khám
               </label>
               <select
@@ -101,11 +115,18 @@ export function HeroSection() {
             <div className="flex items-end">
               <button
                 type="button"
-                onClick={() => alert('Đã tìm thấy 8 khung giờ trống khả dụng cho chuyên khoa của bạn!')}
+                onClick={() =>
+                  alert('Đã tìm thấy 8 khung giờ trống khả dụng cho chuyên khoa của bạn!')
+                }
                 className="w-full py-2.5 px-4 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg shadow-sm shadow-sky-600/30 transition-all flex items-center justify-center gap-1.5"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
                 </svg>
                 Tìm Lịch Khám (AI)
               </button>
@@ -116,7 +137,9 @@ export function HeroSection() {
           <div className="pt-4 border-t border-slate-100 grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
             <div className="p-2">
               <div className="text-xl sm:text-2xl font-black text-sky-700 font-mono">0 Phút</div>
-              <div className="text-[11px] text-slate-500 font-medium">Chờ tại quầy (Check-in QR)</div>
+              <div className="text-[11px] text-slate-500 font-medium">
+                Chờ tại quầy (Check-in QR)
+              </div>
             </div>
             <div className="p-2">
               <div className="text-xl sm:text-2xl font-black text-emerald-700 font-mono">100%</div>
@@ -124,7 +147,9 @@ export function HeroSection() {
             </div>
             <div className="p-2">
               <div className="text-xl sm:text-2xl font-black text-slate-900 font-mono">50.000+</div>
-              <div className="text-[11px] text-slate-500 font-medium">Lượt khám hài lòng (4.9★)</div>
+              <div className="text-[11px] text-slate-500 font-medium">
+                Lượt khám hài lòng (4.9★)
+              </div>
             </div>
             <div className="p-2">
               <div className="text-xl sm:text-2xl font-black text-sky-700 font-mono">15 Phút</div>
@@ -134,5 +159,5 @@ export function HeroSection() {
         </div>
       </div>
     </section>
-  )
+  );
 }

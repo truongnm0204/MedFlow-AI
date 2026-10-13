@@ -1,4 +1,4 @@
-import { JOURNEY_STEPS } from '../data/home-catalog'
+import { JOURNEY_STEPS } from '../data/home-catalog';
 
 /** Quy trình 4 bước khám không giấy tờ (anchor #about). */
 export function JourneySection() {
@@ -19,7 +19,10 @@ export function JourneySection() {
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           {JOURNEY_STEPS.map((item) => (
-            <div key={item.step} className="bg-white rounded-2xl border border-slate-200 p-6 relative shadow-sm">
+            <div
+              key={item.step}
+              className="bg-white rounded-2xl border border-slate-200 p-6 relative shadow-sm"
+            >
               <div className="w-8 h-8 rounded-lg bg-sky-50 text-sky-700 font-black text-sm flex items-center justify-center font-mono mb-3">
                 {item.step}
               </div>
@@ -30,5 +33,5 @@ export function JourneySection() {
         </div>
       </div>
     </section>
-  )
+  );
 }
