@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 7.4
 <#
 .SYNOPSIS
   MedFlowAI task-harness entrypoint.
@@ -10,12 +10,12 @@
   new         -Id TASK-0002 -Title "..." -Risk tiny|normal|high-risk -Type feature [-Goal "..."] [-Modules backend,frontend]
   status      [-Task TASK-XXXX]            task detail, or one-line list of all tasks
   verify      -Task TASK-XXXX              run module gates from .harness/config.json, write evidence to .harness/runs/<task>/
-  resume      -Task TASK-XXXX              JSON: state, stale hints, resumeFrom, nextAction
-  finish      -Task TASK-XXXX              validate ACs+review+handoff, walk state machine to done
+  resume      -Task TASK-XXXX              JSON: state, warnings, blockers, resumeFrom, nextAction
+  finish      -Task TASK-XXXX              schema-validate + check blockers, walk state machine to done
   new-handoff -Task TASK-XXXX              render handoff.md from template (idempotent)
 
 .EXIT CODES
-  0 ok · 1 error · 3 verify failed · 5 finish blocked · 6 resume issues
+  0 ok · 1 error · 3 verify failed · 5 finish blocked · 6 resume blockers
 #>
 [CmdletBinding()]
 param(
@@ -40,13 +40,16 @@ param(
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)   # scripts/harness -> repo root
 if (-not (Test-Path "$RepoRoot/.harness/config.json")) {
-    # fallback: script may sit at <root>/scripts/harness
     $RepoRoot = Resolve-Path "$PSScriptRoot/../.."
 }
 Set-Location $RepoRoot
 
 $Config = Get-Content "$RepoRoot/.harness/config.json" -Raw | ConvertFrom-Json
 $TasksDir = "$RepoRoot/tasks"
+$TaskSchemaPath = "$RepoRoot/.harness/schemas/task.schema.json"
+
+# Task types that change source code — must declare at least one module so gates exist.
+$SourceChangingTypes = @('feature', 'fix', 'refactor')
 
 # ---------- helpers ----------
 
@@ -63,6 +66,51 @@ function Write-Task([string]$id, $task) {
     $tmp = Get-TaskPath $id + ".tmp"
     $task | ConvertTo-Json -Depth 10 | Set-Content $tmp -Encoding utf8
     Move-Item -Force $tmp (Get-TaskPath $id)
+}
+
+function Test-TaskSchema([string]$id) {
+    # Test-Json supports Draft 2020-12 via JsonSchema.NET on PowerShell >= 7.4.
+    # Older runtimes lack the -Schema keyword entirely -> fail loudly, never skip.
+    if (-not (Get-Command Test-Json -ErrorAction SilentlyContinue)) {
+        throw "Test-Json unavailable — PowerShell >= 7.4 required for schema validation."
+    }
+    $errors = $null
+    $ok = Test-Json -Json (Get-Content (Get-TaskPath $id) -Raw) `
+        -Schema (Get-Content $TaskSchemaPath -Raw) -ErrorVariable errors
+    return @{ valid = $ok; errors = @($errors) }
+}
+
+function Get-ContentFingerprint {
+    # Deterministic snapshot of HEAD + working tree so finish can prove the
+    # verified code is the code being completed. Re-verify after every commit.
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $acc = New-Object System.Text.StringBuilder
+
+    $head = (git rev-parse HEAD 2>$null)
+    [void]$acc.Append("HEAD:$head`n")
+
+    # Unstaged + staged tracked diffs (binary-safe, path-stable ordering).
+    foreach ($args in @(@('diff', '--binary'), @('diff', '--cached', '--binary'))) {
+        $out = & git @args 2>$null
+        [void]$acc.Append(($out -join "`n")).Append("`n")
+    }
+
+    # Untracked-but-not-ignored files: hash each file's content (paths sorted).
+    $untracked = git ls-files --others --exclude-standard 2>$null | Sort-Object
+    foreach ($f in $untracked) {
+        $fp = Join-Path $RepoRoot $f
+        if (Test-Path $fp -PathType Leaf) {
+            $h = (Get-FileHash $fp -Algorithm SHA256).Hash
+            [void]$acc.Append("UT:$f`:$h`n")
+        }
+    }
+
+    # Harness config gates are part of what "passed" means.
+    $cfg = (Get-FileHash "$RepoRoot/.harness/config.json" -Algorithm SHA256).Hash
+    [void]$acc.Append("CFG:$cfg")
+
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($acc.ToString())
+    return [Convert]::ToHexString($sha.ComputeHash($bytes)).ToLowerInvariant()
 }
 
 $script:LegalTransitions = @{
@@ -91,11 +139,20 @@ function Get-TaskGates($task) {
     return $gates
 }
 
+function Read-Evidence([string]$taskId) {
+    $p = "$RepoRoot/.harness/runs/$taskId/evidence.json"
+    if (-not (Test-Path $p)) { return $null }
+    Get-Content $p -Raw | ConvertFrom-Json
+}
+
 # ---------- verbs ----------
 
 function Invoke-New {
     if (-not $Id) { throw "new requires -Id TASK-XXXX" }
     if ($Id -notmatch '^TASK-[0-9]{4,}$') { throw "Id must match TASK-####" }
+    if ($SourceChangingTypes -contains $Type -and $Modules.Count -eq 0) {
+        throw "type '$Type' changes source — declare -Modules so required gates are non-empty"
+    }
     $dir = Join-Path $TasksDir $Id
     if (Test-Path $dir) { Write-Output "$Id already exists at $dir"; return }
     New-Item -ItemType Directory -Path $dir | Out-Null
@@ -145,6 +202,8 @@ function Invoke-Verify {
     $gates = Get-TaskGates $task
     if ($gates.Count -eq 0) { Write-Output "No gates for $($task.id) (docs-only or no modules)"; return }
 
+    $fpBefore = Get-ContentFingerprint
+
     $runDir = "$RepoRoot/.harness/runs/$TaskId"
     New-Item -ItemType Directory -Force -Path $runDir | Out-Null
     $results = @(); $failed = 0
@@ -163,34 +222,70 @@ function Invoke-Verify {
         }
     }
 
+    $fpAfter = Get-ContentFingerprint
+    $fpStable = ($fpBefore -eq $fpAfter)
+
+    # 'passed' requires all gates green AND the tree unchanged by the gates
+    # (a gate that edits source makes the evidence describe different code).
     $ev = [ordered]@{
-        taskId = $TaskId; at = (Get-Date).ToString('o')
-        headSha = (git rev-parse HEAD 2>$null)
-        status = ($failed -eq 0 ? 'passed' : 'failed'); gates = $results
+        taskId              = $TaskId
+        at                  = (Get-Date).ToString('o')
+        headSha             = (git rev-parse HEAD 2>$null)
+        status              = (($failed -eq 0 -and $fpStable) ? 'passed' : 'failed')
+        fingerprint         = $fpAfter
+        fingerprintChanged  = (-not $fpStable)
+        fingerprintBefore   = $fpBefore
+        fingerprintAfter    = $fpAfter
+        gates               = $results
     }
     $evPath = Join-Path $runDir 'evidence.json'
     $ev | ConvertTo-Json -Depth 6 | Set-Content $evPath -Encoding utf8
 
+    if (-not $fpStable) {
+        Write-Output "verify: fingerprint changed during gates — evidence marked failed; re-run verify."
+    }
     if ($task.evidenceRefs -notcontains ".harness/runs/$TaskId/evidence.json") {
         $task.evidenceRefs += ".harness/runs/$TaskId/evidence.json"
         Write-Task $TaskId $task
     }
     Write-Output "verify: $failed failed gate(s). Evidence: .harness/runs/$TaskId/evidence.json"
-    if ($failed -gt 0) { exit 3 }
+    if ($failed -gt 0 -or -not $fpStable) { exit 3 }
+}
+
+function Get-ResumeInfo($task) {
+    # Blockers: resume cannot proceed. Warnings: proceed but act on them.
+    $warnings = @(); $blockers = @()
+
+    if ($task.status -eq 'blocked' -and (-not $task.blockedReason -or -not $task.resumeFrom)) {
+        $blockers += 'blocked without blockedReason/resumeFrom (schema violation)'
+    }
+    if ($task.status -ne 'draft' -and $task.status -ne 'done' -and
+        $task.risk -ne 'tiny' -and
+        [string]::IsNullOrEmpty($task.planPath)) {
+        $blockers += 'missing planPath for non-tiny task past draft'
+    }
+    foreach ($e in ($task.evidenceRefs ?? @())) {
+        if (-not (Test-Path (Join-Path $RepoRoot $e))) { $blockers += "missing evidence file: $e" }
+    }
+
+    # Stale evidence = warning (re-verify before finish), not a blocker.
+    $ev = Read-Evidence $task.id
+    if ($ev -and $ev.fingerprint -and $ev.fingerprint -ne (Get-ContentFingerprint)) {
+        $warnings += 'evidence fingerprint stale — re-run verify before finish'
+    } elseif ($ev -and -not $ev.fingerprint -and $ev.headSha -and
+              $ev.headSha -ne (git rev-parse HEAD 2>$null)) {
+        $warnings += 'evidence headSha stale (legacy evidence) — re-run verify before finish'
+    }
+    if ($task.status -notin @('draft', 'done') -and ($task.evidenceRefs ?? @()).Count -eq 0) {
+        $warnings += 'no verify evidence yet — verification still owed'
+    }
+
+    return @{ warnings = $warnings; blockers = $blockers }
 }
 
 function Invoke-Resume {
     $task = Read-Task $TaskId
-    $issues = @()
-    if ($task.status -eq 'blocked' -and (-not $task.blockedReason -or -not $task.resumeFrom)) {
-        $issues += 'blocked without blockedReason/resumeFrom (schema violation)'
-    }
-    foreach ($e in ($task.evidenceRefs ?? @())) {
-        if (-not (Test-Path (Join-Path $RepoRoot $e))) { $issues += "missing evidence: $e" }
-    }
-    if ($task.status -notin @('draft', 'done') -and ($task.evidenceRefs ?? @()).Count -eq 0) {
-        $issues += 'no verify evidence yet — verification still owed'
-    }
+    $info = Get-ResumeInfo $task
     [pscustomobject]@{
         taskId      = $task.id
         status      = $task.status
@@ -198,23 +293,58 @@ function Invoke-Resume {
         goal        = $task.goal
         resumeFrom  = $task.resumeFrom
         nextAction  = $task.nextAction
-        blockers    = $task.blockedReason
-        issues      = $issues
-        canContinue = ($issues.Count -eq 0 -and $task.status -ne 'done')
+        blockedReason = $task.blockedReason
+        warnings    = $info.warnings
+        blockers    = $info.blockers
+        canContinue = ($info.blockers.Count -eq 0 -and $task.status -ne 'done')
     } | ConvertTo-Json -Depth 6
-    if ($issues.Count -gt 0) { exit 6 }
+    if ($info.blockers.Count -gt 0) { exit 6 }
 }
 
 function Get-FinishBlockers($task) {
     $b = @()
+
+    # Schema gate first — a malformed task.json must fail loudly.
+    $sv = Test-TaskSchema $task.id
+    if (-not $sv.valid) { $b += "task.json fails schema validation: $($sv.errors -join '; ')" }
+
     if ($task.status -eq 'done') { return $b }
+
     foreach ($ac in $task.acceptanceCriteria) {
         $ev = $task.acEvidence.($ac.id)
         if (-not $ev -or $ev.Count -eq 0) { $b += "AC $($ac.id) has no evidence" }
     }
-    if (($task.evidenceRefs ?? @()).Count -eq 0 -and ($task.modules ?? @()).Count -gt 0) {
-        $b += 'no verify evidence (.harness/runs/<task>/evidence.json)'
+
+    if ($SourceChangingTypes -contains $task.type -and ($task.modules ?? @()).Count -eq 0) {
+        $b += "type '$($task.type)' changes source but declares no modules — required gates would be empty"
     }
+
+    $requiredGates = Get-TaskGates $task
+    if (($task.evidenceRefs ?? @()).Count -eq 0 -and $requiredGates.Count -gt 0) {
+        $b += 'no verify evidence (.harness/runs/<task>/evidence.json)'
+    } elseif ($requiredGates.Count -gt 0) {
+        $ev = Read-Evidence $task.id
+        if (-not $ev) {
+            $b += 'evidence file missing on disk'
+        } else {
+            if ($ev.status -ne 'passed') { $b += "evidence status '$($ev.status)' (must be 'passed')" }
+            if (-not $ev.fingerprint) {
+                $b += 'evidence has no fingerprint (legacy) — re-run verify'
+            } elseif ($ev.fingerprint -ne (Get-ContentFingerprint)) {
+                $b += 'evidence fingerprint stale — re-run verify before finish'
+            }
+            # Every gate the task requires must appear and have passed.
+            $runGates = @($ev.gates | ForEach-Object { $_.gateId })
+            foreach ($g in $requiredGates) {
+                if ($g.id -notin $runGates) { $b += "evidence missing required gate '$($g.id)'" }
+                else {
+                    $r = $ev.gates | Where-Object { $_.gateId -eq $g.id } | Select-Object -First 1
+                    if ($r.status -ne 'passed') { $b += "gate '$($g.id)' status '$($r.status)'" }
+                }
+            }
+        }
+    }
+
     if ($Config.policy.independentReview -and ($task.reviewRefs ?? @()).Count -eq 0) {
         $b += 'no independent review recorded in reviewRefs'
     }
@@ -226,7 +356,12 @@ function Get-FinishBlockers($task) {
 
 function Invoke-Finish {
     $task = Read-Task $TaskId
-    $blockers = Get-FinishBlockers $task
+    try {
+        $blockers = Get-FinishBlockers $task
+    } catch {
+        # Schema validation throws on malformed task.json — surface as blockers.
+        $blockers = @("task.json fails schema validation: $_")
+    }
     if ($blockers.Count -gt 0) {
         $blockers | ForEach-Object { Write-Output "BLOCKED: $_" }
         exit 5

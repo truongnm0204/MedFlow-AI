@@ -100,9 +100,15 @@
     },
     {
       "if": {
-        "properties": { "risk": { "enum": ["normal", "high-risk"] } }
+        "properties": {
+          "risk": { "enum": ["normal", "high-risk"] },
+          "status": { "enum": ["ready", "implementing", "verifying", "reviewing", "done"] }
+        }
       },
-      "then": { "required": ["planPath"] }
+      "then": {
+        "required": ["planPath"],
+        "properties": { "planPath": { "minLength": 1 } }
+      }
     }
   ],
   "$defs": {
