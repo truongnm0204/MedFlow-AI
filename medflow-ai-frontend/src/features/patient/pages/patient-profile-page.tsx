@@ -80,6 +80,7 @@ export function PatientProfilePage() {
       <EditContactModal
         open={isEditModalOpen}
         onClose={() => setIsEditModalOpen(false)}
+        identity={profile.identity}
         contact={profile.contact}
         onSave={handleSaveContact}
       />
