@@ -1,16 +1,18 @@
+import { Link } from 'react-router-dom';
 import {
   AlertCircle,
   Bell,
   Calendar,
+  Eye,
   FileText,
   Heart,
-  MoreVertical,
   Pencil,
   Phone,
   Stethoscope,
   User,
   Users,
 } from 'lucide-react';
+
 import type { FamilyMember } from '../types/family.types';
 
 interface DependentMemberCardProps {
@@ -49,7 +51,7 @@ export function DependentMemberCard({
                 alt={member.fullName}
                 className="h-full w-full rounded-full border border-slate-200 object-cover"
               />
-              <span className="absolute bottom-0 right-0 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-slate-100 text-slate-500 shadow-2xs">
+              <span className="absolute right-0 bottom-0 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-slate-100 text-slate-500 shadow-2xs">
                 {member.relationship === 'Con trai' ? (
                   <User className="h-2.5 w-2.5 text-sky-600" />
                 ) : member.relationship === 'Vợ' ? (
@@ -62,9 +64,12 @@ export function DependentMemberCard({
 
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold tracking-wide text-slate-900">
+                <Link
+                  to={`/family/${member.id}`}
+                  className="text-sm font-bold tracking-wide text-slate-900 transition-colors hover:text-sky-600"
+                >
                   {member.fullName}
-                </h3>
+                </Link>
                 <span
                   className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold ${getBadgeStyle()}`}
                 >
@@ -117,7 +122,7 @@ export function DependentMemberCard({
             </div>
           )}
 
-          {member.emergencyPhone && (
+          {member.emergencyPhone && !member.phone && (
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-2 text-slate-400">
                 <Phone className="h-3.5 w-3.5 text-slate-400" />
@@ -149,7 +154,7 @@ export function DependentMemberCard({
         </div>
 
         {/* Extra info for Wife (two boxes) */}
-        {member.followUpSchedule && (
+        {member.followUpSchedule && member.relationship === 'Vợ' && (
           <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
             <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-2.5">
               <span className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400">
@@ -206,19 +211,20 @@ export function DependentMemberCard({
         <button
           type="button"
           onClick={() => onEditMember?.(member)}
-          className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700 shadow-2xs transition-colors hover:bg-slate-50 active:scale-[0.99]"
+          className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-700 shadow-2xs transition-colors hover:bg-slate-50 active:scale-[0.99]"
         >
           <Pencil className="h-3.5 w-3.5 text-slate-500" />
           Sửa thông tin
         </button>
 
-        <button
-          type="button"
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-600"
-          aria-label="Thao tác khác"
+        <Link
+          to={`/family/${member.id}`}
+          className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-sky-600"
+          aria-label={`Xem chi tiết ${member.fullName}`}
+          title="Xem chi tiết hồ sơ"
         >
-          <MoreVertical className="h-4 w-4" />
-        </button>
+          <Eye className="h-4 w-4" />
+        </Link>
       </div>
     </div>
   );

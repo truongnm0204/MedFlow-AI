@@ -1,11 +1,9 @@
-import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronRight, Home, Plus, ShieldCheck } from 'lucide-react';
 
 import { AppHeader } from '@/shared/components/layout/app-header';
 import { PatientFooter } from '@/shared/components/layout/patient-footer';
 
-import { AddFamilyMemberModal } from '../components/add-family-member-modal';
 import { FamilyEmptySlotCard } from '../components/family-empty-slot-card';
 import { FamilyMemberCard } from '../components/family-member-card';
 import { FamilyPolicyBanner } from '../components/family-policy-banner';
@@ -13,17 +11,9 @@ import { mockFamilyMembers } from '../data/family-mock';
 import type { FamilyMember } from '../types/family.types';
 
 export function FamilyProfileListPage() {
-  const [members, setMembers] = useState<FamilyMember[]>(mockFamilyMembers);
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-
+  const members = mockFamilyMembers;
   const maxSlots = 5;
   const remainingSlots = Math.max(0, maxSlots - members.length);
-
-  const handleAddMember = (newMember: FamilyMember) => {
-    if (members.length < maxSlots) {
-      setMembers((prev) => [...prev, newMember]);
-    }
-  };
 
   const handleBookAppointment = (member: FamilyMember) => {
     window.location.assign(`/#booking?patient=${encodeURIComponent(member.fullName)}`);
@@ -33,7 +23,7 @@ export function FamilyProfileListPage() {
     <div className="flex min-h-screen flex-col bg-[#F8FAFC] font-sans antialiased">
       <AppHeader />
 
-      <main className="flex-1 pb-16 pt-5">
+      <main className="flex-1 pt-5 pb-16">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           {/* Top Bar: Breadcrumb + Security Badges */}
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -70,7 +60,7 @@ export function FamilyProfileListPage() {
               <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
                 Quản lý Hồ sơ Người thân trong Gia đình
               </h1>
-              <p className="mt-1 max-w-2xl text-xs text-slate-500 leading-relaxed">
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">
                 Quản lý danh sách thành viên gia đình được ủy quyền đặt lịch khám và tra cứu kết quả
                 khám ngoại trú nhanh chóng, chính xác.
               </p>
@@ -93,8 +83,7 @@ export function FamilyProfileListPage() {
               {remainingSlots > 0 && (
                 <button
                   type="button"
-                  onClick={() => setIsAddModalOpen(true)}
-                  className="flex items-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-sky-700 active:scale-[0.99]"
+                  className="flex items-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-sky-700"
                 >
                   <Plus className="h-4 w-4 stroke-[2.5]" />
                   Thêm người thân mới
@@ -110,18 +99,12 @@ export function FamilyProfileListPage() {
                 key={member.id}
                 member={member}
                 onBookAppointment={handleBookAppointment}
-                onEditMember={() => setIsAddModalOpen(true)}
               />
             ))}
           </div>
 
           {/* Empty Slot Card if remaining */}
-          {remainingSlots > 0 && (
-            <FamilyEmptySlotCard
-              remainingSlots={remainingSlots}
-              onAddMember={() => setIsAddModalOpen(true)}
-            />
-          )}
+          {remainingSlots > 0 && <FamilyEmptySlotCard remainingSlots={remainingSlots} />}
 
           {/* Bottom Security Policy Banner */}
           <FamilyPolicyBanner />
@@ -129,12 +112,6 @@ export function FamilyProfileListPage() {
       </main>
 
       <PatientFooter />
-
-      <AddFamilyMemberModal
-        open={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
-        onAddMember={handleAddMember}
-      />
     </div>
   );
 }

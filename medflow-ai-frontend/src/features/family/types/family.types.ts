@@ -1,5 +1,14 @@
 export type RelationshipType =
-  'Bản thân' | 'Con trai' | 'Con gái' | 'Vợ' | 'Chồng' | 'Mẹ ruột' | 'Bố ruột' | 'Khác';
+  | 'Bản thân'
+  | 'Con trai'
+  | 'Con gái'
+  | 'Vợ'
+  | 'Chồng'
+  | 'Mẹ ruột'
+  | 'Bố ruột'
+  | 'Khác';
+
+export type RelationshipStatus = 'ACTIVE' | 'PENDING' | 'REVOKED' | 'NEEDS_REVIEW';
 
 export interface FamilyMemberVitals {
   bloodType: string;
@@ -10,6 +19,14 @@ export interface FamilyMemberVitals {
 export interface FamilyMemberNotice {
   type: 'warning' | 'info';
   message: string;
+}
+
+export interface FamilyMemberPermissions {
+  canManage: boolean;
+  canBookAppointments: boolean;
+  canViewMedicalRecords: boolean;
+  relationshipStatus: RelationshipStatus;
+  consentVerifiedAt?: string;
 }
 
 export interface FamilyMember {
@@ -24,14 +41,25 @@ export interface FamilyMember {
   birthDate: string;
   age: number;
   gender: 'Nam' | 'Nữ';
+  nationality?: string;
+  identificationNo?: string;
+  identityIssueDate?: string;
+  identityIssuePlace?: string;
+  isIdentityVerified?: boolean;
   phone?: string;
   email?: string;
+  address?: string;
   guardian?: string;
+  emergencyContactName?: string;
+  emergencyContactRelation?: string;
   emergencyPhone?: string;
   latestVisit?: string;
   followUpSchedule?: string;
   servicePackage?: string;
   clinicalNotes?: string;
+  outpatientVisitsCount?: number;
+  activePrescriptionsCount?: number;
   vitals?: FamilyMemberVitals;
   notice?: FamilyMemberNotice;
+  permissions?: FamilyMemberPermissions;
 }

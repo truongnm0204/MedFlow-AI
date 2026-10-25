@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
@@ -62,33 +62,15 @@ describe('FamilyProfileListPage', () => {
     expect(screen.getByText(/Ủy quyền nhận kết quả xét nghiệm/)).toBeInTheDocument();
   });
 
-  it('hiển thị thẻ vị trí trống còn lại và banner chính sách HL7/FHIR', () => {
+  it('hiển thị thẻ vị trí trống còn lại, nút thêm người thân và banner chính sách HL7/FHIR', () => {
     renderPage();
 
     expect(screen.getByText(/Còn trống 1 suất liên kết/)).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Thêm người thân/i }).length).toBeGreaterThan(0);
     expect(
-      screen.getByText(/Quy định quản lý hồ sơ người thân và bảo mật thông tin khám bệnh HL7\/FHIR/),
+      screen.getByText(
+        /Quy định quản lý hồ sơ người thân và bảo mật thông tin khám bệnh HL7\/FHIR/,
+      ),
     ).toBeInTheDocument();
-  });
-
-  it('mở modal thêm người thân và thêm thành viên mới thành công', () => {
-    renderPage();
-
-    const addButtons = screen.getAllByRole('button', { name: /Thêm người thân/i });
-    expect(addButtons.length).toBeGreaterThan(0);
-    fireEvent.click(addButtons[0]);
-
-    expect(screen.getByText('Thêm hồ sơ người thân trong gia đình')).toBeInTheDocument();
-
-    const nameInput = screen.getByPlaceholderText('VD: NGUYỄN VĂN B');
-    fireEvent.change(nameInput, { target: { value: 'Nguyễn Văn Em' } });
-
-    const submitBtn = screen.getByRole('button', { name: 'Thêm người thân' });
-    fireEvent.click(submitBtn);
-
-    // Thành viên mới xuất hiện
-    expect(screen.getByText('NGUYỄN VĂN EM')).toBeInTheDocument();
-    // Đang quản lý cập nhật lên 5/5
-    expect(screen.getByText('5/5')).toBeInTheDocument();
   });
 });
