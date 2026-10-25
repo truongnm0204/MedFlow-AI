@@ -79,3 +79,40 @@ export const createFamilyMemberSchema = z.object({
 
 export type CreateFamilyMemberInput = z.infer<typeof createFamilyMemberSchema>;
 
+export const updateFamilyMemberSchema = z.object({
+  phone: z
+    .string()
+    .trim()
+    .refine((v) => !v || /^0[35789]\d{8}$/.test(v.replace(/\s+/g, '')), {
+      message: 'Số điện thoại liên hệ không hợp lệ (cần 10 chữ số bắt đầu bằng 0)',
+    })
+    .optional(),
+  email: z
+    .string()
+    .trim()
+    .refine((v) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), {
+      message: 'Email nhận kết quả không hợp lệ',
+    })
+    .optional(),
+  address: z
+    .string()
+    .trim()
+    .min(5, 'Địa chỉ thường trú tối thiểu 5 ký tự'),
+  emergencyContactName: z
+    .string()
+    .trim()
+    .min(2, 'Họ tên người liên hệ khẩn cấp tối thiểu 2 ký tự')
+    .optional(),
+  emergencyContactRelation: z.string().trim().optional(),
+  emergencyPhone: z
+    .string()
+    .trim()
+    .refine((v) => !v || /^0[35789]\d{8}$/.test(v.replace(/\s+/g, '')), {
+      message: 'Số điện thoại khẩn cấp không hợp lệ',
+    })
+    .optional(),
+});
+
+export type UpdateFamilyMemberInput = z.infer<typeof updateFamilyMemberSchema>;
+
+

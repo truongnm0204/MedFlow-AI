@@ -6,6 +6,7 @@ import { AppHeader } from '@/shared/components/layout/app-header';
 import { PatientFooter } from '@/shared/components/layout/patient-footer';
 
 import { AddFamilyMemberModal } from '../components/add-family-member-modal';
+import { EditFamilyMemberModal } from '../components/edit-family-member-modal';
 import { FamilyEmptySlotCard } from '../components/family-empty-slot-card';
 import { FamilyMemberCard } from '../components/family-member-card';
 import { FamilyPolicyBanner } from '../components/family-policy-banner';
@@ -15,6 +16,7 @@ import type { FamilyMember } from '../types/family.types';
 export function FamilyProfileListPage() {
   const [members, setMembers] = useState<FamilyMember[]>(mockFamilyMembers);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [editingMember, setEditingMember] = useState<FamilyMember | null>(null);
 
   const maxSlots = 5;
   const remainingSlots = Math.max(0, maxSlots - members.length);
@@ -23,6 +25,12 @@ export function FamilyProfileListPage() {
     if (members.length < maxSlots) {
       setMembers((prev) => [...prev, newMember]);
     }
+  };
+
+  const handleSaveMember = (updatedMember: FamilyMember) => {
+    setMembers((prev) =>
+      prev.map((m) => (m.id === updatedMember.id ? updatedMember : m)),
+    );
   };
 
   const handleBookAppointment = (member: FamilyMember) => {
@@ -114,6 +122,7 @@ export function FamilyProfileListPage() {
                 key={member.id}
                 member={member}
                 onBookAppointment={handleBookAppointment}
+                onEditMember={(m) => setEditingMember(m)}
               />
             ))}
           </div>
@@ -138,6 +147,15 @@ export function FamilyProfileListPage() {
         onClose={() => setIsAddModalOpen(false)}
         onAddMember={handleAddMember}
       />
+
+      {editingMember && (
+        <EditFamilyMemberModal
+          open={Boolean(editingMember)}
+          onClose={() => setEditingMember(null)}
+          member={editingMember}
+          onSave={handleSaveMember}
+        />
+      )}
     </div>
   );
 }

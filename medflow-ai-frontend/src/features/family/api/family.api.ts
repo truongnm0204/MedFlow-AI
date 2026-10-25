@@ -1,7 +1,10 @@
 import { apiClient } from '@/shared/lib/axios';
 
 import { mockFamilyMembers } from '../data/family-mock';
-import type { CreateFamilyMemberInput } from '../schemas/family-member.schema';
+import type {
+  CreateFamilyMemberInput,
+  UpdateFamilyMemberInput,
+} from '../schemas/family-member.schema';
 import type { FamilyMember } from '../types/family.types';
 
 export interface UpdateFamilyMemberContactPayload {
@@ -110,3 +113,50 @@ export async function createFamilyMember(payload: CreateFamilyMemberInput): Prom
   mockFamilyMembers.push(newMember);
   return newMember;
 }
+
+export async function updateFamilyMember(
+  memberId: string,
+  payload: UpdateFamilyMemberInput,
+): Promise<FamilyMember> {
+  const hasToken =
+    typeof window !== 'undefined' && Boolean(window.localStorage?.getItem('medflow.access_token'));
+
+  if (hasToken) {
+    try {
+      const { data } = await apiClient.put<FamilyMember>(
+        `/patients/me/family-members/${encodeURIComponent(memberId)}`,
+        payload,
+      );
+      return data;
+    } catch (error) {
+      console.warn('API error, falling back to mock update:', error);
+    }
+  }
+
+  const index = mockFamilyMembers.findIndex((m) => m.id === memberId);
+  if (index === -1) {
+    throw new Error('Không tìm thấy hồ sơ người thân cần cập nhật.');
+  }
+
+  const current = mockFamilyMembers[index];
+  const updated: FamilyMember = {
+    ...current,
+    phone: payload.phone !== undefined ? payload.phone : current.phone,
+    email: payload.email !== undefined ? payload.email : current.email,
+    address: payload.address !== undefined ? payload.address : current.address,
+    emergencyContactName:
+      payload.emergencyContactName !== undefined
+        ? payload.emergencyContactName
+        : current.emergencyContactName,
+    emergencyContactRelation:
+      payload.emergencyContactRelation !== undefined
+        ? payload.emergencyContactRelation
+        : current.emergencyContactRelation,
+    emergencyPhone:
+      payload.emergencyPhone !== undefined ? payload.emergencyPhone : current.emergencyPhone,
+  };
+
+  mockFamilyMembers[index] = updated;
+  return updated;
+}
+

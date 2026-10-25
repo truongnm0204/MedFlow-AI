@@ -7,12 +7,14 @@ interface FamilyMemberDetailActionsProps {
   member: FamilyMember;
   onBookAppointment?: (member: FamilyMember) => void;
   onDownloadPdf?: () => void;
+  onEditContact?: () => void;
 }
 
 export function FamilyMemberDetailActions({
   member,
   onBookAppointment,
   onDownloadPdf,
+  onEditContact,
 }: FamilyMemberDetailActionsProps) {
   const canManage = member.permissions?.canManage ?? true;
   const canBook =
@@ -36,6 +38,7 @@ export function FamilyMemberDetailActions({
         {canManage && (
           <button
             type="button"
+            onClick={onEditContact}
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition-colors hover:bg-slate-50"
           >
             <Edit2 className="h-3.5 w-3.5 text-slate-500" />

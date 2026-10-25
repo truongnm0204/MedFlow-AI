@@ -14,9 +14,13 @@ import type { FamilyMember } from '../types/family.types';
 
 interface FamilyMemberContactCardProps {
   member: FamilyMember;
+  onEditContact?: () => void;
 }
 
-export function FamilyMemberContactCard({ member }: FamilyMemberContactCardProps) {
+export function FamilyMemberContactCard({
+  member,
+  onEditContact,
+}: FamilyMemberContactCardProps) {
   const canManage = member.permissions?.canManage ?? true;
   const canViewMedical = member.permissions?.canViewMedicalRecords ?? true;
 
@@ -41,6 +45,7 @@ export function FamilyMemberContactCard({ member }: FamilyMemberContactCardProps
         {canManage && (
           <button
             type="button"
+            onClick={onEditContact}
             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs transition-colors hover:bg-slate-50"
           >
             <Edit2 className="h-3.5 w-3.5 text-slate-500" />

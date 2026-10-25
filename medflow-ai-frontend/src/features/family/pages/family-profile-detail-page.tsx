@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, ChevronRight, Home, RefreshCw, ShieldCheck } from 'lucide-react';
 
 import { AppHeader } from '@/shared/components/layout/app-header';
 import { PatientFooter } from '@/shared/components/layout/patient-footer';
 
+import { EditFamilyMemberModal } from '../components/edit-family-member-modal';
 import { FamilyMemberContactCard } from '../components/family-member-contact-card';
 import { FamilyMemberDetailActions } from '../components/family-member-detail-actions';
 import { FamilyMemberDetailSidebar } from '../components/family-member-detail-sidebar';
@@ -14,6 +16,7 @@ import type { FamilyMember } from '../types/family.types';
 export function FamilyProfileDetailPage() {
   const { memberId = 'FAM-002' } = useParams<{ memberId: string }>();
   const { data: member, isPending, isError, error, refetch } = useFamilyMemberDetail(memberId);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   const handleBookAppointment = (target: FamilyMember) => {
     window.location.assign(`/#booking?patient=${encodeURIComponent(target.fullName)}`);
@@ -125,11 +128,15 @@ export function FamilyProfileDetailPage() {
 
               <section className="lg:col-span-8 xl:col-span-8">
                 <FamilyMemberIdentityCard member={member} />
-                <FamilyMemberContactCard member={member} />
+                <FamilyMemberContactCard
+                  member={member}
+                  onEditContact={() => setIsEditModalOpen(true)}
+                />
                 <FamilyMemberDetailActions
                   member={member}
                   onBookAppointment={handleBookAppointment}
                   onDownloadPdf={handleDownloadPdf}
+                  onEditContact={() => setIsEditModalOpen(true)}
                 />
               </section>
             </div>
@@ -138,6 +145,15 @@ export function FamilyProfileDetailPage() {
       </main>
 
       <PatientFooter />
+
+      {member && (
+        <EditFamilyMemberModal
+          open={isEditModalOpen}
+          onClose={() => setIsEditModalOpen(false)}
+          member={member}
+          onSave={() => void refetch()}
+        />
+      )}
     </div>
   );
 }
