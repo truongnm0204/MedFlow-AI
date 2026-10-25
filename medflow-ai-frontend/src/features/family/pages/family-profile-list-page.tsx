@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronRight, Home, Plus, ShieldCheck } from 'lucide-react';
 
 import { AppHeader } from '@/shared/components/layout/app-header';
 import { PatientFooter } from '@/shared/components/layout/patient-footer';
 
+import { AddFamilyMemberModal } from '../components/add-family-member-modal';
 import { FamilyEmptySlotCard } from '../components/family-empty-slot-card';
 import { FamilyMemberCard } from '../components/family-member-card';
 import { FamilyPolicyBanner } from '../components/family-policy-banner';
@@ -11,9 +13,17 @@ import { mockFamilyMembers } from '../data/family-mock';
 import type { FamilyMember } from '../types/family.types';
 
 export function FamilyProfileListPage() {
-  const members = mockFamilyMembers;
+  const [members, setMembers] = useState<FamilyMember[]>(mockFamilyMembers);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+
   const maxSlots = 5;
   const remainingSlots = Math.max(0, maxSlots - members.length);
+
+  const handleAddMember = (newMember: FamilyMember) => {
+    if (members.length < maxSlots) {
+      setMembers((prev) => [...prev, newMember]);
+    }
+  };
 
   const handleBookAppointment = (member: FamilyMember) => {
     window.location.assign(`/#booking?patient=${encodeURIComponent(member.fullName)}`);
@@ -80,14 +90,19 @@ export function FamilyProfileListPage() {
                 </div>
               </div>
 
-              {remainingSlots > 0 && (
+              {remainingSlots > 0 ? (
                 <button
                   type="button"
-                  className="flex items-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-sky-700"
+                  onClick={() => setIsAddModalOpen(true)}
+                  className="flex items-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-sky-700 active:scale-[0.99]"
                 >
                   <Plus className="h-4 w-4 stroke-[2.5]" />
                   Thêm người thân mới
                 </button>
+              ) : (
+                <span className="rounded-xl border border-slate-200 bg-slate-100 px-3.5 py-2.5 text-xs font-semibold text-slate-500">
+                  Đã đạt giới hạn 5/5 hồ sơ
+                </span>
               )}
             </div>
           </div>
@@ -104,7 +119,12 @@ export function FamilyProfileListPage() {
           </div>
 
           {/* Empty Slot Card if remaining */}
-          {remainingSlots > 0 && <FamilyEmptySlotCard remainingSlots={remainingSlots} />}
+          {remainingSlots > 0 && (
+            <FamilyEmptySlotCard
+              remainingSlots={remainingSlots}
+              onAddMember={() => setIsAddModalOpen(true)}
+            />
+          )}
 
           {/* Bottom Security Policy Banner */}
           <FamilyPolicyBanner />
@@ -112,6 +132,12 @@ export function FamilyProfileListPage() {
       </main>
 
       <PatientFooter />
+
+      <AddFamilyMemberModal
+        open={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        onAddMember={handleAddMember}
+      />
     </div>
   );
 }
