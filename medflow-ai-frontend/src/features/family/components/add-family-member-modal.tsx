@@ -13,7 +13,6 @@ import {
   User,
   UserPlus,
   Users,
-  X,
 } from 'lucide-react';
 
 import { Modal } from '@/shared/ui/modal';
@@ -133,29 +132,18 @@ export function AddFamilyMemberModal({
     <Modal open={open} onClose={onClose} maxWidth="max-w-2xl">
       <form onSubmit={handleSubmit} className="p-6 sm:p-7" noValidate>
         {/* Header */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-sky-50 text-sky-600">
-              <UserPlus className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold tracking-tight text-slate-900">
-                Thêm Hồ sơ Người thân
-              </h2>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Liên kết hồ sơ khám chữa bệnh ngoại trú trong gia đình
-              </p>
-            </div>
+        <div className="flex items-center gap-3.5 pr-8">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-sky-50 text-sky-600">
+            <UserPlus className="h-5 w-5" />
           </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-            aria-label="Đóng"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div>
+            <h2 className="text-lg font-bold tracking-tight text-slate-900">
+              Thêm Hồ sơ Người thân
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Liên kết hồ sơ khám chữa bệnh ngoại trú trong gia đình
+            </p>
+          </div>
         </div>
 
         {/* Notice Box matching reference design */}
