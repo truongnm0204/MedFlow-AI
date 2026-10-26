@@ -10,20 +10,9 @@ export function HeroSection() {
     <section className="relative bg-gradient-to-b from-white via-sky-50/30 to-transparent pt-10 pb-16 lg:pt-16 lg:pb-24 border-b border-slate-200/60 overflow-hidden">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center max-w-3xl mx-auto space-y-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-50 border border-sky-200 text-sky-700 text-xs font-bold tracking-wide">
-            <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
-            HỆ THỐNG Y TẾ NGOẠI TRÚ THÔNG MINH MEDFLOW AI
-          </div>
-
           <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#0A2540] tracking-tight leading-tight">
-            Khám Ngoại Trú Đẳng Cấp • Đặt Hẹn Tức Thì • Không Chờ Đợi
+            BANNER
           </h1>
-
-          <p className="text-sm sm:text-base text-slate-600 leading-relaxed max-w-2xl mx-auto">
-            Mô hình khám chữa bệnh tự nguyện 100% chuẩn quốc tế. Định tuyến buồng khám thông minh
-            bằng AI, không giấy tờ, bảng giá niêm yết minh bạch trước khi khám, kết quả cận lâm sàng
-            và đơn thuốc điện tử trả ngay trên điện thoại.
-          </p>
         </div>
 
         {/* SMART QUICK-BOOKING CARD */}

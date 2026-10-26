@@ -14,3 +14,12 @@
   --color-sub: #49607e; /* text phụ / link nav */
   --color-danger: #ef4444; /* badge cảnh báo */
 }
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
