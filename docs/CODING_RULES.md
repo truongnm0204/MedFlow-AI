@@ -38,7 +38,7 @@ Code bang English. Comment giai thich *tai sao*, khong nhac lai *cai gi*. Khong 
 
 ## 4. Database
 
-- `database/medflow_schema_v1_2.sql` la source of truth schema `medflow`; migrations `database/migrations/NNN_desc.sql`.
+- `database/medflow_schema_v4_1.sql` la source of truth schema `public`; migrations `database/migrations/NNN_desc.sql`.
 - 1 EF Configuration file moi entity (`MedFlow.Infrastructure/Persistence/Configurations/`).
 - UTC timestamps; soft-delete hoac unique constraint cho idempotency khi phu hop.
 - Khong hard-delete du lieu co audit/evidence value (PHI).

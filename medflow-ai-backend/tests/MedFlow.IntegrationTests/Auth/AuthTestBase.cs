@@ -68,7 +68,7 @@ public abstract class AuthTestBase : IClassFixture<TestWebAppFactory>, IDisposab
     protected async Task<LoginResponse> LoginAsync(string email, string password = "MedFlow@2026")
     {
         var response = await Client.PostAsJsonAsync("/api/v1/auth/login",
-            new LoginRequest { Identifier = email, Password = password });
+            new LoginRequest { Email = email, Password = password });
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<LoginResponse>())!;
     }

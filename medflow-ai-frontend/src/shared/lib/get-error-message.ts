@@ -28,5 +28,7 @@ export function getErrorMessage(
       return 'Không kết nối được máy chủ. Kiểm tra backend đã chạy chưa.';
     if (error.response?.status === 429) return 'Bạn thao tác quá nhanh. Vui lòng thử lại sau.';
   }
+  if (error instanceof AggregateError)
+    return 'Không kết nối được máy chủ. Kiểm tra backend đã chạy chưa.';
   return error instanceof Error ? error.message : fallback;
 }

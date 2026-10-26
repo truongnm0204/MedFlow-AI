@@ -30,7 +30,7 @@ public sealed class AuditLoggerTests : IDisposable
         public DbSet<RolePermission> RolePermissions => throw NotUsed();
         public DbSet<Patient> Patients => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
-        public DbSet<RefreshToken> RefreshTokens => throw NotUsed();
+        public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
         public override Task<int> SaveChangesAsync(CancellationToken ct = default)
@@ -52,7 +52,7 @@ public sealed class AuditLoggerTests : IDisposable
             modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Patient>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<RefreshToken>();
+            modelBuilder.Ignore<AuthSession>();
         }
 
         private static NotSupportedException NotUsed()
@@ -75,9 +75,9 @@ public sealed class AuditLoggerTests : IDisposable
     [Fact]
     public void Add_EnqueuesAuditLog_WithoutSaving()
     {
-        var userId = Guid.NewGuid();
+        long userId = 42;
 
-        _sut.Add(userId, "LOGIN_SUCCESS", "USER", userId, null, "192.168.1.1");
+        _sut.Add(userId, "LOGIN_SUCCESS", "USER", userId.ToString(), null, "192.168.1.1");
 
         var entry = _db.ChangeTracker.Entries<AuditLog>().Single();
         Assert.Equal(EntityState.Added, entry.State);
@@ -85,37 +85,38 @@ public sealed class AuditLoggerTests : IDisposable
     }
 
     [Fact]
-    public void Add_EmptyGuid_StoresNullActorUserId()
+    public void Add_NullActor_StoresNullActorUserId()
     {
-        _sut.Add(Guid.Empty, "REFRESH_REUSE_DETECTED", "USER", null, null, null);
+        _sut.Add(null, "REFRESH_REUSE_DETECTED", "USER", null, null, null);
 
         var log = _db.ChangeTracker.Entries<AuditLog>().Single().Entity;
         Assert.Null(log.ActorUserId);
     }
 
     [Fact]
-    public void Add_SerializesNewValueToJson()
+    public void Add_SerializesChangeDataToJson()
     {
         var payload = new { Email = "a@b.com", Count = 3 };
 
-        _sut.Add(Guid.NewGuid(), "REGISTER", "USER", Guid.NewGuid(), payload, null);
+        _sut.Add(1, "REGISTER", "USER", "99", payload, null);
 
         var log = _db.ChangeTracker.Entries<AuditLog>().Single().Entity;
-        Assert.Equal(JsonSerializer.Serialize(payload), log.NewValue);
+        Assert.Equal(JsonSerializer.Serialize(payload), log.ChangeData);
+        Assert.Equal("99", log.EntityId);
     }
 
     [Fact]
-    public void Add_NullNewValue_StoresNull()
+    public void Add_NullChangeData_StoresNull()
     {
-        _sut.Add(Guid.NewGuid(), "LOGOUT", "USER", null, null, null);
+        _sut.Add(1, "LOGOUT", "USER", null, null, null);
 
-        Assert.Null(_db.ChangeTracker.Entries<AuditLog>().Single().Entity.NewValue);
+        Assert.Null(_db.ChangeTracker.Entries<AuditLog>().Single().Entity.ChangeData);
     }
 
     [Fact]
     public void Add_ParsesIpAddress()
     {
-        _sut.Add(Guid.NewGuid(), "LOGIN_FAILED", "USER", null, null, "10.0.0.7");
+        _sut.Add(1, "LOGIN_FAILED", "USER", null, null, "10.0.0.7");
 
         var log = _db.ChangeTracker.Entries<AuditLog>().Single().Entity;
         Assert.Equal(IPAddress.Parse("10.0.0.7"), log.IpAddress);
@@ -124,7 +125,7 @@ public sealed class AuditLoggerTests : IDisposable
     [Fact]
     public void Add_InvalidIp_StoresNull()
     {
-        _sut.Add(Guid.NewGuid(), "LOGIN_FAILED", "USER", null, null, "not-an-ip");
+        _sut.Add(1, "LOGIN_FAILED", "USER", null, null, "not-an-ip");
 
         Assert.Null(_db.ChangeTracker.Entries<AuditLog>().Single().Entity.IpAddress);
     }

@@ -4,12 +4,11 @@ import { useAuthStore } from '../store/auth.store';
 import type { UserDto } from '../types/auth.types';
 
 const mockUser: UserDto = {
-  id: 'u-1',
-  username: 'test@example.com',
+  id: 1,
   email: 'test@example.com',
   fullName: 'Nguyễn Văn Test',
   roles: ['PATIENT'],
-  patientCode: 'PAT-20261012-0001',
+  patientCode: 'PAT-0001',
 };
 
 describe('auth.store', () => {
