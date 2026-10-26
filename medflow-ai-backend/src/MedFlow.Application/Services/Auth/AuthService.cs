@@ -14,7 +14,7 @@ public class AuthService : IAuthService
 {
     private readonly IApplicationDbContext _db;
     private readonly IJwtTokenService _jwtService;
-    private readonly IRefreshTokenService _refreshService;
+    private readonly IAuthSessionService _sessionService;
     private readonly IConfiguration _configuration;
     private readonly AuthOtpService _otpService;
     private readonly IAuditLogger _audit;
@@ -27,14 +27,14 @@ public class AuthService : IAuthService
     public AuthService(
         IApplicationDbContext db,
         IJwtTokenService jwtService,
-        IRefreshTokenService refreshService,
+        IAuthSessionService sessionService,
         IConfiguration configuration,
         AuthOtpService otpService,
         IAuditLogger audit)
     {
         _db = db;
         _jwtService = jwtService;
-        _refreshService = refreshService;
+        _sessionService = sessionService;
         _configuration = configuration;
         _otpService = otpService;
         _audit = audit;
@@ -46,11 +46,10 @@ public class AuthService : IAuthService
         var email = NormalizeEmail(request.Email);
         await EnsureEmailNotTakenAsync(email, ct);
         var patientRole = await GetDefaultRoleAsync(ct);
-        var (otp, challenge) = CreateOtpChallenge(email, ct);
+        var (otp, challenge) = CreateOtpChallenge(email);
 
         var user = new User
         {
-            Username = email,
             Email = email,
             PasswordHash = _passwordHasher.HashPassword(null!, request.Password),
             AuthProvider = "LOCAL",
@@ -86,7 +85,7 @@ public class AuthService : IAuthService
         => await _db.Roles.FirstOrDefaultAsync(r => r.Code == "PATIENT", ct)
             ?? throw new InvalidOperationException("Role PATIENT not seeded.");
 
-    private (string otp, AuthVerificationChallenge challenge) CreateOtpChallenge(string email, CancellationToken ct)
+    private (string otp, AuthVerificationChallenge challenge) CreateOtpChallenge(string email)
     {
         var otpSecret = AuthCryptoHelpers.GetOtpSecret(_configuration);
         var otp = AuthCryptoHelpers.GenerateOtp();
@@ -119,8 +118,8 @@ public class AuthService : IAuthService
             challenge.UserId = user.Id;
             _db.AuthVerificationChallenges.Add(challenge);
 
-            _audit.Add(user.Id, "REGISTER", "USER", user.Id,
-                new { user.Email, user.Username }, ipAddress);
+            _audit.Add(user.Id, "REGISTER", "USER", user.Id.ToString(),
+                new { user.Email }, ipAddress);
 
             await _db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -132,18 +131,17 @@ public class AuthService : IAuthService
         }
     }
 
-    private Task SendOtpEmailAfterCommitAsync(string email, string fullName, string otp, Guid userId, CancellationToken ct)
+    private Task SendOtpEmailAfterCommitAsync(string email, string fullName, string otp, long userId, CancellationToken ct)
         => _otpService.SendOtpAndAuditAsync(email, fullName, otp, userId, ct);
 
     // ── Login ─────────────────────────────────────────────────────────────
     public async Task<LoginResponse> LoginAsync(LoginRequest request, string? ipAddress, CancellationToken ct = default)
     {
-        var identifier = request.Identifier.ToLowerInvariant();
+        var email = request.Email.ToLowerInvariant();
         var user = await _db.Users
             .Include(u => u.UserRoles).ThenInclude(ur => ur.Role)
             .Include(u => u.Patient)
-            .FirstOrDefaultAsync(u =>
-                u.Username == identifier || u.Email == identifier, ct);
+            .FirstOrDefaultAsync(u => u.Email == email, ct);
 
         // Generic message chống enumeration
         var invalidMsg = "Sai thông tin đăng nhập";
@@ -163,10 +161,9 @@ public class AuthService : IAuthService
 
         user.FailedLoginAttempts = 0;
         user.LockedUntil = null;
-        user.LastLoginAt = DateTime.UtcNow;
 
         var tokens = await IssueTokensAsync(user, ipAddress, ct);
-        _audit.Add(user.Id, "LOGIN_SUCCESS", "USER", user.Id, null, ipAddress);
+        _audit.Add(user.Id, "LOGIN_SUCCESS", "USER", user.Id.ToString(), null, ipAddress);
         await _db.SaveChangesAsync(ct);
 
         return new LoginResponse(
@@ -191,7 +188,7 @@ public class AuthService : IAuthService
             user.LockedUntil = DateTime.UtcNow.Add(LockDuration);
             user.FailedLoginAttempts = 0;
         }
-        _audit.Add(user.Id, "LOGIN_FAILED", "USER", user.Id, null, ipAddress);
+        _audit.Add(user.Id, "LOGIN_FAILED", "USER", user.Id.ToString(), null, ipAddress);
         await _db.SaveChangesAsync(ct);
     }
 
@@ -200,25 +197,25 @@ public class AuthService : IAuthService
     {
         var roles = user.UserRoles.Select(ur => ur.Role.Code).ToArray();
         var accessToken = _jwtService.GenerateAccessToken(user, roles);
-        var refresh = await _refreshService.GenerateAsync(user.Id, ipAddress, ct);
+        var refresh = await _sessionService.GenerateAsync(user.Id, ipAddress, ct);
         return (accessToken.AccessToken,
             (int)(accessToken.ExpiresAt - DateTime.UtcNow).TotalSeconds,
             refresh.RawToken, roles);
     }
 
     private static UserDto BuildUserDto(User user, string[] roles)
-        => new(user.Id, user.Username, user.Email,
+        => new(user.Id, user.Email,
             user.Patient?.FullName, roles, user.Patient?.PatientCode);
 
     // ── Refresh ───────────────────────────────────────────────────────────
     public async Task<RefreshResponse> RefreshAsync(RefreshRequest request, string? ipAddress, CancellationToken ct = default)
     {
-        var result = await _refreshService.RotateAsync(request.RefreshToken, ipAddress, ct);
+        var result = await _sessionService.RotateAsync(request.RefreshToken, ipAddress, ct);
 
         if (result.ReuseDetected)
         {
-            _audit.Add(result.User?.Id ?? Guid.Empty, "REFRESH_REUSE_DETECTED", "USER",
-                result.User?.Id, null, ipAddress);
+            _audit.Add(result.User?.Id, "REFRESH_REUSE_DETECTED", "USER",
+                result.User?.Id.ToString(), null, ipAddress);
             await _db.SaveChangesAsync(ct);
             throw new UnauthorizedAccessException("Refresh token không hợp lệ");
         }
@@ -241,10 +238,10 @@ public class AuthService : IAuthService
     }
 
     // ── Logout ────────────────────────────────────────────────────────────
-    public async Task LogoutAsync(Guid userId, string refreshToken, string? ipAddress, CancellationToken ct = default)
+    public async Task LogoutAsync(long userId, string refreshToken, string? ipAddress, CancellationToken ct = default)
     {
-        await _refreshService.RevokeAsync(refreshToken, ipAddress, ct);
-        _audit.Add(userId, "LOGOUT", "USER", userId, null, ipAddress);
+        await _sessionService.RevokeAsync(refreshToken, ipAddress, ct);
+        _audit.Add(userId, "LOGOUT", "USER", userId.ToString(), null, ipAddress);
         await _db.SaveChangesAsync(ct);
     }
 
@@ -256,7 +253,7 @@ public class AuthService : IAuthService
         => _otpService.ResendOtpAsync(request, ct);
 
     // ── GetMe ─────────────────────────────────────────────────────────────
-    public async Task<UserDto> GetMeAsync(Guid userId, CancellationToken ct = default)
+    public async Task<UserDto> GetMeAsync(long userId, CancellationToken ct = default)
     {
         var user = await _db.Users
             .Include(u => u.UserRoles).ThenInclude(ur => ur.Role)

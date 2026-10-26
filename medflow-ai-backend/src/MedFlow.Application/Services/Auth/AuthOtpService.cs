@@ -77,7 +77,7 @@ public class AuthOtpService
         user.AccountStatus = AccountStatus.ACTIVE;
         user.EmailVerifiedAt = DateTime.UtcNow;
 
-        _audit.Add(user.Id, "OTP_VERIFY", "USER", user.Id, null, null);
+        _audit.Add(user.Id, "OTP_VERIFY", "USER", user.Id.ToString(), null, null);
         await _db.SaveChangesAsync(ct);
 
         return new VerifyOtpResponse(user.Id);
@@ -117,7 +117,7 @@ public class AuthOtpService
             ExpiresAt = DateTime.UtcNow.Add(OtpTtl),
         });
 
-        _audit.Add(user.Id, "OTP_RESEND", "USER", user.Id, null, null);
+        _audit.Add(user.Id, "OTP_RESEND", "USER", user.Id.ToString(), null, null);
         await _db.SaveChangesAsync(ct);
 
         var patient = await _db.Patients.FirstOrDefaultAsync(p => p.UserId == user.Id, ct);
@@ -127,19 +127,19 @@ public class AuthOtpService
     }
 
     /// <summary>Gửi OTP + audit nếu fail.</summary>
-    internal async Task SendOtpAndAuditAsync(string email, string fullName, string otp, Guid userId, CancellationToken ct)
+    internal async Task SendOtpAndAuditAsync(string email, string fullName, string otp, long userId, CancellationToken ct)
     {
         var sent = await OtpEmailBuilder.SendAsync(_emailSender, _logger, email, fullName, otp, ct);
         if (!sent)
         {
-            _audit.Add(userId, "EMAIL_SEND_FAILED", "USER", userId, null, null);
+            _audit.Add(userId, "EMAIL_SEND_FAILED", "USER", userId.ToString(), null, null);
             await _db.SaveChangesAsync(ct);
         }
     }
 
     /// <summary>Latest pending challenge for a user+purpose — user is already resolved by the caller.</summary>
     private async Task<AuthVerificationChallenge?> GetLatestPendingChallengeAsync(
-        Guid userId, ChallengePurpose purpose, CancellationToken ct)
+        long userId, ChallengePurpose purpose, CancellationToken ct)
         => await _db.AuthVerificationChallenges
             .Where(c => c.UserId == userId && c.Purpose == purpose && c.Status == ChallengeStatus.PENDING)
             .OrderByDescending(c => c.CreatedAt)

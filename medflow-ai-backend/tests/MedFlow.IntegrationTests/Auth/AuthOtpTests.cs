@@ -66,7 +66,7 @@ public sealed class AuthOtpTests(TestWebAppFactory factory) : AuthTestBase(facto
         // Check constraint expires_at > created_at — phải update cả created_at cùng lúc.
         var past = DateTime.UtcNow.AddMinutes(-10);
         await Db.Database.ExecuteSqlInterpolatedAsync(
-            $"UPDATE medflow.auth_verification_challenges SET expires_at = {past.AddMinutes(1)}, created_at = {past} WHERE user_id = {user.Id} AND status = 'PENDING'");
+            $"UPDATE auth_verification_challenges SET expires_at = {past.AddMinutes(1)}, created_at = {past} WHERE user_id = {user.Id} AND status = 'PENDING'");
 
         var response = await Client.PostAsJsonAsync("/api/v1/auth/verify-otp",
             new VerifyOtpRequest { Email = email, Otp = otp });
