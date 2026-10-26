@@ -21,3 +21,12 @@ export function GuestOnly({ children }: { children: ReactNode }) {
   if (isAuthenticated) return <Navigate to="/" replace />;
   return children;
 }
+
+/** Client-side navigation guard for admin screens; API authorization remains server-side. */
+export function RequireAdmin({ children }: { children: ReactNode }) {
+  const roles = useAuthStore((state) => state.user?.roles ?? []);
+  if (!roles.some((role) => role === 'HOSPITAL_ADMIN' || role === 'SYSTEM_ADMIN')) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
