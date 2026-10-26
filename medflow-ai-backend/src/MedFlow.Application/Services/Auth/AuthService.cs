@@ -151,7 +151,8 @@ public class AuthService : IAuthService
         if (user is null || user.AccountStatus != AccountStatus.ACTIVE)
             throw new UnauthorizedAccessException(invalidMsg);
 
-        ApplyLockoutRules(user);
+        if (user.LockedUntil.HasValue && user.LockedUntil > DateTime.UtcNow)
+            throw new ValidationException("Tài khoản đang bị khóa, vui lòng thử lại sau");
 
         var result = _passwordHasher.VerifyHashedPassword(null!, user.PasswordHash!, request.Password);
 
@@ -174,14 +175,11 @@ public class AuthService : IAuthService
             tokens.ExpiresInSeconds,
             tokens.RawRefreshToken,
             GetRefreshExpirySeconds(),
-            BuildUserDto(user, tokens.Roles));
+            new(user.Id, user.Username, user.Email,
+            user.Patient?.FullName, tokens.Roles, user.Patient?.PatientCode));
     }
 
-    private void ApplyLockoutRules(User user)
-    {
-        if (user.LockedUntil.HasValue && user.LockedUntil > DateTime.UtcNow)
-            throw new ValidationException("Tài khoản đang bị khóa, vui lòng thử lại sau");
-    }
+  
 
     private async Task RecordFailedLoginAsync(User user, string? ipAddress, CancellationToken ct)
     {
