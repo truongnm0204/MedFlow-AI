@@ -16,7 +16,7 @@ public sealed class AuthLoginTests(TestWebAppFactory factory) : AuthTestBase(fac
         response.EnsureSuccessStatusCode();
 
         var login = await Client.PostAsJsonAsync("/api/v1/auth/login",
-            new LoginRequest { Identifier = email, Password = "MedFlow@2026" });
+            new LoginRequest { Email = email, Password = "MedFlow@2026" });
         Assert.Equal(HttpStatusCode.Unauthorized, login.StatusCode);
     }
 
@@ -26,7 +26,7 @@ public sealed class AuthLoginTests(TestWebAppFactory factory) : AuthTestBase(fac
         var email = await RegisterAndVerifyAsync();
 
         var login = await Client.PostAsJsonAsync("/api/v1/auth/login",
-            new LoginRequest { Identifier = email, Password = "Wrong@123" });
+            new LoginRequest { Email = email, Password = "Wrong@123" });
         Assert.Equal(HttpStatusCode.Unauthorized, login.StatusCode);
 
         var user = await Db.Users.FirstAsync(u => u.Email == email);
@@ -40,7 +40,7 @@ public sealed class AuthLoginTests(TestWebAppFactory factory) : AuthTestBase(fac
 
         for (var i = 0; i < 5; i++)
             await Client.PostAsJsonAsync("/api/v1/auth/login",
-                new LoginRequest { Identifier = email, Password = "Wrong@123" });
+                new LoginRequest { Email = email, Password = "Wrong@123" });
 
         var user = await Db.Users.FirstAsync(u => u.Email == email);
         Assert.NotNull(user.LockedUntil);
@@ -59,17 +59,17 @@ public sealed class AuthLoginTests(TestWebAppFactory factory) : AuthTestBase(fac
 
         // Password đúng nhưng vẫn 400 vì locked.
         var login = await Client.PostAsJsonAsync("/api/v1/auth/login",
-            new LoginRequest { Identifier = email, Password = "MedFlow@2026" });
+            new LoginRequest { Email = email, Password = "MedFlow@2026" });
         Assert.Equal(HttpStatusCode.BadRequest, login.StatusCode);
     }
 
     [Fact]
-    public async Task Login_WithUsername_Works()
+    public async Task Login_MixedCaseEmail_Works()
     {
         var email = await RegisterAndVerifyAsync();
-        // Username = email lowercase (AuthService.RegisterAsync gán như vậy).
+        // Email được normalize lowercase khi register — login mixed-case vẫn phải vào.
         var login = await Client.PostAsJsonAsync("/api/v1/auth/login",
-            new LoginRequest { Identifier = email.ToLowerInvariant(), Password = "MedFlow@2026" });
+            new LoginRequest { Email = email.ToUpperInvariant(), Password = "MedFlow@2026" });
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
     }
 }

@@ -61,11 +61,11 @@ export function ReceptionDashboardPage() {
             </button>
             <div className="flex items-center gap-2.5 pl-3 border-l border-slate-200">
               <div className="w-9 h-9 rounded-full bg-emerald-100 border border-emerald-200 text-emerald-700 flex items-center justify-center font-bold text-xs">
-                {(user?.fullName ?? user?.username ?? 'LT').slice(0, 2).toUpperCase()}
+                {(user?.fullName ?? 'LT').slice(0, 2).toUpperCase()}
               </div>
               <div className="text-right">
                 <div className="text-xs font-bold text-slate-800">
-                  {user?.fullName ?? user?.username ?? 'Nhân viên tiếp đón'}
+                  {user?.fullName ?? 'Nhân viên tiếp đón'}
                 </div>
                 <button
                   type="button"

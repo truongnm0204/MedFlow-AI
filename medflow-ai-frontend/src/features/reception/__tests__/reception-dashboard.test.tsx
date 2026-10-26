@@ -22,11 +22,10 @@ describe('ReceptionDashboardPage', () => {
   it('render dashboard header + stat cards', () => {
     useAuthStore.setState({
       user: {
-        id: 'u-1',
-        username: 'letan01',
+        id: 5,
         email: 'letan@medflow.test',
         fullName: 'Lê Tân',
-        roles: ['RECEPTIONIST'],
+        roles: ['RECEPTION'],
         patientCode: null,
       },
       accessToken: 'tok',

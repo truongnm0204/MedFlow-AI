@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Bootstrap the medflow_test database: schema snapshot + minimal auth seed.
+# Bootstrap the medflow_test database with schema v4.1 + seed.
 # Used by CI (.github/workflows/ci.yml) and locally for integration tests.
 # Usage: init-test-db.sh <connection-uri>
 #   e.g. init-test-db.sh "postgresql://postgres:postgres@localhost:5432/medflow_test"
 set -euo pipefail
 
 DB="${1:?Usage: init-test-db.sh <connection-uri>}"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BASELINE=1   # migration 001 is already inside the schema snapshot
+# REPO_ROOT env override for containerized runs (defaults to script's repo location).
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
 command -v psql >/dev/null || { echo "psql not found" >&2; exit 1; }
 
@@ -27,29 +27,15 @@ if [[ "$existing" != "0" ]]; then
   exit 1
 fi
 
-# btree_gist is built into PG18 but must be installed on PG16 — the schema's
-# EXCLUDE constraints on uuid columns (ex_*_overlap) fail without it.
-psql "$DB" -X -v ON_ERROR_STOP=1 -q -c "CREATE EXTENSION IF NOT EXISTS btree_gist"
-
-# Schema snapshot + minimal seed in ONE transaction.
-# The PG18 dump needs lines stripped that PG16 cannot parse.
-# --single-transaction requires -f; "-f -" reads stdin.
-{
-  sed -e '/^\\restrict /d' \
-      -e '/^\\unrestrict /d' \
-      -e '/^SET transaction_timeout = /d' \
-    "$REPO_ROOT/database/medflow_schema_v1_2.sql"
-  cat "$REPO_ROOT/database/seed_auth_test.sql"
-} | psql "$DB" -X -v ON_ERROR_STOP=1 --single-transaction -f - -q
-
-# Apply migrations newer than the baseline, in filename order.
-for f in "$REPO_ROOT"/database/migrations/*.sql; do
-  [[ -e "$f" ]] || continue
-  n=$(basename "$f" | grep -oE '^[0-9]+' | sed 's/^0*//')
-  if [[ -n "$n" && "$n" -gt "$BASELINE" ]]; then
-    echo "applying post-baseline migration: $(basename "$f")"
-    psql "$DB" -X -v ON_ERROR_STOP=1 -q -f "$f"
-  fi
+# v4.1 migrations: schema (002) → seed (003) → deltas (004+005), all in order.
+# Each file already wraps itself in BEGIN;…COMMIT;.
+for f in \
+  "$REPO_ROOT/database/migrations/002_v41_priority1_schema.sql" \
+  "$REPO_ROOT/database/migrations/003_v41_priority1_seed.sql" \
+  "$REPO_ROOT/database/migrations/004_readd_auth_verification_challenges.sql" \
+  "$REPO_ROOT/database/migrations/005_readd_auth_session_and_audit_cols.sql"; do
+  echo "applying: $(basename "$f")"
+  psql "$DB" -X -v ON_ERROR_STOP=1 -q -f "$f"
 done
 
-echo "medflow_test initialized (schema v1.2 + auth seed)."
+echo "medflow_test initialized (schema v4.1 + seed)."
