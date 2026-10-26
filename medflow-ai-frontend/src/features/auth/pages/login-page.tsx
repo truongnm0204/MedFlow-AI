@@ -56,13 +56,13 @@ export function LoginPage() {
 
           <form onSubmit={handleSubmit(onSubmit)} className="mt-6 flex flex-col gap-5" noValidate>
             <Input
-              label="Email hoặc tên đăng nhập"
-              type="text"
-              autoComplete="username"
+              label="Email"
+              type="email"
+              autoComplete="email"
               placeholder="nguyenvana@gmail.com"
               leftIcon={<Mail className="h-4 w-4" />}
-              error={errors.identifier?.message}
-              {...register('identifier')}
+              error={errors.email?.message}
+              {...register('email')}
             />
 
             <PasswordInput

@@ -14,9 +14,10 @@ public class AuthVerificationChallengeConfiguration : IEntityTypeConfiguration<A
         builder.HasKey(c => c.Id);
         builder.Property(c => c.Id)
             .HasColumnName("id")
-            .HasDefaultValueSql("gen_random_uuid()");
+            .UseIdentityByDefaultColumn();
 
-        builder.Property(c => c.UserId).HasColumnName("user_id");
+        builder.Property(c => c.UserId).HasColumnName("user_id").IsRequired();
+        builder.HasIndex(c => c.UserId).HasDatabaseName("ix_auth_verification_challenges_user_id");
 
         builder.Property(c => c.Purpose)
             .HasColumnName("purpose")
@@ -42,16 +43,19 @@ public class AuthVerificationChallengeConfiguration : IEntityTypeConfiguration<A
             .HasMaxLength(20)
             .HasConversion<string>()
             .HasDefaultValue(ChallengeStatus.PENDING);
+        builder.HasIndex(c => c.Status).HasDatabaseName("ix_auth_verification_challenges_status");
 
         builder.Property(c => c.Attempts).HasColumnName("attempts").HasDefaultValue(0);
         builder.Property(c => c.MaxAttempts).HasColumnName("max_attempts").HasDefaultValue(5);
         builder.Property(c => c.ExpiresAt).HasColumnName("expires_at").IsRequired();
+        builder.HasIndex(c => c.ExpiresAt).HasDatabaseName("ix_auth_verification_challenges_expires_at");
+
         builder.Property(c => c.VerifiedAt).HasColumnName("verified_at");
         builder.Property(c => c.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
 
         builder.HasOne(c => c.User)
             .WithMany()
             .HasForeignKey(c => c.UserId)
-            .OnDelete(DeleteBehavior.SetNull);
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

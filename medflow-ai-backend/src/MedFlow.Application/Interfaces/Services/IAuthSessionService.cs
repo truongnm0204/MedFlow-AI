@@ -2,10 +2,10 @@ using MedFlow.Domain.Entities;
 
 namespace MedFlow.Application.Interfaces.Services;
 
-public class RefreshTokenResult
+public class AuthSessionResult
 {
     public string RawToken { get; set; } = string.Empty;
-    public RefreshToken Entity { get; set; } = null!;
+    public AuthSession Entity { get; set; } = null!;
 }
 
 public class RotateResult
@@ -13,14 +13,14 @@ public class RotateResult
     public bool Success { get; set; }
     public bool ReuseDetected { get; set; }
     public string? RawToken { get; set; }
-    public RefreshToken? Entity { get; set; }
+    public AuthSession? Entity { get; set; }
     public User? User { get; set; }
 }
 
-public interface IRefreshTokenService
+public interface IAuthSessionService
 {
-    Task<RefreshTokenResult> GenerateAsync(Guid userId, string? createdByIp, CancellationToken ct = default);
+    Task<AuthSessionResult> GenerateAsync(long userId, string? createdByIp, CancellationToken ct = default);
     Task<RotateResult> RotateAsync(string rawToken, string? ipAddress, CancellationToken ct = default);
     Task RevokeAsync(string rawToken, string? ipAddress, CancellationToken ct = default);
-    Task RevokeAllForUserAsync(Guid userId, string? ipAddress, CancellationToken ct = default);
+    Task RevokeAllForUserAsync(long userId, string? ipAddress, CancellationToken ct = default);
 }

@@ -4,8 +4,8 @@ namespace MedFlow.Domain.Entities;
 
 public class AuthVerificationChallenge
 {
-    public Guid Id { get; set; }
-    public Guid? UserId { get; set; }
+    public long Id { get; set; }
+    public long UserId { get; set; }
     public ChallengePurpose Purpose { get; set; }
     public ChallengeChannel Channel { get; set; }
     public byte[] RecipientFingerprint { get; set; } = [];

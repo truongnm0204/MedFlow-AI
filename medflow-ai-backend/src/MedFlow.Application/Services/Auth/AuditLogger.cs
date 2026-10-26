@@ -16,17 +16,18 @@ public class AuditLogger : IAuditLogger
 
     public AuditLogger(IApplicationDbContext db) => _db = db;
 
-    public void Add(Guid actorUserId, string action, string entityType,
-        Guid? entityId, object? newValue, string? ipAddress)
+    public void Add(long? actorUserId, string action, string entityType,
+        string? entityId, object? changeData, string? ipAddress)
     {
         _db.AuditLogs.Add(new AuditLog
         {
-            ActorUserId = actorUserId == Guid.Empty ? null : actorUserId,
+            ActorUserId = actorUserId,
             Action = action,
             EntityType = entityType,
             EntityId = entityId,
-            NewValue = newValue is null ? null : JsonSerializer.Serialize(newValue),
+            ChangeData = changeData is null ? null : JsonSerializer.Serialize(changeData),
             IpAddress = IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
+            OccurredAt = DateTime.UtcNow,
         });
     }
 }

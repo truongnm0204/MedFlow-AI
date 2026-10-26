@@ -16,10 +16,10 @@ namespace MedFlow.IntegrationTests.Auth;
 /// </summary>
 public sealed class TestWebAppFactory : WebApplicationFactory<Program>
 {
-    // Local dev postgres mặc định — chỉ dùng cho DB test, không phải credential thật.
+    // Docker medflow-postgres trên :5433 — chỉ dùng cho DB test, không phải credential thật.
     // Override bằng env var MEDFLOW_TEST_DB khi cần (CI, password khác).
     private const string DefaultTestConnection =
-        "Host=localhost;Port=5432;Database=medflow_test;Username=postgres;Password=123";
+        "Host=localhost;Port=5433;Database=medflow_test;Username=postgres;Password=medflow_dev";
 
     public FakeEmailSender EmailSender { get; } = new();
 

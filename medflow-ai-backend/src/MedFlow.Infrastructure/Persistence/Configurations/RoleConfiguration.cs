@@ -13,12 +13,11 @@ public class RoleConfiguration : IEntityTypeConfiguration<Role>
         builder.HasKey(r => r.Id);
         builder.Property(r => r.Id)
             .HasColumnName("id")
-            .HasDefaultValueSql("gen_random_uuid()");
+            .UseIdentityByDefaultColumn();
 
         builder.Property(r => r.Code).HasColumnName("code").HasMaxLength(50).IsRequired();
-        builder.HasIndex(r => r.Code).IsUnique();
+        builder.HasIndex(r => r.Code).IsUnique().HasDatabaseName("uq_roles_code");
 
-        builder.Property(r => r.Name).HasColumnName("name").HasMaxLength(255).IsRequired();
-        builder.Property(r => r.IsActive).HasColumnName("is_active").HasDefaultValue(true);
+        builder.Property(r => r.Name).HasColumnName("name").HasMaxLength(120).IsRequired();
     }
 }

@@ -18,9 +18,9 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<UserRole> UserRoles => Set<UserRole>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
     public DbSet<Patient> Patients => Set<Patient>();
+    public DbSet<AuthSession> AuthSessions => Set<AuthSession>();
     public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => Set<AuthVerificationChallenge>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
-    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => Database.BeginTransactionAsync(ct);
@@ -28,7 +28,7 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
-        modelBuilder.HasDefaultSchema("medflow");
+        // v4.1 schema lives in `public` — EF default for Npgsql already is public.
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(MedFlowDbContext).Assembly);
     }
 }

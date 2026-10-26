@@ -16,10 +16,12 @@ public class RolePermissionConfiguration : IEntityTypeConfiguration<RolePermissi
 
         builder.HasOne(rp => rp.Role)
             .WithMany(r => r.RolePermissions)
-            .HasForeignKey(rp => rp.RoleId);
+            .HasForeignKey(rp => rp.RoleId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(rp => rp.Permission)
             .WithMany(p => p.RolePermissions)
-            .HasForeignKey(rp => rp.PermissionId);
+            .HasForeignKey(rp => rp.PermissionId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
