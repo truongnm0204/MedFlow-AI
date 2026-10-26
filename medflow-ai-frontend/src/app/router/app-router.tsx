@@ -3,12 +3,15 @@ import { Route, Routes } from 'react-router-dom';
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
+import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
+import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
+import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
-import { GuestOnly, RequireAuth } from './guards';
+import { GuestOnly, RequireAdmin, RequireAuth } from './guards';
 
 export function AppRouter() {
   return (
@@ -35,6 +38,28 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <ReceptionDashboardPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/doctors"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <DoctorListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      >
+        <Route path=":doctorId/edit" element={<DoctorEditModal />} />
+      </Route>
+      <Route
+        path="/admin/doctors/new"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <DoctorCreatePage />
+            </RequireAdmin>
           </RequireAuth>
         }
       />

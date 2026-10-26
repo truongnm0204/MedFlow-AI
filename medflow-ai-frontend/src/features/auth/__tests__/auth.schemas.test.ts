@@ -8,14 +8,15 @@ import {
 } from '../schemas/auth.schemas';
 
 describe('loginSchema', () => {
-  it('chấp nhận identifier + password hợp lệ', () => {
-    const r = loginSchema.safeParse({ identifier: 'a@b.com', password: 'x' });
+  it('chấp nhận email + password hợp lệ', () => {
+    const r = loginSchema.safeParse({ email: 'a@b.com', password: 'x' });
     expect(r.success).toBe(true);
   });
 
-  it('từ chối identifier trống', () => {
-    expect(loginSchema.safeParse({ identifier: '', password: 'x' }).success).toBe(false);
-    expect(loginSchema.safeParse({ identifier: 'a@b.com', password: '' }).success).toBe(false);
+  it('từ chối email trống hoặc sai format', () => {
+    expect(loginSchema.safeParse({ email: '', password: 'x' }).success).toBe(false);
+    expect(loginSchema.safeParse({ email: 'not-email', password: 'x' }).success).toBe(false);
+    expect(loginSchema.safeParse({ email: 'a@b.com', password: '' }).success).toBe(false);
   });
 });
 
