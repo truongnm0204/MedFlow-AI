@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
@@ -73,5 +73,19 @@ describe('PatientProfilePage', () => {
     expect(screen.getByText('Chỉnh sửa thông tin liên hệ')).toBeInTheDocument();
     expect(screen.getByText('Quản lý người thân')).toBeInTheDocument();
     expect(screen.getByText('Tải tóm tắt hồ sơ y tế (PDF)')).toBeInTheDocument();
+  });
+
+  it('mở modal cập nhật thông tin liên hệ khi bấm chỉnh sửa', () => {
+    renderPage();
+
+    const editBtn = screen.getByText('Chỉnh sửa thông tin liên hệ');
+    fireEvent.click(editBtn);
+
+    expect(screen.getByText('Cập nhật Thông tin Liên hệ Cá nhân')).toBeInTheDocument();
+    expect(screen.getByText('Thông tin định danh pháp lý (Không thể sửa)')).toBeInTheDocument();
+    expect(screen.getByText('Thông tin tiếp nhận kết quả & liên hệ')).toBeInTheDocument();
+    expect(screen.getByText('Đã xác thực OTP')).toBeInTheDocument();
+    expect(screen.getByText('Lưu thay đổi')).toBeInTheDocument();
+    expect(screen.getByText('Hủy bỏ')).toBeInTheDocument();
   });
 });

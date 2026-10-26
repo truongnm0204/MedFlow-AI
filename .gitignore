@@ -56,3 +56,4 @@ docs/*
 !docs/backend-code-standards.md
 !docs/frontend-code-standards.md
 !docs/decisions/
+medflow-ai-frontend/.agents

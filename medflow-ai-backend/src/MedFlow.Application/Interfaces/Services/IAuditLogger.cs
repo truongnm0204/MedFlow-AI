@@ -6,6 +6,9 @@ namespace MedFlow.Application.Interfaces.Services;
 /// </summary>
 public interface IAuditLogger
 {
-    void Add(Guid actorUserId, string action, string entityType,
-        Guid? entityId, object? newValue, string? ipAddress);
+    /// <param name="actorUserId">null for system actions</param>
+    /// <param name="entityId">entity PK serialised as text (varchar(80) in v4.1)</param>
+    /// <param name="changeData">payload to serialise into <c>change_data</c> jsonb</param>
+    void Add(long? actorUserId, string action, string entityType,
+        string? entityId, object? changeData, string? ipAddress);
 }

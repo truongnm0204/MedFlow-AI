@@ -37,7 +37,7 @@ Plan dir naming: `yymmdd-hhmm-{slug}/` containing `plan.md` + `phase-XX-*.md` + 
 
 - **tiny**: `AGENTS.md` + the file being edited. ~2K tokens.
 - **normal**: `AGENTS.md` + `docs/context-rules.md` + relevant code-standards doc + files being changed. ~5K.
-- **high-risk**: everything above + `docs/system-architecture.md` + `docs/backend-auth-architecture.md` (if auth) + `database/medflow_schema_v1_2.sql` (if DB) + `docs/decisions/*` + `.claude/rules/*`. ~10K.
+- **high-risk**: everything above + `docs/system-architecture.md` + `docs/backend-auth-architecture.md` (if auth) + `database/medflow_schema_v4_1.sql` (if DB) + `docs/decisions/*` + `.claude/rules/*`. ~10K.
 
 Retrieval triggers: auth → auth-architecture doc + rules; DB → schema SQL + ef-migration rule; MCP file output → artifact-hygiene rule.
 

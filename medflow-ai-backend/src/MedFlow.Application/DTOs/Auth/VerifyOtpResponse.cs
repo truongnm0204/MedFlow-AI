@@ -1,5 +1,5 @@
 namespace MedFlow.Application.DTOs.Auth;
 
 public sealed record VerifyOtpResponse(
-    Guid UserId,
+    long UserId,
     string Message = "Xác thực thành công");

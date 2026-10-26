@@ -25,7 +25,7 @@ public static class DependencyInjection
             sp.GetRequiredService<MedFlowDbContext>());
 
         services.AddScoped<IJwtTokenService, JwtTokenService>();
-        services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+        services.AddScoped<IAuthSessionService, AuthSessionService>();
         services.AddTransient<IEmailSender, SmtpEmailSender>();
 
         return services;
