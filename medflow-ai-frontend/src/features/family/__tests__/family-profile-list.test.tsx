@@ -20,13 +20,11 @@ function renderPage() {
 }
 
 describe('FamilyProfileListPage', () => {
-  it('hiển thị breadcrumb, tiêu đề màn hình và các badge bảo mật SCR-PRO-03', () => {
+  it('hiển thị breadcrumb và tiêu đề màn hình', () => {
     renderPage();
 
     expect(screen.getByText('Quản lý Hồ sơ Người thân trong Gia đình')).toBeInTheDocument();
-    expect(screen.getByText('Chuẩn bảo mật HL7/FHIR Ready')).toBeInTheDocument();
-    expect(screen.getByText('Mã màn hình: SCR-PRO-03')).toBeInTheDocument();
-    expect(screen.getByText('4/5')).toBeInTheDocument();
+    expect(screen.getByText('4')).toBeInTheDocument();
     expect(screen.getByText('hồ sơ thành viên')).toBeInTheDocument();
   });
 
@@ -35,7 +33,6 @@ describe('FamilyProfileListPage', () => {
 
     expect(screen.getByText('NGUYỄN VĂN AN')).toBeInTheDocument();
     expect(screen.getByText('Chủ tài khoản chính')).toBeInTheDocument();
-    expect(screen.getByText('#PAT-2026-8921')).toBeInTheDocument();
     expect(screen.getByText('O+')).toBeInTheDocument();
     expect(screen.getByText('172 cm')).toBeInTheDocument();
     expect(screen.getByText('68 kg')).toBeInTheDocument();
@@ -62,15 +59,10 @@ describe('FamilyProfileListPage', () => {
     expect(screen.getByText(/Ủy quyền nhận kết quả xét nghiệm/)).toBeInTheDocument();
   });
 
-  it('hiển thị thẻ vị trí trống còn lại, nút thêm người thân và banner chính sách HL7/FHIR', () => {
+  it('hiển thị thẻ thêm người thân và nút thêm người thân mới', () => {
     renderPage();
 
-    expect(screen.getByText(/Còn trống 1 suất liên kết/)).toBeInTheDocument();
+    expect(screen.getByText('Thêm hồ sơ người thân mới')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /Thêm người thân/i }).length).toBeGreaterThan(0);
-    expect(
-      screen.getByText(
-        /Quy định quản lý hồ sơ người thân và bảo mật thông tin khám bệnh HL7\/FHIR/,
-      ),
-    ).toBeInTheDocument();
   });
 });

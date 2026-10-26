@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Calendar, Download, Edit2 } from 'lucide-react';
+import { ArrowLeft, Calendar, Download, Edit2, Trash2 } from 'lucide-react';
 
 import type { FamilyMember } from '../types/family.types';
 
@@ -8,6 +8,7 @@ interface FamilyMemberDetailActionsProps {
   onBookAppointment?: (member: FamilyMember) => void;
   onDownloadPdf?: () => void;
   onEditContact?: () => void;
+  onRemoveMember?: () => void;
 }
 
 export function FamilyMemberDetailActions({
@@ -15,6 +16,7 @@ export function FamilyMemberDetailActions({
   onBookAppointment,
   onDownloadPdf,
   onEditContact,
+  onRemoveMember,
 }: FamilyMemberDetailActionsProps) {
   const canManage = member.permissions?.canManage ?? true;
   const canBook =
@@ -43,6 +45,17 @@ export function FamilyMemberDetailActions({
           >
             <Edit2 className="h-3.5 w-3.5 text-slate-500" />
             Chỉnh sửa thông tin liên hệ
+          </button>
+        )}
+
+        {canManage && !member.isPrimaryAccount && (
+          <button
+            type="button"
+            onClick={onRemoveMember}
+            className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-5 py-2.5 text-xs font-bold text-rose-600 shadow-2xs transition-colors hover:border-rose-300 hover:bg-rose-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Gỡ liên kết hồ sơ
           </button>
         )}
 

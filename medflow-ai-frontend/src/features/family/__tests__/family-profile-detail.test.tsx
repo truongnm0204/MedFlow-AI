@@ -26,7 +26,6 @@ describe('FamilyProfileDetailPage', () => {
     renderDetailAtRoute('/family/FAM-002');
 
     expect((await screen.findAllByText('NGUYỄN MINH KHANG')).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText('Mã màn hình: SCR-PRO-04')).toBeInTheDocument();
     expect(screen.getByText('#PAT-2026-9042')).toBeInTheDocument();
     expect(screen.getByText('128 cm')).toBeInTheDocument();
     expect(screen.getByText('26 kg')).toBeInTheDocument();

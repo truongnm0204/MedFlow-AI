@@ -57,6 +57,8 @@ export interface FamilyMember {
   followUpSchedule?: string;
   servicePackage?: string;
   clinicalNotes?: string;
+  hasActiveAppointment?: boolean;
+  activeAppointmentDetails?: string;
   outpatientVisitsCount?: number;
   activePrescriptionsCount?: number;
   vitals?: FamilyMemberVitals;

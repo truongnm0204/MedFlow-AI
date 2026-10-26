@@ -6,12 +6,14 @@ interface FamilyMemberCardProps {
   member: FamilyMember;
   onBookAppointment?: (member: FamilyMember) => void;
   onEditMember?: (member: FamilyMember) => void;
+  onRemoveMember?: (member: FamilyMember) => void;
 }
 
 export function FamilyMemberCard({
   member,
   onBookAppointment,
   onEditMember,
+  onRemoveMember,
 }: FamilyMemberCardProps) {
   if (member.isPrimaryAccount) {
     return <PrimaryMemberCard member={member} onBookAppointment={onBookAppointment} />;
@@ -22,6 +24,7 @@ export function FamilyMemberCard({
       member={member}
       onBookAppointment={onBookAppointment}
       onEditMember={onEditMember}
+      onRemoveMember={onRemoveMember}
     />
   );
 }

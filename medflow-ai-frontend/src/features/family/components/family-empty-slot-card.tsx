@@ -2,10 +2,9 @@ import { Plus, UserPlus } from 'lucide-react';
 
 interface FamilyEmptySlotCardProps {
   onAddMember?: () => void;
-  remainingSlots?: number;
 }
 
-export function FamilyEmptySlotCard({ onAddMember, remainingSlots = 1 }: FamilyEmptySlotCardProps) {
+export function FamilyEmptySlotCard({ onAddMember }: FamilyEmptySlotCardProps) {
   return (
     <div className="mt-6 rounded-2xl border-2 border-dashed border-slate-300 bg-white/60 p-8 text-center transition-colors hover:border-slate-400">
       <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-sky-600 shadow-2xs">
@@ -13,7 +12,7 @@ export function FamilyEmptySlotCard({ onAddMember, remainingSlots = 1 }: FamilyE
       </div>
 
       <h4 className="mt-3 text-sm font-bold text-slate-800">
-        Thêm hồ sơ người thân (Còn trống {remainingSlots} suất liên kết)
+        Thêm hồ sơ người thân mới
       </h4>
 
       <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-slate-400">

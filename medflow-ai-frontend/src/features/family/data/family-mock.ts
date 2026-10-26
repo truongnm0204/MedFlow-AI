@@ -1,6 +1,6 @@
 import type { FamilyMember } from '../types/family.types';
 
-export const mockFamilyMembers: FamilyMember[] = [
+export const initialMockFamilyMembers: FamilyMember[] = [
   {
     id: 'FAM-001',
     fullName: 'NGUYỄN VĂN AN',
@@ -67,6 +67,7 @@ export const mockFamilyMembers: FamilyMember[] = [
     followUpSchedule: 'Chưa có lịch hẹn mới',
     servicePackage: 'Gói Nhi khoa tiêu chuẩn',
     clinicalNotes: 'Theo dõi viêm mũi dị ứng thời tiết, không dị ứng kháng sinh',
+    hasActiveAppointment: false,
     outpatientVisitsCount: 3,
     activePrescriptionsCount: 1,
     vitals: {
@@ -114,6 +115,8 @@ export const mockFamilyMembers: FamilyMember[] = [
     followUpSchedule: 'Chưa đặt lịch mới',
     servicePackage: 'Khám lẻ Ngoại trú',
     clinicalNotes: 'Sức khỏe tổng quát ổn định, kiểm tra định kỳ 6 tháng/lần',
+    hasActiveAppointment: true,
+    activeAppointmentDetails: '25/11/2026 (Khám Sản phụ khoa - BS. Nguyễn Thu Hà)',
     outpatientVisitsCount: 2,
     activePrescriptionsCount: 0,
     vitals: {
@@ -177,3 +180,52 @@ export const mockFamilyMembers: FamilyMember[] = [
     },
   },
 ];
+
+export const mockFamilyMembers: FamilyMember[] = [...initialMockFamilyMembers];
+
+const STORAGE_KEY = 'medflow.mock_family_members';
+
+export function getStoredFamilyMembers(): FamilyMember[] {
+  if (typeof window === 'undefined') {
+    return mockFamilyMembers;
+  }
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(mockFamilyMembers));
+      return mockFamilyMembers;
+    }
+    const parsed = JSON.parse(raw) as FamilyMember[];
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(mockFamilyMembers));
+      return mockFamilyMembers;
+    }
+    mockFamilyMembers.length = 0;
+    mockFamilyMembers.push(...parsed);
+    return parsed;
+  } catch {
+    return mockFamilyMembers;
+  }
+}
+
+export function saveStoredFamilyMembers(members: FamilyMember[]): void {
+  mockFamilyMembers.length = 0;
+  mockFamilyMembers.push(...members);
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(members));
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export function resetStoredFamilyMembers(): void {
+  saveStoredFamilyMembers([...initialMockFamilyMembers]);
+}
+
+export function getFamilyMemberById(id: string): FamilyMember | undefined {
+  const normalizedId = id?.trim().toLowerCase();
+  const list = getStoredFamilyMembers();
+  return list.find((m) => m.id.trim().toLowerCase() === normalizedId);
+}

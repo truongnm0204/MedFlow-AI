@@ -34,11 +34,7 @@ export function PrimaryMemberCard({ member, onBookAppointment }: PrimaryMemberCa
                   {member.relationship}
                 </span>
               </div>
-              <div className="mt-1 flex items-center gap-2 text-xs">
-                <span className="font-mono font-semibold text-sky-600">{member.patientCode}</span>
-                <span className="text-slate-300">•</span>
-                <span className="text-slate-400">{member.subStatus}</span>
-              </div>
+              <p className="mt-1 text-xs text-slate-400">{member.subStatus}</p>
             </div>
           </div>
 

@@ -17,6 +17,7 @@ import {
 
 import { Modal } from '@/shared/ui/modal';
 
+import { useCreateFamilyMember } from '../hooks/use-create-family-member';
 import { createFamilyMemberSchema, type CreateFamilyMemberInput } from '../schemas/family-member.schema';
 import type { FamilyMember, RelationshipType } from '../types/family.types';
 
@@ -33,6 +34,8 @@ export function AddFamilyMemberModal({
   onAddMember,
   isSubmitting = false,
 }: AddFamilyMemberModalProps) {
+  const createMutation = useCreateFamilyMember();
+
   const [fullName, setFullName] = useState('');
   const [relationship, setRelationship] = useState<RelationshipType>('Con trai');
   const [birthDate, setBirthDate] = useState('');
@@ -47,7 +50,9 @@ export function AddFamilyMemberModal({
   const [emergencyPhone, setEmergencyPhone] = useState('0912 345 678');
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const isPending = isSubmitting || createMutation.isPending;
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setValidationError(null);
 
@@ -73,59 +78,13 @@ export function AddFamilyMemberModal({
       return;
     }
 
-    const badgeColor =
-      relationship === 'Con trai' || relationship === 'Con gái'
-        ? 'blue'
-        : relationship === 'Vợ' || relationship === 'Chồng'
-          ? 'rose'
-          : 'amber';
-
-    const avatar =
-      gender === 'Nam'
-        ? 'https://images.unsplash.com/photo-1543332164-6e82f355badc?w=300&auto=format&fit=crop&q=80'
-        : 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&auto=format&fit=crop&q=80';
-
-    let age = 10;
     try {
-      const parts = birthDate.split(/[-/]/);
-      const year = parts.length === 3 ? parseInt(parts[0].length === 4 ? parts[0] : parts[2], 10) : 2016;
-      age = Math.max(1, new Date().getFullYear() - year);
-    } catch {
-      age = 10;
+      const created = await createMutation.mutateAsync(result.data);
+      onAddMember(created);
+      onClose();
+    } catch (err: unknown) {
+      setValidationError(err instanceof Error ? err.message : 'Có lỗi khi thêm người thân.');
     }
-
-    const newMember: FamilyMember = {
-      id: `FAM-${Date.now()}`,
-      fullName: fullName.trim().toUpperCase(),
-      relationship,
-      relationshipBadgeColor: badgeColor,
-      patientCode: `#PAT-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      subStatus: 'Hồ sơ người thân mới',
-      isPrimaryAccount: false,
-      avatarUrl: avatar,
-      birthDate,
-      age,
-      gender,
-      nationality: nationality.trim() || 'Việt Nam',
-      identificationNo: identificationNo.trim() || undefined,
-      phone: phone.trim() || undefined,
-      email: email.trim() || undefined,
-      address: address.trim(),
-      emergencyContactName: emergencyContactName.trim() || 'Nguyễn Văn An',
-      emergencyContactRelation: emergencyContactRelation.trim() || 'Chủ tài khoản chính',
-      emergencyPhone: emergencyPhone.trim() || '0912 345 678',
-      isIdentityVerified: true,
-      permissions: {
-        canManage: true,
-        canBookAppointments: true,
-        canViewMedicalRecords: true,
-        relationshipStatus: 'ACTIVE',
-        consentVerifiedAt: new Date().toLocaleDateString('vi-VN'),
-      },
-    };
-
-    onAddMember(newMember);
-    onClose();
   };
 
   return (
@@ -388,18 +347,18 @@ export function AddFamilyMemberModal({
           <button
             type="button"
             onClick={onClose}
-            disabled={isSubmitting}
+            disabled={isPending}
             className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 disabled:opacity-50"
           >
             Hủy bỏ
           </button>
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isPending}
             className="inline-flex items-center gap-1.5 rounded-xl bg-sky-600 px-6 py-2.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-sky-700 active:scale-[0.99] disabled:opacity-50"
           >
             <Check className="h-4 w-4 stroke-[2.5]" />
-            {isSubmitting ? 'Đang lưu...' : 'Thêm người thân'}
+            {isPending ? 'Đang lưu...' : 'Thêm người thân'}
           </button>
         </div>
       </form>

@@ -9,6 +9,7 @@ import {
   Pencil,
   Phone,
   Stethoscope,
+  Trash2,
   User,
   Users,
 } from 'lucide-react';
@@ -19,12 +20,14 @@ interface DependentMemberCardProps {
   member: FamilyMember;
   onBookAppointment?: (member: FamilyMember) => void;
   onEditMember?: (member: FamilyMember) => void;
+  onRemoveMember?: (member: FamilyMember) => void;
 }
 
 export function DependentMemberCard({
   member,
   onBookAppointment,
   onEditMember,
+  onRemoveMember,
 }: DependentMemberCardProps) {
   const getBadgeStyle = () => {
     switch (member.relationshipBadgeColor) {
@@ -76,11 +79,7 @@ export function DependentMemberCard({
                   {member.relationship}
                 </span>
               </div>
-              <div className="mt-1 flex items-center gap-2 text-xs">
-                <span className="font-mono font-semibold text-sky-600">{member.patientCode}</span>
-                <span className="text-slate-300">•</span>
-                <span className="text-emerald-600">{member.subStatus}</span>
-              </div>
+              <p className="mt-1 text-xs text-emerald-600">{member.subStatus}</p>
             </div>
           </div>
 
@@ -216,6 +215,18 @@ export function DependentMemberCard({
           <Pencil className="h-3.5 w-3.5 text-slate-500" />
           Sửa thông tin
         </button>
+
+        {member.permissions?.canManage !== false && onRemoveMember && (
+          <button
+            type="button"
+            onClick={() => onRemoveMember(member)}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-400 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 active:scale-[0.99]"
+            aria-label={`Gỡ liên kết ${member.fullName}`}
+            title="Gỡ liên kết hồ sơ"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
 
         <Link
           to={`/family/${member.id}`}
