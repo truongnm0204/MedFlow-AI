@@ -69,12 +69,12 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<UserDto>> Me(CancellationToken ct)
         => Ok(await _authService.GetMeAsync(GetUserId(), ct));
 
-    private Guid GetUserId()
+    private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
             ?? User.FindFirstValue("sub")
             ?? throw new UnauthorizedAccessException("Token không hợp lệ");
-        return Guid.Parse(sub);
+        return long.Parse(sub);
     }
 
     private string? GetIp()

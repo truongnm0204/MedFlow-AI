@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const loginSchema = z.object({
-  identifier: z.string().min(1, 'Vui lòng nhập email hoặc tên đăng nhập'),
+  email: z.string().min(1, 'Vui lòng nhập email').email('Email không hợp lệ'),
   password: z.string().min(1, 'Vui lòng nhập mật khẩu'),
 });
 export type LoginFormValues = z.infer<typeof loginSchema>;

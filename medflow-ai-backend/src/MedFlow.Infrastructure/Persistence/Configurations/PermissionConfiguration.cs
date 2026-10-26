@@ -13,11 +13,9 @@ public class PermissionConfiguration : IEntityTypeConfiguration<Permission>
         builder.HasKey(p => p.Id);
         builder.Property(p => p.Id)
             .HasColumnName("id")
-            .HasDefaultValueSql("gen_random_uuid()");
+            .UseIdentityByDefaultColumn();
 
         builder.Property(p => p.Code).HasColumnName("code").HasMaxLength(100).IsRequired();
-        builder.HasIndex(p => p.Code).IsUnique();
-
-        builder.Property(p => p.Description).HasColumnName("description");
+        builder.HasIndex(p => p.Code).IsUnique().HasDatabaseName("uq_permissions_code");
     }
 }

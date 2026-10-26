@@ -8,12 +8,11 @@ import type { UserDto } from '@/features/auth/types/auth.types';
 import { AppHeader } from '../app-header';
 
 const patient: UserDto = {
-  id: 'u1',
-  username: 'nguyenvana',
+  id: 1,
   email: 'a@b.com',
   fullName: 'Nguyễn Văn A',
   roles: ['PATIENT'],
-  patientCode: 'PAT-20261012-0001',
+  patientCode: 'PAT-0001',
 };
 
 function renderHeader() {

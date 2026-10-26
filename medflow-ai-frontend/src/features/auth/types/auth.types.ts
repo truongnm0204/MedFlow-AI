@@ -1,7 +1,7 @@
 // Types khớp DTOs backend `MedFlow.Application/DTOs/Auth`.
 
 export interface LoginRequest {
-  identifier: string;
+  email: string;
   password: string;
 }
 
@@ -16,8 +16,8 @@ export interface RegisterRequest {
 }
 
 export interface UserDto {
-  id: string;
-  username: string;
+  /** numeric — backend emits bigint PK as JSON number (v4.1). */
+  id: number;
   email: string;
   fullName: string | null;
   roles: string[];
