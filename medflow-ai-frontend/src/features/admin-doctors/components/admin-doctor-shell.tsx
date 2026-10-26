@@ -68,7 +68,7 @@ export function AdminDoctorShell({ children, showTabs = false }: AdminDoctorShel
             </span>
             <div className="hidden text-right text-[11px] md:block">
               <div className="font-bold text-ink">
-                {user?.fullName ?? user?.username ?? 'Quản trị viên'}
+                {user?.fullName ?? user?.email ?? 'Quản trị viên'}
               </div>
               <div className="text-sub">
                 <b className="text-primary">

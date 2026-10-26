@@ -20,24 +20,8 @@ export function DoctorCreateIdentity({
   portraitError,
 }: Props) {
   return (
-    <DoctorCard
-      title="1. ĐỊNH DANH & LIÊN KẾT TÀI KHOẢN NHÂN SỰ"
-      note="Bắt buộc theo chuẩn ISO/HL7"
-    >
+    <DoctorCard title="1. ĐỊNH DANH" note="Bắt buộc theo chuẩn ISO/HL7">
       <div className="space-y-5">
-        <DoctorField
-          label="Chọn Nhân viên Y tế từ Danh mục Staff"
-          required
-          hint="Danh sách nhân sự minh họa; chưa kết nối hồ sơ Staff SSO."
-          error={errors.staffId?.message}
-        >
-          <select className={doctorControlClass} {...register('staffId')}>
-            <option value="">Chọn nhân sự</option>
-            <option value="NV-0089">
-              NV-0089 • BS. Phạm Quang Duy (Khoa Khám bệnh - Chưa liên kết bác sĩ)
-            </option>
-          </select>
-        </DoctorField>
         <div className="grid gap-5 sm:grid-cols-[1fr_180px]">
           <div className="space-y-4">
             <DoctorField

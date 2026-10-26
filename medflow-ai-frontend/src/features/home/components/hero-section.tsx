@@ -13,7 +13,6 @@ export function HeroSection() {
           <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#0A2540] tracking-tight leading-tight">
             BANNER
           </h1>
-
         </div>
 
         {/* SMART QUICK-BOOKING CARD */}
