@@ -7,6 +7,7 @@ import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-p
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
+import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
@@ -70,6 +71,8 @@ export function AppRouter() {
           </GuestOnly>
         }
       />
+      <Route path="/profile" element={<PatientProfilePage />} />
+      <Route path="/patient/profile" element={<PatientProfilePage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
