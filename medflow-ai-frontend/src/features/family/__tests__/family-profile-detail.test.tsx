@@ -33,7 +33,9 @@ describe('FamilyProfileDetailPage', () => {
       screen.getByText(/Khám Nhi tự nguyện: Cần có phụ huynh đi cùng khi thăm khám/),
     ).toBeInTheDocument();
     expect(screen.getByText('02/09/2026 (Nhi khoa Hô hấp)')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Chỉnh sửa thông tin liên hệ/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Chỉnh sửa thông tin liên hệ/i }),
+    ).toBeInTheDocument();
   });
 
   it('ẩn các nút chỉnh sửa khi hồ sơ người thân không có quyền canManage (FAM-004)', async () => {
@@ -54,13 +56,17 @@ describe('FamilyProfileDetailPage', () => {
     expect((await screen.findAllByText('NGUYỄN THỊ BÌNH')).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('nguyenthibinh.90@gmail.com')).toBeInTheDocument();
     expect(screen.getByText('0988 765 432')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Chỉnh sửa thông tin liên hệ/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Chỉnh sửa thông tin liên hệ/i }),
+    ).toBeInTheDocument();
   });
 
   it('hiển thị trạng thái lỗi khi không tìm thấy hồ sơ người thân', async () => {
     renderDetailAtRoute('/family/FAM-999');
 
     expect(await screen.findByText('Không tìm thấy hồ sơ người thân')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Quay lại danh sách người thân/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /Quay lại danh sách người thân/i }),
+    ).toBeInTheDocument();
   });
 });

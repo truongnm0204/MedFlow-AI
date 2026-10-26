@@ -18,7 +18,10 @@ import {
 import { Modal } from '@/shared/ui/modal';
 
 import { useCreateFamilyMember } from '../hooks/use-create-family-member';
-import { createFamilyMemberSchema, type CreateFamilyMemberInput } from '../schemas/family-member.schema';
+import {
+  createFamilyMemberSchema,
+  type CreateFamilyMemberInput,
+} from '../schemas/family-member.schema';
 import type { FamilyMember, RelationshipType } from '../types/family.types';
 
 interface AddFamilyMemberModalProps {
@@ -44,7 +47,9 @@ export function AddFamilyMemberModal({
   const [nationality, setNationality] = useState('Việt Nam');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [address, setAddress] = useState('Số 45 Tràng Tiền, Phường Tràng Tiền, Quận Hoàn Kiếm, Hà Nội');
+  const [address, setAddress] = useState(
+    'Số 45 Tràng Tiền, Phường Tràng Tiền, Quận Hoàn Kiếm, Hà Nội',
+  );
   const [emergencyContactName, setEmergencyContactName] = useState('Nguyễn Văn An');
   const emergencyContactRelation = 'Bố ruột (Giám hộ)';
   const [emergencyPhone, setEmergencyPhone] = useState('0912 345 678');
@@ -292,7 +297,8 @@ export function AddFamilyMemberModal({
                 />
               </div>
               <p className="mt-1 text-[11px] text-slate-400">
-                File kết quả xét nghiệm định dạng PDF kèm chữ ký số bảo mật sẽ được gửi về hộp thư này.
+                File kết quả xét nghiệm định dạng PDF kèm chữ ký số bảo mật sẽ được gửi về hộp thư
+                này.
               </p>
             </div>
 

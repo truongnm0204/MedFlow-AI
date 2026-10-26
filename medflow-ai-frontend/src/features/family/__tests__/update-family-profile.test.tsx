@@ -74,12 +74,8 @@ describe('Update Family Profile (M1-033)', () => {
     fireEvent.change(addressInput, { target: { value: 'abc' } });
     fireEvent.click(submitBtn);
 
-    expect(
-      await screen.findByText(/Số điện thoại liên hệ không hợp lệ/i),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByText(/Địa chỉ thường trú tối thiểu 5 ký tự/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/Số điện thoại liên hệ không hợp lệ/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Địa chỉ thường trú tối thiểu 5 ký tự/i)).toBeInTheDocument();
   });
 
   it('cập nhật thành công thông tin người thân từ trang chi tiết', async () => {

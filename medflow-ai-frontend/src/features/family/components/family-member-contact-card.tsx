@@ -17,10 +17,7 @@ interface FamilyMemberContactCardProps {
   onEditContact?: () => void;
 }
 
-export function FamilyMemberContactCard({
-  member,
-  onEditContact,
-}: FamilyMemberContactCardProps) {
+export function FamilyMemberContactCard({ member, onEditContact }: FamilyMemberContactCardProps) {
   const canManage = member.permissions?.canManage ?? true;
   const canViewMedical = member.permissions?.canViewMedicalRecords ?? true;
 
@@ -113,27 +110,21 @@ export function FamilyMemberContactCard({
         {canViewMedical ? (
           <div className="mt-3 grid grid-cols-1 gap-3 rounded-xl border border-slate-200/80 bg-white p-3.5 sm:grid-cols-3">
             <div>
-              <span className="block text-xs font-medium text-slate-500">
-                Lần khám gần nhất
-              </span>
+              <span className="block text-xs font-medium text-slate-500">Lần khám gần nhất</span>
               <span className="mt-1 block text-sm font-semibold text-slate-900">
                 {member.latestVisit ?? 'Chưa có lượt khám'}
               </span>
             </div>
 
             <div>
-              <span className="block text-xs font-medium text-slate-500">
-                Lịch tái khám
-              </span>
+              <span className="block text-xs font-medium text-slate-500">Lịch tái khám</span>
               <span className="mt-1 block text-sm font-semibold text-slate-900">
                 {member.followUpSchedule ?? 'Chưa đặt lịch mới'}
               </span>
             </div>
 
             <div>
-              <span className="block text-xs font-medium text-slate-500">
-                Lưu ý lâm sàng
-              </span>
+              <span className="block text-xs font-medium text-slate-500">Lưu ý lâm sàng</span>
               <span className="mt-1 block text-sm font-semibold text-slate-900">
                 {member.clinicalNotes ?? 'Không có lưu ý đặc biệt'}
               </span>
@@ -180,9 +171,7 @@ export function FamilyMemberContactCard({
           </div>
 
           <div>
-            <span className="block text-xs font-medium text-slate-500">
-              Số điện thoại khẩn cấp
-            </span>
+            <span className="block text-xs font-medium text-slate-500">Số điện thoại khẩn cấp</span>
             <span className="mt-1 block font-mono text-sm font-semibold text-slate-900">
               {member.emergencyPhone ?? member.phone ?? '0912 345 678'}
             </span>

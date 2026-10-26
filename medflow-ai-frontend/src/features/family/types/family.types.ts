@@ -1,12 +1,5 @@
 export type RelationshipType =
-  | 'Bản thân'
-  | 'Con trai'
-  | 'Con gái'
-  | 'Vợ'
-  | 'Chồng'
-  | 'Mẹ ruột'
-  | 'Bố ruột'
-  | 'Khác';
+  'Bản thân' | 'Con trai' | 'Con gái' | 'Vợ' | 'Chồng' | 'Mẹ ruột' | 'Bố ruột' | 'Khác';
 
 export type RelationshipStatus = 'ACTIVE' | 'PENDING' | 'REVOKED' | 'NEEDS_REVIEW';
 

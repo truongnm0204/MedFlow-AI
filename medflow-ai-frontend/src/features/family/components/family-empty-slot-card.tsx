@@ -11,9 +11,7 @@ export function FamilyEmptySlotCard({ onAddMember }: FamilyEmptySlotCardProps) {
         <Plus className="h-5 w-5 stroke-[2.5]" />
       </div>
 
-      <h4 className="mt-3 text-sm font-bold text-slate-800">
-        Thêm hồ sơ người thân mới
-      </h4>
+      <h4 className="mt-3 text-sm font-bold text-slate-800">Thêm hồ sơ người thân mới</h4>
 
       <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-slate-400">
         Liên kết hồ sơ cha mẹ, vợ/chồng hoặc con cái để thuận tiện đăng ký lịch khám bệnh chuyên

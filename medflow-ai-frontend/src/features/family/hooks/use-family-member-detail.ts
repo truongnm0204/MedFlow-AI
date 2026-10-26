@@ -10,4 +10,3 @@ export function useFamilyMemberDetail(memberId: string): UseQueryResult<FamilyMe
     enabled: Boolean(memberId),
   });
 }
-

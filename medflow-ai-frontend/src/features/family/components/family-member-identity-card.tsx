@@ -63,9 +63,7 @@ export function FamilyMemberIdentityCard({ member }: FamilyMemberIdentityCardPro
             </span>
             <Lock className="h-3.5 w-3.5 text-slate-400" />
           </div>
-          <p className="mt-1.5 text-base font-semibold text-slate-900">
-            {member.fullName}
-          </p>
+          <p className="mt-1.5 text-base font-semibold text-slate-900">{member.fullName}</p>
         </div>
 
         {/* Field 2: Ngày sinh & Tuổi */}

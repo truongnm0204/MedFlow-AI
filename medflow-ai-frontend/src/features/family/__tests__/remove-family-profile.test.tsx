@@ -53,7 +53,9 @@ describe('Remove Family Profile (M2-001)', () => {
 
     // Modal hiển thị
     expect(screen.getByText('Gỡ liên kết Hồ sơ Người thân')).toBeInTheDocument();
-    expect(screen.getByText(/Hủy ủy quyền quản lý hồ sơ khám chữa bệnh ngoại trú/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Hủy ủy quyền quản lý hồ sơ khám chữa bệnh ngoại trú/i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Lưu ý bảo mật EHR:/i)).toBeInTheDocument();
   });
 

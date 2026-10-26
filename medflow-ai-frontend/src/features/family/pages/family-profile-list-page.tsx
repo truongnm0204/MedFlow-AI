@@ -38,11 +38,11 @@ export function FamilyProfileListPage() {
       <main className="flex-1 pt-5 pb-16">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           {/* Breadcrumb */}
-          <nav aria-label="Breadcrumb" className="mb-6 flex items-center gap-2 text-xs text-slate-500">
-            <Link
-              to="/"
-              className="flex items-center gap-1.5 transition-colors hover:text-sky-600"
-            >
+          <nav
+            aria-label="Breadcrumb"
+            className="mb-6 flex items-center gap-2 text-xs text-slate-500"
+          >
+            <Link to="/" className="flex items-center gap-1.5 transition-colors hover:text-sky-600">
               <Home className="h-3.5 w-3.5" />
               <span>Trang chủ</span>
             </Link>
@@ -73,9 +73,7 @@ export function FamilyProfileListPage() {
                   <span className="text-xs text-slate-500">Đang quản lý:</span>
                 </div>
                 <div className="flex items-baseline gap-1">
-                  <span className="font-bold text-slate-900">
-                    {members.length}
-                  </span>
+                  <span className="font-bold text-slate-900">{members.length}</span>
                   <span className="text-[11px] text-slate-400">hồ sơ thành viên</span>
                 </div>
               </div>
@@ -105,9 +103,7 @@ export function FamilyProfileListPage() {
           </div>
 
           {/* Empty Slot Card to add more */}
-          <FamilyEmptySlotCard
-            onAddMember={() => setIsAddModalOpen(true)}
-          />
+          <FamilyEmptySlotCard onAddMember={() => setIsAddModalOpen(true)} />
         </div>
       </main>
 

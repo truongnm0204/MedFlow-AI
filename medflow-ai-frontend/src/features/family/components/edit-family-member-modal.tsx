@@ -58,7 +58,8 @@ function EditFamilyMemberForm({ member, onClose, onSave }: EditFamilyMemberFormP
     // Parse Họ tên & Mối quan hệ
     const parts = emergencyNameAndRel.split('-').map((s) => s.trim());
     const emergencyContactName = parts[0] || member.emergencyContactName || 'Nguyễn Văn An';
-    const emergencyContactRelation = parts[1] || member.emergencyContactRelation || 'Chủ tài khoản chính';
+    const emergencyContactRelation =
+      parts[1] || member.emergencyContactRelation || 'Chủ tài khoản chính';
 
     const inputData: UpdateFamilyMemberInput = {
       phone: phone.trim() || undefined,
@@ -122,9 +123,9 @@ function EditFamilyMemberForm({ member, onClose, onSave }: EditFamilyMemberFormP
           <Info className="h-3.5 w-3.5" />
         </div>
         <p className="text-xs leading-relaxed text-slate-700">
-          <strong className="font-semibold text-sky-900">Lưu ý:</strong> Để đảm bảo an toàn pháp
-          lý của Hồ sơ bệnh án điện tử, Họ tên và Số CCCD/Mã bệnh nhân được khóa cố định. Bệnh nhân
-          có thể tự cập nhật Số điện thoại, Email, Địa chỉ nơi ở và Người liên hệ khẩn cấp.
+          <strong className="font-semibold text-sky-900">Lưu ý:</strong> Để đảm bảo an toàn pháp lý
+          của Hồ sơ bệnh án điện tử, Họ tên và Số CCCD/Mã bệnh nhân được khóa cố định. Bệnh nhân có
+          thể tự cập nhật Số điện thoại, Email, Địa chỉ nơi ở và Người liên hệ khẩn cấp.
         </p>
       </div>
 
@@ -208,7 +209,10 @@ function EditFamilyMemberForm({ member, onClose, onSave }: EditFamilyMemberFormP
 
             {/* Email */}
             <div>
-              <label htmlFor="family-edit-email" className="block text-xs font-semibold text-slate-700">
+              <label
+                htmlFor="family-edit-email"
+                className="block text-xs font-semibold text-slate-700"
+              >
                 Email nhận kết quả xét nghiệm / đơn thuốc <span className="text-rose-500">*</span>
               </label>
               <div className="relative mt-1.5">
@@ -231,15 +235,18 @@ function EditFamilyMemberForm({ member, onClose, onSave }: EditFamilyMemberFormP
                 <p className="mt-1 text-xs text-rose-600">{errors.email}</p>
               ) : (
                 <p className="mt-1.5 text-[11px] text-slate-500">
-                  File kết quả xét nghiệm định dạng PDF kèm chữ ký số bảo mật sẽ được gửi về hộp
-                  thư này.
+                  File kết quả xét nghiệm định dạng PDF kèm chữ ký số bảo mật sẽ được gửi về hộp thư
+                  này.
                 </p>
               )}
             </div>
 
             {/* Address */}
             <div>
-              <label htmlFor="family-edit-address" className="block text-xs font-semibold text-slate-700">
+              <label
+                htmlFor="family-edit-address"
+                className="block text-xs font-semibold text-slate-700"
+              >
                 Địa chỉ thường trú / nơi ở hiện tại <span className="text-rose-500">*</span>
               </label>
               <div className="relative mt-1.5">
@@ -268,7 +275,10 @@ function EditFamilyMemberForm({ member, onClose, onSave }: EditFamilyMemberFormP
               </h5>
               <div className="mt-2.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label htmlFor="family-edit-emergency-name" className="block text-[11px] font-medium text-slate-500">
+                  <label
+                    htmlFor="family-edit-emergency-name"
+                    className="block text-[11px] font-medium text-slate-500"
+                  >
                     Họ tên & mối quan hệ
                   </label>
                   <div className="relative mt-1">
@@ -285,7 +295,10 @@ function EditFamilyMemberForm({ member, onClose, onSave }: EditFamilyMemberFormP
                 </div>
 
                 <div>
-                  <label htmlFor="family-edit-emergency-phone" className="block text-[11px] font-medium text-slate-500">
+                  <label
+                    htmlFor="family-edit-emergency-phone"
+                    className="block text-[11px] font-medium text-slate-500"
+                  >
                     Số điện thoại khẩn cấp
                   </label>
                   <div className="relative mt-1">
@@ -347,14 +360,8 @@ export function EditFamilyMemberModal({
   return (
     <Modal open={open} onClose={onClose} maxWidth="max-w-2xl">
       {open && member && (
-        <EditFamilyMemberForm
-          key={member.id}
-          member={member}
-          onClose={onClose}
-          onSave={onSave}
-        />
+        <EditFamilyMemberForm key={member.id} member={member} onClose={onClose} onSave={onSave} />
       )}
     </Modal>
   );
 }
-

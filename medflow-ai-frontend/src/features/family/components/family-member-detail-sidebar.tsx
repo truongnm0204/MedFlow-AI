@@ -19,8 +19,7 @@ export function FamilyMemberDetailSidebar({
     canViewMedicalRecords: true,
     relationshipStatus: 'ACTIVE',
   };
-  const canBook =
-    permissions.canBookAppointments && permissions.relationshipStatus === 'ACTIVE';
+  const canBook = permissions.canBookAppointments && permissions.relationshipStatus === 'ACTIVE';
 
   return (
     <div className="space-y-5">

@@ -62,10 +62,7 @@ export const createFamilyMemberSchema = z.object({
       message: 'Email nhận kết quả không hợp lệ',
     })
     .optional(),
-  address: z
-    .string()
-    .trim()
-    .min(5, 'Địa chỉ thường trú tối thiểu 5 ký tự'),
+  address: z.string().trim().min(5, 'Địa chỉ thường trú tối thiểu 5 ký tự'),
   emergencyContactName: z.string().trim().optional(),
   emergencyContactRelation: z.string().trim().optional(),
   emergencyPhone: z
@@ -94,10 +91,7 @@ export const updateFamilyMemberSchema = z.object({
       message: 'Email nhận kết quả không hợp lệ',
     })
     .optional(),
-  address: z
-    .string()
-    .trim()
-    .min(5, 'Địa chỉ thường trú tối thiểu 5 ký tự'),
+  address: z.string().trim().min(5, 'Địa chỉ thường trú tối thiểu 5 ký tự'),
   emergencyContactName: z
     .string()
     .trim()
@@ -114,5 +108,3 @@ export const updateFamilyMemberSchema = z.object({
 });
 
 export type UpdateFamilyMemberInput = z.infer<typeof updateFamilyMemberSchema>;
-
-

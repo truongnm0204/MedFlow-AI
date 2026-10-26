@@ -83,4 +83,3 @@ describe('Create Family Profile (M1-031)', () => {
     expect(screen.getAllByRole('button', { name: /Thêm người thân/i }).length).toBeGreaterThan(0);
   });
 });
-
