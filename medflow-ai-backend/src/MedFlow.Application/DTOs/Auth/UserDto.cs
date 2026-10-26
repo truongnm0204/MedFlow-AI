@@ -1,8 +1,7 @@
 namespace MedFlow.Application.DTOs.Auth;
 
 public sealed record UserDto(
-    Guid Id,
-    string Username,
+    long Id,
     string Email,
     string? FullName,
     string[] Roles,

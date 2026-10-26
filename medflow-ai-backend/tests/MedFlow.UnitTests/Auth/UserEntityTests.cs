@@ -45,28 +45,26 @@ public sealed class UserEntityTests
         var u = new User { FailedLoginAttempts = 3 };
         u.FailedLoginAttempts = 0;
         u.LockedUntil = null;
-        u.LastLoginAt = DateTime.UtcNow;
 
         Assert.Equal(0, u.FailedLoginAttempts);
         Assert.Null(u.LockedUntil);
-        Assert.NotNull(u.LastLoginAt);
     }
 
     [Fact]
-    public void RefreshToken_IsActive_WhenNotRevokedAndNotExpired()
+    public void AuthSession_IsActive_WhenNotRevokedAndNotExpired()
     {
-        var token = new RefreshToken { ExpiresAt = DateTime.UtcNow.AddDays(7) };
-        Assert.True(token.IsActive);
+        var session = new AuthSession { ExpiresAt = DateTime.UtcNow.AddDays(7) };
+        Assert.True(session.IsActive);
 
-        token.RevokedAt = DateTime.UtcNow;
-        Assert.False(token.IsActive);
+        session.RevokedAt = DateTime.UtcNow;
+        Assert.False(session.IsActive);
     }
 
     [Fact]
-    public void RefreshToken_NotActive_WhenExpired()
+    public void AuthSession_NotActive_WhenExpired()
     {
-        var token = new RefreshToken { ExpiresAt = DateTime.UtcNow.AddMinutes(-1) };
-        Assert.False(token.IsActive);
+        var session = new AuthSession { ExpiresAt = DateTime.UtcNow.AddMinutes(-1) };
+        Assert.False(session.IsActive);
     }
 
     [Fact]

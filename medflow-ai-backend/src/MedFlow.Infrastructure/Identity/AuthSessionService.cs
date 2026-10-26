@@ -8,39 +8,40 @@ using Microsoft.Extensions.Configuration;
 
 namespace MedFlow.Infrastructure.Identity;
 
-public class RefreshTokenService : IRefreshTokenService
+public class AuthSessionService : IAuthSessionService
 {
     private readonly MedFlowDbContext _db;
     private readonly IConfiguration _configuration;
 
-    public RefreshTokenService(MedFlowDbContext db, IConfiguration configuration)
+    public AuthSessionService(MedFlowDbContext db, IConfiguration configuration)
     {
         _db = db;
         _configuration = configuration;
     }
 
-    public async Task<RefreshTokenResult> GenerateAsync(Guid userId, string? createdByIp, CancellationToken ct = default)
+    public async Task<AuthSessionResult> GenerateAsync(long userId, string? createdByIp, CancellationToken ct = default)
     {
         var expiryDays = int.TryParse(_configuration["Jwt:RefreshTokenExpiryDays"], out var d) ? d : 7;
         var rawToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
-        var entity = new RefreshToken
+        var entity = new AuthSession
         {
             UserId = userId,
-            TokenHash = ComputeHash(rawToken),
+            RefreshTokenHash = ComputeHash(rawToken),
             ExpiresAt = DateTime.UtcNow.AddDays(expiryDays),
             CreatedByIp = createdByIp,
+            CreatedAt = DateTime.UtcNow,
         };
-        _db.RefreshTokens.Add(entity);
+        _db.AuthSessions.Add(entity);
         await _db.SaveChangesAsync(ct);
-        return new RefreshTokenResult { RawToken = rawToken, Entity = entity };
+        return new AuthSessionResult { RawToken = rawToken, Entity = entity };
     }
 
     public async Task<RotateResult> RotateAsync(string rawToken, string? ipAddress, CancellationToken ct = default)
     {
         var hash = ComputeHash(rawToken);
-        var existing = await _db.RefreshTokens
-            .Include(rt => rt.User)
-            .FirstOrDefaultAsync(rt => rt.TokenHash == hash, ct);
+        var existing = await _db.AuthSessions
+            .Include(s => s.User)
+            .FirstOrDefaultAsync(s => s.RefreshTokenHash == hash, ct);
 
         if (existing is null)
             return new RotateResult();
@@ -60,12 +61,12 @@ public class RefreshTokenService : IRefreshTokenService
         // Atomic UPDATE: chỉ revoke khi token vẫn active — chống race condition
         // khi 2 request refresh cùng token song song (mỗi request chỉ 1 cái thắng).
         var now = DateTime.UtcNow;
-        var updated = await _db.RefreshTokens
-            .Where(rt => rt.Id == existing.Id && rt.RevokedAt == null)
+        var updated = await _db.AuthSessions
+            .Where(s => s.Id == existing.Id && s.RevokedAt == null)
             .ExecuteUpdateAsync(s => s
-                .SetProperty(rt => rt.RevokedAt, now)
-                .SetProperty(rt => rt.RevokedByIp, ipAddress)
-                .SetProperty(rt => rt.ReplacedByTokenHash, newToken.Entity.TokenHash), ct);
+                .SetProperty(x => x.RevokedAt, now)
+                .SetProperty(x => x.RevokedByIp, ipAddress)
+                .SetProperty(x => x.ReplacedByTokenHash, newToken.Entity.RefreshTokenHash), ct);
 
         if (updated == 0)
         {
@@ -77,7 +78,7 @@ public class RefreshTokenService : IRefreshTokenService
         // Đồng bộ entity in-memory đã track (ExecuteUpdate bypass change tracker).
         existing.RevokedAt = now;
         existing.RevokedByIp = ipAddress;
-        existing.ReplacedByTokenHash = newToken.Entity.TokenHash;
+        existing.ReplacedByTokenHash = newToken.Entity.RefreshTokenHash;
 
         return new RotateResult
         {
@@ -91,7 +92,7 @@ public class RefreshTokenService : IRefreshTokenService
     public async Task RevokeAsync(string rawToken, string? ipAddress, CancellationToken ct = default)
     {
         var hash = ComputeHash(rawToken);
-        var token = await _db.RefreshTokens.FirstOrDefaultAsync(rt => rt.TokenHash == hash, ct);
+        var token = await _db.AuthSessions.FirstOrDefaultAsync(s => s.RefreshTokenHash == hash, ct);
         if (token is null || token.RevokedAt is not null)
             return;
 
@@ -100,10 +101,10 @@ public class RefreshTokenService : IRefreshTokenService
         await _db.SaveChangesAsync(ct);
     }
 
-    public async Task RevokeAllForUserAsync(Guid userId, string? ipAddress, CancellationToken ct = default)
+    public async Task RevokeAllForUserAsync(long userId, string? ipAddress, CancellationToken ct = default)
     {
-        var tokens = await _db.RefreshTokens
-            .Where(rt => rt.UserId == userId && rt.RevokedAt == null)
+        var tokens = await _db.AuthSessions
+            .Where(s => s.UserId == userId && s.RevokedAt == null)
             .ToListAsync(ct);
 
         foreach (var token in tokens)
