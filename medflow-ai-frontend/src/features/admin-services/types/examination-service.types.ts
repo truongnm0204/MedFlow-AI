@@ -1,4 +1,4 @@
-export type ServiceCategory = 'Khám Lâm sàng' | 'Hội chẩn Lâm sàng';
+export type ServiceCategory = 'Khám Lâm sàng' | 'Hội chẩn Lâm sàng' | 'Cận lâm sàng kỹ thuật';
 
 export type ServiceStatus = 'ACTIVE' | 'SUSPENDED';
 
