@@ -103,69 +103,94 @@ export function DoctorListPage() {
       <main className="mx-auto max-w-[1720px] space-y-6 px-6 py-6">
         <DoctorMetrics doctors={doctors} />
         <section
-          className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-white p-4 shadow-sm"
+          className="space-y-3 rounded-lg border border-border bg-white p-4 shadow-sm"
           aria-label="Tìm kiếm và lọc bác sĩ"
         >
-          <div className="flex min-w-64 flex-1 items-center gap-2 rounded border border-border bg-canvas px-3 py-2.5">
-            <img src="/assets/admin-doctors/list-14.svg" alt="" />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={(event) => updateFilter(setQuery, event.target.value)}
-              placeholder="Tìm theo mã BS, họ tên, chuyên khoa, CCHN..."
-              className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-slate-400"
-              aria-label="Tìm bác sĩ"
-            />
-            <kbd className="hidden rounded border border-border bg-white px-1.5 text-[10px] text-sub sm:block">
-              Ctrl + K
-            </kbd>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex min-w-80 flex-1 items-center gap-2.5 rounded-lg border border-border bg-canvas px-3.5 py-2.5 transition-colors focus-within:border-primary focus-within:bg-white focus-within:ring-1 focus-within:ring-primary">
+              <img src="/assets/admin-doctors/list-14.svg" alt="" />
+              <input
+                ref={searchRef}
+                value={query}
+                onChange={(event) => updateFilter(setQuery, event.target.value)}
+                placeholder="Tìm theo mã BS, họ tên, chuyên khoa, CCHN..."
+                className="min-w-0 flex-1 bg-transparent text-xs text-ink outline-none placeholder:text-slate-400"
+                aria-label="Tìm bác sĩ"
+              />
+              <kbd className="hidden rounded border border-border bg-white px-1.5 py-0.5 text-[10px] font-medium text-sub sm:inline-block shadow-xs">
+                Ctrl + K
+              </kbd>
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => searchRef.current?.focus()}
+              className="gap-2"
+            >
+              <img src="/assets/admin-doctors/list-14.svg" alt="" className="h-3.5 w-3.5" />
+              Tìm kiếm
+            </Button>
           </div>
-          <select
-            aria-label="Lọc khoa phòng"
-            className="rounded border border-border bg-white px-3 py-2.5 text-xs"
-            value={department}
-            onChange={(event) => updateFilter(setDepartment, event.target.value)}
-          >
-            <option value="">Tất cả khoa phòng</option>
-            {DEPARTMENTS.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </select>
-          <select
-            aria-label="Lọc học hàm học vị"
-            className="rounded border border-border bg-white px-3 py-2.5 text-xs"
-            value={degree}
-            onChange={(event) => updateFilter(setDegree, event.target.value)}
-          >
-            <option value="">Tất cả học hàm/học vị</option>
-            {DEGREES.map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </select>
-          <select
-            aria-label="Lọc trạng thái"
-            className="rounded border border-border bg-white px-3 py-2.5 text-xs"
-            value={status}
-            onChange={(event) => updateFilter(setStatus, event.target.value)}
-          >
-            <option value="">Tất cả trạng thái</option>
-            <option value="true">Đang nhận lịch</option>
-            <option value="false">Tạm ngừng nhận lịch</option>
-          </select>
-          <Button variant="secondary" size="sm" onClick={() => downloadCsv(filtered)}>
-            <img src="/assets/admin-doctors/list-17.svg" alt="" />
-            Xuất CSV
-          </Button>
-          <Button variant="secondary" size="sm" disabled title="Tùy chọn cột sẽ có ở phiên bản sau">
-            <img src="/assets/admin-doctors/list-18.svg" alt="" />
-          </Button>
-          <Link
-            to="/admin/doctors/new"
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-primary-dark"
-          >
-            <img src="/assets/admin-doctors/list-19.svg" alt="" />
-            Thêm Hồ sơ Bác sĩ <kbd className="rounded bg-white/20 px-1.5 py-0.5">F2</kbd>
-          </Link>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-100">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <select
+                aria-label="Lọc khoa phòng"
+                className="rounded-lg border border-border bg-white px-3 py-2 text-xs text-ink shadow-xs outline-none focus:border-primary"
+                value={department}
+                onChange={(event) => updateFilter(setDepartment, event.target.value)}
+              >
+                <option value="">Tất cả khoa phòng</option>
+                {DEPARTMENTS.map((item) => (
+                  <option key={item}>{item}</option>
+                ))}
+              </select>
+              <select
+                aria-label="Lọc học hàm học vị"
+                className="rounded-lg border border-border bg-white px-3 py-2 text-xs text-ink shadow-xs outline-none focus:border-primary"
+                value={degree}
+                onChange={(event) => updateFilter(setDegree, event.target.value)}
+              >
+                <option value="">Tất cả học hàm/học vị</option>
+                {DEGREES.map((item) => (
+                  <option key={item}>{item}</option>
+                ))}
+              </select>
+              <select
+                aria-label="Lọc trạng thái"
+                className="rounded-lg border border-border bg-white px-3 py-2 text-xs text-ink shadow-xs outline-none focus:border-primary"
+                value={status}
+                onChange={(event) => updateFilter(setStatus, event.target.value)}
+              >
+                <option value="">Tất cả trạng thái</option>
+                <option value="true">Đang nhận lịch</option>
+                <option value="false">Tạm ngừng nhận lịch</option>
+              </select>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={() => downloadCsv(filtered)}>
+                <img src="/assets/admin-doctors/list-17.svg" alt="" />
+                Xuất CSV
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled
+                title="Tùy chọn cột sẽ có ở phiên bản sau"
+              >
+                <img src="/assets/admin-doctors/list-18.svg" alt="" />
+              </Button>
+              <Link
+                to="/admin/doctors/new"
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary-dark transition-colors"
+              >
+                <img src="/assets/admin-doctors/list-19.svg" alt="" />
+                Thêm Hồ sơ Bác sĩ{' '}
+                <kbd className="rounded bg-white/20 px-1.5 py-0.5 text-[10px]">F2</kbd>
+              </Link>
+            </div>
+          </div>
         </section>
         <section
           className="overflow-hidden rounded-lg border border-border bg-white shadow-sm"
