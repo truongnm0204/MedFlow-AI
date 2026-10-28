@@ -6,6 +6,8 @@ import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page'
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
+import { DiagnosticDashboardPage } from '@/features/diagnostic/pages/diagnostic-dashboard-page';
+import { DoctorDashboardPage } from '@/features/doctor/pages/doctor-dashboard-page';
 import { FamilyProfileDetailPage } from '@/features/family/pages/family-profile-detail-page';
 import { FamilyProfileListPage } from '@/features/family/pages/family-profile-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
@@ -19,6 +21,22 @@ export function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      <Route
+        path="/patient"
+        element={
+          <RequireAuth>
+            <HomePage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/patient/home"
+        element={
+          <RequireAuth>
+            <HomePage />
+          </RequireAuth>
+        }
+      />
       <Route
         path="/login"
         element={
@@ -40,6 +58,22 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <ReceptionDashboardPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor"
+        element={
+          <RequireAuth>
+            <DoctorDashboardPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic"
+        element={
+          <RequireAuth>
+            <DiagnosticDashboardPage />
           </RequireAuth>
         }
       />
