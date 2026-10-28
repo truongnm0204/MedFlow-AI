@@ -33,7 +33,13 @@ export function ExaminationServiceCatalogPage() {
   const activeService = useMemo(() => {
     if (selectedService) return selectedService;
     if (targetServiceId) {
-      return MOCK_EXAMINATION_SERVICES.find((s) => s.id === targetServiceId) ?? null;
+      return (
+        MOCK_EXAMINATION_SERVICES.find(
+          (s) =>
+            s.id === targetServiceId ||
+            s.serviceCode.toLowerCase() === targetServiceId.toLowerCase(),
+        ) ?? null
+      );
     }
     return null;
   }, [selectedService, targetServiceId]);
