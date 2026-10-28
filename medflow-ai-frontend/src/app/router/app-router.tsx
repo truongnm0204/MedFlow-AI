@@ -5,6 +5,7 @@ import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-moda
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
+import { DoctorSearchPage } from '@/features/appointment/pages/doctor-search-page';
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
@@ -23,6 +24,8 @@ export function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      <Route path="/doctors" element={<DoctorSearchPage />} />
+      <Route path="/appointment/doctors" element={<DoctorSearchPage />} />
       <Route
         path="/patient"
         element={
