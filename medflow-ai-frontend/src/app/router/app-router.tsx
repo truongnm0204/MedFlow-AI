@@ -21,6 +21,7 @@ export function AppRouter() {
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/doctors" element={<DoctorSearchPage />} />
+      <Route path="/doctors/:doctorId" element={<DoctorSearchPage />} />
       <Route path="/appointment/doctors" element={<DoctorSearchPage />} />
       <Route
         path="/login"

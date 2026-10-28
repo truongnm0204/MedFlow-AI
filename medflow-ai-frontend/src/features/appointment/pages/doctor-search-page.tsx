@@ -1,19 +1,26 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Calendar, ChevronRight, Home } from 'lucide-react';
 
 import { AppHeader } from '@/shared/components/layout/app-header';
 import { PatientFooter } from '@/shared/components/layout/patient-footer';
 
+import { DoctorDetailModal } from '../components/doctor-detail-modal';
 import { DoctorFilterBar } from '../components/doctor-filter-bar';
 import { DoctorGrid } from '../components/doctor-grid';
 import { DoctorPagination } from '../components/doctor-pagination';
 import { DoctorSearchBar } from '../components/doctor-search-bar';
 import { DoctorSpecialtyTabs } from '../components/doctor-specialty-tabs';
 import { useDoctorSearch } from '../hooks/use-doctor-search';
-import type { DoctorFilterParams } from '../types/doctor-search.types';
+import type { DoctorFilterParams, DoctorSearchResult } from '../types/doctor-search.types';
 
 export function DoctorSearchPage() {
+  const { doctorId } = useParams();
+  const navigate = useNavigate();
+
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(null);
+  const activeDoctorId = selectedDoctorId ?? doctorId ?? null;
+
   const [filters, setFilters] = useState<DoctorFilterParams>({
     keyword: '',
     specialty: 'ALL',
@@ -74,6 +81,17 @@ export function DoctorSearchPage() {
   const handlePageChange = (newPage: number) => {
     setFilters((prev) => ({ ...prev, page: newPage }));
     window.scrollTo({ top: 180, behavior: 'smooth' });
+  };
+
+  const handleViewProfile = (doctor: DoctorSearchResult) => {
+    setSelectedDoctorId(doctor.id);
+  };
+
+  const handleCloseModal = () => {
+    setSelectedDoctorId(null);
+    if (doctorId) {
+      navigate('/doctors', { replace: true });
+    }
   };
 
   return (
@@ -141,6 +159,7 @@ export function DoctorSearchPage() {
               doctors={doctors}
               isLoading={isLoading}
               onResetFilters={handleResetFilters}
+              onViewProfile={handleViewProfile}
             />
           </section>
 
@@ -158,6 +177,15 @@ export function DoctorSearchPage() {
           )}
         </div>
       </main>
+
+      {/* Doctor Detail Modal */}
+      {activeDoctorId && (
+        <DoctorDetailModal
+          doctorId={activeDoctorId}
+          isOpen={Boolean(activeDoctorId)}
+          onClose={handleCloseModal}
+        />
+      )}
 
       <PatientFooter />
     </div>
