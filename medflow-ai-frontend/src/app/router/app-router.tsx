@@ -20,6 +20,22 @@ export function AppRouter() {
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route
+        path="/patient"
+        element={
+          <RequireAuth>
+            <HomePage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/patient/home"
+        element={
+          <RequireAuth>
+            <HomePage />
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/login"
         element={
           <GuestOnly>
