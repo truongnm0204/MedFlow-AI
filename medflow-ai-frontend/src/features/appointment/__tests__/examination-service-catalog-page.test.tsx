@@ -92,11 +92,11 @@ describe('ExaminationServiceCatalogPage (SCR-APT-03)', () => {
 
     // Modal dialog opens
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText('Mô tả dịch vụ')).toBeInTheDocument();
-    expect(screen.getByText('Lưu ý chuẩn bị trước khi khám')).toBeInTheDocument();
+    expect(screen.getByText('MỤC ĐÍCH KHÁM & ĐỐI TƯỢNG CHỈ ĐỊNH')).toBeInTheDocument();
+    expect(screen.getByText('QUY TRÌNH THĂM KHÁM TIÊU CHUẨN (4 BƯỚC)')).toBeInTheDocument();
 
     // Close modal
-    const closeBtn = screen.getByRole('button', { name: 'Đóng' });
+    const closeBtn = screen.getByRole('button', { name: 'Đóng / Quay lại danh mục' });
     fireEvent.click(closeBtn);
 
     await waitFor(() => {

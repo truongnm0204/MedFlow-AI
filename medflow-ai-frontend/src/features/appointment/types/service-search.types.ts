@@ -2,12 +2,20 @@ export type ServiceCategory = 'all' | 'specialty' | 'package' | 'pediatric' | 'g
 
 export type ServiceBadgeType = 'online' | 'endoscopy' | 'pediatric';
 
+export interface ServiceStandardStep {
+  stepNumber: number;
+  title: string;
+  description: string;
+}
+
 export interface ExaminationService {
   id: string;
   serviceCode: string;
   name: string;
   departmentId: string;
   departmentName: string;
+  location?: string;
+  isOnlineBookingActive?: boolean;
   badgeType?: ServiceBadgeType;
   badgeLabel?: string;
   durationMinutes: number;
@@ -20,6 +28,10 @@ export interface ExaminationService {
   category: ServiceCategory;
   preparationNotes?: string[];
   targetAudience?: string;
+  purposeSummary?: string;
+  highlightSymptoms?: string[];
+  suitableFor?: string;
+  standardSteps?: ServiceStandardStep[];
 }
 
 export interface ServiceSearchParams {
@@ -38,4 +50,3 @@ export interface ServiceSearchResponse {
   pageSize: number;
   totalPages: number;
 }
-

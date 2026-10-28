@@ -18,4 +18,3 @@ export const serviceSearchParamsSchema = z.object({
 });
 
 export type ServiceSearchParamsInput = z.infer<typeof serviceSearchParamsSchema>;
-

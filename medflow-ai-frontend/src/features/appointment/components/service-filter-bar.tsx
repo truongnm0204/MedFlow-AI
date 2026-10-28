@@ -94,4 +94,3 @@ export function ServiceFilterBar({
     </div>
   );
 }
-

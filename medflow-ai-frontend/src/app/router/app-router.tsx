@@ -22,7 +22,9 @@ export function AppRouter() {
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/services" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
       <Route path="/appointment/services" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/appointment/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
       <Route path="/doctors" element={<DoctorSearchPage />} />
       <Route path="/doctors/:doctorId" element={<DoctorSearchPage />} />
       <Route path="/appointment/doctors" element={<DoctorSearchPage />} />
