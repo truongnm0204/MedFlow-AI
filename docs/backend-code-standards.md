@@ -172,4 +172,4 @@ public class AppointmentServiceTests
 - `dotnet build` clean — warnings treated as real problems (fix or justify).
 - `dotnet test` must pass (UnitTests + IntegrationTests) before push.
 - New public API → integration test; new business rule → unit test.
-- Files under ~200 lines; one type per file; extract when it grows.
+- One primary public type per file; extract when responsibilities diverge.

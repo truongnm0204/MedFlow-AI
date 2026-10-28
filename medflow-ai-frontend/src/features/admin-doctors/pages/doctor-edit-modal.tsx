@@ -1,3 +1,4 @@
+import { Info } from 'lucide-react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
@@ -81,7 +82,7 @@ export function DoctorEditModal() {
         />
         <div className="overflow-y-auto">
           <div className="mx-6 mt-5 flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-[11px] leading-relaxed text-sky-900">
-            <img src="/assets/admin-doctors/edit-03.svg" alt="" />
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
             <p>
               <b>Lưu ý vận hành Khám Ngoại trú:</b> Thông tin buồng khám mặc định và trạng thái nhận
               lịch của Bác sĩ hiện chỉ được chỉnh sửa trên dữ liệu minh họa trong phiên này.

@@ -1,3 +1,4 @@
+import { Stethoscope } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 
@@ -35,7 +36,7 @@ export function AdminDoctorShell({ children, showTabs = false }: AdminDoctorShel
               aria-label="Danh mục Bác sĩ"
             >
               <span className="grid h-9 w-9 place-items-center rounded-md bg-primary">
-                <img src="/assets/admin-doctors/list-27.svg" alt="" />
+                <Stethoscope className="h-5 w-5 text-white" aria-hidden="true" />
               </span>
               <span className="leading-tight">
                 <span className="block text-base font-bold tracking-tight">

@@ -1,38 +1,44 @@
-import type { Doctor } from '../types/doctor.types';
+import { GraduationCap, UserCheck, Users, UserX, type LucideIcon } from 'lucide-react';
 
-const icon = (number: string) => `/assets/admin-doctors/list-${number}.svg`;
+import type { Doctor } from '../types/doctor.types';
 
 export function DoctorMetrics({ doctors }: { doctors: Doctor[] }) {
   const active = doctors.filter((doctor) => doctor.active).length;
   const advanced = doctors.filter((doctor) => /Thạc sĩ|PGS|khoa II/.test(doctor.degree)).length;
-  const items = [
+  const items: Array<{
+    title: string;
+    count: number;
+    note: string;
+    Icon: LucideIcon;
+    tone: string;
+  }> = [
     {
       title: 'TỔNG SỐ BÁC SĨ CƠ SỞ',
       count: doctors.length,
       note: 'Lâm sàng • Cận lâm sàng',
-      image: icon('10'),
-      tone: 'bg-sky-50',
+      Icon: Users,
+      tone: 'bg-sky-50 text-primary',
     },
     {
       title: 'ĐANG NHẬN LỊCH KHÁM',
       count: active,
       note: 'Sẵn sàng tiếp nhận',
-      image: icon('11'),
-      tone: 'bg-emerald-50',
+      Icon: UserCheck,
+      tone: 'bg-emerald-50 text-emerald-600',
     },
     {
       title: 'TẠM NGỪNG NHẬN LỊCH',
       count: doctors.length - active,
       note: 'Hội chẩn / NCKH / Nghỉ phép',
-      image: icon('12'),
-      tone: 'bg-amber-50',
+      Icon: UserX,
+      tone: 'bg-amber-50 text-amber-600',
     },
     {
       title: 'TRÌNH ĐỘ SAU ĐẠI HỌC',
       count: advanced,
       note: 'ThS, BSCKII, PGS, TS',
-      image: icon('13'),
-      tone: 'bg-indigo-50',
+      Icon: GraduationCap,
+      tone: 'bg-indigo-50 text-indigo-600',
     },
   ];
   return (
@@ -51,7 +57,7 @@ export function DoctorMetrics({ doctors }: { doctors: Doctor[] }) {
             <p className="mt-3 text-[11px] font-medium text-sub">{item.note}</p>
           </div>
           <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-md ${item.tone}`}>
-            <img src={item.image} alt="" />
+            <item.Icon className="h-5 w-5" aria-hidden="true" />
           </span>
         </div>
       ))}
