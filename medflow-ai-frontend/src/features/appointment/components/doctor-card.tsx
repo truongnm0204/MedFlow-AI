@@ -76,7 +76,7 @@ export function DoctorCard({ doctor, onViewProfile }: DoctorCardProps) {
 
         {/* Room Info Box */}
         <div className="mt-3.5 flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-          <DoorClosed className="h-4 w-4 shrink-0 text-slate-400" />
+          <DoorClosed className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
           <span className="truncate font-medium">{doctor.room}</span>
         </div>
 
@@ -84,7 +84,7 @@ export function DoctorCard({ doctor, onViewProfile }: DoctorCardProps) {
         <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/50 p-2.5">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 text-xs text-slate-600">
-              <Clock className="h-3.5 w-3.5 text-sky-600" />
+              <Clock className="h-3.5 w-3.5 text-sky-600" aria-hidden="true" />
               <span>Lịch khám gần nhất:</span>
             </div>
             <span
