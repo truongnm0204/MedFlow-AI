@@ -1,3 +1,4 @@
+import { Save, UserCog } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 
 import type { Doctor } from '../types/doctor.types';
@@ -15,7 +16,7 @@ export function DoctorEditHeader({
     <header className="flex items-center justify-between border-b border-border bg-slate-50 px-6 py-4">
       <div className="flex min-w-0 items-center gap-3">
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-sky-100 bg-sky-50">
-          <img src="/assets/admin-doctors/edit-01.svg" alt="" />
+          <UserCog className="h-5 w-5 text-primary" aria-hidden="true" />
         </span>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -70,7 +71,7 @@ export function DoctorEditFooter({
           Hủy bỏ [Esc]
         </Button>
         <Button id="doctor-edit-submit" type="submit" size="sm">
-          <img src="/assets/admin-doctors/edit-12.svg" alt="" />
+          <Save className="h-4 w-4" aria-hidden="true" />
           Lưu hồ sơ Bác sĩ [Ctrl+S]
         </Button>
       </div>

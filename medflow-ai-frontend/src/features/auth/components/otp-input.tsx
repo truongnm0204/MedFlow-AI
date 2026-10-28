@@ -77,8 +77,8 @@ export function OtpInput({ value, onChange, disabled }: OtpInputProps) {
           aria-label={`Chữ số ${i + 1}`}
           className={`h-16 w-full rounded-xl border-2 bg-white text-center font-mono text-2xl font-bold
             text-ink shadow-sm transition-colors focus:outline-none disabled:opacity-60
-            ${digit ? 'border-[#0284c7]' : 'border-slate-300'}
-            focus:border-[#0ea5e9] focus:shadow-[0_0_0_4px_#e0f2fe]`}
+            ${digit ? 'border-primary' : 'border-slate-300'}
+            focus:border-sky-500 focus:ring-4 focus:ring-sky-100`}
         />
       ))}
     </div>

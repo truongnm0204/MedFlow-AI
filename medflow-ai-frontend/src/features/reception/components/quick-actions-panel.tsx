@@ -27,7 +27,13 @@ export function QuickActionsPanel({ actions, onAction }: QuickActionsPanelProps)
           <div
             className={`w-10 h-10 rounded-xl border flex items-center justify-center mb-3 transition-colors ${ACCENT_STYLES[action.accent]}`}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg
+              aria-hidden="true"
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={action.icon} />
             </svg>
           </div>

@@ -1,0 +1,161 @@
+import type {
+  AssignedPatientEntry,
+  DoctorQuickAction,
+  DoctorStats,
+  PendingDiagnosticItem,
+} from '../types/doctor.types';
+
+// Mock data cho M1 Doctor Role Landing — dữ liệu giả lập phục vụ hiển thị bàn khám.
+export const DOCTOR_WORKBENCH_META = {
+  defaultDoctorName: 'BS. CKII Nguyễn Văn Hùng',
+  roomCode: 'P.102',
+  departmentName: 'Khoa Nội Tổng Quát',
+  shiftLabel: 'Ca sáng 07:30–11:30',
+} as const;
+
+export const DOCTOR_STATS_MOCK: DoctorStats = {
+  assignedWaiting: 9,
+  inConsultation: 2,
+  pendingLabResults: 3,
+  completedToday: 18,
+};
+
+export const ASSIGNED_QUEUE_MOCK: AssignedPatientEntry[] = [
+  {
+    id: 'dq-1',
+    queueNo: 'B008',
+    patientName: 'Nguyễn Văn An',
+    patientCode: 'BN-2026-0102',
+    age: 58,
+    gender: 'Nam',
+    chiefComplaint: 'Đau tức ngực trái lan lên vai, khó thở khi gắng sức',
+    assignedAt: '08:10',
+    priority: 'URGENT',
+    status: 'IN_CONSULTATION',
+  },
+  {
+    id: 'dq-2',
+    queueNo: 'B009',
+    patientName: 'Trần Thị Mai',
+    patientCode: 'BN-2026-0145',
+    age: 34,
+    gender: 'Nữ',
+    chiefComplaint: 'Ho khan kéo dài 2 tuần kèm sốt nhẹ về chiều',
+    assignedAt: '08:18',
+    priority: 'NORMAL',
+    status: 'CALLED',
+  },
+  {
+    id: 'dq-3',
+    queueNo: 'B005',
+    patientName: 'Lê Hoàng Nam',
+    patientCode: 'BN-2026-0089',
+    age: 67,
+    gender: 'Nam',
+    chiefComplaint: 'Quay lại đọc kết quả xét nghiệm máu & điện tâm đồ',
+    assignedAt: '08:25',
+    priority: 'RETURN_RESULT',
+    status: 'WAITING',
+  },
+  {
+    id: 'dq-4',
+    queueNo: 'B010',
+    patientName: 'Phạm Thị Hoa',
+    patientCode: 'BN-2026-0211',
+    age: 72,
+    gender: 'Nữ',
+    chiefComplaint: 'Tái khám tăng huyết áp, chóng mặt khi thay đổi tư thế',
+    assignedAt: '08:30',
+    priority: 'ELDERLY',
+    status: 'WAITING',
+  },
+  {
+    id: 'dq-5',
+    queueNo: 'B006',
+    patientName: 'Võ Minh Tuấn',
+    patientCode: 'BN-2026-0174',
+    age: 45,
+    gender: 'Nam',
+    chiefComplaint: 'Đau thượng vị sau ăn, ợ chua nhiều về đêm',
+    assignedAt: '08:00',
+    priority: 'NORMAL',
+    status: 'AWAITING_RESULTS',
+  },
+  {
+    id: 'dq-6',
+    queueNo: 'B004',
+    patientName: 'Đặng Thu Thảo',
+    patientCode: 'BN-2026-0063',
+    age: 29,
+    gender: 'Nữ',
+    chiefComplaint: 'Khám nội tổng quát định kỳ, tư vấn chỉ số mỡ máu',
+    assignedAt: '07:45',
+    priority: 'NORMAL',
+    status: 'COMPLETED',
+  },
+];
+
+export const PENDING_DIAGNOSTICS_MOCK: PendingDiagnosticItem[] = [
+  {
+    id: 'diag-1',
+    orderCode: 'CLS-0921',
+    patientName: 'Lê Hoàng Nam',
+    patientCode: 'BN-2026-0089',
+    serviceName: 'Điện tâm đồ 12 chuyển đạo (ECG)',
+    orderedAt: '08:05',
+    status: 'RESULT_READY',
+  },
+  {
+    id: 'diag-2',
+    orderCode: 'CLS-0922',
+    patientName: 'Lê Hoàng Nam',
+    patientCode: 'BN-2026-0089',
+    serviceName: 'Tổng phân tích tế bào máu ngoại vi',
+    orderedAt: '08:05',
+    status: 'RESULT_READY',
+  },
+  {
+    id: 'diag-3',
+    orderCode: 'CLS-0925',
+    patientName: 'Võ Minh Tuấn',
+    patientCode: 'BN-2026-0174',
+    serviceName: 'Siêu âm ổ bụng tổng quát',
+    orderedAt: '08:20',
+    status: 'IN_PROGRESS',
+  },
+];
+
+export const DOCTOR_QUICK_ACTIONS_MOCK: DoctorQuickAction[] = [
+  {
+    id: 'call-next',
+    label: 'Gọi bệnh nhân tiếp theo',
+    description: 'Mời ca đủ điều kiện kế tiếp trong hàng đợi vào phòng khám P.102',
+    shortcut: 'F1',
+    accent: 'sky',
+    icon: 'M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z',
+  },
+  {
+    id: 'open-consultation',
+    label: 'Mở phiếu khám lâm sàng',
+    description: 'Ghi nhận sinh hiệu, triệu chứng, tiền sử bệnh và chẩn đoán ICD-10',
+    shortcut: 'F2',
+    accent: 'emerald',
+    icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
+  },
+  {
+    id: 'create-diagnostic',
+    label: 'Chỉ định cận lâm sàng',
+    description: 'Tạo phiếu chỉ định xét nghiệm, siêu âm, X-quang cho ca đang khám',
+    shortcut: 'F3',
+    accent: 'amber',
+    icon: 'M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z',
+  },
+  {
+    id: 'create-prescription',
+    label: 'Kê đơn thuốc điện tử',
+    description: 'Lập toa thuốc ngoại trú, kiểm tra liều dùng và hoàn tất lượt khám',
+    shortcut: 'F4',
+    accent: 'rose',
+    icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
+  },
+];
