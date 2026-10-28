@@ -10,7 +10,7 @@ export function DoctorsSection() {
             <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-sky-50 text-sky-700 text-xs font-semibold mb-2">
               ĐỘI NGŨ CHUYÊN GIA
             </div>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-[#0A2540] tracking-tight">
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight">
               Bác Sĩ Chuyên Khoa II & Tiến Sĩ Trực Khám
             </h2>
             <p className="text-xs sm:text-sm text-slate-500 mt-1">

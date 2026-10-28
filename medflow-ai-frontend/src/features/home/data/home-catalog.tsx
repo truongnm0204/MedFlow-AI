@@ -1,6 +1,7 @@
 import type { Doctor, JourneyStep, Specialty } from '../types/home.types';
 
 const svgProps = {
+  'aria-hidden': true,
   className: 'w-6 h-6 text-sky-600',
   fill: 'none',
   stroke: 'currentColor',

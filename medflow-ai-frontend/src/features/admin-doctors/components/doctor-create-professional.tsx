@@ -1,3 +1,4 @@
+import { Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import type { FieldErrors, UseFormRegister } from 'react-hook-form';
 
 import { DEGREES } from '../data/doctor-demo-data';
@@ -46,7 +47,7 @@ export function DoctorCreateCredentials({ register, errors }: Pick<Props, 'regis
           <div className="flex gap-2">
             <input className={doctorControlClass} {...register('license')} />
             <span className="mt-1.5 flex shrink-0 items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-2 text-[10px] text-emerald-700">
-              <img src="/assets/admin-doctors/create-12.svg" alt="" />
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
               Chưa xác minh · minh họa
             </span>
           </div>
@@ -122,7 +123,7 @@ export function DoctorCreateBiography({
               onClick={() => onHistoryChange(history.filter((_, itemIndex) => itemIndex !== index))}
               className="text-slate-400 hover:text-rose-600"
             >
-              <img src="/assets/admin-doctors/create-16.svg" alt="" />
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         ))}
@@ -132,7 +133,7 @@ export function DoctorCreateBiography({
         className="mt-3 w-full rounded border border-dashed border-slate-300 px-3 py-2 text-[11px] text-sub"
         onClick={() => onHistoryChange([...history, { year: '', description: '' }])}
       >
-        <img src="/assets/admin-doctors/create-17.svg" alt="" className="mr-1 inline-block" />
+        <Plus className="mr-1 inline-block h-3.5 w-3.5" aria-hidden="true" />
         Thêm mốc đào tạo / công tác mới
       </button>
     </DoctorCard>

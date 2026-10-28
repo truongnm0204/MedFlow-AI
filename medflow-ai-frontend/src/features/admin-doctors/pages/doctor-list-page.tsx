@@ -1,3 +1,4 @@
+import { Download, Search, SlidersHorizontal, UserPlus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 
@@ -107,7 +108,7 @@ export function DoctorListPage() {
           aria-label="Tìm kiếm và lọc bác sĩ"
         >
           <div className="flex min-w-64 flex-1 items-center gap-2 rounded border border-border bg-canvas px-3 py-2.5">
-            <img src="/assets/admin-doctors/list-14.svg" alt="" />
+            <Search className="h-4 w-4 text-slate-400" aria-hidden="true" />
             <input
               ref={searchRef}
               value={query}
@@ -153,17 +154,23 @@ export function DoctorListPage() {
             <option value="false">Tạm ngừng nhận lịch</option>
           </select>
           <Button variant="secondary" size="sm" onClick={() => downloadCsv(filtered)}>
-            <img src="/assets/admin-doctors/list-17.svg" alt="" />
+            <Download className="h-4 w-4" aria-hidden="true" />
             Xuất CSV
           </Button>
-          <Button variant="secondary" size="sm" disabled title="Tùy chọn cột sẽ có ở phiên bản sau">
-            <img src="/assets/admin-doctors/list-18.svg" alt="" />
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled
+            aria-label="Tùy chọn cột"
+            title="Tùy chọn cột sẽ có ở phiên bản sau"
+          >
+            <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
           </Button>
           <Link
             to="/admin/doctors/new"
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-primary-dark"
           >
-            <img src="/assets/admin-doctors/list-19.svg" alt="" />
+            <UserPlus className="h-4 w-4" aria-hidden="true" />
             Thêm Hồ sơ Bác sĩ <kbd className="rounded bg-white/20 px-1.5 py-0.5">F2</kbd>
           </Link>
         </section>
