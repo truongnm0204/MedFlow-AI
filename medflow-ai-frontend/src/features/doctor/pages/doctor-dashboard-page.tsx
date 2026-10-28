@@ -59,7 +59,7 @@ export function DoctorDashboardPage() {
   }, [queueFilter, searchTerm]);
 
   return (
-    <div className="min-h-screen flex bg-[#F8FAFC] text-slate-800 antialiased">
+    <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
       <DoctorSidebar
         activeItem={activeNav}
         doctorName={doctorDisplayName}

@@ -48,7 +48,7 @@ export function HeroSection() {
           <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
             CỔNG ĐẶT LỊCH & ĐIỀU PHỐI KHÁM NGOẠI TRÚ THÔNG MINH
           </span>
-          <h1 className="text-3xl leading-tight font-extrabold tracking-tight text-[#0A2540] sm:text-4xl lg:text-5xl">
+          <h1 className="text-3xl leading-tight font-extrabold tracking-tight text-navy sm:text-4xl lg:text-5xl">
             Đặt Lịch Khám Chuyên Khoa Nhanh Chóng, Không Chờ Đợi
           </h1>
           <p className="text-xs leading-relaxed text-slate-600 sm:text-sm">

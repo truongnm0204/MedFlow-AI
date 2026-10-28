@@ -111,8 +111,8 @@ export function AddFamilyMemberModal({
         </div>
 
         {/* Notice Box matching reference design */}
-        <div className="mt-5 flex items-start gap-3 rounded-2xl border border-sky-100 bg-[#f0f9ff] p-4 text-xs leading-relaxed text-sky-900">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+        <div className="mt-5 flex items-start gap-3 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-xs leading-relaxed text-sky-900">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" aria-hidden="true" />
           <p>
             <span className="font-bold">Lưu ý:</span> Để đảm bảo an toàn pháp lý của Hồ sơ bệnh án
             điện tử, thông tin định danh của người thân cần chính xác và trùng khớp với CCCD hoặc

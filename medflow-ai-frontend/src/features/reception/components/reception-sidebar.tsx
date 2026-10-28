@@ -45,6 +45,7 @@ export function ReceptionSidebar({
 
   return (
     <aside
+      aria-label="Điều hướng quầy tiếp đón"
       className={`bg-white border-r border-slate-200 flex flex-col transition-all duration-200 select-none ${
         isCollapsed ? 'w-[68px]' : 'w-[260px]'
       }`}
@@ -66,10 +67,18 @@ export function ReceptionSidebar({
         <button
           type="button"
           onClick={() => setIsCollapsed(!isCollapsed)}
+          aria-label={isCollapsed ? 'Mở rộng thanh bên' : 'Thu gọn thanh bên'}
+          aria-expanded={!isCollapsed}
           className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
           title={isCollapsed ? 'Mở rộng' : 'Thu gọn'}
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg
+            aria-hidden="true"
+            className="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -120,6 +129,7 @@ export function ReceptionSidebar({
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 <svg
+                  aria-hidden="true"
                   className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`}
                   fill="none"
                   stroke="currentColor"

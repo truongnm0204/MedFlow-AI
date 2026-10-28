@@ -9,7 +9,7 @@ export function GuaranteeSection() {
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
               CAM KẾT 100% MINH BẠCH VIỆN PHÍ (KHÔNG BHYT)
             </div>
-            <h3 className="text-lg sm:text-xl font-extrabold text-[#0A2540]">
+            <h3 className="text-lg sm:text-xl font-extrabold text-navy">
               Không Phụ Phí Ẩn • Xuất Hóa Đơn VAT Điện Tử Ngay Sau Khám
             </h3>
             <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">

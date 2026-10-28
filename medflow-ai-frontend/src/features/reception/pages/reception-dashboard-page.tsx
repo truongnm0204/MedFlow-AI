@@ -33,7 +33,7 @@ export function ReceptionDashboardPage() {
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
 
   return (
-    <div className="min-h-screen flex bg-[#F8FAFC] text-slate-800 antialiased">
+    <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
       <ReceptionSidebar activeItem="dashboard" />
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -46,10 +46,17 @@ export function ReceptionDashboardPage() {
           <div className="flex items-center gap-3">
             <button
               type="button"
+              aria-label="Thông báo"
               className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors relative"
               title="Thông báo"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg
+                aria-hidden="true"
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
