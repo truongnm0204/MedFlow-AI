@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom';
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
+import { DoctorSearchPage } from '@/features/appointment/pages/doctor-search-page';
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
@@ -19,6 +20,8 @@ export function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      <Route path="/doctors" element={<DoctorSearchPage />} />
+      <Route path="/appointment/doctors" element={<DoctorSearchPage />} />
       <Route
         path="/login"
         element={
