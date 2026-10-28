@@ -1,3 +1,4 @@
+import { BadgeCheck, Calendar, Power, SquarePen } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import type { Doctor } from '../types/doctor.types';
@@ -97,7 +98,10 @@ export function DoctorTable({
               <td className="px-2 text-sub">{doctor.department}</td>
               <td className="px-2">
                 <span className="font-mono text-[10px] font-semibold">{doctor.license}</span>
-                <img src="/assets/admin-doctors/list-21.svg" alt="" className="ml-2 inline-block" />
+                <BadgeCheck
+                  className="ml-2 inline-block h-3.5 w-3.5 text-emerald-600"
+                  aria-hidden="true"
+                />
               </td>
               <td className="px-2">
                 <span className="inline-flex border border-border bg-canvas px-2 py-1.5 font-mono text-[10px] text-sub">
@@ -120,15 +124,19 @@ export function DoctorTable({
                     title={`Chỉnh sửa ${doctor.name}`}
                     aria-label={`Chỉnh sửa ${doctor.name}`}
                   >
-                    <img src="/assets/admin-doctors/list-22.svg" alt="" />
+                    <SquarePen
+                      className="h-4 w-4 text-slate-500 hover:text-primary"
+                      aria-hidden="true"
+                    />
                   </Link>
                   <button
                     type="button"
                     disabled
+                    aria-label={`Lịch khám ${doctor.name}`}
                     title="Lịch khám sẽ có ở màn hình tiếp theo"
                     className="opacity-40"
                   >
-                    <img src="/assets/admin-doctors/list-23.svg" alt="" />
+                    <Calendar className="h-4 w-4 text-slate-500" aria-hidden="true" />
                   </button>
                   <button
                     type="button"
@@ -136,7 +144,10 @@ export function DoctorTable({
                     title={doctor.active ? 'Tạm ngừng nhận lịch' : 'Kích hoạt nhận lịch'}
                     onClick={() => onToggleStatus(doctor.id)}
                   >
-                    <img src="/assets/admin-doctors/list-24.svg" alt="" />
+                    <Power
+                      className="h-4 w-4 text-slate-500 hover:text-amber-600"
+                      aria-hidden="true"
+                    />
                   </button>
                 </div>
               </td>

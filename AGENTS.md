@@ -39,7 +39,7 @@ Plan dir naming: `yymmdd-hhmm-{slug}/` containing `plan.md` + `phase-XX-*.md` + 
 - **normal**: `AGENTS.md` + `docs/context-rules.md` + relevant code-standards doc + files being changed. ~5K.
 - **high-risk**: everything above + `docs/system-architecture.md` + `docs/backend-auth-architecture.md` (if auth) + `database/medflow_schema_v4_1.sql` (if DB) + `docs/decisions/*` + `.claude/rules/*`. ~10K.
 
-Retrieval triggers: auth → auth-architecture doc + rules; DB → schema SQL + ef-migration rule; MCP file output → artifact-hygiene rule.
+Retrieval triggers: auth → auth-architecture doc + rules; DB → schema SQL + ef-migration rule; frontend UI/UX → `skill://ui-ux-pro-max` + `docs/frontend-code-standards.md` + `.claude/rules/frontend-ui-consistency.md`; MCP file output → artifact-hygiene rule.
 
 ## 4. Knowledge graph (GKG)
 
@@ -61,12 +61,16 @@ Neu GKG server tat (MCP tools fail) → fallback Explore agent `find_referencing
 - **`MedFlow.Application` uses EF Core only through `IApplicationDbContext`** — DbSet + async LINQ OK; never `MedFlowDbContext`, `new DbContext`, or connection/options config (those live in Infrastructure).
 - **No secrets in repo** — conn strings, JWT secret, SMTP creds via user-secrets/env only.
 - **MCP artifacts**: all tool-generated files go to `.mcp-artifacts/<tool>/` (gitignored). Promote to `docs/assets/` or `plans/<plan>/assets/` only when durable (`.claude/rules/mcp-artifact-hygiene.md`).
+- **Frontend UI/UX & Design System (`ui-ux-pro-max`)**: every frontend task MUST follow `.claude/rules/frontend-ui-consistency.md` and `skill://ui-ux-pro-max`:
+  - **Semantic tokens**: use theme tokens in `src/index.css` (`bg-canvas`, `text-ink`, `text-sub`, `border-border`, `bg-primary`, `text-primary`, `text-navy`) instead of ad-hoc hex values (`bg-[#F8FAFC]`, `text-[#0A2540]`).
+  - **Icon discipline**: use `lucide-react` vector icons consistently (never emojis or scattered `/assets/*.svg` files for UI controls); add `aria-hidden="true"` on decorative icons beside text and `aria-label` on icon-only buttons.
+  - **Shell templates**: Patient screens use `AppHeader` + `PatientFooter` (`max-w-7xl`); Clinical Workbench screens (`reception`, `doctor`, `diagnostic`, `pharmacy`) use the collapsible `260px/68px` Sidebar + `h-16` Header + 4 Stat Cards + Queue/Worklist Table + Quick Actions pattern with `@/shared/ui/{card,badge,button,modal,input}`.
+  - **No duplicate feature folders**: reuse canonical feature directories; never create parallel feature folders for the same domain.
 
 ## 6. Quality gates
 
 Backend: `dotnet build` clean, `dotnet test` pass before push.
-Frontend: `npm run lint` before commit, `npm run test` before push, `tsc -b` clean.
-Files < ~200 lines; split when growing (already enforced in code-standards docs).
+Frontend: `npm run format:check`, `npm run lint` before commit, `npm run test` before push, `tsc -b` clean.
 
 ## 7. Done definition
 
