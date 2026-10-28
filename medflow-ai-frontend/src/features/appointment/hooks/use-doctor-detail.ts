@@ -10,6 +10,7 @@ export function useDoctorDetail(
     queryKey: ['doctor-detail', doctorId],
     queryFn: () => fetchDoctorDetailApi(doctorId!),
     enabled: Boolean(doctorId),
+    retry: false,
   });
 }
 
