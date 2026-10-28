@@ -169,17 +169,21 @@ describe('login', () => {
 - In mutations use `onError` to surface user-facing messages.
 - Never swallow errors silently; log or rethrow.
 
-## 7. Style / UI
+## 7. Style / UI (`ui-ux-pro-max` & Design System)
 
-- Tailwind utility classes only; extract `ui/` primitives for repeated patterns.
+- Follow `.claude/rules/frontend-ui-consistency.md` and `skill://ui-ux-pro-max`.
+- Use semantic design tokens from `src/index.css` (`bg-canvas`, `text-ink`, `text-sub`, `border-border`, `bg-primary`, `text-primary`, `text-navy`) instead of hardcoded hex classes (`bg-[#F8FAFC]`, `text-[#0A2540]`).
+- Use `lucide-react` as the single vector icon family (no emojis or scattered `/assets/*.svg` icon images for controls); set `aria-hidden="true"` on decorative icons and `aria-label` on icon-only buttons.
+- Reuse `@/shared/ui/{button,badge,card,input,modal,alert,avatar,divider,kbd,popover,spinner}` and the canonical Patient Portal (`AppHeader` + `PatientFooter`) or Clinical Workbench (`260px/68px` Sidebar + `h-16` Header + Stat Cards + Queue Table + Quick Actions) shell templates.
 - Responsive-first: design mobile layout, then `sm:`/`md:`/`lg:` up.
 - All user-visible strings in Vietnamese (per product locale); keep medical
   terms accurate.
 
 ## 8. Quality gates
 
+- `npm run format:check` (Prettier) must pass before commit.
 - `npm run lint` (oxlint) must pass before commit.
 - `npm run test` (vitest) must pass before push.
 - `tsc -b` clean — build runs strict-ish flags (`noUnusedLocals`,
   `noUnusedParameters`, `noFallthroughCasesInSwitch`, `verbatimModuleSyntax`).
-- Files under ~200 lines; split when they grow.
+- No empty duplicate feature folders.

@@ -33,7 +33,7 @@ export function HomePage() {
     isAuthenticated && (userRoles.length === 0 || userRoles.includes('PATIENT'));
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#F8FAFC] font-sans text-slate-800 antialiased">
+    <div className="flex min-h-screen flex-col bg-canvas font-sans text-ink antialiased">
       <AppHeader />
 
       {/* Chỉ hiển thị thanh chuyển đổi HIS Workbench khi user có role nhân viên y tế / quản trị */}

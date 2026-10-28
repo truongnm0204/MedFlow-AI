@@ -1,3 +1,4 @@
+import { Sparkles } from 'lucide-react';
 import { useState } from 'react';
 
 import { aiTriageSchema } from '../schemas/home.schemas';
@@ -58,9 +59,10 @@ export function AiTriageBanner() {
           <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
             <div className="space-y-1">
               <div className="inline-flex items-center gap-1.5 rounded-full bg-sky-100 px-2.5 py-0.5 text-[10px] font-bold text-sky-800">
-                <span>⚡</span> Trợ Lý Y Tế AI MedFlow
+                <Sparkles className="h-3 w-3 text-sky-600" aria-hidden="true" /> Trợ Lý Y Tế AI
+                MedFlow
               </div>
-              <h3 className="text-base font-bold text-[#0A2540] sm:text-lg">
+              <h3 className="text-base font-bold text-navy sm:text-lg">
                 Bạn chưa biết nên khám chuyên khoa nào?
               </h3>
               <p className="text-xs text-slate-600">

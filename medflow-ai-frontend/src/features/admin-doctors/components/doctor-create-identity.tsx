@@ -1,3 +1,4 @@
+import { Camera } from 'lucide-react';
 import type { FieldErrors, UseFormRegister } from 'react-hook-form';
 
 import { DEPARTMENTS } from '../data/doctor-demo-data';
@@ -52,7 +53,7 @@ export function DoctorCreateIdentity({
               />
             ) : (
               <span className="grid h-10 w-10 place-items-center rounded-full border border-sky-200 bg-white">
-                <img src="/assets/admin-doctors/create-09.svg" alt="" />
+                <Camera className="h-5 w-5 text-primary" aria-hidden="true" />
               </span>
             )}
             <b className="mt-2 text-primary">Tải ảnh áo Blouse trắng</b>
