@@ -112,8 +112,8 @@ export function ExaminationServiceCatalogPage() {
 
   const handleSelectService = (service: ExaminationService) => {
     selectService(service.id, service.name);
-    // Điều hướng sang chọn bác sĩ tương ứng với dịch vụ khám
-    navigate(`/appointment/doctors?serviceId=${service.id}`);
+    // Điều hướng sang màn chọn ngày và ca khám theo dịch vụ (không gộp với màn chọn bác sĩ)
+    navigate(`/appointment/services/${service.id}/booking`);
   };
 
   return (
