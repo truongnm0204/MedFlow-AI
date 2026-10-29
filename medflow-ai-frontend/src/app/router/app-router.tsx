@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom';
 
+import { DepartmentEditPage } from '@/features/admin-departments/pages/department-edit-page';
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
@@ -106,6 +107,16 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <PharmacyDashboardPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/departments/:id/edit"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <DepartmentEditPage />
+            </RequireAdmin>
           </RequireAuth>
         }
       />
