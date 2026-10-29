@@ -5,6 +5,7 @@ import { useLogout } from '@/features/auth/hooks/use-auth';
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
+import { CreatePatientModal } from '../components/create-patient-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
 import { QueuePreviewTable } from '../components/queue-preview-table';
 import { ReceptionSidebar } from '../components/reception-sidebar';
@@ -15,6 +16,7 @@ import {
   RECEPTION_STATS_MOCK,
   TODAY_APPOINTMENTS_MOCK,
 } from '../data/reception-mock-data';
+import type { CreatePatientFormData, CreatedPatientResult } from '../types/create-patient.types';
 import type { TodayAppointment } from '../types/reception.types';
 
 const APPOINTMENT_STATUS_LABEL: Record<
@@ -27,9 +29,16 @@ const APPOINTMENT_STATUS_LABEL: Record<
   NO_SHOW: { label: 'Không đến', tone: 'slate' },
 };
 
+// TODO(M2): thay bằng API tạo bệnh nhân khi backend sẵn sàng; hiện sinh mã cục bộ.
+async function createPatientLocally(data: CreatePatientFormData): Promise<CreatedPatientResult> {
+  const seq = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+  return { patientCode: `BN-${new Date().getFullYear()}-${seq}`, fullName: data.fullName };
+}
+
 export function ReceptionDashboardPage() {
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
+  const [createOpen, setCreateOpen] = useState(false);
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
 
   return (
@@ -116,8 +125,9 @@ export function ReceptionDashboardPage() {
                 <CardContent className="pt-0">
                   <QuickActionsPanel
                     actions={QUICK_ACTIONS_MOCK}
-                    // TODO(M2): wire quick actions toi flow that (check-in, walk-in, new patient, search).
-                    onAction={(_id) => undefined}
+                    onAction={(id) => {
+                      if (id === 'new-patient') setCreateOpen(true);
+                    }}
                   />
                 </CardContent>
               </Card>
@@ -154,6 +164,12 @@ export function ReceptionDashboardPage() {
           </div>
         </main>
       </div>
+
+      <CreatePatientModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSubmit={createPatientLocally}
+      />
     </div>
   );
 }
