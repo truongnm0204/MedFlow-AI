@@ -8,6 +8,12 @@ interface ServiceSearchBarProps {
 
 export function ServiceSearchBar({ initialValue = '', onSearch }: ServiceSearchBarProps) {
   const [keyword, setKeyword] = useState(initialValue);
+  const [prevInitialValue, setPrevInitialValue] = useState(initialValue);
+
+  if (prevInitialValue !== initialValue) {
+    setPrevInitialValue(initialValue);
+    setKeyword(initialValue);
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
