@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom';
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
+import { OperationalReportsPage } from '@/features/admin-reports/pages/operational-reports-page';
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
@@ -160,6 +161,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <ExaminationServiceCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/reports"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <OperationalReportsPage />
             </RequireAdmin>
           </RequireAuth>
         }
