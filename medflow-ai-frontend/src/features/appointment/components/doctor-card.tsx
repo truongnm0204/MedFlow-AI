@@ -36,7 +36,7 @@ export function DoctorCard({ doctor, onViewProfile }: DoctorCardProps) {
 
   const handleBookNow = () => {
     selectDoctor(doctor.id);
-    navigate(`/appointment/booking?doctorId=${doctor.id}`);
+    navigate(`/appointment/doctors/${doctor.id}/booking`);
   };
 
   return (
