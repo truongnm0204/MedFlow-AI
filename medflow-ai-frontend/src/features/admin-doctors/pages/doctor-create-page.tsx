@@ -1,3 +1,4 @@
+import { Info, Save } from 'lucide-react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
@@ -129,7 +130,7 @@ export function DoctorCreatePage() {
           </h1>
           <div className="my-6 flex gap-3 rounded-lg border border-sky-200 bg-sky-50 px-5 py-4 text-xs leading-relaxed text-sky-900">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded bg-white">
-              <img src="/assets/admin-doctors/create-13.svg" alt="" />
+              <Info className="h-4 w-4 text-primary" aria-hidden="true" />
             </span>
             <p>
               <b>Lưu ý vận hành Khám Ngoại trú & Đồng bộ dữ liệu Cổng Bệnh nhân:</b>
@@ -189,7 +190,7 @@ export function DoctorCreatePage() {
                 Lưu bản nháp
               </Button>
               <Button id="doctor-create-submit" type="submit" size="sm">
-                <img src="/assets/admin-doctors/create-03.svg" alt="" />
+                <Save className="h-4 w-4" aria-hidden="true" />
                 Tạo Hồ sơ Bác sĩ [Ctrl+S]
               </Button>
             </div>

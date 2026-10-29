@@ -3,13 +3,13 @@ import { MOCK_SPECIALTIES } from '../data/home-catalog';
 /** Danh mục chuyên khoa ngoại trú + bảng giá (anchor #specialties). */
 export function SpecialtiesSection() {
   return (
-    <section id="specialties" className="py-16 bg-[#F8FAFC] scroll-mt-24">
+    <section id="specialties" className="py-16 bg-canvas scroll-mt-24">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center max-w-2xl mx-auto mb-12 space-y-2">
           <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold">
             DANH MỤC DỊCH VỤ NGOẠI TRÚ
           </div>
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-[#0A2540] tracking-tight">
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-navy tracking-tight">
             Chuyên Khoa Kỹ Thuật Cao & Bảng Giá Niêm Yết
           </h2>
           <p className="text-xs sm:text-sm text-slate-500">

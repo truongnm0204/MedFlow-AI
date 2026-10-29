@@ -12,7 +12,7 @@ Distilled rulebook. Chi tiet + templates xem `docs/backend-code-standards.md` va
 - **Two-layer authz** — `[Authorize]` la layer 1; moi endpoint cham du lieu co owner can service-level ownership check (`.claude/rules/authorization-two-layers.md`).
 - **Idempotent write ops** — cac endpoint duoc retry/register can unique key hoac idempotency guard; khong tin client-sent `userId`, `role`, `verified`.
 - **Khong secrets trong repo** — conn strings, JWT secret, SMTP creds qua user-secrets/env.
-- **File < ~200 dong** — split khi lon hon (KHONG tao file "enhanced" moi: update truc tiep file cu).
+- **Khong tao file "enhanced" moi** — update truc tiep file cu thay vi nhan ban file.
 
 ## 2. Naming & style
 

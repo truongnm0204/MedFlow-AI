@@ -1,3 +1,4 @@
+import { ChevronDown, Stethoscope } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -14,6 +15,11 @@ export type AdminPortalTab =
   | 'Quản lý Slot khám'
   | 'Chính sách hẹn';
 
+export interface AdminPortalBreadcrumb {
+  label: string;
+  href?: string;
+}
+
 export interface AdminPortalShellProps {
   children: ReactNode;
   showTabs?: boolean;
@@ -21,6 +27,7 @@ export interface AdminPortalShellProps {
   breadcrumbText?: string;
   breadcrumbCode?: string;
   breadcrumbLink?: string;
+  breadcrumbs?: AdminPortalBreadcrumb[];
 }
 
 const TABS: { name: AdminPortalTab; href?: string }[] = [
@@ -40,6 +47,7 @@ export function AdminPortalShell({
   breadcrumbText,
   breadcrumbCode,
   breadcrumbLink,
+  breadcrumbs,
 }: AdminPortalShellProps) {
   const user = useAuthStore((state) => state.user);
   const doctorCount = useDoctorDemoStore((state) => state.doctors.length);
@@ -56,7 +64,7 @@ export function AdminPortalShell({
               aria-label="MedFlow HIS Hospital Admin Portal"
             >
               <span className="grid h-9 w-9 place-items-center rounded-md bg-primary text-white shadow-sm">
-                <img src="/assets/admin-doctors/list-27.svg" alt="" className="h-5 w-5" />
+                <Stethoscope className="h-5 w-5 text-white" aria-hidden="true" />
               </span>
               <span className="leading-tight">
                 <span className="block text-base font-bold tracking-tight">
@@ -72,19 +80,36 @@ export function AdminPortalShell({
             <div className="hidden h-7 w-px bg-border md:block" />
 
             <div className="hidden items-center gap-2 text-xs text-sub md:flex">
-              <span className="text-slate-500">Cấu hình Cơ sở</span>
-              <span className="text-slate-400">›</span>
-              {breadcrumbLink ? (
-                <Link to={breadcrumbLink} className="font-semibold text-ink hover:text-primary">
-                  {breadcrumbText}
-                </Link>
+              {breadcrumbs && breadcrumbs.length > 0 ? (
+                breadcrumbs.map((crumb, idx) => (
+                  <div key={crumb.label} className="flex items-center gap-2">
+                    {idx > 0 && <span className="text-slate-400">›</span>}
+                    {crumb.href ? (
+                      <Link to={crumb.href} className="text-slate-500 hover:text-primary">
+                        {crumb.label}
+                      </Link>
+                    ) : (
+                      <span className="font-semibold text-ink">{crumb.label}</span>
+                    )}
+                  </div>
+                ))
               ) : (
-                <span className="font-semibold text-ink">{breadcrumbText}</span>
-              )}
-              {breadcrumbCode && (
-                <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[10px] text-sub">
-                  {breadcrumbCode}
-                </span>
+                <>
+                  <span className="text-slate-500">Cấu hình Cơ sở</span>
+                  <span className="text-slate-400">›</span>
+                  {breadcrumbLink ? (
+                    <Link to={breadcrumbLink} className="font-semibold text-ink hover:text-primary">
+                      {breadcrumbText}
+                    </Link>
+                  ) : (
+                    <span className="font-semibold text-ink">{breadcrumbText}</span>
+                  )}
+                  {breadcrumbCode && (
+                    <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[10px] text-sub">
+                      {breadcrumbCode}
+                    </span>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -116,19 +141,7 @@ export function AdminPortalShell({
               >
                 NVQ
               </div>
-              <svg
-                className="h-4 w-4 text-slate-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 9l-7 7-7-7"
-                />
-              </svg>
+              <ChevronDown className="h-4 w-4 text-slate-400" aria-hidden="true" />
             </div>
           </div>
         </div>

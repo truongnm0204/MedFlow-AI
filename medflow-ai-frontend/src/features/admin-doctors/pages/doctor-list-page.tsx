@@ -1,3 +1,4 @@
+import { Download, Search, SlidersHorizontal, UserPlus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 
@@ -108,7 +109,7 @@ export function DoctorListPage() {
         >
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex min-w-80 flex-1 items-center gap-2.5 rounded-lg border border-border bg-canvas px-3.5 py-2.5 transition-colors focus-within:border-primary focus-within:bg-white focus-within:ring-1 focus-within:ring-primary">
-              <img src="/assets/admin-doctors/list-14.svg" alt="" />
+              <Search className="h-4 w-4 text-slate-400" aria-hidden="true" />
               <input
                 ref={searchRef}
                 value={query}
@@ -127,7 +128,7 @@ export function DoctorListPage() {
               onClick={() => searchRef.current?.focus()}
               className="gap-2"
             >
-              <img src="/assets/admin-doctors/list-14.svg" alt="" className="h-3.5 w-3.5" />
+              <Search className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
               Tìm kiếm
             </Button>
           </div>
@@ -170,22 +171,23 @@ export function DoctorListPage() {
 
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="secondary" size="sm" onClick={() => downloadCsv(filtered)}>
-                <img src="/assets/admin-doctors/list-17.svg" alt="" />
+                <Download className="h-4 w-4" aria-hidden="true" />
                 Xuất CSV
               </Button>
               <Button
                 variant="secondary"
                 size="sm"
                 disabled
+                aria-label="Tùy chọn cột"
                 title="Tùy chọn cột sẽ có ở phiên bản sau"
               >
-                <img src="/assets/admin-doctors/list-18.svg" alt="" />
+                <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
               </Button>
               <Link
                 to="/admin/doctors/new"
                 className="inline-flex items-center gap-2 rounded-lg bg-primary px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary-dark transition-colors"
               >
-                <img src="/assets/admin-doctors/list-19.svg" alt="" />
+                <UserPlus className="h-4 w-4" aria-hidden="true" />
                 Thêm Hồ sơ Bác sĩ{' '}
                 <kbd className="rounded bg-white/20 px-1.5 py-0.5 text-[10px]">F2</kbd>
               </Link>

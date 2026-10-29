@@ -44,6 +44,10 @@ interface ExaminationServiceState {
   toggleColumn: (key: ColumnKey) => void;
   setPriceHistoryService: (service: ExaminationService | null) => void;
   setIsColumnModalOpen: (open: boolean) => void;
+  draft: Partial<ExaminationService> | null;
+  addService: (service: ExaminationService) => void;
+  saveDraft: (draft: Partial<ExaminationService>) => void;
+  clearDraft: () => void;
 }
 
 export const useExaminationServiceStore = create<ExaminationServiceState>((set) => ({
@@ -124,4 +128,13 @@ export const useExaminationServiceStore = create<ExaminationServiceState>((set) 
 
   setPriceHistoryService: (service) => set({ priceHistoryService: service }),
   setIsColumnModalOpen: (open) => set({ isColumnModalOpen: open }),
+
+  draft: null,
+  addService: (service) =>
+    set((state) => ({
+      services: [service, ...state.services],
+      draft: null,
+    })),
+  saveDraft: (draft) => set({ draft }),
+  clearDraft: () => set({ draft: null }),
 }));

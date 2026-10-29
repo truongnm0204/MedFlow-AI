@@ -1,6 +1,7 @@
 import type { ExaminationService } from '../types/examination-service.types';
 
 export const DEPARTMENTS = [
+  'Khoa Nội Tiêu hóa - Gan Mật (Dept. Gastro)',
   'Khoa Khám bệnh',
   'Khoa Nội Tiêu hóa',
   'Khoa Tim mạch Can thiệp',
@@ -18,7 +19,18 @@ export const DEPARTMENTS = [
   'Ban Điều hành Chuyên môn',
 ];
 
-export const CATEGORIES = ['Khám Lâm sàng', 'Hội chẩn Lâm sàng'] as const;
+export const CATEGORIES = ['Khám Lâm sàng', 'Hội chẩn Lâm sàng', 'Cận lâm sàng kỹ thuật'] as const;
+
+export const DEFAULT_SERVICE_FORM_VALUES = {
+  code: 'EX-2-09',
+  name: 'Khám Chuyên khoa Nội Tiêu hóa & Gan Mật Chuyên sâu',
+  category: 'Khám Lâm sàng' as const,
+  department: 'Khoa Nội Tiêu hóa - Gan Mật (Dept. Gastro)',
+  description:
+    'Thăm khám, chẩn đoán phân biệt và tư vấn phác đồ điều trị chuyên sâu các bệnh lý dạ dày tá tràng, trào ngược GERD, gan mật tụy, viêm gan virus...',
+  onlineBooking: true,
+  status: 'ACTIVE' as const,
+};
 
 export const INITIAL_SERVICES: ExaminationService[] = [
   {
