@@ -5,6 +5,7 @@ import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-moda
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
+import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
 import { DoctorSearchPage } from '@/features/appointment/pages/doctor-search-page';
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
@@ -113,7 +114,9 @@ export function AppRouter() {
             </RequireAdmin>
           </RequireAuth>
         }
-      />
+      >
+        <Route path=":serviceId/edit" element={<ServiceEditModal />} />
+      </Route>
       <Route
         path="/admin/services/new"
         element={
@@ -133,7 +136,9 @@ export function AppRouter() {
             </RequireAdmin>
           </RequireAuth>
         }
-      />
+      >
+        <Route path=":serviceId/edit" element={<ServiceEditModal />} />
+      </Route>
       <Route
         path="/admin/examination-services/new"
         element={
