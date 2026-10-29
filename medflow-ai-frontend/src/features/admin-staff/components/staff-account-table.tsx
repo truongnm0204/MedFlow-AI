@@ -18,9 +18,24 @@ const STATUS_STYLES: Record<StaffAccountStatus, string> = {
   DISABLED: 'bg-slate-100 text-sub',
 };
 
-const COLUMNS = ['MÃ NV', 'NHÂN SỰ / EMAIL', 'VAI TRÒ', 'KHOA CÔNG TÁC', 'CƠ SỞ', 'TRẠNG THÁI', 'THAO TÁC'];
+const COLUMNS = [
+  'MÃ NV',
+  'NHÂN SỰ / EMAIL',
+  'VAI TRÒ',
+  'KHOA CÔNG TÁC',
+  'CƠ SỞ',
+  'TRẠNG THÁI',
+  'THAO TÁC',
+];
 
-export function StaffAccountTable({ items, total, page, totalPages, pageSize, onPageChange }: StaffAccountTableProps) {
+export function StaffAccountTable({
+  items,
+  total,
+  page,
+  totalPages,
+  pageSize,
+  onPageChange,
+}: StaffAccountTableProps) {
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
 
@@ -31,7 +46,9 @@ export function StaffAccountTable({ items, total, page, totalPages, pageSize, on
           <thead className="bg-canvas text-xs font-semibold tracking-wide text-sub">
             <tr>
               {COLUMNS.map((column) => (
-                <th key={column} scope="col" className="px-4 py-3">{column}</th>
+                <th key={column} scope="col" className="px-4 py-3">
+                  {column}
+                </th>
               ))}
             </tr>
           </thead>
@@ -54,7 +71,9 @@ export function StaffAccountTable({ items, total, page, totalPages, pageSize, on
                   <td className="px-4 py-3 text-ink">{item.department}</td>
                   <td className="px-4 py-3 text-ink">{item.facility}</td>
                   <td className="px-4 py-3">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_STYLES[item.status]}`}>
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_STYLES[item.status]}`}
+                    >
                       {STAFF_STATUS_LABELS[item.status]}
                     </span>
                   </td>
@@ -87,7 +106,9 @@ export function StaffAccountTable({ items, total, page, totalPages, pageSize, on
           >
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </button>
-          <span>Trang {page} / {totalPages}</span>
+          <span>
+            Trang {page} / {totalPages}
+          </span>
           <button
             type="button"
             aria-label="Trang sau"

@@ -20,7 +20,15 @@ describe('StaffAccountListPage (SCR-ADM-STAFF-01)', () => {
     expect(screen.getByText('ĐÃ VÔ HIỆU HÓA')).toBeInTheDocument();
     expect(screen.getByText('56')).toBeInTheDocument();
     expect(screen.getByText('05')).toBeInTheDocument();
-    for (const column of ['MÃ NV', 'NHÂN SỰ / EMAIL', 'VAI TRÒ', 'KHOA CÔNG TÁC', 'CƠ SỞ', 'TRẠNG THÁI', 'THAO TÁC']) {
+    for (const column of [
+      'MÃ NV',
+      'NHÂN SỰ / EMAIL',
+      'VAI TRÒ',
+      'KHOA CÔNG TÁC',
+      'CƠ SỞ',
+      'TRẠNG THÁI',
+      'THAO TÁC',
+    ]) {
       expect(screen.getByRole('columnheader', { name: column })).toBeInTheDocument();
     }
     expect(screen.getByText('STF-0142')).toBeInTheDocument();
@@ -38,10 +46,14 @@ describe('StaffAccountListPage (SCR-ADM-STAFF-01)', () => {
 
   it('filters by role and status and shows empty state', () => {
     renderPage();
-    fireEvent.change(screen.getByLabelText('Lọc theo vai trò'), { target: { value: 'Nhân viên quầy' } });
+    fireEvent.change(screen.getByLabelText('Lọc theo vai trò'), {
+      target: { value: 'Nhân viên quầy' },
+    });
     expect(screen.getByText('STF-0231')).toBeInTheDocument();
     expect(screen.queryByText('STF-0142')).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Lọc theo trạng thái'), { target: { value: 'DISABLED' } });
+    fireEvent.change(screen.getByLabelText('Lọc theo trạng thái'), {
+      target: { value: 'DISABLED' },
+    });
     expect(screen.getByText('Không tìm thấy tài khoản nhân sự phù hợp.')).toBeInTheDocument();
   });
 
