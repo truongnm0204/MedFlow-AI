@@ -1,0 +1,26 @@
+namespace MedFlow.Application.DTOs.Services;
+
+public record ExaminationServiceDto(
+    string Id,
+    string ServiceCode,
+    string Name,
+    string DepartmentId,
+    string DepartmentName,
+    string? Location,
+    bool IsOnlineBookingActive,
+    string? BadgeType,
+    string? BadgeLabel,
+    int DurationMinutes,
+    string DurationDescription,
+    string Description,
+    IReadOnlyList<string> Tags,
+    decimal Price,
+    string PriceFormatted,
+    string? PriceNote,
+    string Category,
+    IReadOnlyList<string>? PreparationNotes,
+    string? TargetAudience,
+    string? PurposeSummary,
+    IReadOnlyList<string>? HighlightSymptoms,
+    string? SuitableFor,
+    IReadOnlyList<ServiceStandardStepDto> StandardSteps);
