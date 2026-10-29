@@ -29,11 +29,21 @@ export function DepartmentTable({
       <table className="w-full text-left text-sm">
         <thead className="bg-canvas text-xs font-semibold tracking-wide text-sub">
           <tr>
-            <th scope="col" className="px-4 py-3">MÃ KHOA</th>
-            <th scope="col" className="px-4 py-3">TÊN KHOA</th>
-            <th scope="col" className="px-4 py-3">CƠ SỞ</th>
-            <th scope="col" className="px-4 py-3">TRẠNG THÁI</th>
-            <th scope="col" className="px-4 py-3 text-right">THAO TÁC</th>
+            <th scope="col" className="px-4 py-3">
+              MÃ KHOA
+            </th>
+            <th scope="col" className="px-4 py-3">
+              TÊN KHOA
+            </th>
+            <th scope="col" className="px-4 py-3">
+              CƠ SỞ
+            </th>
+            <th scope="col" className="px-4 py-3">
+              TRẠNG THÁI
+            </th>
+            <th scope="col" className="px-4 py-3 text-right">
+              THAO TÁC
+            </th>
           </tr>
         </thead>
         <tbody>

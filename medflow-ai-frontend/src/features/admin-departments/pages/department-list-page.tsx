@@ -48,10 +48,7 @@ export function DepartmentListPage() {
     };
   }, [departments]);
 
-  const facilities = useMemo(
-    () => [...new Set(departments.map((d) => d.facility))],
-    [departments],
-  );
+  const facilities = useMemo(() => [...new Set(departments.map((d) => d.facility))], [departments]);
 
   const filtered = useMemo(() => {
     const term = filters.search.trim().toLowerCase();
