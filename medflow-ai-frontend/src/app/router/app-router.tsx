@@ -16,6 +16,7 @@ import { FamilyProfileDetailPage } from '@/features/family/pages/family-profile-
 import { FamilyProfileListPage } from '@/features/family/pages/family-profile-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
+import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
@@ -80,6 +81,14 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <DiagnosticDashboardPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy"
+        element={
+          <RequireAuth>
+            <PharmacyDashboardPage />
           </RequireAuth>
         }
       />
