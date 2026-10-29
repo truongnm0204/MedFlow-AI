@@ -74,7 +74,7 @@ export function DoctorFilterBar({
         onClick={onResetFilters}
         className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-sky-600 transition-colors"
       >
-        <RotateCcw className="h-3.5 w-3.5" />
+        <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
         <span>Xóa tất cả bộ lọc</span>
       </button>
     </div>

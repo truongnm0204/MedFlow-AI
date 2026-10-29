@@ -95,7 +95,7 @@ export function DoctorSearchPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#F8FAFC] font-sans antialiased text-slate-900">
+    <div className="flex min-h-screen flex-col bg-canvas font-sans text-ink antialiased">
       <AppHeader />
 
       <main className="flex-1 pb-16 pt-5">
@@ -106,12 +106,12 @@ export function DoctorSearchPage() {
             className="mb-4 flex items-center gap-2 text-xs text-slate-500"
           >
             <Link to="/" className="flex items-center gap-1.5 transition-colors hover:text-sky-600">
-              <Home className="h-3.5 w-3.5" />
+              <Home className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Trang chủ</span>
             </Link>
-            <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+            <ChevronRight className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
             <span className="text-slate-500">Đặt khám</span>
-            <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+            <ChevronRight className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
             <span className="font-semibold text-sky-600">Danh bạ Bác sĩ (SCR-APT-01)</span>
           </nav>
 
@@ -122,7 +122,7 @@ export function DoctorSearchPage() {
             </h1>
 
             <div className="inline-flex w-fit items-center gap-2 rounded-xl border border-sky-100 bg-sky-50/70 px-3.5 py-1.5 text-xs text-slate-600 shadow-xs">
-              <Calendar className="h-4 w-4 text-sky-600" />
+              <Calendar className="h-4 w-4 text-sky-600" aria-hidden="true" />
               <span>
                 Cập nhật ca trực:{' '}
                 <strong className="font-semibold text-slate-800">Hôm nay, 24/10/2026</strong>

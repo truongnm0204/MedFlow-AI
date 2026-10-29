@@ -33,7 +33,7 @@ export function DoctorPagination({
           className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition-all hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="Trang trước"
         >
-          <ChevronLeft className="h-4 w-4" />
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
         </button>
 
         {pages.map((p) => {
@@ -61,7 +61,7 @@ export function DoctorPagination({
           className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition-all hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="Trang tiếp"
         >
-          <ChevronRight className="h-4 w-4" />
+          <ChevronRight className="h-4 w-4" aria-hidden="true" />
         </button>
       </div>
     </div>
