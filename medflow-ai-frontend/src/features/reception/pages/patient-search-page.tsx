@@ -39,8 +39,7 @@ export function PatientSearchPage() {
 
       // Lọc tab
       if (activeTab === 'HAS_APPOINTMENT') return !!patient.todayAppointment;
-      if (activeTab === 'CHECKED_IN')
-        return patient.todayAppointment?.status === 'CHECKED_IN';
+      if (activeTab === 'CHECKED_IN') return patient.todayAppointment?.status === 'CHECKED_IN';
       if (activeTab === 'NO_APPOINTMENT') return !patient.todayAppointment;
 
       return true;
@@ -52,9 +51,8 @@ export function PatientSearchPage() {
     return {
       all: PATIENT_SEARCH_MOCK_DATA.length,
       hasAppointment: PATIENT_SEARCH_MOCK_DATA.filter((p) => !!p.todayAppointment).length,
-      checkedIn: PATIENT_SEARCH_MOCK_DATA.filter(
-        (p) => p.todayAppointment?.status === 'CHECKED_IN'
-      ).length,
+      checkedIn: PATIENT_SEARCH_MOCK_DATA.filter((p) => p.todayAppointment?.status === 'CHECKED_IN')
+        .length,
       noAppointment: PATIENT_SEARCH_MOCK_DATA.filter((p) => !p.todayAppointment).length,
     };
   }, []);
@@ -82,9 +80,7 @@ export function PatientSearchPage() {
               <ArrowLeft className="w-5 h-5" aria-hidden="true" />
             </button>
             <div>
-              <div className="text-sm font-bold text-slate-900">
-                Tra cứu Bệnh nhân & Tiếp nhận
-              </div>
+              <div className="text-sm font-bold text-slate-900">Tra cứu Bệnh nhân & Tiếp nhận</div>
               <div className="text-[11px] text-slate-500">
                 Quầy tiếp đón • Hôm nay, {todayLabel}
               </div>
@@ -122,7 +118,8 @@ export function PatientSearchPage() {
                 Hồ sơ Bệnh nhân tại quầy
               </h1>
               <p className="text-xs text-slate-500 mt-1">
-                Tìm kiếm thông tin theo CCCD/VNeID, Mã bệnh nhân hoặc Số điện thoại để tiếp nhận hoặc tạo hồ sơ mới.
+                Tìm kiếm thông tin theo CCCD/VNeID, Mã bệnh nhân hoặc Số điện thoại để tiếp nhận
+                hoặc tạo hồ sơ mới.
               </p>
             </div>
 

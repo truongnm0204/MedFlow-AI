@@ -16,7 +16,7 @@ function renderSearchPage() {
       <MemoryRouter>
         <PatientSearchPage />
       </MemoryRouter>
-    </QueryClientProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -31,7 +31,7 @@ describe('Patient Search Components (Issue #63)', () => {
           activeTab="ALL"
           onTabChange={vi.fn()}
           counts={counts}
-        />
+        />,
       );
 
       expect(screen.getByPlaceholderText(/Tra cứu theo Mã BN/i)).toBeInTheDocument();
@@ -50,7 +50,7 @@ describe('Patient Search Components (Issue #63)', () => {
           activeTab="ALL"
           onTabChange={vi.fn()}
           counts={{ all: 6, hasAppointment: 4, checkedIn: 1, noAppointment: 2 }}
-        />
+        />,
       );
 
       const clearBtn = screen.getByRole('button', { name: /Xóa từ khóa tìm kiếm/i });
@@ -79,7 +79,7 @@ describe('Patient Search Components (Issue #63)', () => {
           patients={PATIENT_SEARCH_MOCK_DATA}
           onSelectPatient={handleSelect}
           onCheckInPatient={handleCheckIn}
-        />
+        />,
       );
 
       const checkInBtns = screen.getAllByRole('button', { name: /Tiếp nhận/i });
@@ -98,7 +98,9 @@ describe('Patient Search Components (Issue #63)', () => {
       render(<PatientSearchEmptyState query="999999" onClear={handleClear} />);
 
       expect(screen.getByText(/"999999"/)).toBeInTheDocument();
-      expect(screen.getByText(/Không tìm thấy bệnh nhân nào khớp với từ khóa/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Không tìm thấy bệnh nhân nào khớp với từ khóa/i),
+      ).toBeInTheDocument();
 
       const clearBtn = screen.getByRole('button', { name: /Xóa bộ lọc/i });
       fireEvent.click(clearBtn);
@@ -138,7 +140,9 @@ describe('Patient Search Components (Issue #63)', () => {
       const input = screen.getByPlaceholderText(/Tra cứu theo Mã BN/i);
       fireEvent.change(input, { target: { value: 'XYZ-NOT-FOUND' } });
 
-      expect(screen.getByText(/Không tìm thấy bệnh nhân nào khớp với từ khóa/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Không tìm thấy bệnh nhân nào khớp với từ khóa/i),
+      ).toBeInTheDocument();
     });
   });
 });

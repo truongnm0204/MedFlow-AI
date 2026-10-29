@@ -37,12 +37,24 @@ export function PatientSearchResultTable({
         <table className="w-full text-left text-xs border-collapse">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-              <th scope="col" className="px-5 py-3.5">Mã Bệnh Nhân</th>
-              <th scope="col" className="px-5 py-3.5">Họ Và Tên</th>
-              <th scope="col" className="px-5 py-3.5">CCCD / SĐT</th>
-              <th scope="col" className="px-5 py-3.5">BHYT</th>
-              <th scope="col" className="px-5 py-3.5">Lịch Hẹn Hôm Nay</th>
-              <th scope="col" className="px-5 py-3.5 text-right">Thao Tác</th>
+              <th scope="col" className="px-5 py-3.5">
+                Mã Bệnh Nhân
+              </th>
+              <th scope="col" className="px-5 py-3.5">
+                Họ Và Tên
+              </th>
+              <th scope="col" className="px-5 py-3.5">
+                CCCD / SĐT
+              </th>
+              <th scope="col" className="px-5 py-3.5">
+                BHYT
+              </th>
+              <th scope="col" className="px-5 py-3.5">
+                Lịch Hẹn Hôm Nay
+              </th>
+              <th scope="col" className="px-5 py-3.5 text-right">
+                Thao Tác
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -54,10 +66,7 @@ export function PatientSearchResultTable({
               const statusCfg = apptStatus ? APPOINTMENT_STATUS_CONFIG[apptStatus] : null;
 
               return (
-                <tr
-                  key={patient.id}
-                  className="hover:bg-slate-50/70 transition-colors group"
-                >
+                <tr key={patient.id} className="hover:bg-slate-50/70 transition-colors group">
                   {/* Mã BN */}
                   <td className="px-5 py-4 font-mono font-bold text-sky-700 whitespace-nowrap">
                     {patient.patientCode}
@@ -65,9 +74,7 @@ export function PatientSearchResultTable({
 
                   {/* Họ tên */}
                   <td className="px-5 py-4">
-                    <div className="font-bold text-slate-900 text-sm">
-                      {patient.fullName}
-                    </div>
+                    <div className="font-bold text-slate-900 text-sm">{patient.fullName}</div>
                     <div className="text-[11px] text-slate-500 mt-0.5">
                       {GENDER_LABEL[patient.gender] || 'Khác'} • {age} tuổi ({birthYear})
                     </div>
@@ -104,12 +111,12 @@ export function PatientSearchResultTable({
                             <Clock className="w-3.5 h-3.5 text-primary" aria-hidden="true" />
                             {patient.todayAppointment.time}
                           </span>
-                          {statusCfg && (
-                            <Badge tone={statusCfg.tone}>{statusCfg.label}</Badge>
-                          )}
+                          {statusCfg && <Badge tone={statusCfg.tone}>{statusCfg.label}</Badge>}
                         </div>
                         <div className="text-[11px] text-slate-500">
-                          {patient.todayAppointment.department} • {patient.todayAppointment.doctorName} ({patient.todayAppointment.roomName})
+                          {patient.todayAppointment.department} •{' '}
+                          {patient.todayAppointment.doctorName} ({patient.todayAppointment.roomName}
+                          )
                         </div>
                       </div>
                     ) : (

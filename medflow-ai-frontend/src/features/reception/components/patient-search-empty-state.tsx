@@ -27,7 +27,8 @@ export function PatientSearchEmptyState({ query, onClear }: PatientSearchEmptySt
           </p>
         )}
         <p className="text-xs text-slate-500 leading-relaxed">
-          Vui lòng kiểm tra lại số CCCD (12 chữ số), Số điện thoại (10 chữ số) hoặc chuyển sang tìm kiếm bằng Họ tên tiếng Việt có dấu.
+          Vui lòng kiểm tra lại số CCCD (12 chữ số), Số điện thoại (10 chữ số) hoặc chuyển sang tìm
+          kiếm bằng Họ tên tiếng Việt có dấu.
         </p>
       </div>
 
