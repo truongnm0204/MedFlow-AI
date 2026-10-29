@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChevronRight, Home } from 'lucide-react';
 
 import { AppHeader } from '@/shared/components/layout/app-header';
@@ -11,6 +11,7 @@ import { ServiceFilterBar } from '../components/service-filter-bar';
 import { ServiceGrid } from '../components/service-grid';
 import { ServicePagination } from '../components/service-pagination';
 import { ServiceSearchBar } from '../components/service-search-bar';
+import { MOCK_EXAMINATION_SERVICES } from '../data/service-search-mock';
 import { useExaminationServicesQuery } from '../hooks/use-service-search';
 import { useBookingStore } from '../store/booking.store';
 import type {
@@ -20,10 +21,28 @@ import type {
 } from '../types/service-search.types';
 
 export function ExaminationServiceCatalogPage() {
+  const { serviceId } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const selectService = useBookingStore((s) => s.selectService);
 
-  const [detailService, setDetailService] = useState<ExaminationService | null>(null);
+  const [selectedService, setSelectedService] = useState<ExaminationService | null>(null);
+
+  // Derive active service from state or URL parameter
+  const targetServiceId = serviceId ?? searchParams.get('serviceId');
+  const activeService = useMemo(() => {
+    if (selectedService) return selectedService;
+    if (targetServiceId) {
+      return (
+        MOCK_EXAMINATION_SERVICES.find(
+          (s) =>
+            s.id === targetServiceId ||
+            s.serviceCode.toLowerCase() === targetServiceId.toLowerCase(),
+        ) ?? null
+      );
+    }
+    return null;
+  }, [selectedService, targetServiceId]);
 
   const [filters, setFilters] = useState<ServiceSearchParams>({
     query: '',
@@ -81,7 +100,14 @@ export function ExaminationServiceCatalogPage() {
   };
 
   const handleViewDetail = (service: ExaminationService) => {
-    setDetailService(service);
+    setSelectedService(service);
+  };
+
+  const handleCloseModal = () => {
+    setSelectedService(null);
+    if (serviceId || searchParams.has('serviceId')) {
+      navigate('/services', { replace: true });
+    }
   };
 
   const handleSelectService = (service: ExaminationService) => {
@@ -168,9 +194,9 @@ export function ExaminationServiceCatalogPage() {
 
       {/* Service Detail Modal */}
       <ServiceDetailModal
-        service={detailService}
-        isOpen={Boolean(detailService)}
-        onClose={() => setDetailService(null)}
+        service={activeService}
+        isOpen={Boolean(activeService)}
+        onClose={handleCloseModal}
         onSelectService={handleSelectService}
       />
 

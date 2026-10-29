@@ -118,4 +118,12 @@ describe('DoctorDetailModal (SCR-APT-01-DETAIL)', () => {
     expect(useBookingStore.getState().selectedDoctorId).toBe('doc-01');
     expect(handleClose).toHaveBeenCalled();
   });
+
+  it('renders error state when doctor profile is not found', async () => {
+    renderDoctorDetailModal({ doctorId: 'non-existent-id' });
+
+    expect(
+      await screen.findByText('Không thể tải thông tin hồ sơ bác sĩ. Vui lòng thử lại sau.'),
+    ).toBeInTheDocument();
+  });
 });

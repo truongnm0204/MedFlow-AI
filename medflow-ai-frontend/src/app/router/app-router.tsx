@@ -3,6 +3,9 @@ import { Route, Routes } from 'react-router-dom';
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
+import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
+import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
+import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
 import { DoctorSearchPage } from '@/features/appointment/pages/doctor-search-page';
 import { ExaminationServiceCatalogPage } from '@/features/appointment/pages/examination-service-catalog-page';
 import { LoginPage } from '@/features/auth/pages/login-page';
@@ -14,6 +17,7 @@ import { FamilyProfileDetailPage } from '@/features/family/pages/family-profile-
 import { FamilyProfileListPage } from '@/features/family/pages/family-profile-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
+import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
@@ -24,7 +28,9 @@ export function AppRouter() {
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/services" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
       <Route path="/appointment/services" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/appointment/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
       <Route path="/doctors" element={<DoctorSearchPage />} />
       <Route path="/doctors/:doctorId" element={<DoctorSearchPage />} />
       <Route path="/appointment/doctors" element={<DoctorSearchPage />} />
@@ -85,6 +91,14 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/pharmacy"
+        element={
+          <RequireAuth>
+            <PharmacyDashboardPage />
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/doctors"
         element={
           <RequireAuth>
@@ -102,6 +116,50 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <DoctorCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/services"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ExaminationServiceListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      >
+        <Route path=":serviceId/edit" element={<ServiceEditModal />} />
+      </Route>
+      <Route
+        path="/admin/services/new"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ExaminationServiceCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/examination-services"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ExaminationServiceListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      >
+        <Route path=":serviceId/edit" element={<ServiceEditModal />} />
+      </Route>
+      <Route
+        path="/admin/examination-services/new"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ExaminationServiceCreatePage />
             </RequireAdmin>
           </RequireAuth>
         }

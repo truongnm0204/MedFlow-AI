@@ -1,5 +1,32 @@
 import type { ExaminationService } from '../types/service-search.types';
 
+export const DEFAULT_STANDARD_STEPS = [
+  {
+    stepNumber: 1,
+    title: 'Tiếp đón & Đo sinh hiệu',
+    description:
+      'Đo huyết áp, mạch, thân nhiệt, chỉ số BMI (chiều cao, cân nặng) tại quầy tiếp đón điều dưỡng.',
+  },
+  {
+    stepNumber: 2,
+    title: 'Khám lâm sàng chuyên khoa',
+    description:
+      'Bác sĩ chuyên khoa hỏi bệnh sử kỹ lưỡng, thăm khám lâm sàng vùng bụng và ấn điểm đau thực thể.',
+  },
+  {
+    stepNumber: 3,
+    title: 'Chỉ định cận lâm sàng',
+    description:
+      'Nếu cần thiết: chỉ định xét nghiệm máu, siêu âm ổ bụng tổng quát hoặc nội soi tiêu hóa theo nhu cầu bệnh học.',
+  },
+  {
+    stepNumber: 4,
+    title: 'Kết luận & Đơn thuốc số',
+    description:
+      'Đọc kết quả, chẩn đoán xác định, kê đơn thuốc điện tử và tư vấn chế độ dinh dưỡng, hẹn tái khám.',
+  },
+];
+
 export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
   {
     id: 'srv-th-01',
@@ -7,19 +34,31 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Khám Chuyên khoa Tiêu Hóa',
     departmentId: 'dept-th',
     departmentName: 'Khoa Tiêu Hóa - Gan Mật',
+    location: 'Khu Khám Ngoại trú - Tầng 2, Nhà A',
+    isOnlineBookingActive: true,
     badgeType: 'online',
     badgeLabel: 'Đặt online nhanh',
     durationMinutes: 25,
-    durationDescription: '25 phút thăm khám trực tiếp',
+    durationDescription: '25 phút thăm khám trực tiếp cùng bác sĩ chuyên khoa',
     description:
       'Khám chuyên sâu dạ dày, đại tràng, trào ngược thực quản GERD và các bệnh lý gan mật tụy với bác sĩ chuyên khoa cấp II.',
     tags: ['Bác sĩ CKII', 'Tư vấn chế độ ăn'],
     price: 250000,
     priceFormatted: '250.000 VNĐ',
-    priceNote: 'Giá theo cơ sở/ngày khám',
+    priceNote: 'Khám ngoại trú • giá theo dịch vụ/cơ sở/ngày khám',
     category: 'specialty',
-    preparationNotes: ['Nhịn ăn ít nhất 6 tiếng nếu có chỉ định xét nghiệm máu hoặc nội soi'],
-    targetAudience: 'Bệnh nhân có triệu chứng đau dạ dày, rối loạn tiêu hóa, ợ hơi, trào ngược',
+    purposeSummary:
+      'Thăm khám, chẩn đoán phân biệt và tư vấn phác đồ điều trị chuyên khoa đối với các trường hợp: Đau tức vùng thượng vị, trào ngược dạ dày thực quản (GERD), ợ hơi, ợ chua, rối loạn tiêu hóa kéo dài, viêm đại tràng co thắt, kiểm soát viêm gan siêu vi và bệnh lý đường mật, tụy tạng.',
+    highlightSymptoms: [
+      'Đau tức vùng thượng vị',
+      'trào ngược dạ dày thực quản (GERD)',
+      'ợ hơi, ợ chua',
+      'rối loạn tiêu hóa kéo dài',
+      'viêm đại tràng co thắt',
+    ],
+    suitableFor:
+      'Phù hợp cho mọi người bệnh có nhu cầu khám trực tiếp cùng Bác sĩ Chuyên khoa cấp cao hoặc Chuyên gia đầu ngành tại phòng khám ngoại trú riêng biệt, không cần xếp hàng chờ đợi lâu.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-tm-01',
@@ -27,19 +66,48 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Khám Chuyên khoa Tim Mạch',
     departmentId: 'dept-tm',
     departmentName: 'Khoa Tim Mạch',
+    location: 'Khu Khám Ngoại trú - Tầng 1, Nhà B',
+    isOnlineBookingActive: true,
     badgeType: 'online',
     badgeLabel: 'Đặt online nhanh',
     durationMinutes: 20,
-    durationDescription: '20 phút thăm khám trực tiếp',
+    durationDescription: '20 phút thăm khám trực tiếp cùng bác sĩ chuyên khoa',
     description:
       'Tầm soát tăng huyết áp, thiếu máu cơ tim cục bộ, rối loạn nhịp tim và theo dõi bệnh van tim mạn tính.',
     tags: ['Đo điện tim cơ bản', 'Bác sĩ chuyên khoa'],
     price: 250000,
     priceFormatted: '250.000 VNĐ',
-    priceNote: 'Giá theo cơ sở/ngày khám',
+    priceNote: 'Khám ngoại trú • giá theo dịch vụ/cơ sở/ngày khám',
     category: 'specialty',
-    preparationNotes: ['Mang theo toa thuốc đang uống và kết quả điện tim gần nhất (nếu có)'],
-    targetAudience: 'Người bị tăng huyết áp, tức ngực, hồi hộp, khó thở khi gắng sức',
+    purposeSummary:
+      'Thăm khám và theo dõi các bệnh lý tim mạch mạn tính: Tăng huyết áp, đau tức ngực khi gắng sức, rối loạn nhịp tim, khó thở về đêm.',
+    highlightSymptoms: ['Tăng huyết áp', 'đau tức ngực', 'rối loạn nhịp tim', 'khó thở'],
+    suitableFor:
+      'Phù hợp cho bệnh nhân có tiền sử tim mạch hoặc xuất hiện các triệu chứng hồi hộp, đau thắt ngực cần khám chuyên gia.',
+    standardSteps: [
+      {
+        stepNumber: 1,
+        title: 'Tiếp đón & Đo huyết áp hai tay',
+        description: 'Đo huyết áp tư thế ngồi, đếm nhịp tim, chiều cao cân nặng tại quầy tiếp đón.',
+      },
+      {
+        stepNumber: 2,
+        title: 'Khám tim mạch & Nghe tim',
+        description: 'Bác sĩ chuyên khoa nghe tim, phổi, bắt mạch ngoại vi và khai thác tiền sử.',
+      },
+      {
+        stepNumber: 3,
+        title: 'Đo điện tâm đồ (ECG)',
+        description:
+          'Đo điện tim 12 chuyển đạo tiêu chuẩn để tầm soát rối loạn nhịp và thiếu máu cơ tim.',
+      },
+      {
+        stepNumber: 4,
+        title: 'Kết luận & Tư vấn lối sống',
+        description:
+          'Kê đơn thuốc điều hòa huyết áp, tư vấn chế độ ăn giảm muối và hẹn lịch tái khám.',
+      },
+    ],
   },
   {
     id: 'srv-noi-01',
@@ -47,36 +115,71 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Khám Nội Tổng Quát Ban Đầu',
     departmentId: 'dept-noi',
     departmentName: 'Khoa Nội Tổng Quát',
+    location: 'Khu Khám Ngoại trú - Tầng 1, Nhà A',
+    isOnlineBookingActive: true,
+    badgeType: 'online',
+    badgeLabel: 'Đặt online nhanh',
     durationMinutes: 20,
-    durationDescription: '20 phút thăm khám',
+    durationDescription: '20 phút thăm khám ban đầu',
     description:
       'Khám sàng lọc sức khỏe ban đầu cho người bệnh có nhiều triệu chứng kết hợp hoặc chưa rõ chuyên khoa cụ thể.',
     tags: ['Định hướng chỉ định', 'Tiếp nhận nhanh'],
     price: 200000,
     priceFormatted: '200.000 VNĐ',
-    priceNote: 'Giá theo cơ sở/ngày khám',
+    priceNote: 'Khám ngoại trú • giá theo dịch vụ/cơ sở/ngày khám',
     category: 'general',
-    preparationNotes: ['Khám vào buổi sáng để thuận tiện làm các xét nghiệm sàng lọc cần thiết'],
-    targetAudience: 'Người có triệu chứng mệt mỏi, sụt cân, sốt kéo dài hoặc khám kiểm tra ban đầu',
+    purposeSummary:
+      'Khám sàng lọc, định hướng chẩn đoán cho các trường hợp: Mệt mỏi kéo dài, sốt nhẹ về chiều, sụt cân không rõ nguyên nhân, khó chịu toàn thân.',
+    highlightSymptoms: ['Mệt mỏi kéo dài', 'sốt nhẹ về chiều', 'sụt cân', 'khó chịu toàn thân'],
+    suitableFor:
+      'Người bệnh chưa rõ bệnh thuộc chuyên khoa nào, cần bác sĩ đa khoa thăm khám ban đầu và định hướng xét nghiệm chính xác.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-tmh-01',
     serviceCode: 'DV-TMH-01',
     name: 'Khám Tai Mũi Họng',
     departmentId: 'dept-tmh',
-    departmentName: 'Dịch vụ khám',
+    departmentName: 'Khoa Tai Mũi Họng',
+    location: 'Khu Khám Ngoại trú - Tầng 2, Nhà B',
+    isOnlineBookingActive: true,
     badgeType: 'endoscopy',
     badgeLabel: 'Kèm nội soi',
     durationMinutes: 20,
-    durationDescription: '20 phút thăm khám & nội soi',
+    durationDescription: '20 phút thăm khám & nội soi ống mềm',
     description: 'Thông tin dịch vụ theo danh mục cơ sở; xác nhận khung giờ còn chỗ trước khi đặt.',
     tags: ['Nội soi ống mềm', 'Hình ảnh HD'],
     price: 220000,
     priceFormatted: '220.000 VNĐ',
     priceNote: '(Đã bao gồm nội soi tầm soát)',
     category: 'specialty',
-    preparationNotes: ['Vệ sinh sạch tai mũi trước khi khám, không xịt thuốc mũi trước 2 tiếng'],
-    targetAudience: 'Người bị nghẹt mũi, khàn tiếng kéo dài, ù tai, viêm họng mạn tính',
+    purposeSummary:
+      'Thăm khám và nội soi chẩn đoán các bệnh lý: Viêm xoang mạn tính, viêm amidan hốc mủ, khàn tiếng kéo dài, nghẹt mũi dị ứng, ù tai.',
+    highlightSymptoms: ['Viêm xoang mạn tính', 'khàn tiếng kéo dài', 'nghẹt mũi', 'ù tai'],
+    suitableFor:
+      'Người bệnh có triệu chứng vùng tai mũi họng cần nội soi hình ảnh độ phân giải cao để chẩn đoán chính xác.',
+    standardSteps: [
+      {
+        stepNumber: 1,
+        title: 'Tiếp đón & Vệ sinh họng mũi',
+        description: 'Chuẩn bị bệnh nhân, xịt thuốc làm co niêm mạc mũi nếu cần nội soi sâu.',
+      },
+      {
+        stepNumber: 2,
+        title: 'Nội soi ống mềm HD',
+        description: 'Bác sĩ thực hiện nội soi quan sát vòm họng, dây thanh âm và hốc mũi.',
+      },
+      {
+        stepNumber: 3,
+        title: 'Phân tích hình ảnh nội soi',
+        description: 'Giải thích tổn thương trực tiếp trên màn hình monitor cho bệnh nhân.',
+      },
+      {
+        stepNumber: 4,
+        title: 'Kê đơn & Hướng dẫn vệ sinh',
+        description: 'Cấp đơn thuốc, hướng dẫn rửa mũi xoang đúng cách và hẹn kiểm tra.',
+      },
+    ],
   },
   {
     id: 'srv-nhi-01',
@@ -84,10 +187,12 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Khám Chuyên khoa Nhi Tự Nguyện',
     departmentId: 'dept-nhi',
     departmentName: 'Khoa Nhi Ngoại Trú',
+    location: 'Khu Khám Ngoại trú - Tầng 1, Khu Khám Nhi',
+    isOnlineBookingActive: true,
     badgeType: 'pediatric',
     badgeLabel: 'Dành cho trẻ em',
     durationMinutes: 25,
-    durationDescription: '25 phút thăm khám thân thiện',
+    durationDescription: '25 phút thăm khám thân thiện cùng bác sĩ Nhi',
     description:
       'Thăm khám chuyên sâu hô hấp, tiêu hóa, dinh dưỡng và tư vấn phát triển thể chất cho trẻ sơ sinh và trẻ nhỏ.',
     tags: ['Bác sĩ Nhi khoa nhẹ nhàng', 'Phòng khám riêng'],
@@ -95,9 +200,18 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     priceFormatted: '250.000 VNĐ',
     priceNote: '(Khám riêng theo yêu cầu)',
     category: 'pediatric',
-    preparationNotes: ['Mang theo sổ tiêm chủng và thông tin cân nặng, chiều cao của bé'],
-    targetAudience:
-      'Trẻ sơ sinh và trẻ em dưới 16 tuổi cần kiểm tra sức khỏe tổng quát hoặc bệnh lý',
+    purposeSummary:
+      'Thăm khám bệnh lý nhi khoa thường gặp: Ho sốt khò khè, viêm phế quản, nôn trớ, biếng ăn chậm lớn, rối loạn tiêu hóa ở trẻ nhỏ.',
+    highlightSymptoms: [
+      'Ho sốt khò khè',
+      'viêm phế quản',
+      'nôn trớ',
+      'biếng ăn',
+      'rối loạn tiêu hóa',
+    ],
+    suitableFor:
+      'Trẻ em từ sơ sinh đến 15 tuổi cần không gian khám thân thiện, bác sĩ nhẹ nhàng và tư vấn chu đáo cho phụ huynh.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-cxk-01',
@@ -105,6 +219,8 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Khám Chuyên khoa Cơ Xương Khớp',
     departmentId: 'dept-cxk',
     departmentName: 'Khoa Cơ Xương Khớp',
+    location: 'Khu Khám Ngoại trú - Tầng 2, Nhà B',
+    isOnlineBookingActive: true,
     badgeType: 'online',
     badgeLabel: 'Đặt online nhanh',
     durationMinutes: 20,
@@ -114,10 +230,19 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     tags: ['Siêu âm khớp', 'Phác đồ phục hồi'],
     price: 250000,
     priceFormatted: '250.000 VNĐ',
-    priceNote: 'Giá theo cơ sở/ngày khám',
+    priceNote: 'Khám ngoại trú • giá theo dịch vụ/cơ sở/ngày khám',
     category: 'specialty',
-    preparationNotes: ['Mặc trang phục rộng rãi để bác sĩ dễ dàng thăm khám vận động khớp'],
-    targetAudience: 'Người bị đau lưng, cứng khớp buổi sáng, đau khớp gối khi vận động',
+    purposeSummary:
+      'Chẩn đoán và điều trị: Đau lưng mạn tính, cứng khớp buổi sáng, đau khớp gối khi lên xuống cầu thang, tê bì tay chân do chèn ép rễ thần kinh.',
+    highlightSymptoms: [
+      'Đau lưng mạn tính',
+      'cứng khớp buổi sáng',
+      'đau khớp gối',
+      'tê bì tay chân',
+    ],
+    suitableFor:
+      'Người lớn tuổi thoái hóa khớp hoặc người trẻ tuổi chấn thương thể thao, đau nhức cột sống do ngồi văn phòng lâu.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-ts-01',
@@ -125,6 +250,8 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Gói Tầm soát Sức khỏe Toàn diện Cơ bản',
     departmentId: 'dept-ts',
     departmentName: 'Trung tâm Khám Sức Khỏe',
+    location: 'Trung tâm Khám Sức Khỏe - Tầng 3, Nhà C',
+    isOnlineBookingActive: true,
     badgeType: 'online',
     badgeLabel: 'Đặt online nhanh',
     durationMinutes: 45,
@@ -136,8 +263,11 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     priceFormatted: '850.000 VNĐ',
     priceNote: 'Đã bao gồm tất cả xét nghiệm cơ bản',
     category: 'package',
-    preparationNotes: ['Nhịn ăn sáng và không uống các loại nước ngọt, cà phê trước khi lấy máu'],
-    targetAudience: 'Người trưởng thành muốn kiểm tra sức khỏe định kỳ 6 tháng/lần',
+    purposeSummary:
+      'Tầm soát định kỳ chức năng gan, thận, mỡ máu, đường huyết, phổi và phát hiện sớm các khối u lành/ác tính tiềm ẩn.',
+    highlightSymptoms: ['Kiểm tra sức khỏe định kỳ', 'tầm soát bệnh mạn tính tiềm ẩn'],
+    suitableFor: 'Người trưởng thành muốn kiểm tra sức khỏe tổng thể định kỳ 6 tháng - 1 năm/lần.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-ts-02',
@@ -145,6 +275,8 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Gói Tầm soát Tim Mạch & Đột Quỵ Nâng Cao',
     departmentId: 'dept-tm',
     departmentName: 'Khoa Tim Mạch',
+    location: 'Khu Khám Ngoại trú - Tầng 1, Nhà B',
+    isOnlineBookingActive: true,
     durationMinutes: 40,
     durationDescription: '40 phút thăm khám chuyên sâu',
     description:
@@ -154,9 +286,12 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     priceFormatted: '1.200.000 VNĐ',
     priceNote: 'Gói khám kỹ thuật cao',
     category: 'package',
-    preparationNotes: ['Nhịn ăn 8 tiếng, ngưng các chất kích thích trước ngày khám'],
-    targetAudience:
-      'Người trên 45 tuổi, có tiền sử tăng huyết áp, tiểu đường hoặc gia đình có người đột quỵ',
+    purposeSummary:
+      'Đánh giá toàn diện nguy cơ tắc nghẽn mạch máu não, xơ vữa thành mạch và các mảng bám nguy cơ gây tai biến mạch máu não.',
+    highlightSymptoms: ['Tăng huyết áp lâu năm', 'tiền sử gia đình đột quỵ', 'cholesterol cao'],
+    suitableFor:
+      'Người trên 45 tuổi, có yếu tố nguy cơ tăng huyết áp, hút thuốc lá hoặc đái tháo đường.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-tk-01',
@@ -164,10 +299,12 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Khám Chuyên khoa Nội Thần Kinh',
     departmentId: 'dept-tk',
     departmentName: 'Khoa Nội Thần Kinh',
+    location: 'Khu Khám Ngoại trú - Tầng 3, Nhà C',
+    isOnlineBookingActive: true,
     badgeType: 'online',
     badgeLabel: 'Đặt online nhanh',
     durationMinutes: 25,
-    durationDescription: '25 phút thăm khám trực tiếp',
+    durationDescription: '25 phút thăm khám trực tiếp cùng chuyên gia',
     description:
       'Chẩn đoán và điều trị đau đầu mạn tính, rối loạn giấc ngủ, chóng mặt tiền đình, suy giảm trí nhớ.',
     tags: ['PGS.TS trực tiếp khám', 'Đo lưu huyết não'],
@@ -175,8 +312,12 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     priceFormatted: '350.000 VNĐ',
     priceNote: 'Khám chuyên gia đầu ngành',
     category: 'specialty',
-    preparationNotes: ['Ghi chép lại nhật ký các cơn đau đầu hoặc chóng mặt trong 2 tuần gần nhất'],
-    targetAudience: 'Bệnh nhân mất ngủ kéo dài, đau nửa đầu, tê bì tay chân',
+    purposeSummary:
+      'Thăm khám các chứng bệnh: Đau nửa đầu Migraine, rối loạn tiền đình kịch phát, mất ngủ kéo dài, run chân tay, suy giảm trí nhớ.',
+    highlightSymptoms: ['Đau nửa đầu', 'chóng mặt hoa mắt', 'mất ngủ kéo dài', 'suy giảm trí nhớ'],
+    suitableFor:
+      'Người bệnh gặp phải các cơn đau đầu không đáp ứng thuốc thông thường, mất ngủ trầm trọng hoặc chóng mặt quay cuồng.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-nt-01',
@@ -184,6 +325,8 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Khám Chuyên khoa Nội Tiết - Đái Tháo Đường',
     departmentId: 'dept-nt',
     departmentName: 'Khoa Nội Tiết',
+    location: 'Khu Khám Ngoại trú - Tầng 2, Nhà A',
+    isOnlineBookingActive: true,
     durationMinutes: 20,
     durationDescription: '20 phút thăm khám',
     description:
@@ -191,10 +334,14 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     tags: ['Kiểm tra HbA1c', 'Siêu âm tuyến giáp'],
     price: 250000,
     priceFormatted: '250.000 VNĐ',
-    priceNote: 'Giá theo cơ sở/ngày khám',
+    priceNote: 'Khám ngoại trú • giá theo dịch vụ/cơ sở/ngày khám',
     category: 'specialty',
-    preparationNotes: ['Nhịn ăn sáng để xét nghiệm đường huyết lúc đói'],
-    targetAudience: 'Người bị tiểu đường, sụt cân không rõ nguyên nhân, run tay, hồi hộp',
+    purposeSummary:
+      'Kiểm soát đường huyết, phát hiện biến chứng mắt, thận, thần kinh ở người bệnh tiểu đường và điều trị u tuyến giáp.',
+    highlightSymptoms: ['Khát nhiều uống nhiều', 'sụt cân nhanh', 'run tay hồi hộp', 'bướu cổ'],
+    suitableFor:
+      'Người mắc đái tháo đường typ 1, typ 2 hoặc có nhân tuyến giáp cần theo dõi định kỳ.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-mat-01',
@@ -202,6 +349,8 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Khám Mắt Toàn Diện & Khúc Xạ',
     departmentId: 'dept-mat',
     departmentName: 'Khoa Mắt',
+    location: 'Khu Khám Ngoại trú - Tầng 1, Nhà C',
+    isOnlineBookingActive: true,
     badgeType: 'online',
     badgeLabel: 'Đặt online nhanh',
     durationMinutes: 20,
@@ -211,10 +360,13 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     tags: ['Máy đo khúc xạ tự động', 'Chụp đáy mắt màu'],
     price: 200000,
     priceFormatted: '200.000 VNĐ',
-    priceNote: 'Giá theo cơ sở/ngày khám',
+    priceNote: 'Khám ngoại trú • giá theo dịch vụ/cơ sở/ngày khám',
     category: 'specialty',
-    preparationNotes: ['Tháo kính áp tròng trước khi vào phòng khám ít nhất 30 phút'],
-    targetAudience: 'Người có dấu hiệu mờ mắt, nhức mỏi mắt, trẻ em cần đo tật khúc xạ',
+    purposeSummary:
+      'Đo tật khúc xạ (cận, viễn, loạn), tầm soát nhược thị ở trẻ em và phát hiện sớm đục thủy tinh thể ở người cao tuổi.',
+    highlightSymptoms: ['Nhìn mờ', 'mỏi mắt nhức mắt', 'chảy nước mắt sống', 'ruồi bay trước mắt'],
+    suitableFor: 'Học sinh, sinh viên, nhân viên văn phòng và người cao tuổi có thị lực suy giảm.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-dl-01',
@@ -222,6 +374,8 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Khám Chuyên khoa Da Liễu',
     departmentId: 'dept-dl',
     departmentName: 'Khoa Da Liễu',
+    location: 'Khu Khám Ngoại trú - Tầng 2, Nhà C',
+    isOnlineBookingActive: true,
     durationMinutes: 20,
     durationDescription: '20 phút soi da & thăm khám',
     description:
@@ -229,10 +383,13 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     tags: ['Soi da kỹ thuật số', 'Phác đồ cá thể hóa'],
     price: 220000,
     priceFormatted: '220.000 VNĐ',
-    priceNote: 'Giá theo cơ sở/ngày khám',
+    priceNote: 'Khám ngoại trú • giá theo dịch vụ/cơ sở/ngày khám',
     category: 'specialty',
-    preparationNotes: ['Không bôi kem trang điểm hoặc thuốc bôi da trước buổi khám'],
-    targetAudience: 'Người bị ngứa da, mẩn đỏ, rụng tóc, viêm da dị ứng',
+    purposeSummary:
+      'Chẩn đoán và điều trị bệnh lý da liễu: Viêm da tiết bã, mẩn ngứa dị ứng, nấm da, chàm vảy nến và mụn viêm nặng.',
+    highlightSymptoms: ['Mẩn đỏ ngứa ngáy', 'tróc vảy da', 'mụn bọc viêm', 'sẩn ngứa tái phát'],
+    suitableFor: 'Người bệnh gặp phải các vấn đề da kéo dài không khỏi với thuốc bôi thông thường.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-nhi-02',
@@ -240,10 +397,12 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Tư Vấn Dinh Dưỡng & Vi Chất Trẻ Em',
     departmentId: 'dept-nhi',
     departmentName: 'Khoa Nhi Ngoại Trú',
+    location: 'Khu Khám Ngoại trú - Tầng 1, Khu Khám Nhi',
+    isOnlineBookingActive: true,
     badgeType: 'pediatric',
     badgeLabel: 'Dành cho trẻ em',
     durationMinutes: 30,
-    durationDescription: '30 phút tư vấn chuyên sâu',
+    durationDescription: '30 phút tư vấn chuyên sâu cùng chuyên gia dinh dưỡng',
     description:
       'Đánh giá biểu đồ tăng trưởng, xét nghiệm vi chất (kẽm, sắt, canxi, vitamin D3) và lên thực đơn khoa học.',
     tags: ['Chuyên gia dinh dưỡng Nhi', 'Thực đơn mẫu theo tuần'],
@@ -251,8 +410,17 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     priceFormatted: '300.000 VNĐ',
     priceNote: '(Khám riêng theo yêu cầu)',
     category: 'pediatric',
-    preparationNotes: ['Ghi nhật ký ăn uống của trẻ trong 3 ngày trước buổi tư vấn'],
-    targetAudience: 'Trẻ biếng ăn, chậm tăng cân, thấp còi hoặc thừa cân béo phì',
+    purposeSummary:
+      'Tầm soát thiếu hụt vi chất, lập thực đơn phục hồi cho trẻ biếng ăn, suy dinh dưỡng hoặc béo phì sớm.',
+    highlightSymptoms: [
+      'Chậm tăng cân',
+      'rụng tóc vành khăn',
+      'đổ mồ hôi trộm',
+      'biếng ăn kéo dài',
+    ],
+    suitableFor:
+      'Trẻ sơ sinh và trẻ nhỏ chậm lớn, phụ huynh cần tư vấn chế độ dinh dưỡng chuẩn theo độ tuổi.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-ts-03',
@@ -260,6 +428,8 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Gói Tầm soát Tiêu Hóa - Nội Soi Dạ Dày Đại Tràng',
     departmentId: 'dept-th',
     departmentName: 'Khoa Tiêu Hóa - Gan Mật',
+    location: 'Khu Khám Ngoại trú - Tầng 2, Nhà A',
+    isOnlineBookingActive: true,
     badgeType: 'endoscopy',
     badgeLabel: 'Kèm nội soi',
     durationMinutes: 45,
@@ -271,8 +441,16 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     priceFormatted: '1.850.000 VNĐ',
     priceNote: 'Đã bao gồm chi phí thuốc tiền mê',
     category: 'package',
-    preparationNotes: ['Nhịn ăn 8 tiếng, cần có người nhà đi cùng sau khi nội soi có gây mê'],
-    targetAudience: 'Người trên 40 tuổi, gia đình có người bị polyp hoặc ung thư tiêu hóa',
+    purposeSummary:
+      'Tầm soát sớm polyp dạ dày, đại tràng và vi khuẩn HP, ngăn ngừa nguy cơ ung thư đường tiêu hóa.',
+    highlightSymptoms: [
+      'Đi ngoài ra máu',
+      'đau bụng âm ỉ kéo dài',
+      'tiền sử gia đình có polyp/ung thư',
+    ],
+    suitableFor:
+      'Người từ 40 tuổi trở lên hoặc người có triệu chứng tiêu hóa mạn tính cần nội soi kiểm tra toàn diện.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-noi-02',
@@ -280,6 +458,8 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Khám Nội Tổng Quát Sức Khỏe Hậu Nhiễm Khuẩn',
     departmentId: 'dept-noi',
     departmentName: 'Khoa Nội Tổng Quát',
+    location: 'Khu Khám Ngoại trú - Tầng 1, Nhà A',
+    isOnlineBookingActive: true,
     durationMinutes: 25,
     durationDescription: '25 phút thăm khám tổng hợp',
     description:
@@ -287,10 +467,19 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     tags: ['Đo chức năng hô hấp', 'Xét nghiệm miễn dịch'],
     price: 250000,
     priceFormatted: '250.000 VNĐ',
-    priceNote: 'Giá theo cơ sở/ngày khám',
+    priceNote: 'Khám ngoại trú • giá theo dịch vụ/cơ sở/ngày khám',
     category: 'general',
-    preparationNotes: ['Mang theo hồ sơ điều trị đợt sốt/nhiễm khuẩn trước đó'],
-    targetAudience: 'Người có triệu chứng mệt mỏi kéo dài, khó thở sau đợt bệnh nặng',
+    purposeSummary:
+      'Hồi phục và đánh giá tổn thương cơ quan sau các đợt sốt virus, nhiễm trùng đường hô hấp hoặc Covid-19.',
+    highlightSymptoms: [
+      'Hụt hơi khi vận động nhẹ',
+      'mệt mỏi rũ rượi',
+      'ho khan kéo dài',
+      'suy nhược',
+    ],
+    suitableFor:
+      'Bệnh nhân sau đợt nằm viện hoặc sốt kéo dài có triệu chứng mệt mỏi chưa hồi phục thể lực.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-rh-01',
@@ -298,6 +487,8 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Khám Răng Hàm Mặt Ngoại Trú',
     departmentId: 'dept-rhm',
     departmentName: 'Khoa Răng Hàm Mặt',
+    location: 'Khu Khám Ngoại trú - Tầng 2, Nhà B',
+    isOnlineBookingActive: true,
     badgeType: 'online',
     badgeLabel: 'Đặt online nhanh',
     durationMinutes: 20,
@@ -307,10 +498,17 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     tags: ['Ghế nha cao cấp', 'Vô trùng tiêu chuẩn'],
     price: 180000,
     priceFormatted: '180.000 VNĐ',
-    priceNote: 'Giá theo cơ sở/ngày khám',
+    priceNote: 'Khám ngoại trú • giá theo dịch vụ/cơ sở/ngày khám',
     category: 'specialty',
-    preparationNotes: ['Đánh răng sạch trước khi đến khám nha khoa'],
-    targetAudience: 'Người bị ê buốt răng, chảy máu chân răng, đau nhức vùng hàm',
+    purposeSummary:
+      'Khám tổng quát răng miệng: Kiểm tra khớp cắn, tủy răng, mảng bám vôi răng, răng khôn mọc lệch và viêm nướu.',
+    highlightSymptoms: [
+      'Ê buốt răng khi ăn đồ nóng lạnh',
+      'chảy máu chân răng',
+      'đau nhức răng khôn',
+    ],
+    suitableFor: 'Khám định kỳ răng miệng 6 tháng/lần cho cả người lớn và trẻ em.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-ts-04',
@@ -318,6 +516,8 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Gói Tầm soát Chức Năng Tuyến Giáp Toàn Diện',
     departmentId: 'dept-nt',
     departmentName: 'Khoa Nội Tiết',
+    location: 'Khu Khám Ngoại trú - Tầng 2, Nhà A',
+    isOnlineBookingActive: true,
     durationMinutes: 30,
     durationDescription: '30 phút thăm khám & siêu âm',
     description:
@@ -327,8 +527,17 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     priceFormatted: '650.000 VNĐ',
     priceNote: 'Đã bao gồm trọn gói xét nghiệm & siêu âm',
     category: 'package',
-    preparationNotes: ['Nhịn ăn sáng trước khi lấy mẫu máu xét nghiệm hormone'],
-    targetAudience: 'Phụ nữ tuổi trung niên, người có nhân giáp hoặc tiền sử bướu cổ',
+    purposeSummary:
+      'Đánh giá chính xác mức độ cường giáp, suy giáp và phân loại TIRADS các nhân giáp bằng siêu âm 4D.',
+    highlightSymptoms: [
+      'Nuốt vướng',
+      'nghẹn cổ',
+      'tim đập nhanh',
+      'sút cân hoặc tăng cân không kiểm soát',
+    ],
+    suitableFor:
+      'Phụ nữ trung niên, người có tiền sử gia đình mắc bệnh bướu cổ hoặc phát hiện u cổ khi đi khám sức khỏe.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
   {
     id: 'srv-nhi-03',
@@ -336,6 +545,8 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     name: 'Khám Sàng Lọc Phát Triển Thần Kinh - Vận Động Trẻ Em',
     departmentId: 'dept-nhi',
     departmentName: 'Khoa Nhi Ngoại Trú',
+    location: 'Khu Khám Ngoại trú - Tầng 1, Khu Khám Nhi',
+    isOnlineBookingActive: true,
     badgeType: 'pediatric',
     badgeLabel: 'Dành cho trẻ em',
     durationMinutes: 30,
@@ -347,7 +558,16 @@ export const MOCK_EXAMINATION_SERVICES: ExaminationService[] = [
     priceFormatted: '350.000 VNĐ',
     priceNote: '(Khám riêng theo yêu cầu)',
     category: 'pediatric',
-    preparationNotes: ['Cho bé ngủ đủ giấc và ăn no trước giờ khám để bé thoải mái hợp tác'],
-    targetAudience: 'Trẻ chậm nói, khó tập trung hoặc có dấu hiệu rối loạn phổ tự kỷ',
+    purposeSummary:
+      'Sàng lọc sớm chậm nói, rối loạn tăng động giảm chú ý (ADHD), phổ tự kỷ và các khó khăn vận động tinh ở trẻ nhỏ.',
+    highlightSymptoms: [
+      'Chậm nói',
+      'ít giao tiếp mắt',
+      'không quay đầu khi gọi tên',
+      'khó tập trung',
+    ],
+    suitableFor:
+      'Trẻ từ 18 tháng đến 6 tuổi phụ huynh lo lắng về khả năng hòa nhập và phát triển ngôn ngữ.',
+    standardSteps: DEFAULT_STANDARD_STEPS,
   },
 ];
