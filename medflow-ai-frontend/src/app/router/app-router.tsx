@@ -7,6 +7,7 @@ import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/ex
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
 import { DoctorSearchPage } from '@/features/appointment/pages/doctor-search-page';
+import { ExaminationServiceCatalogPage } from '@/features/appointment/pages/examination-service-catalog-page';
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
@@ -26,7 +27,12 @@ export function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      <Route path="/services" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/appointment/services" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/appointment/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
       <Route path="/doctors" element={<DoctorSearchPage />} />
+      <Route path="/doctors/:doctorId" element={<DoctorSearchPage />} />
       <Route path="/appointment/doctors" element={<DoctorSearchPage />} />
       <Route
         path="/patient"
