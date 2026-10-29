@@ -31,4 +31,3 @@ export interface DoctorDetailProfile {
   hashtags: string[];
   weeklySchedule: WeeklyScheduleDay[];
 }
-

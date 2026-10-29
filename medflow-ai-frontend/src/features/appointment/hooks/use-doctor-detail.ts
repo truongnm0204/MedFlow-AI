@@ -12,4 +12,3 @@ export function useDoctorDetail(
     enabled: Boolean(doctorId),
   });
 }
-
