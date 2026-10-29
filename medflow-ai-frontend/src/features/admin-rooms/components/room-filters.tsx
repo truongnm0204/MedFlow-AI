@@ -1,97 +1,111 @@
 import { Download, Plus, Search } from 'lucide-react';
-import type { Ref } from 'react';
 
-import { ROOM_STATUS_LABELS } from '../types/room.types';
-import type { RoomFilters as RoomFiltersState, RoomStatus } from '../types/room.types';
+import { Button } from '@/shared/ui/button';
+
+import type { RoomFilters as RoomFiltersType, RoomItem } from '../types/room.types';
 
 interface RoomFiltersProps {
-  filters: RoomFiltersState;
+  filters: RoomFiltersType;
+  onChange: (filters: Partial<RoomFiltersType>) => void;
   departments: string[];
-  searchRef?: Ref<HTMLInputElement>;
-  onChange: (filters: RoomFiltersState) => void;
-  onExport: () => void;
-  onAdd: () => void;
+  rooms: RoomItem[];
+  onAddRoom?: () => void;
 }
-
-const controlClass =
-  'h-10 rounded-lg border border-border bg-white px-3 text-xs text-ink focus:border-primary focus:outline-none';
 
 export function RoomFilters({
   filters,
-  departments,
-  searchRef,
   onChange,
-  onExport,
-  onAdd,
+  departments,
+  rooms,
+  onAddRoom,
 }: RoomFiltersProps) {
+  const handleExportCsv = () => {
+    const headers = ['Mã phòng', 'Tên buồng khám', 'Khoa phòng', 'Vị trí', 'Cơ sở', 'Trạng thái'];
+    const rows = rooms.map((r) => [
+      r.roomCode,
+      `"${r.roomName}"`,
+      `"${r.department}"`,
+      `"${r.location}"`,
+      `"${r.facility}"`,
+      r.status === 'ACTIVE'
+        ? 'Đang hoạt động'
+        : r.status === 'MAINTENANCE'
+          ? 'Bảo trì'
+          : 'Tạm ngừng',
+    ]);
+    const csvContent =
+      'data:text/csv;charset=utf-8,\uFEFF' +
+      [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute(
+      'download',
+      `danh-sach-buong-kham-${new Date().toISOString().slice(0, 10)}.csv`,
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
-    <section
-      aria-label="Bộ lọc buồng khám"
-      className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-white p-3 shadow-sm"
-    >
-      <div className="relative min-w-[260px] flex-1">
-        <Search
-          className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-          aria-hidden="true"
-        />
-        <input
-          ref={searchRef}
-          type="search"
-          value={filters.searchQuery}
-          onChange={(e) => onChange({ ...filters, searchQuery: e.target.value })}
-          placeholder="Tìm theo mã phòng hoặc tên phòng..."
-          aria-label="Tìm kiếm buồng khám"
-          className={`${controlClass} w-full pl-9`}
-        />
+    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-4 rounded-2xl bg-white border border-border shadow-2xs">
+      <div className="flex flex-wrap items-center gap-3 flex-1">
+        {/* Search Input */}
+        <div className="relative min-w-[260px] flex-1 sm:flex-initial">
+          <Search
+            className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+            aria-hidden="true"
+          />
+          <input
+            type="text"
+            value={filters.search}
+            onChange={(e) => onChange({ search: e.target.value })}
+            placeholder="Tìm theo mã phòng hoặc tên phòng..."
+            className="w-full h-10 pl-10 pr-3 rounded-xl border border-border bg-canvas text-xs text-ink placeholder:text-sub focus:outline-hidden focus:ring-2 focus:ring-primary focus:bg-white transition-all"
+          />
+        </div>
+
+        {/* Department Select */}
+        <select
+          value={filters.department}
+          onChange={(e) => onChange({ department: e.target.value })}
+          aria-label="Lọc theo khoa phòng"
+          className="h-10 px-3 rounded-xl border border-border bg-canvas text-xs text-ink focus:outline-hidden focus:ring-2 focus:ring-primary focus:bg-white transition-all"
+        >
+          <option value="">Tất cả khoa phòng</option>
+          {departments.map((dept) => (
+            <option key={dept} value={dept}>
+              {dept}
+            </option>
+          ))}
+        </select>
+
+        {/* Status Select */}
+        <select
+          value={filters.status}
+          onChange={(e) => onChange({ status: e.target.value })}
+          aria-label="Lọc theo trạng thái"
+          className="h-10 px-3 rounded-xl border border-border bg-canvas text-xs text-ink focus:outline-hidden focus:ring-2 focus:ring-primary focus:bg-white transition-all"
+        >
+          <option value="">Tất cả trạng thái</option>
+          <option value="ACTIVE">Đang hoạt động</option>
+          <option value="MAINTENANCE">Bảo trì</option>
+          <option value="INACTIVE">Tạm ngừng</option>
+        </select>
       </div>
 
-      <select
-        value={filters.department}
-        onChange={(e) => onChange({ ...filters, department: e.target.value })}
-        aria-label="Lọc theo khoa phòng"
-        className={controlClass}
-      >
-        <option value="">Tất cả khoa phòng</option>
-        {departments.map((d) => (
-          <option key={d} value={d}>
-            {d}
-          </option>
-        ))}
-      </select>
-
-      <select
-        value={filters.status}
-        onChange={(e) => onChange({ ...filters, status: e.target.value as RoomStatus | '' })}
-        aria-label="Lọc theo trạng thái"
-        className={controlClass}
-      >
-        <option value="">Tất cả trạng thái</option>
-        {(Object.keys(ROOM_STATUS_LABELS) as RoomStatus[]).map((s) => (
-          <option key={s} value={s}>
-            {ROOM_STATUS_LABELS[s]}
-          </option>
-        ))}
-      </select>
-
-      <button
-        type="button"
-        onClick={onExport}
-        aria-label="Xuất Excel"
-        className="flex h-10 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-xs font-semibold text-ink hover:bg-slate-50"
-      >
-        <Download className="h-4 w-4" aria-hidden="true" />
-        Xuất Excel
-      </button>
-
-      <button
-        type="button"
-        onClick={onAdd}
-        aria-label="Thêm buồng khám"
-        className="flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-semibold text-white hover:bg-primary-dark"
-      >
-        <Plus className="h-4 w-4" aria-hidden="true" />
-        Thêm buồng khám
-      </button>
-    </section>
+      {/* Action buttons */}
+      <div className="flex items-center gap-2.5 self-end lg:self-center shrink-0">
+        <Button variant="secondary" size="sm" onClick={handleExportCsv} className="gap-1.5 h-10">
+          <Download className="w-4 h-4" aria-hidden="true" />
+          <span>Xuất Excel</span>
+        </Button>
+        <Button variant="primary" size="sm" onClick={onAddRoom} className="gap-1.5 h-10 shadow-xs">
+          <Plus className="w-4 h-4" aria-hidden="true" />
+          <span>Thêm buồng khám</span>
+        </Button>
+      </div>
+    </div>
   );
 }

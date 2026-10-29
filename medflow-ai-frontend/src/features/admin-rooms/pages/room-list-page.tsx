@@ -1,106 +1,94 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
 
 import { RoomFilters } from '../components/room-filters';
 import { RoomMetrics } from '../components/room-metrics';
 import { RoomTable } from '../components/room-table';
-import { INITIAL_ROOMS } from '../data/room-mock-data';
-import { ROOM_STATUS_LABELS } from '../types/room.types';
-import type { RoomFilters as RoomFiltersState, RoomItem } from '../types/room.types';
+import { ROOM_METRICS_MOCK, ROOMS_MOCK_DATA } from '../data/room-mock-data';
+import type { RoomFilters as RoomFiltersType, RoomItem } from '../types/room.types';
 
-const PAGE_SIZE = 10;
-
-function exportRoomsToCsv(rooms: RoomItem[]) {
-  const quote = (val: string) => `"${val.replaceAll('"', '""').replace(/^[=+\-@]/, "'$&")}"`;
-  const headers = ['Mã phòng', 'Tên buồng khám', 'Khoa phòng', 'Vị trí / Tầng', 'Trạng thái'];
-  const rows = rooms.map((r) => [
-    r.code,
-    r.name,
-    r.department,
-    r.location,
-    ROOM_STATUS_LABELS[r.status],
-  ]);
-  const csv = '\uFEFF' + [headers, ...rows].map((row) => row.map(quote).join(',')).join('\r\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'danh-muc-buong-kham-medflow.csv';
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-/** SCR-ADM-ROOM-01 · Danh mục Buồng khám & Kỹ thuật. */
 export function RoomListPage() {
-  const searchRef = useRef<HTMLInputElement>(null);
-  const [rooms] = useState<RoomItem[]>(INITIAL_ROOMS);
-  const [filters, setFilters] = useState<RoomFiltersState>({
-    searchQuery: '',
+  const [filters, setFilters] = useState<RoomFiltersType>({
+    search: '',
     department: '',
     status: '',
   });
-  const [page, setPage] = useState(1);
 
-  const departments = useMemo(
-    () =>
-      Array.from(new Set(rooms.map((r) => r.department))).sort((a, b) => a.localeCompare(b, 'vi')),
-    [rooms],
-  );
+  const departments = useMemo(() => {
+    return Array.from(new Set(ROOMS_MOCK_DATA.map((r) => r.department)));
+  }, []);
 
-  const metrics = useMemo(() => {
-    const active = rooms.filter((r) => r.status === 'ACTIVE').length;
-    return {
-      total: rooms.length,
-      active,
-      inactive: rooms.length - active,
-      departments: departments.length,
-    };
-  }, [rooms, departments]);
+  const filteredRooms = useMemo(() => {
+    return ROOMS_MOCK_DATA.filter((room) => {
+      const q = filters.search.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        room.roomCode.toLowerCase().includes(q) ||
+        room.roomName.toLowerCase().includes(q) ||
+        room.location.toLowerCase().includes(q);
 
-  const filtered = useMemo(() => {
-    const term = filters.searchQuery.trim().toLowerCase();
-    return rooms.filter(
-      (r) =>
-        (!term || r.code.toLowerCase().includes(term) || r.name.toLowerCase().includes(term)) &&
-        (!filters.department || r.department === filters.department) &&
-        (!filters.status || r.status === filters.status),
-    );
-  }, [rooms, filters]);
+      if (!matchesSearch) return false;
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const pageRooms = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+      if (filters.department && room.department !== filters.department) {
+        return false;
+      }
+
+      if (filters.status && room.status !== filters.status) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [filters]);
+
+  const handleFilterChange = (partial: Partial<RoomFiltersType>) => {
+    setFilters((prev) => ({ ...prev, ...partial }));
+  };
+
+  const handleViewRoom = (room: RoomItem) => {
+    alert(`Xem chi tiết buồng khám: ${room.roomName} (${room.roomCode})`);
+  };
+
+  const handleAddRoom = () => {
+    alert('Chức năng thêm mới buồng khám (SCR-ADM-ROOM-02) sẽ kết nối tại đây.');
+  };
 
   return (
     <AdminPortalShell
-      showTabs={true}
       activeTab="Buồng khám & Kỹ thuật"
-      breadcrumbText="Danh mục Buồng khám & Kỹ thuật (SCR-ADM-ROOM-01)"
-      breadcrumbLink="/admin/rooms"
+      breadcrumbs={[
+        { label: 'Cấu hình Cơ sở' },
+        { label: 'Danh mục Buồng khám & Kỹ thuật (SCR-ADM-ROOM-01)' },
+      ]}
     >
-      <main className="mx-auto max-w-[1720px] space-y-5 px-6 py-6">
-        <RoomMetrics metrics={metrics} />
+      <div className="p-6 space-y-6 max-w-[1720px] mx-auto">
+        {/* Page Title */}
+        <div>
+          <h1 className="text-xl font-bold text-ink tracking-tight">
+            Danh mục Buồng khám & Kỹ thuật
+          </h1>
+          <p className="text-xs text-sub mt-1">
+            Quản lý danh sách các buồng khám chuyên khoa, buồng cận lâm sàng và trạng thái khả dụng
+            đón tiếp bệnh nhân.
+          </p>
+        </div>
+
+        {/* 4 Stat Cards */}
+        <RoomMetrics metrics={ROOM_METRICS_MOCK} />
+
+        {/* Filters and Search Bar */}
         <RoomFilters
           filters={filters}
+          onChange={handleFilterChange}
           departments={departments}
-          searchRef={searchRef}
-          onChange={(next) => {
-            setFilters(next);
-            setPage(1);
-          }}
-          onExport={() => exportRoomsToCsv(filtered)}
-          onAdd={() => undefined}
+          rooms={filteredRooms}
+          onAddRoom={handleAddRoom}
         />
-        <RoomTable
-          rooms={pageRooms}
-          totalCount={filtered.length}
-          currentPage={currentPage}
-          pageSize={PAGE_SIZE}
-          totalPages={totalPages}
-          onPageChange={setPage}
-        />
-      </main>
+
+        {/* Rooms Data Table */}
+        <RoomTable rooms={filteredRooms} onViewRoom={handleViewRoom} />
+      </div>
     </AdminPortalShell>
   );
 }

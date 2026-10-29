@@ -1,29 +1,25 @@
-export type RoomStatus = 'ACTIVE' | 'SUSPENDED' | 'MAINTENANCE';
+export type RoomStatus = 'ACTIVE' | 'INACTIVE' | 'MAINTENANCE';
 
 export interface RoomItem {
   id: string;
-  code: string;
-  name: string;
+  roomCode: string;
+  roomName: string;
   department: string;
   location: string;
+  facility: string;
   status: RoomStatus;
+  capacityPerSlot: number;
 }
 
 export interface RoomFilters {
-  searchQuery: string;
+  search: string;
   department: string;
-  status: RoomStatus | '';
+  status: string;
 }
 
 export interface RoomMetrics {
-  total: number;
-  active: number;
-  inactive: number;
-  departments: number;
+  totalRooms: number;
+  activeRooms: number;
+  maintenanceRooms: number;
+  linkedDepartments: number;
 }
-
-export const ROOM_STATUS_LABELS: Record<RoomStatus, string> = {
-  ACTIVE: 'Đang hoạt động',
-  SUSPENDED: 'Tạm ngừng',
-  MAINTENANCE: 'Bảo trì',
-};

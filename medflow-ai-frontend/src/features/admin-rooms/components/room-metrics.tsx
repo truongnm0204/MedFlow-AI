@@ -1,74 +1,61 @@
-import { Building2, DoorOpen, PauseCircle, Stethoscope } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { Activity, AlertTriangle, Building2, DoorOpen } from 'lucide-react';
 
-import type { RoomMetrics as RoomMetricsData } from '../types/room.types';
+import type { RoomMetrics as RoomMetricsType } from '../types/room.types';
 
 interface RoomMetricsProps {
-  metrics: RoomMetricsData;
+  metrics: RoomMetricsType;
 }
-
-interface Card {
-  label: string;
-  value: string;
-  unit: string;
-  hint: string;
-  icon: LucideIcon;
-}
-
-const pad = (n: number) => String(n).padStart(2, '0');
 
 export function RoomMetrics({ metrics }: RoomMetricsProps) {
-  const cards: Card[] = [
+  const cards = [
     {
-      label: 'TỔNG SỐ BUỒNG KHÁM',
-      value: String(metrics.total),
-      unit: 'Phòng',
-      hint: `${metrics.active} phòng đang hoạt động`,
+      title: 'TỔNG SỐ BUỒNG KHÁM',
+      value: `${metrics.totalRooms} Phòng`,
+      desc: '20 phòng đang hoạt động',
       icon: DoorOpen,
+      tone: 'text-primary',
     },
     {
-      label: 'ĐANG HOẠT ĐỘNG',
-      value: String(metrics.active),
-      unit: 'Phòng',
-      hint: 'Tiếp nhận khám trực tiếp',
-      icon: Stethoscope,
+      title: 'ĐANG HOẠT ĐỘNG',
+      value: `${metrics.activeRooms} Phòng`,
+      desc: 'Tiếp nhận khám trực tiếp',
+      icon: Activity,
+      tone: 'text-emerald-600',
     },
     {
-      label: 'TẠM NGỪNG / BẢO TRÌ',
-      value: pad(metrics.inactive),
-      unit: 'Phòng',
-      hint: 'Không dùng vào lịch mới',
-      icon: PauseCircle,
+      title: 'TẠM NGỪNG / BẢO TRÌ',
+      value: `${metrics.maintenanceRooms < 10 ? `0${metrics.maintenanceRooms}` : metrics.maintenanceRooms} Phòng`,
+      desc: 'Không dùng vào lịch mới',
+      icon: AlertTriangle,
+      tone: 'text-amber-500',
     },
     {
-      label: 'KHOA PHÒNG LIÊN KẾT',
-      value: String(metrics.departments),
-      unit: 'Khoa phòng',
-      hint: 'Đã liên kết buồng khám',
+      title: 'KHOA PHÒNG LIÊN KẾT',
+      value: `${metrics.linkedDepartments} Khoa phòng`,
+      desc: 'Theo danh mục cơ sở',
       icon: Building2,
+      tone: 'text-sky-600',
     },
   ];
 
   return (
-    <section
-      aria-label="Chỉ số buồng khám"
-      className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"
-    >
-      {cards.map(({ label, value, unit, hint, icon: Icon }) => (
-        <div key={label} className="rounded-xl border border-border bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-sub">
-              {label}
-            </span>
-            <Icon className="h-4 w-4 text-primary" aria-hidden="true" />
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      {cards.map((card) => {
+        const Icon = card.icon;
+        return (
+          <div
+            key={card.title}
+            className="p-5 rounded-2xl bg-white border border-border shadow-2xs space-y-1 transition-all hover:border-slate-300"
+          >
+            <div className="flex items-center justify-between text-xs font-semibold text-sub tracking-wider">
+              <span>{card.title}</span>
+              <Icon className={`w-4 h-4 ${card.tone}`} aria-hidden="true" />
+            </div>
+            <div className="text-2xl font-black text-ink">{card.value}</div>
+            <div className="text-[11px] text-sub">{card.desc}</div>
           </div>
-          <div className="mt-2 flex items-baseline gap-1.5">
-            <span className="text-2xl font-bold text-navy">{value}</span>
-            <span className="text-xs font-semibold text-sub">{unit}</span>
-          </div>
-          <div className="mt-1 text-[11px] text-sub">{hint}</div>
-        </div>
-      ))}
-    </section>
+        );
+      })}
+    </div>
   );
 }
