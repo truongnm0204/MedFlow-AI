@@ -41,7 +41,7 @@ export function DoctorDetailModal({ doctorId, isOpen, onClose }: DoctorDetailMod
     if (doctor) {
       selectDoctor(doctor.id);
       onClose();
-      navigate(`/appointment/booking?doctorId=${doctor.id}`);
+      navigate(`/appointment/doctors/${doctor.id}/booking`);
     }
   };
 
