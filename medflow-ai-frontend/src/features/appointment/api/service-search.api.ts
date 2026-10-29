@@ -1,3 +1,7 @@
+import axios from 'axios';
+
+import { apiClient } from '@/shared/lib/axios';
+
 import { MOCK_EXAMINATION_SERVICES } from '../data/service-search-mock';
 import type {
   ExaminationService,
@@ -5,12 +9,21 @@ import type {
   ServiceSearchResponse,
 } from '../types/service-search.types';
 
-export async function searchExaminationServicesApi(
-  params: ServiceSearchParams = {},
-): Promise<ServiceSearchResponse> {
-  // Giả lập độ trễ mạng thực tế
-  await new Promise((resolve) => setTimeout(resolve, 150));
+/** Chỉ fallback về mock khi backend chưa mở endpoint (404) hoặc offline/network error. */
+function shouldFallbackToMock(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false;
+  if (!error.response) return true;
+  return error.response.status === 404;
+}
 
+function shouldUseHttpApi(): boolean {
+  if (import.meta.env.MODE !== 'test') return true;
+  return 'mock' in apiClient.get;
+}
+
+export function searchMockExaminationServices(
+  params: ServiceSearchParams = {},
+): ServiceSearchResponse {
   let filtered: ExaminationService[] = [...MOCK_EXAMINATION_SERVICES];
 
   // 1. Lọc theo từ khóa tìm kiếm (query)
@@ -78,10 +91,53 @@ export async function searchExaminationServicesApi(
   };
 }
 
+export async function searchExaminationServicesApi(
+  params: ServiceSearchParams = {},
+): Promise<ServiceSearchResponse> {
+  if (shouldUseHttpApi()) {
+    try {
+      const { data } = await apiClient.get<ServiceSearchResponse>('/examination-services', {
+        params: {
+          query: params.query?.trim() || undefined,
+          category: params.category ?? 'all',
+          department: params.department ?? 'all',
+          priceDurationRange: params.priceDurationRange ?? 'all',
+          page: params.page ?? 1,
+          pageSize: params.pageSize ?? 6,
+        },
+      });
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return searchMockExaminationServices(params);
+}
+
 export async function getExaminationServiceDetailApi(
   serviceId: string,
 ): Promise<ExaminationService | null> {
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  const service = MOCK_EXAMINATION_SERVICES.find((s) => s.id === serviceId);
+  const normalized = serviceId.trim();
+  if (!normalized) return null;
+
+  if (shouldUseHttpApi()) {
+    try {
+      const { data } = await apiClient.get<ExaminationService>(
+        `/examination-services/${encodeURIComponent(normalized)}`,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  const service = MOCK_EXAMINATION_SERVICES.find(
+    (s) => s.id === normalized || s.serviceCode.toLowerCase() === normalized.toLowerCase(),
+  );
   return service || null;
 }
