@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom';
 
+import { DepartmentCreatePage } from '@/features/admin-departments/pages/department-create-page';
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
@@ -143,6 +144,16 @@ export function AppRouter() {
       >
         <Route path=":serviceId/edit" element={<ServiceEditModal />} />
       </Route>
+      <Route
+        path="/admin/departments/new"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <DepartmentCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
       <Route
         path="/admin/services/new"
         element={
