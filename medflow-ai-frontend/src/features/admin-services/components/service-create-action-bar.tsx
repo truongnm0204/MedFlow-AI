@@ -10,7 +10,7 @@ interface ServiceCreateActionBarProps {
 export function ServiceCreateActionBar({ onCancel, onSaveDraft }: ServiceCreateActionBarProps) {
   return (
     <div className="sticky bottom-0 z-20 border-t border-border bg-white px-6 py-3 shadow-lg">
-      <div className="mx-auto flex max-w-[1720px] flex-wrap items-center justify-between gap-4 text-xs text-slate-600">
+      <div className="flex flex-wrap items-center justify-between gap-4 text-xs text-slate-600">
         <div className="flex items-center gap-2">
           <RotateCw className="h-3.5 w-3.5 text-primary animate-spin-slow" />
           <span>Dịch vụ hiển thị trên cổng khi được bật và có slot hợp lệ.</span>

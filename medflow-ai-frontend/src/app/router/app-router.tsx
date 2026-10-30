@@ -1,10 +1,11 @@
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
+import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
 import { DoctorSearchPage } from '@/features/appointment/pages/doctor-search-page';
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
@@ -83,6 +84,16 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <Navigate to="/admin/services" replace />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/doctors"
         element={
           <RequireAuth>
@@ -113,7 +124,9 @@ export function AppRouter() {
             </RequireAdmin>
           </RequireAuth>
         }
-      />
+      >
+        <Route path=":serviceId/edit" element={<ServiceEditModal />} />
+      </Route>
       <Route
         path="/admin/services/new"
         element={
@@ -133,7 +146,9 @@ export function AppRouter() {
             </RequireAdmin>
           </RequireAuth>
         }
-      />
+      >
+        <Route path=":serviceId/edit" element={<ServiceEditModal />} />
+      </Route>
       <Route
         path="/admin/examination-services/new"
         element={

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Outlet, useNavigate } from 'react-router-dom';
 
 import { AdminServicesShell } from '../components/admin-services-shell';
 import { ServiceColumnModal } from '../components/service-column-modal';
@@ -110,7 +110,7 @@ export function ExaminationServiceListPage() {
 
   return (
     <AdminServicesShell>
-      <main className="mx-auto max-w-[1720px] space-y-5 px-6 py-6">
+      <main className="space-y-5 px-6 py-6">
         <ServiceMetrics services={services} />
 
         <ServiceFilters
@@ -141,6 +141,7 @@ export function ExaminationServiceListPage() {
 
       <ServicePriceHistoryModal />
       <ServiceColumnModal />
+      <Outlet />
     </AdminServicesShell>
   );
 }

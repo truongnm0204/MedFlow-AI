@@ -46,6 +46,7 @@ interface ExaminationServiceState {
   setIsColumnModalOpen: (open: boolean) => void;
   draft: Partial<ExaminationService> | null;
   addService: (service: ExaminationService) => void;
+  updateService: (id: string, updated: Partial<ExaminationService>) => void;
   saveDraft: (draft: Partial<ExaminationService>) => void;
   clearDraft: () => void;
 }
@@ -134,6 +135,12 @@ export const useExaminationServiceStore = create<ExaminationServiceState>((set) 
     set((state) => ({
       services: [service, ...state.services],
       draft: null,
+    })),
+  updateService: (id, updated) =>
+    set((state) => ({
+      services: state.services.map((item) =>
+        item.id === id || item.code === id ? { ...item, ...updated } : item,
+      ),
     })),
   saveDraft: (draft) => set({ draft }),
   clearDraft: () => set({ draft: null }),
