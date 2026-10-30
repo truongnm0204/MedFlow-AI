@@ -7,8 +7,11 @@ import { OperationalReportsPage } from '@/features/admin-reports/pages/operation
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
+import { AppointmentListPage } from '@/features/appointment/pages/appointment-list-page';
+import { AppointmentSlotBookingPage } from '@/features/appointment/pages/appointment-slot-booking-page';
 import { DoctorSearchPage } from '@/features/appointment/pages/doctor-search-page';
 import { ExaminationServiceCatalogPage } from '@/features/appointment/pages/examination-service-catalog-page';
+import { ServiceSlotBookingPage } from '@/features/appointment/pages/service-slot-booking-page';
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
@@ -30,11 +33,29 @@ export function AppRouter() {
       <Route path="/" element={<HomePage />} />
       <Route path="/services" element={<ExaminationServiceCatalogPage />} />
       <Route path="/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/services/:serviceId/booking" element={<ServiceSlotBookingPage />} />
       <Route path="/appointment/services" element={<ExaminationServiceCatalogPage />} />
       <Route path="/appointment/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/appointment/services/:serviceId/booking" element={<ServiceSlotBookingPage />} />
       <Route path="/doctors" element={<DoctorSearchPage />} />
       <Route path="/doctors/:doctorId" element={<DoctorSearchPage />} />
+      <Route path="/doctors/:doctorId/booking" element={<AppointmentSlotBookingPage />} />
       <Route path="/appointment/doctors" element={<DoctorSearchPage />} />
+      <Route path="/appointment/doctors/:doctorId" element={<DoctorSearchPage />} />
+      <Route
+        path="/appointment/doctors/:doctorId/booking"
+        element={<AppointmentSlotBookingPage />}
+      />
+      <Route path="/appointments" element={<AppointmentListPage />} />
+      <Route path="/appointment/list" element={<AppointmentListPage />} />
+      <Route
+        path="/patient/appointments"
+        element={
+          <RequireAuth>
+            <AppointmentListPage />
+          </RequireAuth>
+        }
+      />
       <Route
         path="/patient"
         element={
