@@ -9,6 +9,7 @@ import { ExaminationServiceListPage } from '@/features/admin-services/pages/exam
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
 import { ExaminationSlotCreatePage } from '@/features/admin-slots/pages/examination-slot-create-page';
 import { ExaminationSlotListPage } from '@/features/admin-slots/pages/examination-slot-list-page';
+import { AppointmentDetailPage } from '@/features/appointment/pages/appointment-detail-page';
 import { AppointmentListPage } from '@/features/appointment/pages/appointment-list-page';
 import { AppointmentSlotBookingPage } from '@/features/appointment/pages/appointment-slot-booking-page';
 import { DoctorSearchPage } from '@/features/appointment/pages/doctor-search-page';
@@ -49,15 +50,7 @@ export function AppRouter() {
         element={<AppointmentSlotBookingPage />}
       />
       <Route path="/appointments" element={<AppointmentListPage />} />
-      <Route path="/appointment/list" element={<AppointmentListPage />} />
-      <Route
-        path="/patient/appointments"
-        element={
-          <RequireAuth>
-            <AppointmentListPage />
-          </RequireAuth>
-        }
-      />
+      <Route path="/appointments/:appointmentId" element={<AppointmentDetailPage />} />
       <Route
         path="/patient"
         element={

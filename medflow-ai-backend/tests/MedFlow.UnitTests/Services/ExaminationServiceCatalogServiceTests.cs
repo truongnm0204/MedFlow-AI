@@ -29,6 +29,7 @@ public sealed class ExaminationServiceCatalogServiceTests : IDisposable
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
 
         public DbSet<Department> Departments => Set<Department>();
+        public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => Set<Service>();
         public DbSet<ServicePrice> ServicePrices => Set<ServicePrice>();
@@ -50,6 +51,11 @@ public sealed class ExaminationServiceCatalogServiceTests : IDisposable
             modelBuilder.Ignore<AuditLog>();
 
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
+            modelBuilder.Entity<HospitalRoom>(b =>
+            {
+                b.HasKey(r => r.Id);
+                b.HasOne(r => r.Department).WithMany(d => d.HospitalRooms).HasForeignKey(r => r.DepartmentId);
+            });
             modelBuilder.Entity<Specialty>().HasKey(s => s.Id);
             modelBuilder.Entity<Service>(b =>
             {
@@ -88,6 +94,80 @@ public sealed class ExaminationServiceCatalogServiceTests : IDisposable
             new Department { Id = 2, HospitalId = 1, DepartmentCode = "GI", Name = "Khoa Tiêu hóa", IsActive = true },
             new Department { Id = 3, HospitalId = 1, DepartmentCode = "CARD", Name = "Khoa Tim mạch", IsActive = true },
             new Department { Id = 4, HospitalId = 1, DepartmentCode = "DIA", Name = "Khoa Cận lâm sàng", IsActive = true });
+
+        db.HospitalRooms.AddRange(
+            new HospitalRoom
+            {
+                Id = 1,
+                HospitalId = 1,
+                DepartmentId = 2,
+                RoomCode = "RM-001",
+                Name = "Khám Tiêu hóa 101",
+                RoomType = "EXAMINATION",
+                Location = "Tầng 1, Khu Demo",
+                Capacity = 2,
+                Status = "ACTIVE",
+            },
+            new HospitalRoom
+            {
+                Id = 2,
+                HospitalId = 1,
+                DepartmentId = 2,
+                RoomCode = "RM-002",
+                Name = "Khám Tiêu hóa 102",
+                RoomType = "EXAMINATION",
+                Location = "Tầng 1, Khu Demo",
+                Capacity = 2,
+                Status = "ACTIVE",
+            },
+            new HospitalRoom
+            {
+                Id = 3,
+                HospitalId = 1,
+                DepartmentId = 3,
+                RoomCode = "RM-003",
+                Name = "Khám Tim mạch 201",
+                RoomType = "EXAMINATION",
+                Location = "Tầng 1, Khu Demo",
+                Capacity = 2,
+                Status = "ACTIVE",
+            },
+            new HospitalRoom
+            {
+                Id = 4,
+                HospitalId = 1,
+                DepartmentId = 3,
+                RoomCode = "RM-004",
+                Name = "Khám Tim mạch 202",
+                RoomType = "EXAMINATION",
+                Location = "Tầng 1, Khu Demo",
+                Capacity = 2,
+                Status = "ACTIVE",
+            },
+            new HospitalRoom
+            {
+                Id = 5,
+                HospitalId = 1,
+                DepartmentId = 4,
+                RoomCode = "RM-005",
+                Name = "Phòng Cận lâm sàng 205",
+                RoomType = "DIAGNOSTIC",
+                Location = "Tầng 2, Khu Demo",
+                Capacity = 1,
+                Status = "ACTIVE",
+            },
+            new HospitalRoom
+            {
+                Id = 99,
+                HospitalId = 1,
+                DepartmentId = 2,
+                RoomCode = "RM-099",
+                Name = "Khám Tiêu hóa 199",
+                RoomType = "EXAMINATION",
+                Location = "Tầng 1, Khu Demo",
+                Capacity = 2,
+                Status = "INACTIVE",
+            });
 
         db.Specialties.AddRange(
             new Specialty { Id = 1, SpecialtyCode = "GI", Name = "Tiêu hóa", IsActive = true },
@@ -330,10 +410,13 @@ public sealed class ExaminationServiceCatalogServiceTests : IDisposable
 
     [Theory]
     [InlineData("1", "EX-GI-01")]
-    [InlineData("ex-gi-01", "EX-GI-01")]
+    [InlineData("EX-GI-01", "EX-GI-01")]
+    [InlineData("ex-card-01", "EX-CARD-01")]
     [InlineData("srv-th-01", "EX-GI-01")]
     [InlineData("srv-tm-01", "EX-CARD-01")]
-    public async Task GetByIdOrCodeAsync_ResolvesByNumericIdServiceCodeOrLegacySlug(
+    [InlineData("DV-TH-01", "EX-GI-01")]
+    [InlineData("DV-TM-01", "EX-CARD-01")]
+    public async Task GetByIdOrCodeAsync_ResolvesByNumericIdServiceCodeLegacySlugOrDisplayCode(
         string idOrCode,
         string expectedServiceCode)
     {
@@ -343,8 +426,36 @@ public sealed class ExaminationServiceCatalogServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetByIdOrCodeAsync_ThrowsNotFoundException_WhenMissingOrDiagnostic()
+    public async Task GetByIdOrCodeAsync_ReturnsRoomLocationPreparationNotesTargetAudienceAndSpecialtySteps()
     {
+        var giDto = await _sut.GetByIdOrCodeAsync("EX-GI-01");
+        Assert.Equal("Khu Khám Ngoại trú - Tầng 1, Khu Demo (Phòng 101-102)", giDto.Location);
+        Assert.NotNull(giDto.PreparationNotes);
+        Assert.Equal(2, giDto.PreparationNotes!.Count);
+        Assert.False(string.IsNullOrWhiteSpace(giDto.TargetAudience));
+        Assert.Equal("Tiếp đón & Đo sinh hiệu", giDto.StandardSteps[0].Title);
+
+        var cardDto = await _sut.GetByIdOrCodeAsync("EX-CARD-01");
+        Assert.Equal("Khu Khám Ngoại trú - Tầng 1, Khu Demo (Phòng 201-202)", cardDto.Location);
+        Assert.NotNull(cardDto.PreparationNotes);
+        Assert.Equal(2, cardDto.PreparationNotes!.Count);
+        Assert.False(string.IsNullOrWhiteSpace(cardDto.TargetAudience));
+        Assert.Equal("Đo điện tâm đồ (ECG)", cardDto.StandardSteps[2].Title);
+    }
+
+    [Fact]
+    public async Task GetByIdOrCodeAsync_ThrowsValidationException_OnInvalidIdentifier()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() => _sut.GetByIdOrCodeAsync(""));
+        await Assert.ThrowsAsync<ValidationException>(() => _sut.GetByIdOrCodeAsync("   "));
+        await Assert.ThrowsAsync<ValidationException>(() => _sut.GetByIdOrCodeAsync(new string('a', 65)));
+        await Assert.ThrowsAsync<ValidationException>(() => _sut.GetByIdOrCodeAsync("EX-GI-01@invalid"));
+    }
+
+    [Fact]
+    public async Task GetByIdOrCodeAsync_ThrowsNotFoundException_WhenMissingInactiveOrDiagnostic()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() => _sut.GetByIdOrCodeAsync("EX-GI-INACTIVE"));
         await Assert.ThrowsAsync<NotFoundException>(() => _sut.GetByIdOrCodeAsync("DIA-CBC"));
         await Assert.ThrowsAsync<NotFoundException>(() => _sut.GetByIdOrCodeAsync("999"));
     }
