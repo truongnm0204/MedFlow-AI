@@ -30,6 +30,7 @@ public sealed class AuditLoggerTests : IDisposable
         public DbSet<RolePermission> RolePermissions => throw NotUsed();
         public DbSet<Patient> Patients => throw NotUsed();
         public DbSet<Staff> Staff => throw NotUsed();
+        public DbSet<Doctor> Doctors => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
@@ -57,6 +58,7 @@ public sealed class AuditLoggerTests : IDisposable
             modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Patient>();
             modelBuilder.Ignore<Staff>();
+            modelBuilder.Ignore<Doctor>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<Department>();
