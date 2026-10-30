@@ -1,4 +1,4 @@
-import type { ExaminationSlot } from '../types/examination-slot.types';
+import type { ExaminationSlot, ServiceType } from '../types/examination-slot.types';
 
 export const SLOT_SPECIALTIES = [
   'Nội tiết',
@@ -940,3 +940,110 @@ export const INITIAL_EXAMINATION_SLOTS: ExaminationSlot[] = [
     status: 'OPEN',
   },
 ];
+
+export interface SlotServiceOption {
+  id: string;
+  code: string;
+  name: string;
+  type: ServiceType;
+  specialty: string;
+}
+
+export const MOCK_SLOT_SERVICES: SlotServiceOption[] = [
+  {
+    id: 'srv-001',
+    code: 'EX-1-01',
+    name: 'Khám Nội tiết',
+    type: 'OUTPATIENT',
+    specialty: 'Nội tiết',
+  },
+  {
+    id: 'srv-002',
+    code: 'EX-2-03',
+    name: 'Khám Tim mạch',
+    type: 'OUTPATIENT',
+    specialty: 'Tim mạch',
+  },
+  {
+    id: 'srv-003',
+    code: 'EX-3-01',
+    name: 'Khám Tiêu hóa',
+    type: 'OUTPATIENT',
+    specialty: 'Tiêu hóa',
+  },
+  {
+    id: 'srv-004',
+    code: 'EX-4-02',
+    name: 'Khám Cơ xương khớp',
+    type: 'OUTPATIENT',
+    specialty: 'Cơ xương khớp',
+  },
+  {
+    id: 'srv-005',
+    code: 'EX-5-01',
+    name: 'Khám Tai Mũi Họng',
+    type: 'OUTPATIENT',
+    specialty: 'Tai Mũi Họng',
+  },
+  {
+    id: 'srv-006',
+    code: 'CD-1-01',
+    name: 'Chụp X-quang Ngực thẳng',
+    type: 'DIAGNOSTIC',
+    specialty: 'CĐHA',
+  },
+  {
+    id: 'srv-007',
+    code: 'CD-2-02',
+    name: 'Siêu âm Doppler Tim',
+    type: 'DIAGNOSTIC',
+    specialty: 'Tim mạch',
+  },
+  {
+    id: 'srv-008',
+    code: 'NK-1-01',
+    name: 'Nhi khoa Tổng quát',
+    type: 'OUTPATIENT',
+    specialty: 'Nhi khoa',
+  },
+  {
+    id: 'srv-009',
+    code: 'MT-1-01',
+    name: 'Khám Mắt tổng quát',
+    type: 'OUTPATIENT',
+    specialty: 'Mắt',
+  },
+  {
+    id: 'srv-010',
+    code: 'DL-1-01',
+    name: 'Khám Da liễu',
+    type: 'OUTPATIENT',
+    specialty: 'Da liễu',
+  },
+];
+
+export const MOCK_SLOT_ROOMS = [
+  { id: 'rm-201', code: 'PK-201', name: '01 PK-201' },
+  { id: 'rm-102', code: 'PK-102', name: '02 PK-102' },
+  { id: 'rm-108', code: 'PK-108', name: '03 PK-108' },
+  { id: 'rm-105', code: 'PK-105', name: '04 PK-105' },
+  { id: 'rm-104', code: 'PK-104', name: '05 PK-104' },
+  { id: 'rm-203', code: 'PK-203', name: '06 PK-203' },
+  { id: 'rm-109', code: 'PK-109', name: '07 PK-109' },
+] as const;
+
+export const MOCK_SLOT_DOCTORS = [
+  { id: 'doc-001', name: 'BS. Nguyễn Thu Lan', specialty: 'Nội tiết' },
+  { id: 'doc-002', name: 'BS. Trần Hoài Nam', specialty: 'Tim mạch' },
+  { id: 'doc-003', name: 'BS. Lê Minh Tuấn', specialty: 'Tiêu hóa' },
+  { id: 'doc-004', name: 'BS. Phạm Thảo Vy', specialty: 'Cơ xương khớp' },
+  { id: 'doc-005', name: 'BS. Đặng Hoàng Long', specialty: 'Tai Mũi Họng' },
+  { id: 'doc-006', name: 'BS. Vũ Hoàng Anh', specialty: 'Nhi khoa' },
+  { id: 'doc-007', name: 'BS. Đỗ Mỹ Linh', specialty: 'Mắt' },
+] as const;
+
+export function generateNextSlotCode(dateStr: string, existingCount = 0): string {
+  const cleanDate = dateStr.replaceAll('-', '');
+  const seq = String(existingCount + 1).padStart(2, '0');
+  return `SLT-HN-${cleanDate}-${seq}`;
+}
