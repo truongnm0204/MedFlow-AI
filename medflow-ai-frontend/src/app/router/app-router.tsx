@@ -1,4 +1,4 @@
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
@@ -110,6 +110,16 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <PharmacyDashboardPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <Navigate to="/admin/services" replace />
+            </RequireAdmin>
           </RequireAuth>
         }
       />

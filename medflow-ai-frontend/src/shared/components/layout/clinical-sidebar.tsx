@@ -1,84 +1,325 @@
-import { useState } from 'react';
+import {
+  Activity,
+  AlertCircle,
+  BookOpen,
+  Building2,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  CreditCard,
+  DoorOpen,
+  FileText,
+  LayoutDashboard,
+  Microscope,
+  Pill,
+  ShieldCheck,
+  Stethoscope,
+  UserCheck,
+  Users,
+} from 'lucide-react';
+import type { ElementType } from 'react';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+
+import { useDoctorDemoStore } from '@/features/admin-doctors/store/doctor-demo.store';
+import { useExaminationServiceStore } from '@/features/admin-services/store/examination-service.store';
+import { useAuthStore } from '@/features/auth/store/auth.store';
+
 import { MedflowLogo } from './medflow-logo';
 
-interface ClinicalSidebarProps {
-  activeItem?: string;
-  onItemSelect?: (item: string) => void;
+export interface SidebarNavItem {
+  id: string;
+  label: string;
+  icon: ElementType;
+  href?: string;
+  badge?: string;
+  badgeColor?: 'sky' | 'amber' | 'emerald';
+  hotkey?: string;
 }
 
-export function ClinicalSidebar({ activeItem = 'queue', onItemSelect }: ClinicalSidebarProps) {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+export interface ClinicalSidebarProps {
+  activeItem?: string;
+  onItemSelect?: (item: string) => void;
+  variant?: 'clinical' | 'admin';
+  className?: string;
+}
 
-  const clinicalItems = [
+export function ClinicalSidebar({
+  activeItem = 'queue',
+  onItemSelect,
+  variant = 'clinical',
+  className = '',
+}: ClinicalSidebarProps) {
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const navigate = useNavigate();
+
+  const user = useAuthStore((state) => state.user);
+  const doctorCount = useDoctorDemoStore((state) => state.doctors.length);
+  const serviceCount = useExaminationServiceStore((state) => state.services.length);
+
+  const isAdmin = variant === 'admin';
+
+  // Admin navigation structure
+  const adminItems: SidebarNavItem[] = [
+    {
+      id: 'doctors',
+      label: 'Bác sĩ & Nhân sự Y tế',
+      icon: Users,
+      href: '/admin/doctors',
+      badge: `${doctorCount} BS`,
+      badgeColor: 'sky',
+      hotkey: 'F1',
+    },
+    {
+      id: 'services',
+      label: 'Danh mục Dịch vụ & Kỹ thuật',
+      icon: Activity,
+      href: '/admin/services',
+      badge: `${serviceCount} DV`,
+      badgeColor: 'sky',
+      hotkey: 'F2',
+    },
+    {
+      id: 'departments',
+      label: 'Khoa phòng',
+      icon: Building2,
+      href: '/admin/departments',
+    },
+    {
+      id: 'rooms',
+      label: 'Buồng khám & Kỹ thuật',
+      icon: DoorOpen,
+      href: '/admin/rooms',
+    },
+    {
+      id: 'pricing',
+      label: 'Bảng giá & Biểu phí',
+      icon: CreditCard,
+      href: '/admin/pricing',
+    },
+    {
+      id: 'slots',
+      label: 'Quản lý Slot khám',
+      icon: Calendar,
+      href: '/admin/slots',
+    },
+    {
+      id: 'policies',
+      label: 'Chính sách hẹn',
+      icon: ShieldCheck,
+      href: '/admin/policies',
+    },
+  ];
+
+  const adminSecondaryItems: SidebarNavItem[] = [
+    {
+      id: 'doctor-workbench',
+      label: 'Bàn khám Bác sĩ',
+      icon: LayoutDashboard,
+      href: '/doctor',
+    },
+    {
+      id: 'reception-desk',
+      label: 'Bàn lễ tân Tiếp đón',
+      icon: UserCheck,
+      href: '/reception',
+    },
+    {
+      id: 'diagnostic-desk',
+      label: 'Kỹ thuật Cận lâm sàng',
+      icon: Microscope,
+      href: '/diagnostic',
+    },
+  ];
+
+  // Clinical navigation structure
+  const clinicalItems: SidebarNavItem[] = [
     {
       id: 'queue',
       label: 'Hàng đợi khám',
+      icon: Users,
       badge: '14 ca',
+      badgeColor: 'sky',
       hotkey: 'F1',
-      icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10',
     },
     {
       id: 'emr',
       label: 'Hồ sơ bệnh án EMR',
-      icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
+      icon: FileText,
     },
     {
       id: 'consult',
       label: 'Khám & Kê đơn',
+      icon: Stethoscope,
       hotkey: 'F2',
-      icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
     },
     {
       id: 'diagnostics',
       label: 'Chỉ định CLS & PACS',
+      icon: Microscope,
       badge: '3 chờ trả',
       badgeColor: 'amber',
-      icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2',
     },
     {
       id: 'prescription',
       label: 'Kê đơn thuốc điện tử',
+      icon: Pill,
       hotkey: 'F4',
-      icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2',
     },
   ];
 
-  const toolItems = [
+  const clinicalToolItems: SidebarNavItem[] = [
     {
       id: 'icd10',
       label: 'Từ điển ICD-10 chuẩn',
-      icon: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',
+      icon: BookOpen,
     },
     {
       id: 'drugs',
       label: 'Tra cứu tương tác thuốc',
-      icon: 'M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z',
+      icon: AlertCircle,
+    },
+    {
+      id: 'admin-portal',
+      label: 'Cổng Quản trị Cơ sở',
+      icon: ShieldCheck,
+      href: '/admin/services',
     },
   ];
 
+  const primaryItems = isAdmin ? adminItems : clinicalItems;
+  const secondaryItems = isAdmin ? adminSecondaryItems : clinicalToolItems;
+
+  const primarySectionTitle = isAdmin ? 'Danh Mục Quản Trị' : 'Nghiệp Vụ Bàn Khám';
+  const secondarySectionTitle = isAdmin ? 'Điều Hành Bệnh Viện' : 'Công Cụ Lâm Sàng';
+
+  // Keyboard navigation for hotkeys
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isAdmin) {
+        if (event.key === 'F1') {
+          event.preventDefault();
+          navigate('/admin/doctors');
+        }
+        if (event.key === 'F2') {
+          event.preventDefault();
+          navigate('/admin/services');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isAdmin, navigate]);
+
+  const renderNavItem = (item: SidebarNavItem) => {
+    const Icon = item.icon;
+    const isActive = activeItem === item.id;
+
+    const content = (
+      <>
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Icon
+            className={`h-4 w-4 shrink-0 transition-colors ${
+              isActive ? 'text-white' : 'text-slate-400 group-hover:text-slate-700'
+            }`}
+            aria-hidden="true"
+          />
+          {!isCollapsed && <span className="truncate">{item.label}</span>}
+        </div>
+
+        {!isCollapsed && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            {item.badge && (
+              <span
+                className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                  isActive
+                    ? 'bg-white/20 text-white'
+                    : item.badgeColor === 'amber'
+                      ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                      : 'bg-sky-50 text-primary border border-sky-200'
+                }`}
+              >
+                {item.badge}
+              </span>
+            )}
+            {item.hotkey && (
+              <kbd
+                className={`text-[9px] font-mono px-1 py-0.5 rounded border ${
+                  isActive
+                    ? 'bg-white/20 border-white/30 text-white'
+                    : 'bg-slate-100 border-slate-200 text-slate-400'
+                }`}
+              >
+                {item.hotkey}
+              </kbd>
+            )}
+          </div>
+        )}
+      </>
+    );
+
+    const commonClass = `group w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+      isActive
+        ? 'bg-primary text-white shadow-sm shadow-primary/20 font-semibold'
+        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+    }`;
+
+    if (item.href) {
+      return (
+        <Link
+          key={item.id}
+          to={item.href}
+          onClick={() => onItemSelect?.(item.id)}
+          className={commonClass}
+          title={isCollapsed ? item.label : undefined}
+        >
+          {content}
+        </Link>
+      );
+    }
+
+    return (
+      <button
+        key={item.id}
+        type="button"
+        onClick={() => onItemSelect?.(item.id)}
+        className={commonClass}
+        title={isCollapsed ? item.label : undefined}
+      >
+        {content}
+      </button>
+    );
+  };
+
   return (
     <aside
-      aria-label="Điều hướng lâm sàng"
-      className={`bg-white border-r border-slate-200 flex flex-col justify-between transition-all duration-200 select-none ${
+      aria-label={isAdmin ? 'Điều hướng quản trị' : 'Điều hướng lâm sàng'}
+      className={`bg-white border-r border-border flex flex-col justify-between transition-all duration-200 select-none ${
         isCollapsed ? 'w-[68px]' : 'w-[260px]'
-      }`}
+      } ${className}`}
     >
       {/* Top Header & Role */}
       <div>
         {/* Brand Bar */}
         <div
-          className={`relative h-16 border-b border-slate-200 flex items-center ${
+          className={`relative h-16 border-b border-border flex items-center ${
             isCollapsed ? 'justify-center px-2' : 'justify-between px-4'
           }`}
         >
           <div className="flex items-center gap-2.5 overflow-hidden">
-            <MedflowLogo variant="full" className="h-9 w-auto flex-shrink-0" linkToHome={false} />
+            <MedflowLogo
+              variant={isCollapsed ? 'icon' : 'full'}
+              className={isCollapsed ? 'h-8 w-auto shrink-0' : 'h-9 w-auto shrink-0'}
+              linkToHome={false}
+            />
             {!isCollapsed && (
-              <div className="text-[9px] font-mono text-slate-400 uppercase truncate">
-                CS1 • Ngoại Trú
-              </div>
+              <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[9px] font-bold text-primary font-mono shrink-0">
+                {isAdmin ? 'ADMIN' : 'CS1'}
+              </span>
             )}
           </div>
+
           <button
             type="button"
             onClick={() => setIsCollapsed(!isCollapsed)}
@@ -86,51 +327,42 @@ export function ClinicalSidebar({ activeItem = 'queue', onItemSelect }: Clinical
             aria-expanded={!isCollapsed}
             className={
               isCollapsed
-                ? 'absolute -right-3 top-1/2 -translate-y-1/2 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-xs hover:bg-slate-100 hover:text-slate-700 transition-colors'
+                ? 'absolute -right-3 top-1/2 -translate-y-1/2 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-white text-slate-500 shadow-xs hover:bg-slate-100 hover:text-slate-700 transition-colors'
                 : 'p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors'
             }
             title={isCollapsed ? 'Mở rộng' : 'Thu gọn'}
           >
-            <svg
-              aria-hidden="true"
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              {isCollapsed ? (
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M13 5l7 7-7 7M5 5l7 7-7 7"
-                />
-              ) : (
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M11 19l-7-7 7-7m8 14l-7-7 7-7"
-                />
-              )}
-            </svg>
+            {isCollapsed ? (
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            )}
           </button>
         </div>
 
         {/* Role Identity Card */}
         {!isCollapsed && (
-          <div className="m-3 p-3 rounded-xl bg-sky-50 border border-sky-100 flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-sky-100 border border-sky-200 text-sky-700 flex items-center justify-center font-bold text-xs">
-              LS
+          <div className="m-3 p-3 rounded-xl bg-sky-50/70 border border-sky-100 flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-sky-100 border border-sky-200 text-primary flex items-center justify-center font-bold text-xs shrink-0">
+              {isAdmin ? 'AD' : 'LS'}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-[9px] font-mono uppercase text-sky-700 font-bold tracking-wider">
-                Doctor Workbench
+              <div className="text-[9px] font-mono uppercase text-primary font-bold tracking-wider truncate">
+                {isAdmin ? 'QUẢN TRỊ CƠ SỞ' : 'Doctor Workbench'}
               </div>
-              <div className="text-xs font-bold text-slate-800 truncate">BS. CKII Lâm Sàng</div>
-              <div className="text-[10px] text-slate-500">P.102 • Khám Tự Nguyện</div>
+              <div className="text-xs font-bold text-slate-800 truncate">
+                {isAdmin
+                  ? (user?.fullName ?? user?.email ?? 'DS. Nguyễn Văn Quản')
+                  : 'BS. CKII Lâm Sàng'}
+              </div>
+              <div className="text-[10px] text-slate-500 truncate">
+                {isAdmin ? 'Cơ sở 1 • Quản trị HIS' : 'P.102 • Khám Tự Nguyện'}
+              </div>
             </div>
-            <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-200" />
+            <span
+              className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-200 shrink-0 animate-pulse"
+              title="Trực tuyến"
+            />
           </div>
         )}
 
@@ -138,120 +370,34 @@ export function ClinicalSidebar({ activeItem = 'queue', onItemSelect }: Clinical
         <div className="px-3 py-2 space-y-1">
           {!isCollapsed && (
             <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono mb-1">
-              Nghiệp Vụ Bàn Khám
+              {primarySectionTitle}
             </div>
           )}
-          {clinicalItems.map((item) => {
-            const isActive = activeItem === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onItemSelect?.(item.id)}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                  isActive
-                    ? 'bg-sky-600 text-white shadow-sm shadow-sky-600/30'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                }`}
-                title={item.label}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <svg
-                    aria-hidden="true"
-                    className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`}
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d={item.icon}
-                    />
-                  </svg>
-                  {!isCollapsed && <span className="truncate">{item.label}</span>}
-                </div>
-                {!isCollapsed && (
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    {item.badge && (
-                      <span
-                        className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                          isActive
-                            ? 'bg-white/20 text-white'
-                            : 'bg-sky-50 text-sky-700 border border-sky-200'
-                        }`}
-                      >
-                        {item.badge}
-                      </span>
-                    )}
-                    {item.hotkey && (
-                      <kbd className="text-[9px] font-mono text-slate-400 bg-slate-100 border border-slate-200 px-1 py-0.5 rounded">
-                        {item.hotkey}
-                      </kbd>
-                    )}
-                  </div>
-                )}
-              </button>
-            );
-          })}
+          {primaryItems.map(renderNavItem)}
         </div>
 
         {/* Navigation Group 2 */}
         <div className="px-3 py-2 space-y-1">
           {!isCollapsed && (
             <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono mb-1">
-              Công Cụ Lâm Sàng
+              {secondarySectionTitle}
             </div>
           )}
-          {toolItems.map((item) => {
-            const isActive = activeItem === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onItemSelect?.(item.id)}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium transition-colors ${
-                  isActive
-                    ? 'bg-sky-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                }`}
-                title={item.label}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <svg
-                    aria-hidden="true"
-                    className="w-4 h-4 flex-shrink-0 text-slate-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d={item.icon}
-                    />
-                  </svg>
-                  {!isCollapsed && <span className="truncate">{item.label}</span>}
-                </div>
-              </button>
-            );
-          })}
+          {secondaryItems.map(renderNavItem)}
         </div>
       </div>
 
       {/* Footer Status */}
-      <div className="p-3 bg-slate-50 border-t border-slate-200">
+      <div className="p-3 bg-slate-50 border-t border-border">
         {!isCollapsed ? (
-          <div className="p-2 rounded-lg bg-white border border-slate-200 text-[10px] space-y-1 shadow-2xs">
+          <div className="p-2 rounded-lg bg-white border border-border text-[10px] space-y-1 shadow-2xs">
             <div className="flex items-center justify-between text-slate-700 font-semibold">
               <span>HIS SYNC: ONLINE</span>
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             </div>
             <div className="flex items-center justify-between font-mono text-slate-400">
               <span>v4.2.0-PROD</span>
-              <span className="text-sky-600 font-semibold">Hotline: #101</span>
+              <span className="text-primary font-semibold">Hotline: 1900 6868</span>
             </div>
           </div>
         ) : (

@@ -126,7 +126,7 @@ export function ExaminationServiceCreatePage() {
       ]}
     >
       <form onSubmit={handleSubmit(handleCreate)}>
-        <main className="mx-auto max-w-[1720px] px-6 pb-28 pt-6">
+        <main className="px-6 pb-28 pt-6">
           {/* Subheader bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="flex flex-wrap items-center gap-3">
