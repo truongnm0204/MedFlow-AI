@@ -247,6 +247,7 @@ export function AppointmentListPage() {
                     key={apt.id}
                     appointment={apt}
                     onViewTicketModal={(item) => setSelectedTicketAppointment(item)}
+                    onViewDetail={(item) => navigate(`/appointments/${item.appointmentCode}`)}
                     onReschedule={handleReschedule}
                     onCancelRequest={handleCancelRequest}
                     onRebookSpecialty={handleRebookSpecialty}
