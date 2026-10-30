@@ -34,6 +34,7 @@ public sealed class AuditLoggerTests : IDisposable
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
         public DbSet<Department> Departments => throw NotUsed();
+        public DbSet<HospitalRoom> HospitalRooms => throw NotUsed();
         public DbSet<Specialty> Specialties => throw NotUsed();
         public DbSet<Service> Services => throw NotUsed();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
@@ -60,6 +61,7 @@ public sealed class AuditLoggerTests : IDisposable
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<Department>();
+            modelBuilder.Ignore<HospitalRoom>();
             modelBuilder.Ignore<Specialty>();
             modelBuilder.Ignore<Service>();
             modelBuilder.Ignore<ServicePrice>();

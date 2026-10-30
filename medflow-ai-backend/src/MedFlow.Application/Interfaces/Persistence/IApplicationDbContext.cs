@@ -17,6 +17,7 @@ public interface IApplicationDbContext
     DbSet<AuthVerificationChallenge> AuthVerificationChallenges { get; }
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<Department> Departments { get; }
+    DbSet<HospitalRoom> HospitalRooms { get; }
     DbSet<Specialty> Specialties { get; }
     DbSet<Service> Services { get; }
     DbSet<ServicePrice> ServicePrices { get; }

@@ -99,4 +99,26 @@ describe('service-search.api (M1-42 HTTP + fallback)', () => {
     const fallbackDetail = await getExaminationServiceDetailApi('DV-TH-01');
     expect(fallbackDetail?.serviceCode).toBe('DV-TH-01');
   });
+
+  it('rethrows 400 BadRequest in getExaminationServiceDetailApi instead of falling back to mock', async () => {
+    const badRequestError = new AxiosError(
+      'Request failed with status code 400',
+      'ERR_BAD_REQUEST',
+      undefined,
+      undefined,
+      {
+        status: 400,
+        statusText: 'Bad Request',
+        headers: {},
+        config: {} as never,
+        data: { status: 400, title: 'Lỗi xác thực', detail: 'Mã dịch vụ khám không hợp lệ.' },
+      },
+    );
+
+    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(badRequestError);
+
+    await expect(getExaminationServiceDetailApi('INVALID@CODE')).rejects.toThrow(
+      'Request failed with status code 400',
+    );
+  });
 });
