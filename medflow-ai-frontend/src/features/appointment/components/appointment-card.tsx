@@ -20,6 +20,7 @@ import type { AppointmentListItem } from '../types/appointment-list.types';
 interface AppointmentCardProps {
   appointment: AppointmentListItem;
   onViewTicketModal: (appointment: AppointmentListItem) => void;
+  onViewDetail?: (appointment: AppointmentListItem) => void;
   onReschedule?: (appointment: AppointmentListItem) => void;
   onCancelRequest?: (appointment: AppointmentListItem) => void;
   onRebookSpecialty?: (appointment: AppointmentListItem) => void;
@@ -28,6 +29,7 @@ interface AppointmentCardProps {
 export function AppointmentCard({
   appointment,
   onViewTicketModal,
+  onViewDetail,
   onReschedule,
   onCancelRequest,
   onRebookSpecialty,
@@ -91,6 +93,15 @@ export function AppointmentCard({
 
         {/* Completed Footer */}
         <div className="mt-3.5 flex items-center justify-end gap-2 pt-1">
+          {onViewDetail && (
+            <button
+              type="button"
+              onClick={() => onViewDetail(appointment)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-bold text-ink transition-colors hover:bg-canvas"
+            >
+              <span>Chi tiết lịch hẹn</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onViewTicketModal(appointment)}
@@ -160,7 +171,16 @@ export function AppointmentCard({
         </div>
 
         {/* Cancelled Footer */}
-        <div className="mt-3.5 flex items-center justify-end pt-1">
+        <div className="mt-3.5 flex items-center justify-end gap-2 pt-1">
+          {onViewDetail && (
+            <button
+              type="button"
+              onClick={() => onViewDetail(appointment)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3.5 py-2 text-xs font-bold text-sub transition-colors hover:bg-canvas hover:text-ink"
+            >
+              <span>Chi tiết lịch hẹn</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onRebookSpecialty?.(appointment)}
@@ -323,6 +343,17 @@ export function AppointmentCard({
           <Calendar className="h-3.5 w-3.5 text-sub" aria-hidden="true" />
           <span>Đổi lịch khám</span>
         </button>
+
+        {onViewDetail && (
+          <button
+            type="button"
+            onClick={() => onViewDetail(appointment)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3.5 py-2 text-xs font-bold text-primary transition-colors hover:bg-sky-100"
+          >
+            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Chi tiết lịch hẹn</span>
+          </button>
+        )}
 
         <button
           type="button"
