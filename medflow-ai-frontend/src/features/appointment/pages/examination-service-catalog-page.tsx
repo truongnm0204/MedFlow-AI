@@ -47,21 +47,31 @@ export function ExaminationServiceCatalogPage() {
   const page = data?.page ?? 1;
   const totalPages = data?.totalPages ?? 1;
 
-  // Derive active service from state or URL parameter
+  // Derive active service from state or URL parameter and always resolve full detail from API
   const targetServiceId = serviceId ?? searchParams.get('serviceId');
-  const { data: detailService } = useExaminationServiceDetailQuery(
-    selectedService ? null : targetServiceId,
-  );
+  const detailLookupId = selectedService?.id ?? targetServiceId;
+  const { data: detailService } = useExaminationServiceDetailQuery(detailLookupId);
 
   const activeService = useMemo(() => {
+    if (!detailLookupId) return null;
+
+    if (
+      detailService &&
+      (detailService.id === detailLookupId ||
+        detailService.serviceCode.toLowerCase() === detailLookupId.toLowerCase() ||
+        (selectedService && detailService.id === selectedService.id))
+    ) {
+      return detailService;
+    }
+
     if (selectedService) return selectedService;
+
     if (targetServiceId) {
       const fromCurrentPage = services.find(
         (s) =>
           s.id === targetServiceId || s.serviceCode.toLowerCase() === targetServiceId.toLowerCase(),
       );
       if (fromCurrentPage) return fromCurrentPage;
-      if (detailService) return detailService;
       return (
         MOCK_EXAMINATION_SERVICES.find(
           (s) =>
@@ -71,7 +81,7 @@ export function ExaminationServiceCatalogPage() {
       );
     }
     return null;
-  }, [selectedService, targetServiceId, services, detailService]);
+  }, [detailLookupId, detailService, selectedService, targetServiceId, services]);
 
   const hasActiveFilters = Boolean(
     filters.query ||
