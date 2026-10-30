@@ -110,7 +110,7 @@ export function ExaminationServiceListPage() {
 
   return (
     <AdminServicesShell>
-      <main className="mx-auto max-w-[1720px] space-y-5 px-6 py-6">
+      <main className="space-y-5 px-6 py-6">
         <ServiceMetrics services={services} />
 
         <ServiceFilters

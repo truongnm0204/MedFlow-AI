@@ -41,6 +41,7 @@ export interface AdminPortalBreadcrumb {
 export interface AdminPortalShellProps {
   children: ReactNode;
   showTabs?: boolean;
+  showSidebar?: boolean;
   activeTab?: AdminPortalTab;
   breadcrumbText?: string;
   breadcrumbCode?: string;
