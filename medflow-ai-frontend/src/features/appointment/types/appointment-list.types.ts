@@ -23,9 +23,17 @@ export interface AppointmentListItem {
   patientName: string;
   patientRelationshipLabel: string;
   patientAgeLabel: string;
+  patientBirthYearLabel?: string; // e.g. '1986 (40 tuổi)'
+  patientBirthDateLabel?: string; // e.g. '15/08/1986 (40 tuổi) • Nam'
+  patientPhone?: string; // e.g. '0912 345 678'
+  patientNationalId?: string; // e.g. '001086001234'
+  patientAddress?: string; // e.g. 'P. Hàng Trống, Q. Hoàn Kiếm, Hà Nội'
   serviceId: string;
   serviceCode: string;
   serviceName: string;
+  serviceFullLabel?: string; // e.g. 'DV-TH-01: Khám Nội Tiêu Hóa Chuyên Sâu'
+  serviceSubLabel?: string; // e.g. 'Khám theo giờ yêu cầu tự nguyện'
+  listedFeeServiceLabel?: string; // e.g. 'Khám Tiêu Hóa Theo Giờ'
   specialtyId: string;
   specialtyName: string;
   departmentName: string;
@@ -46,17 +54,33 @@ export interface AppointmentListItem {
   queueNumber?: string | null; // e.g. '012'
   bookingChannel: BookingChannel;
   status: AppointmentRecordStatus;
+  bookingTypeLabel?: string; // e.g. 'Khám chuyên khoa hẹn giờ tự nguyện'
+  priorityBadgeLabel?: string; // e.g. 'Ưu Tiên Khám'
   statusBannerLabel: string; // e.g. 'ĐÃ XÁC NHẬN - SẮP ĐẾN GIỜ KHÁM'
   listedFee: number; // VND, e.g. 250000
   feePolicyNote: string; // e.g. 'Khám Tự Nguyện trọn gói • Không áp dụng BHYT'
   paymentStatus: AppointmentPaymentStatus;
   paymentStatusLabel: string; // e.g. 'Chờ thanh toán tại quầy' or 'Đã thanh toán 250.000 VNĐ qua VietQR'
   paymentSubNote?: string;
+  reasonForVisit?: string | null;
   clinicalSummary?: string | null;
   cancellationReason?: string | null;
   slotReleaseNote?: string | null;
   rebookSpecialtyLabel?: string | null;
   bookedAt: string;
+}
+
+export interface ProposedRescheduleSlotOption {
+  slotId: string;
+  scheduledDate: string;
+  scheduledDateBadge: string;
+  scheduledDateFullLabel: string;
+  scheduledTimeRange: string;
+  checkInDeadlineTime: string;
+  estimatedQueueNumber: string;
+  roomCode: string;
+  roomName: string;
+  doctorName: string;
 }
 
 export interface AppointmentTabCounts {
