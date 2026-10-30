@@ -17,6 +17,8 @@ import {
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
+import { useDoctorDemoStore } from '@/features/admin-doctors/store/doctor-demo.store';
+import { useExaminationServiceStore } from '@/features/admin-services/store/examination-service.store';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 
 import { MedflowLogo } from './medflow-logo';
@@ -67,23 +69,9 @@ export function AdminPortalShell({
 }: AdminPortalShellProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const user = useAuthStore((state) => state.user);
+  const doctorCount = useDoctorDemoStore((state) => state.doctors.length);
+  const serviceCount = useExaminationServiceStore((state) => state.services.length);
 
-  const sidebarActiveItem =
-    activeTab === 'Bác sĩ & Nhân sự Y tế'
-      ? 'doctors'
-      : activeTab === 'Danh mục Dịch vụ & Kỹ thuật'
-        ? 'services'
-        : activeTab === 'Khoa phòng'
-          ? 'departments'
-          : activeTab === 'Buồng khám & Kỹ thuật'
-            ? 'rooms'
-            : activeTab === 'Bảng giá & Biểu phí'
-              ? 'pricing'
-              : activeTab === 'Quản lý Slot khám'
-                ? 'slots'
-                : activeTab === 'Chính sách hẹn'
-                  ? 'policies'
-                  : 'services';
 
   const displayName = user?.fullName ?? user?.email ?? 'DS. Nguyễn Văn Quản';
   const roleLabel = user?.roles.includes('SYSTEM_ADMIN') ? 'SYSTEM_ADMIN' : 'ADM-001';
