@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import * as authApi from '../api/auth.api';
 import { useAuthStore } from '../store/auth.store';
 import type { LoginRequest, RegisterRequest, VerifyOtpRequest } from '../types/auth.types';
+import { resolvePostLoginRedirect } from '../utils/role-landing';
 
 /** Login → lưu tokens + user → điều hướng về returnUrl hoặc '/'. */
 export function useLogin() {
@@ -19,8 +20,8 @@ export function useLogin() {
         accessToken: data.accessToken,
         refreshToken: data.refreshToken,
       });
-      const returnUrl = params.get('returnUrl');
-      navigate(returnUrl && returnUrl.startsWith('/') ? returnUrl : '/', { replace: true });
+      const target = resolvePostLoginRedirect(params.get('returnUrl'), data.user.roles);
+      navigate(target, { replace: true });
     },
   });
 }
@@ -82,9 +83,14 @@ export function useLogout() {
 /** Lấy profile hiện tại; chỉ chạy khi đã có access token. */
 export function useMe() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const setUser = useAuthStore((s) => s.setUser);
   return useQuery({
     queryKey: ['auth', 'me'],
-    queryFn: authApi.getMe,
+    queryFn: async () => {
+      const profile = await authApi.getMe();
+      setUser(profile);
+      return profile;
+    },
     enabled: isAuthenticated,
     staleTime: 60_000,
   });
