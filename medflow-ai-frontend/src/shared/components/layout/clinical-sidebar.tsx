@@ -302,7 +302,11 @@ export function ClinicalSidebar({
       {/* Top Header & Role */}
       <div>
         {/* Brand Bar */}
-        <div className="h-16 px-4 border-b border-border flex items-center justify-between">
+        <div
+          className={`relative h-16 border-b border-border flex items-center ${
+            isCollapsed ? 'justify-center px-2' : 'justify-between px-4'
+          }`}
+        >
           <div className="flex items-center gap-2.5 overflow-hidden">
             <MedflowLogo
               variant={isCollapsed ? 'icon' : 'full'}
@@ -321,7 +325,11 @@ export function ClinicalSidebar({
             onClick={() => setIsCollapsed(!isCollapsed)}
             aria-label={isCollapsed ? 'Mở rộng thanh bên' : 'Thu gọn thanh bên'}
             aria-expanded={!isCollapsed}
-            className="p-1.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            className={
+              isCollapsed
+                ? 'absolute -right-3 top-1/2 -translate-y-1/2 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-white text-slate-500 shadow-xs hover:bg-slate-100 hover:text-slate-700 transition-colors'
+                : 'p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors'
+            }
             title={isCollapsed ? 'Mở rộng' : 'Thu gọn'}
           >
             {isCollapsed ? (
