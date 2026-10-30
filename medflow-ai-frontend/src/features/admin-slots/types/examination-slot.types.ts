@@ -35,3 +35,21 @@ export interface SlotMetricsData {
   upcomingCount: number;
   reviewCount: number;
 }
+
+export interface ExaminationSlotFormValues {
+  code: string;
+  serviceType: ServiceType;
+  serviceId: string;
+  serviceName: string;
+  serviceCode: string;
+  specialty: string;
+  date: string; // YYYY-MM-DD
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+  facility: string;
+  capacityMax: number;
+  room: string;
+  doctorId: string;
+  doctorName: string;
+  status: SlotStatus;
+}

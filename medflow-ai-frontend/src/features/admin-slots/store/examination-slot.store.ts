@@ -1,7 +1,11 @@
 import { create } from 'zustand';
 
 import { INITIAL_EXAMINATION_SLOTS } from '../data/examination-slots-mock';
-import type { ExaminationSlot, SlotStatus } from '../types/examination-slot.types';
+import type {
+  ExaminationSlot,
+  ExaminationSlotFormValues,
+  SlotStatus,
+} from '../types/examination-slot.types';
 
 interface ExaminationSlotStore {
   slots: ExaminationSlot[];
@@ -12,6 +16,7 @@ interface ExaminationSlotStore {
   page: number;
   pageSize: number;
   selectedIds: string[];
+  draft: Partial<ExaminationSlotFormValues> | null;
 
   // Actions
   setSearchQuery: (query: string) => void;
@@ -26,6 +31,9 @@ interface ExaminationSlotStore {
   batchUpdateStatus: (status: SlotStatus) => void;
   toggleSlotStatus: (id: string) => void;
   resetFilters: () => void;
+  addSlot: (slot: ExaminationSlot) => void;
+  saveDraft: (draft: Partial<ExaminationSlotFormValues>) => void;
+  clearDraft: () => void;
 }
 
 export const useExaminationSlotStore = create<ExaminationSlotStore>((set) => ({
@@ -37,6 +45,7 @@ export const useExaminationSlotStore = create<ExaminationSlotStore>((set) => ({
   page: 1,
   pageSize: 20,
   selectedIds: [],
+  draft: null,
 
   setSearchQuery: (searchQuery) => set({ searchQuery, page: 1 }),
   setDateFilter: (dateFilter) => set({ dateFilter, page: 1 }),
@@ -90,4 +99,13 @@ export const useExaminationSlotStore = create<ExaminationSlotStore>((set) => ({
       statusFilter: '',
       page: 1,
     }),
+
+  addSlot: (slot) =>
+    set((state) => ({
+      slots: [slot, ...state.slots],
+    })),
+
+  saveDraft: (draft) => set({ draft }),
+
+  clearDraft: () => set({ draft: null }),
 }));
