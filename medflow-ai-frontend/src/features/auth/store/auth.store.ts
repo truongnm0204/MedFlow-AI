@@ -12,6 +12,7 @@ interface AuthState {
   refreshToken: string | null;
   isAuthenticated: boolean;
   setAuth: (payload: { user: UserDto; accessToken: string; refreshToken: string }) => void;
+  setUser: (user: UserDto) => void;
   setTokens: (payload: { accessToken: string; refreshToken: string }) => void;
   clearAuth: () => void;
 }
@@ -35,6 +36,10 @@ export const useAuthStore = create<AuthState>()(
       setAuth: ({ user, accessToken, refreshToken }) => {
         syncTokenStorage(accessToken, refreshToken);
         set({ user, accessToken, refreshToken, isAuthenticated: true });
+      },
+
+      setUser: (user) => {
+        set({ user });
       },
 
       setTokens: ({ accessToken, refreshToken }) => {

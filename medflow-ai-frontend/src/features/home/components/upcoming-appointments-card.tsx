@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { CheckCircle2, Clock, FileText } from 'lucide-react';
 
 import { Badge } from '@/shared/ui';
@@ -23,7 +24,15 @@ export function UpcomingAppointmentsCard({ appointments }: UpcomingAppointmentsC
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs lg:col-span-5">
       <div className="mb-3 flex items-center justify-between border-b border-slate-100 pb-3">
         <h3 className="text-sm font-bold text-slate-900">Lịch hẹn khám sắp tới của bạn</h3>
-        <FileText className="h-4 w-4 text-sky-600" />
+        <div className="flex items-center gap-2">
+          <Link
+            to="/appointments"
+            className="text-xs font-semibold text-sky-600 transition-colors hover:text-sky-700"
+          >
+            Xem tất cả
+          </Link>
+          <FileText className="h-4 w-4 text-sky-600" aria-hidden="true" />
+        </div>
       </div>
 
       {appointments.length === 0 ? (

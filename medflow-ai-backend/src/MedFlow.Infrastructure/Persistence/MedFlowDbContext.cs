@@ -18,9 +18,15 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<UserRole> UserRoles => Set<UserRole>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
     public DbSet<Patient> Patients => Set<Patient>();
+    public DbSet<Staff> Staff => Set<Staff>();
     public DbSet<AuthSession> AuthSessions => Set<AuthSession>();
     public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => Set<AuthVerificationChallenge>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<Department> Departments => Set<Department>();
+    public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
+    public DbSet<Specialty> Specialties => Set<Specialty>();
+    public DbSet<Service> Services => Set<Service>();
+    public DbSet<ServicePrice> ServicePrices => Set<ServicePrice>();
 
     public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => Database.BeginTransactionAsync(ct);
