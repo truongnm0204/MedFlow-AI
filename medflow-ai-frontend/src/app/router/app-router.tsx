@@ -48,15 +48,7 @@ export function AppRouter() {
         element={<AppointmentSlotBookingPage />}
       />
       <Route path="/appointments" element={<AppointmentListPage />} />
-      <Route path="/appointment/list" element={<AppointmentListPage />} />
-      <Route
-        path="/patient/appointments"
-        element={
-          <RequireAuth>
-            <AppointmentListPage />
-          </RequireAuth>
-        }
-      />
+      <Route path="/appointments/:appointmentId" element={<AppointmentDetailPage />} />
       <Route
         path="/patient"
         element={
