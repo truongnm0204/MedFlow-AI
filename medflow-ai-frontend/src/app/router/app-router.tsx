@@ -3,10 +3,15 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
+import { OperationalReportsPage } from '@/features/admin-reports/pages/operational-reports-page';
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
+import { AppointmentListPage } from '@/features/appointment/pages/appointment-list-page';
+import { AppointmentSlotBookingPage } from '@/features/appointment/pages/appointment-slot-booking-page';
 import { DoctorSearchPage } from '@/features/appointment/pages/doctor-search-page';
+import { ExaminationServiceCatalogPage } from '@/features/appointment/pages/examination-service-catalog-page';
+import { ServiceSlotBookingPage } from '@/features/appointment/pages/service-slot-booking-page';
 import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
@@ -16,6 +21,7 @@ import { FamilyProfileDetailPage } from '@/features/family/pages/family-profile-
 import { FamilyProfileListPage } from '@/features/family/pages/family-profile-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
+import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
@@ -25,8 +31,31 @@ export function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      <Route path="/services" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/services/:serviceId/booking" element={<ServiceSlotBookingPage />} />
+      <Route path="/appointment/services" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/appointment/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
+      <Route path="/appointment/services/:serviceId/booking" element={<ServiceSlotBookingPage />} />
       <Route path="/doctors" element={<DoctorSearchPage />} />
+      <Route path="/doctors/:doctorId" element={<DoctorSearchPage />} />
+      <Route path="/doctors/:doctorId/booking" element={<AppointmentSlotBookingPage />} />
       <Route path="/appointment/doctors" element={<DoctorSearchPage />} />
+      <Route path="/appointment/doctors/:doctorId" element={<DoctorSearchPage />} />
+      <Route
+        path="/appointment/doctors/:doctorId/booking"
+        element={<AppointmentSlotBookingPage />}
+      />
+      <Route path="/appointments" element={<AppointmentListPage />} />
+      <Route path="/appointment/list" element={<AppointmentListPage />} />
+      <Route
+        path="/patient/appointments"
+        element={
+          <RequireAuth>
+            <AppointmentListPage />
+          </RequireAuth>
+        }
+      />
       <Route
         path="/patient"
         element={
@@ -80,6 +109,14 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <DiagnosticDashboardPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy"
+        element={
+          <RequireAuth>
+            <PharmacyDashboardPage />
           </RequireAuth>
         }
       />
@@ -155,6 +192,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <ExaminationServiceCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/reports"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <OperationalReportsPage />
             </RequireAdmin>
           </RequireAuth>
         }

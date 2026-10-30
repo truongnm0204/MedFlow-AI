@@ -88,9 +88,7 @@ describe('ServiceEditModal (SCR-ADM-ESV-03)', () => {
     const suspendBtn = screen.getByRole('button', { name: /⊖ Tạm ngừng dịch vụ/i });
     fireEvent.click(suspendBtn);
 
-    expect(
-      screen.getByText(/Dịch vụ đã chuyển sang trạng thái Tạm dừng/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Dịch vụ đã chuyển sang trạng thái Tạm dừng/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /⊕ Kích hoạt dịch vụ/i })).toBeInTheDocument();
   });
 

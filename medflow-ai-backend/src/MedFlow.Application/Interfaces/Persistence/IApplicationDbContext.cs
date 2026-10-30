@@ -15,6 +15,10 @@ public interface IApplicationDbContext
     DbSet<AuthSession> AuthSessions { get; }
     DbSet<AuthVerificationChallenge> AuthVerificationChallenges { get; }
     DbSet<AuditLog> AuditLogs { get; }
+    DbSet<Department> Departments { get; }
+    DbSet<Specialty> Specialties { get; }
+    DbSet<Service> Services { get; }
+    DbSet<ServicePrice> ServicePrices { get; }
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);

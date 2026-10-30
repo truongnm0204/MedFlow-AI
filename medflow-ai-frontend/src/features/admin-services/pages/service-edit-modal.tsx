@@ -116,8 +116,8 @@ export function ServiceEditModal() {
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
             <p>
               <b>Lưu ý vận hành Khám Ngoại trú:</b> Cập nhật thông tin dịch vụ khám và cờ đặt lịch
-              trực tuyến sẽ áp dụng ngay vào phiên làm việc hiện tại. Biểu phí được đồng bộ theo UC52;
-              buồng khám và slot phân bổ theo UC53.
+              trực tuyến sẽ áp dụng ngay vào phiên làm việc hiện tại. Biểu phí được đồng bộ theo
+              UC52; buồng khám và slot phân bổ theo UC53.
             </p>
           </div>
 
