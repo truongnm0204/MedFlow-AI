@@ -72,7 +72,6 @@ export function AdminPortalShell({
   const doctorCount = useDoctorDemoStore((state) => state.doctors.length);
   const serviceCount = useExaminationServiceStore((state) => state.services.length);
 
-
   const displayName = user?.fullName ?? user?.email ?? 'DS. Nguyễn Văn Quản';
   const roleLabel = user?.roles.includes('SYSTEM_ADMIN') ? 'SYSTEM_ADMIN' : 'ADM-001';
 
