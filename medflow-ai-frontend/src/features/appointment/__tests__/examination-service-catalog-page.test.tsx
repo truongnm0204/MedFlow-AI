@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { ExaminationServiceCatalogPage } from '../pages/examination-service-catalog-page';
@@ -102,5 +102,30 @@ describe('ExaminationServiceCatalogPage (SCR-APT-03)', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
+  });
+
+  it('opens detail modal automatically when deep-linking to /services/:serviceId', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/services/DV-TH-01']}>
+          <Routes>
+            <Route path="/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('MỤC ĐÍCH KHÁM & ĐỐI TƯỢNG CHỈ ĐỊNH')).toBeInTheDocument();
+    expect(screen.getAllByText('Khám Chuyên khoa Tiêu Hóa').length).toBeGreaterThan(0);
+    expect(screen.getByText('Khu Khám Ngoại trú - Tầng 2, Nhà A')).toBeInTheDocument();
   });
 });

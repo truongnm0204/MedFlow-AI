@@ -47,6 +47,10 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
         ["srv-tm-01"] = "EX-CARD-01",
         ["srv-th-02"] = "EX-GI-02",
         ["srv-tm-02"] = "EX-CARD-02",
+        ["DV-TH-01"] = "EX-GI-01",
+        ["DV-TM-01"] = "EX-CARD-01",
+        ["DV-TH-02"] = "EX-GI-02",
+        ["DV-TM-02"] = "EX-CARD-02",
     };
 
     private static readonly IReadOnlyList<ServiceStandardStepDto> DefaultStandardSteps =
@@ -55,6 +59,14 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
         new(2, "Khám lâm sàng chuyên khoa", "Bác sĩ chuyên khoa hỏi bệnh sử kỹ lưỡng, thăm khám lâm sàng và đánh giá triệu chứng thực thể."),
         new(3, "Chỉ định cận lâm sàng", "Nếu cần thiết: chỉ định xét nghiệm máu, siêu âm hoặc chẩn đoán hình ảnh phù hợp theo nhu cầu bệnh học."),
         new(4, "Kết luận & Đơn thuốc số", "Đọc kết quả, chẩn đoán xác định, kê đơn thuốc điện tử và tư vấn chế độ sinh hoạt, hẹn tái khám."),
+    ];
+
+    private static readonly IReadOnlyList<ServiceStandardStepDto> CardiologyStandardSteps =
+    [
+        new(1, "Tiếp đón & Đo huyết áp hai tay", "Đo huyết áp tư thế ngồi, đếm nhịp tim, chiều cao cân nặng tại quầy tiếp đón."),
+        new(2, "Khám tim mạch & Nghe tim", "Bác sĩ chuyên khoa nghe tim, phổi, bắt mạch ngoại vi và khai thác tiền sử."),
+        new(3, "Đo điện tâm đồ (ECG)", "Đo điện tim 12 chuyển đạo tiêu chuẩn để tầm soát rối loạn nhịp và thiếu máu cơ tim."),
+        new(4, "Kết luận & Tư vấn lối sống", "Kê đơn thuốc điều hòa huyết áp, tư vấn chế độ ăn giảm muối và hẹn lịch tái khám."),
     ];
 
     private readonly IApplicationDbContext _db;
@@ -99,6 +111,7 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
         var services = await _db.Services
             .AsNoTracking()
             .Include(s => s.Department)
+                .ThenInclude(d => d!.HospitalRooms)
             .Include(s => s.Specialty)
             .Include(s => s.ServicePrices)
             .Where(s => s.ServiceType == "EXAMINATION" && s.IsActive == true)
@@ -174,6 +187,12 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
             throw new ValidationException("Mã dịch vụ khám không được để trống.");
 
         var normalized = idOrCode.Trim();
+        if (normalized.Length > 64)
+            throw new ValidationException("Mã dịch vụ khám không được vượt quá 64 ký tự.");
+
+        if (!normalized.All(ch => char.IsLetterOrDigit(ch) || ch == '-' || ch == '_'))
+            throw new ValidationException("Mã dịch vụ khám chứa ký tự không hợp lệ.");
+
         var resolvedCode = LegacySlugToServiceCode.TryGetValue(normalized, out var mappedCode)
             ? mappedCode
             : normalized;
@@ -184,13 +203,13 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
         var service = await _db.Services
             .AsNoTracking()
             .Include(s => s.Department)
+                .ThenInclude(d => d!.HospitalRooms)
             .Include(s => s.Specialty)
             .Include(s => s.ServicePrices)
             .Where(s => s.ServiceType == "EXAMINATION" && s.IsActive == true)
             .FirstOrDefaultAsync(
                 s => (isNumericId && s.Id == numericId) || s.ServiceCode.ToUpper() == upperCode,
                 ct);
-
         if (service is null)
             throw new NotFoundException("ExaminationService", normalized);
 
@@ -252,7 +271,7 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
             ? service.Description!
             : $"Khám và tư vấn chuyên sâu dịch vụ {service.Name} tại {departmentName}.";
 
-        var (location, tags, purposeSummary, highlightSymptoms, suitableFor) =
+        var (location, tags, preparationNotes, targetAudience, purposeSummary, highlightSymptoms, suitableFor, standardSteps) =
             ResolvePresentationMetadata(service, deptCode, specialtyCode, departmentName);
 
         return new ExaminationServiceDto(
@@ -273,12 +292,12 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
             PriceFormatted: priceFormatted,
             PriceNote: "Khám ngoại trú • giá niêm yết trực tiếp theo dịch vụ",
             Category: category,
-            PreparationNotes: null,
-            TargetAudience: null,
+            PreparationNotes: preparationNotes,
+            TargetAudience: targetAudience,
             PurposeSummary: purposeSummary,
             HighlightSymptoms: highlightSymptoms,
             SuitableFor: suitableFor,
-            StandardSteps: DefaultStandardSteps);
+            StandardSteps: standardSteps);
     }
 
     private static string ResolveCategory(Service service, string deptCode, string specialtyCode)
@@ -348,9 +367,12 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
     private static (
         string Location,
         IReadOnlyList<string> Tags,
+        IReadOnlyList<string> PreparationNotes,
+        string TargetAudience,
         string PurposeSummary,
         IReadOnlyList<string> HighlightSymptoms,
-        string SuitableFor) ResolvePresentationMetadata(
+        string SuitableFor,
+        IReadOnlyList<ServiceStandardStepDto> StandardSteps) ResolvePresentationMetadata(
         Service service,
         string deptCode,
         string specialtyCode,
@@ -363,39 +385,123 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
             string.Equals(specialtyCode, "GI", StringComparison.OrdinalIgnoreCase))
         {
             return (
-                Location: "Khu Khám Ngoại trú - Tầng 1, Khu Demo (Phòng 101-102)",
+                Location: ResolveDepartmentLocation(service, "Khu Khám Ngoại trú - Tầng 1, Khu Demo (Phòng 101-102)"),
                 Tags: isFollowUp
                     ? ["Tái khám chuyên khoa", "Theo dõi đáp ứng điều trị"]
                     : ["Bác sĩ CKII", "Tư vấn chế độ ăn"],
+                PreparationNotes:
+                [
+                    "Nhịn ăn tối thiểu 6–8 giờ nếu có khả năng chỉ định nội soi hoặc siêu âm bụng.",
+                    "Mang theo kết quả nội soi, xét nghiệm máu và đơn thuốc đang sử dụng (nếu có).",
+                ],
+                TargetAudience: "Người bệnh có triệu chứng tiêu hóa - gan mật cấp hoặc mạn tính",
                 PurposeSummary:
                     "Thăm khám, chẩn đoán phân biệt và tư vấn phác đồ điều trị chuyên khoa đối với các trường hợp: Đau tức vùng thượng vị, trào ngược dạ dày thực quản (GERD), ợ hơi, ợ chua, rối loạn tiêu hóa kéo dài, viêm đại tràng co thắt và bệnh lý gan mật.",
                 HighlightSymptoms:
                     ["Đau tức vùng thượng vị", "trào ngược dạ dày thực quản (GERD)", "ợ hơi, ợ chua", "rối loạn tiêu hóa kéo dài"],
                 SuitableFor:
-                    "Phù hợp cho người bệnh có triệu chứng tiêu hóa - gan mật cần khám trực tiếp cùng bác sĩ chuyên khoa tại phòng khám ngoại trú.");
+                    "Phù hợp cho người bệnh có triệu chứng tiêu hóa - gan mật cần khám trực tiếp cùng bác sĩ chuyên khoa tại phòng khám ngoại trú.",
+                StandardSteps: DefaultStandardSteps);
         }
 
         if (string.Equals(deptCode, "CARD", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(specialtyCode, "CARD", StringComparison.OrdinalIgnoreCase))
         {
             return (
-                Location: "Khu Khám Ngoại trú - Tầng 1, Khu Demo (Phòng 201-202)",
+                Location: ResolveDepartmentLocation(service, "Khu Khám Ngoại trú - Tầng 1, Khu Demo (Phòng 201-202)"),
                 Tags: isFollowUp
                     ? ["Tái khám tim mạch", "Điều chỉnh phác đồ"]
                     : ["Đo điện tim cơ bản", "Bác sĩ chuyên khoa"],
+                PreparationNotes:
+                [
+                    "Nghỉ ngơi tại chỗ 10–15 phút trước khi đo huyết áp và điện tâm đồ.",
+                    "Mang theo sổ theo dõi huyết áp tại nhà và danh sách thuốc tim mạch đang dùng.",
+                ],
+                TargetAudience: "Người bệnh tăng huyết áp, đau tức ngực, rối loạn nhịp tim hoặc tầm soát tim mạch",
                 PurposeSummary:
                     "Thăm khám và theo dõi các bệnh lý tim mạch: Tăng huyết áp, đau tức ngực khi gắng sức, rối loạn nhịp tim, khó thở về đêm.",
                 HighlightSymptoms:
                     ["Tăng huyết áp", "đau tức ngực", "rối loạn nhịp tim", "khó thở"],
                 SuitableFor:
-                    "Phù hợp cho người bệnh có tiền sử tim mạch hoặc xuất hiện triệu chứng hồi hộp, đau thắt ngực cần khám chuyên khoa.");
+                    "Phù hợp cho người bệnh có tiền sử tim mạch hoặc xuất hiện triệu chứng hồi hộp, đau thắt ngực cần khám chuyên khoa.",
+                StandardSteps: CardiologyStandardSteps);
         }
 
         return (
-            Location: "Khu Khám Ngoại trú - Tầng 1, Khu Demo",
+            Location: ResolveDepartmentLocation(service, "Khu Khám Ngoại trú - Tầng 1, Khu Demo"),
             Tags: ["Bác sĩ chuyên khoa", "Đặt lịch trực tuyến"],
+            PreparationNotes:
+            [
+                "Mang theo căn cước công dân và hồ sơ khám bệnh, đơn thuốc cũ (nếu có).",
+                "Đến trước giờ hẹn 15 phút để hoàn tất thủ tục tiếp đón và đo sinh hiệu.",
+            ],
+            TargetAudience: $"Người bệnh có nhu cầu khám chuyên khoa tại {departmentName}",
             PurposeSummary: $"Thăm khám, tư vấn và theo dõi chuyên khoa tại {departmentName} cho dịch vụ {service.Name}.",
             HighlightSymptoms: ["Khám chuyên khoa ngoại trú", "Tư vấn phác đồ điều trị"],
-            SuitableFor: $"Phù hợp cho người bệnh có nhu cầu thăm khám trực tiếp tại {departmentName}.");
+            SuitableFor: $"Phù hợp cho người bệnh có nhu cầu thăm khám trực tiếp tại {departmentName}.",
+            StandardSteps: DefaultStandardSteps);
+    }
+
+    private static string ResolveDepartmentLocation(Service service, string fallbackLocation)
+    {
+        var activeRooms = service.Department?.HospitalRooms?
+            .Where(r =>
+                string.Equals(r.RoomType, "EXAMINATION", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(r.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(r => r.Id)
+            .ToList();
+
+        if (activeRooms is null || activeRooms.Count == 0)
+            return fallbackLocation;
+
+        var rawLocation = activeRooms
+            .Select(r => r.Location?.Trim())
+            .FirstOrDefault(loc => !string.IsNullOrWhiteSpace(loc)) ?? "Tầng 1, Khu Demo";
+
+        var baseLocation = rawLocation.StartsWith("Khu ", StringComparison.OrdinalIgnoreCase) ||
+                           rawLocation.StartsWith("Trung tâm ", StringComparison.OrdinalIgnoreCase)
+            ? rawLocation
+            : $"Khu Khám Ngoại trú - {rawLocation}";
+
+        var labels = activeRooms
+            .Select(ExtractRoomLabel)
+            .Where(label => !string.IsNullOrWhiteSpace(label))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (labels.Count == 0)
+            return baseLocation;
+
+        if (labels.Count == 1)
+            return $"{baseLocation} (Phòng {labels[0]})";
+
+        var numericLabels = new List<int>(labels.Count);
+        foreach (var label in labels)
+        {
+            if (int.TryParse(label, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            {
+                numericLabels.Add(parsed);
+            }
+        }
+
+        var isConsecutiveNumeric = numericLabels.Count == labels.Count &&
+                                   numericLabels.Zip(numericLabels.Skip(1), (prev, next) => next == prev + 1).All(x => x);
+
+        return isConsecutiveNumeric
+            ? $"{baseLocation} (Phòng {labels[0]}-{labels[^1]})"
+            : $"{baseLocation} (Phòng {string.Join(", ", labels)})";
+    }
+
+    private static string ExtractRoomLabel(HospitalRoom room)
+    {
+        if (!string.IsNullOrWhiteSpace(room.Name))
+        {
+            var parts = room.Name.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var lastToken = parts[^1];
+            if (lastToken.All(char.IsDigit))
+                return lastToken;
+        }
+
+        return room.RoomCode?.Trim() ?? string.Empty;
     }
 }

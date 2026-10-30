@@ -9,4 +9,5 @@ public class Department
     public bool? IsActive { get; set; }
 
     public ICollection<Service> Services { get; set; } = new List<Service>();
+    public ICollection<HospitalRoom> HospitalRooms { get; set; } = new List<HospitalRoom>();
 }
