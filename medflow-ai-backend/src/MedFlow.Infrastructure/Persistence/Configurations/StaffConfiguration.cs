@@ -26,5 +26,10 @@ public class StaffConfiguration : IEntityTypeConfiguration<Staff>
         builder.HasIndex(s => new { s.HospitalId, s.StaffCode })
             .IsUnique()
             .HasDatabaseName("uq_staff_hospital_id_staff_code");
+
+        builder.HasOne(s => s.Department)
+            .WithMany()
+            .HasForeignKey(s => s.DepartmentId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }

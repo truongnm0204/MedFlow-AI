@@ -11,4 +11,6 @@ public class Staff
     public string Status { get; set; } = "ACTIVE";
 
     public User? User { get; set; }
+    public Department? Department { get; set; }
+    public Doctor? Doctor { get; set; }
 }
