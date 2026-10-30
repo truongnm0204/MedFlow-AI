@@ -7,6 +7,7 @@ import { OperationalReportsPage } from '@/features/admin-reports/pages/operation
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
+import { StaffAccountListPage } from '@/features/admin-staff/pages/staff-account-list-page';
 import { AppointmentDetailPage } from '@/features/appointment/pages/appointment-detail-page';
 import { AppointmentListPage } from '@/features/appointment/pages/appointment-list-page';
 import { AppointmentSlotBookingPage } from '@/features/appointment/pages/appointment-slot-booking-page';
@@ -110,6 +111,16 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <PharmacyDashboardPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/staff"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <StaffAccountListPage />
+            </RequireAdmin>
           </RequireAuth>
         }
       />
