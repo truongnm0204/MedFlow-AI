@@ -15,5 +15,6 @@ public class User
 
     public ICollection<UserRole> UserRoles { get; set; } = new List<UserRole>();
     public Patient? Patient { get; set; }
+    public Staff? Staff { get; set; }
     public ICollection<AuthSession> AuthSessions { get; set; } = new List<AuthSession>();
 }

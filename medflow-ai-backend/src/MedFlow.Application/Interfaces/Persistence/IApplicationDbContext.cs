@@ -12,6 +12,7 @@ public interface IApplicationDbContext
     DbSet<UserRole> UserRoles { get; }
     DbSet<RolePermission> RolePermissions { get; }
     DbSet<Patient> Patients { get; }
+    DbSet<Staff> Staff { get; }
     DbSet<AuthSession> AuthSessions { get; }
     DbSet<AuthVerificationChallenge> AuthVerificationChallenges { get; }
     DbSet<AuditLog> AuditLogs { get; }

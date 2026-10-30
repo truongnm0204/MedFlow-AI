@@ -176,6 +176,26 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/hospital-admin"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <OperationalReportsPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/system-admin"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <OperationalReportsPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/verify-otp"
         element={
           <GuestOnly>
