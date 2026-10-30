@@ -23,6 +23,7 @@ public sealed class ExaminationServiceCatalogServiceTests : IDisposable
         public DbSet<UserRole> UserRoles => throw NotUsed();
         public DbSet<RolePermission> RolePermissions => throw NotUsed();
         public DbSet<Patient> Patients => throw NotUsed();
+        public DbSet<Staff> Staff => throw NotUsed();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
@@ -43,6 +44,7 @@ public sealed class ExaminationServiceCatalogServiceTests : IDisposable
             modelBuilder.Ignore<UserRole>();
             modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Patient>();
+            modelBuilder.Ignore<Staff>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuditLog>();
