@@ -30,6 +30,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
         public DbSet<Department> Departments => Set<Department>();
+        public DbSet<HospitalRoom> HospitalRooms => throw NotUsed();
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => throw NotUsed();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
@@ -47,6 +48,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuditLog>();
+            modelBuilder.Ignore<HospitalRoom>();
             modelBuilder.Ignore<Service>();
             modelBuilder.Ignore<ServicePrice>();
 
