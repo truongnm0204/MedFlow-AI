@@ -63,3 +63,55 @@ export const DEFAULT_SLOT_FORM_VALUES: ExaminationSlotFormValues = {
   doctorName: 'BS. Nguyễn Thu Lan',
   status: 'OPEN',
 };
+
+export const CLOSE_SLOT_REASONS = [
+  {
+    code: 'DOCTOR_UNAVAILABLE',
+    label: 'Bác sĩ bận đột xuất / công tác / hội chẩn chuyên môn',
+  },
+  {
+    code: 'EQUIPMENT_MAINTENANCE',
+    label: 'Bảo trì buồng khám / trang thiết bị chuyên dụng',
+  },
+  {
+    code: 'SCHEDULE_ADJUSTMENT',
+    label: 'Điều chỉnh phân bổ lịch hoạt động của khoa / phòng',
+  },
+  {
+    code: 'EMERGENCY',
+    label: 'Sự cố vận hành khẩn cấp / bất khả kháng',
+  },
+  {
+    code: 'OTHER',
+    label: 'Lý do khác (ghi rõ lý do)',
+  },
+] as const;
+
+export const slotCloseSchema = z
+  .object({
+    reasonCode: z.enum(
+      ['DOCTOR_UNAVAILABLE', 'EQUIPMENT_MAINTENANCE', 'SCHEDULE_ADJUSTMENT', 'EMERGENCY', 'OTHER'],
+      { message: 'Vui lòng chọn lý do đóng khung giờ' },
+    ),
+    note: z.string().optional(),
+    notifyDoctor: z.boolean().default(true),
+    notifyPatients: z.boolean().default(true),
+    affectedBookingsAction: z
+      .enum(['KEEP_EXISTING', 'RESCHEDULE_REQUIRED'])
+      .default('KEEP_EXISTING'),
+    confirmUnderstood: z.boolean().optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.reasonCode === 'OTHER') {
+        return Boolean(data.note && data.note.trim().length >= 5);
+      }
+      return true;
+    },
+    {
+      message: 'Vui lòng nhập chi tiết lý do đóng (tối thiểu 5 ký tự)',
+      path: ['note'],
+    },
+  );
+
+export type SlotCloseFormValues = z.infer<typeof slotCloseSchema>;

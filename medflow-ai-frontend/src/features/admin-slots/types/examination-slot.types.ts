@@ -21,8 +21,26 @@ export interface ExaminationSlot {
   status: SlotStatus;
   facility?: string;
   needsReview?: boolean;
+  closedAt?: string;
+  closeReason?: string;
+  closeReasonCode?: CloseSlotReasonCode;
+  affectedBookingsAction?: AffectedBookingsAction;
 }
 
+export type CloseSlotReasonCode =
+  'DOCTOR_UNAVAILABLE' | 'EQUIPMENT_MAINTENANCE' | 'SCHEDULE_ADJUSTMENT' | 'EMERGENCY' | 'OTHER';
+
+export type AffectedBookingsAction = 'KEEP_EXISTING' | 'RESCHEDULE_REQUIRED';
+
+export interface CloseSlotPayload {
+  slotId: string;
+  reasonCode: CloseSlotReasonCode;
+  reasonText?: string;
+  note?: string;
+  notifyDoctor: boolean;
+  notifyPatients: boolean;
+  affectedBookingsAction: AffectedBookingsAction;
+}
 export interface SlotFilterState {
   searchQuery: string;
   dateFilter: string;

@@ -1,4 +1,13 @@
-import { Calendar, CheckCircle2, Eye, Info, Pencil, Stethoscope } from 'lucide-react';
+import {
+  Ban,
+  Calendar,
+  CheckCircle2,
+  Eye,
+  Info,
+  Pencil,
+  RotateCcw,
+  Stethoscope,
+} from 'lucide-react';
 
 import { useExaminationSlotStore } from '../store/examination-slot.store';
 import type { ExaminationSlot } from '../types/examination-slot.types';
@@ -8,9 +17,20 @@ interface SlotTableProps {
   onEditSlot?: (slot: ExaminationSlot) => void;
   onViewSchedule?: (slot: ExaminationSlot) => void;
   onViewDetail?: (slot: ExaminationSlot) => void;
+  onRequestCloseSlot?: (slot: ExaminationSlot) => void;
+  onRequestReopenSlot?: (slot: ExaminationSlot) => void;
+  onRequestBatchClose?: (selectedSlots: ExaminationSlot[]) => void;
 }
 
-export function SlotTable({ slots, onEditSlot, onViewSchedule, onViewDetail }: SlotTableProps) {
+export function SlotTable({
+  slots,
+  onEditSlot,
+  onViewSchedule,
+  onViewDetail,
+  onRequestCloseSlot,
+  onRequestReopenSlot,
+  onRequestBatchClose,
+}: SlotTableProps) {
   const selectedIds = useExaminationSlotStore((state) => state.selectedIds);
   const toggleSelection = useExaminationSlotStore((state) => state.toggleSelection);
   const toggleAll = useExaminationSlotStore((state) => state.toggleAll);
@@ -41,7 +61,14 @@ export function SlotTable({ slots, onEditSlot, onViewSchedule, onViewDetail }: S
             </button>
             <button
               type="button"
-              onClick={() => batchUpdateStatus('CLOSED')}
+              onClick={() => {
+                if (onRequestBatchClose) {
+                  const selected = slots.filter((s) => selectedIds.includes(s.id));
+                  onRequestBatchClose(selected);
+                } else {
+                  batchUpdateStatus('CLOSED');
+                }
+              }}
               className="rounded-md border border-rose-200 bg-white px-2.5 py-1 text-rose-700 shadow-2xs hover:bg-rose-50 transition-colors"
             >
               Đóng hàng loạt
@@ -223,6 +250,27 @@ export function SlotTable({ slots, onEditSlot, onViewSchedule, onViewDetail }: S
                   {/* Thao tác */}
                   <td className="px-3 py-3.5 text-right pr-5">
                     <div className="flex items-center justify-end gap-1 text-slate-500">
+                      {isClosed ? (
+                        <button
+                          type="button"
+                          onClick={() => onRequestReopenSlot?.(slot)}
+                          className="rounded p-1 text-slate-500 hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                          title="Mở lại khung giờ"
+                          aria-label={`Mở lại khung giờ ${slot.code}`}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onRequestCloseSlot?.(slot)}
+                          className="rounded p-1 text-slate-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                          title="Đóng khung giờ"
+                          aria-label={`Đóng khung giờ ${slot.code}`}
+                        >
+                          <Ban className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => onEditSlot?.(slot)}
