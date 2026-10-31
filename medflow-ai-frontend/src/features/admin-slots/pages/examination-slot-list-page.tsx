@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Outlet, useNavigate } from 'react-router-dom';
 
 import { AdminSlotShell } from '../components/admin-slot-shell';
 import { SlotFilters } from '../components/slot-filters';
@@ -144,6 +144,7 @@ export function ExaminationSlotListPage() {
           />
         </section>
       </main>
+      <Outlet />
     </AdminSlotShell>
   );
 }
