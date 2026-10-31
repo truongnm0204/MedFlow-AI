@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { useLogout } from '@/features/auth/hooks/use-auth';
@@ -28,13 +29,19 @@ const APPOINTMENT_STATUS_LABEL: Record<
 };
 
 export function ReceptionDashboardPage() {
+  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
-      <ReceptionSidebar activeItem="dashboard" />
+      <ReceptionSidebar
+        activeItem="dashboard"
+        onItemSelect={(item) => {
+          if (item === 'patients') navigate('/reception/patients');
+        }}
+      />
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
@@ -116,8 +123,11 @@ export function ReceptionDashboardPage() {
                 <CardContent className="pt-0">
                   <QuickActionsPanel
                     actions={QUICK_ACTIONS_MOCK}
-                    // TODO(M2): wire quick actions toi flow that (check-in, walk-in, new patient, search).
-                    onAction={(_id) => undefined}
+                    onAction={(id) => {
+                      if (id === 'search' || id === 'new-patient') {
+                        navigate('/reception/patients');
+                      }
+                    }}
                   />
                 </CardContent>
               </Card>
