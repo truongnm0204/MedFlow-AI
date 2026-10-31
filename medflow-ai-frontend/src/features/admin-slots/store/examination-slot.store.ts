@@ -32,6 +32,7 @@ interface ExaminationSlotStore {
   toggleSlotStatus: (id: string) => void;
   resetFilters: () => void;
   addSlot: (slot: ExaminationSlot) => void;
+  updateSlot: (id: string, updated: Partial<ExaminationSlot>) => void;
   saveDraft: (draft: Partial<ExaminationSlotFormValues>) => void;
   clearDraft: () => void;
 }
@@ -103,6 +104,22 @@ export const useExaminationSlotStore = create<ExaminationSlotStore>((set) => ({
   addSlot: (slot) =>
     set((state) => ({
       slots: [slot, ...state.slots],
+    })),
+  updateSlot: (id, updated) =>
+    set((state) => ({
+      slots: state.slots.map((item) => {
+        if (item.id === id || item.code === id) {
+          const next = { ...item, ...updated };
+          if (updated.date && !updated.dateDisplay) {
+            const parts = updated.date.split('-');
+            if (parts.length === 3) {
+              next.dateDisplay = `${parts[2]}/${parts[1]}`;
+            }
+          }
+          return next;
+        }
+        return item;
+      }),
     })),
 
   saveDraft: (draft) => set({ draft }),

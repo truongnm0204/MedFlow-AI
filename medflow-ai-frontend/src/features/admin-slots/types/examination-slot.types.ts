@@ -19,6 +19,7 @@ export interface ExaminationSlot {
   startTime: string; // 'HH:mm'
   endTime: string; // 'HH:mm'
   status: SlotStatus;
+  facility?: string;
   needsReview?: boolean;
 }
 

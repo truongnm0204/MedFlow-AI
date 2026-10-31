@@ -9,6 +9,7 @@ import { ExaminationServiceListPage } from '@/features/admin-services/pages/exam
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
 import { ExaminationSlotCreatePage } from '@/features/admin-slots/pages/examination-slot-create-page';
 import { ExaminationSlotListPage } from '@/features/admin-slots/pages/examination-slot-list-page';
+import { SlotEditModal } from '@/features/admin-slots/pages/slot-edit-modal';
 import { AppointmentDetailPage } from '@/features/appointment/pages/appointment-detail-page';
 import { AppointmentListPage } from '@/features/appointment/pages/appointment-list-page';
 import { AppointmentSlotBookingPage } from '@/features/appointment/pages/appointment-slot-booking-page';
@@ -200,7 +201,9 @@ export function AppRouter() {
             </RequireAdmin>
           </RequireAuth>
         }
-      />
+      >
+        <Route path=":slotId/edit" element={<SlotEditModal />} />
+      </Route>
       <Route
         path="/admin/slots/new"
         element={
@@ -220,7 +223,9 @@ export function AppRouter() {
             </RequireAdmin>
           </RequireAuth>
         }
-      />
+      >
+        <Route path=":slotId/edit" element={<SlotEditModal />} />
+      </Route>
       <Route
         path="/admin/examination-slots/new"
         element={
