@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
+import { CheckCircle2, X } from 'lucide-react';
 
 import { AdminSlotShell } from '../components/admin-slot-shell';
+import { SlotBatchCloseModal } from '../components/slot-batch-close-modal';
+import { SlotCloseModal } from '../components/slot-close-modal';
 import { SlotFilters } from '../components/slot-filters';
 import { SlotMetrics } from '../components/slot-metrics';
 import { SlotPagination } from '../components/slot-pagination';
+import { SlotReopenModal } from '../components/slot-reopen-modal';
 import { SlotTable } from '../components/slot-table';
 import { useExaminationSlotStore } from '../store/examination-slot.store';
 import type { ExaminationSlot } from '../types/examination-slot.types';
@@ -67,6 +71,18 @@ export function ExaminationSlotListPage() {
   const setPage = useExaminationSlotStore((state) => state.setPage);
   const setPageSize = useExaminationSlotStore((state) => state.setPageSize);
 
+  // Modal states for closing, reopening, and batch closing
+  const [closingSlot, setClosingSlot] = useState<ExaminationSlot | null>(null);
+  const [reopeningSlot, setReopeningSlot] = useState<ExaminationSlot | null>(null);
+  const [batchClosingSlots, setBatchClosingSlots] = useState<ExaminationSlot[] | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (feedbackMessage) {
+      const timer = setTimeout(() => setFeedbackMessage(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [feedbackMessage]);
   // Global hotkeys (Ctrl+K and F2)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -111,6 +127,24 @@ export function ExaminationSlotListPage() {
   return (
     <AdminSlotShell>
       <main className="space-y-5 px-6 py-6">
+        {/* Operation Feedback Banner */}
+        {feedbackMessage && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-800 shadow-2xs animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+              <span className="font-medium">{feedbackMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFeedbackMessage(null)}
+              className="rounded p-1 text-emerald-700 hover:bg-emerald-100 transition-colors"
+              aria-label="Đóng thông báo"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* KPI Metric Cards */}
         <SlotMetrics slots={slots} />
 
@@ -132,8 +166,10 @@ export function ExaminationSlotListPage() {
             onEditSlot={(slot) => navigate(`/admin/slots/${slot.id}/edit`)}
             onViewSchedule={(slot) => navigate(`/doctors/${slot.doctorId}`)}
             onViewDetail={(slot) => navigate(`/admin/slots/${slot.id}`)}
+            onRequestCloseSlot={(slot) => setClosingSlot(slot)}
+            onRequestReopenSlot={(slot) => setReopeningSlot(slot)}
+            onRequestBatchClose={(selected) => setBatchClosingSlots(selected)}
           />
-
           <SlotPagination
             count={filteredSlots.length}
             currentPage={currentPage}
@@ -145,6 +181,35 @@ export function ExaminationSlotListPage() {
         </section>
       </main>
       <Outlet />
+      {/* Close Single Slot Modal */}
+      <SlotCloseModal
+        slot={closingSlot}
+        open={Boolean(closingSlot)}
+        onClose={() => setClosingSlot(null)}
+        onSuccess={(slot, message) => {
+          setFeedbackMessage(message || `Đã đóng khung giờ ${slot.code} thành công.`);
+        }}
+      />
+
+      {/* Reopen Single Slot Modal */}
+      <SlotReopenModal
+        slot={reopeningSlot}
+        open={Boolean(reopeningSlot)}
+        onClose={() => setReopeningSlot(null)}
+        onSuccess={(slot, message) => {
+          setFeedbackMessage(message || `Đã mở lại khung giờ ${slot.code} thành công.`);
+        }}
+      />
+
+      {/* Batch Close Modal */}
+      <SlotBatchCloseModal
+        slots={batchClosingSlots ?? []}
+        open={Boolean(batchClosingSlots && batchClosingSlots.length > 0)}
+        onClose={() => setBatchClosingSlots(null)}
+        onSuccess={(count, message) => {
+          setFeedbackMessage(message || `Đã đóng hàng loạt ${count} khung giờ thành công.`);
+        }}
+      />
     </AdminSlotShell>
   );
 }

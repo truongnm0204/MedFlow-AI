@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Info } from 'lucide-react';
+import { AlertTriangle, Info } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -372,6 +372,27 @@ export function SlotEditModal() {
                 <option value="CLOSED">Đã đóng (CLOSED)</option>
               </select>
             </FormField>
+            {/* Dependent Bookings Warning on Close */}
+            {status === 'CLOSED' && slot.capacityBooked > 0 && (
+              <div className="sm:col-span-2 rounded-xl border border-amber-300 bg-amber-50 p-4">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle
+                    className="h-5 w-5 shrink-0 text-amber-600 mt-0.5"
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-900">
+                      Cảnh báo: Khung giờ hiện có {slot.capacityBooked} lượt bệnh nhân đã đặt hẹn!
+                    </h4>
+                    <p className="mt-0.5 text-xs text-amber-800 leading-relaxed">
+                      Khi chuyển sang trạng thái <b>Đã đóng (CLOSED)</b>, hệ thống sẽ ngừng nhận
+                      lượt đặt mới. Các lượt khám đã đặt trước cần được điều phối tiếp nhận hoặc chủ
+                      động liên hệ dời lịch.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Facility */}
             <div className="sm:col-span-2">
