@@ -26,6 +26,8 @@ public sealed class DoctorAdminServiceTests : IDisposable
         public DbSet<Patient> Patients => throw NotUsed();
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => Set<Doctor>();
+        public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => throw NotUsed();
+        public DbSet<ExaminationSlot> ExaminationSlots => throw NotUsed();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
@@ -53,6 +55,8 @@ public sealed class DoctorAdminServiceTests : IDisposable
             modelBuilder.Ignore<Service>();
             modelBuilder.Ignore<ServicePrice>();
             modelBuilder.Ignore<HospitalPolicy>();
+            modelBuilder.Ignore<DoctorServiceAuthorization>();
+            modelBuilder.Ignore<ExaminationSlot>();
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Department>().HasKey(d => d.Id);

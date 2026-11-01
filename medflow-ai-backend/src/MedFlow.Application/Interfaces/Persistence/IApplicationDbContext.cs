@@ -14,6 +14,8 @@ public interface IApplicationDbContext
     DbSet<Patient> Patients { get; }
     DbSet<Staff> Staff { get; }
     DbSet<Doctor> Doctors { get; }
+    DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations { get; }
+    DbSet<ExaminationSlot> ExaminationSlots { get; }
     DbSet<AuthSession> AuthSessions { get; }
     DbSet<AuthVerificationChallenge> AuthVerificationChallenges { get; }
     DbSet<AuditLog> AuditLogs { get; }
