@@ -499,7 +499,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
         return "Phòng 101 - Tầng 1, Khu Demo";
     }
 
-    private static string FormatHospitalRoom(HospitalRoom room)
+    internal static string FormatHospitalRoom(HospitalRoom room)
     {
         var roomLabel = ExtractRoomLabel(room);
         var location = !string.IsNullOrWhiteSpace(room.Location)
@@ -511,7 +511,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
             : $"{room.Name} - {location}";
     }
 
-    private static string ExtractRoomLabel(HospitalRoom room)
+    internal static string ExtractRoomLabel(HospitalRoom room)
     {
         if (!string.IsNullOrWhiteSpace(room.Name))
         {
