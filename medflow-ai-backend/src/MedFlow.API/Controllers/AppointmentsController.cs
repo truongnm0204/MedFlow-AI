@@ -52,6 +52,19 @@ public sealed class AppointmentsController : ControllerBase
         CancellationToken ct)
         => Ok(await _slotService.GetServiceShiftsAsync(GetUserId(), request, ct));
 
+    /// <summary>GET /api/v1/appointments/review-preview — Soát xét thông tin đặt lịch trước khi xác nhận (UC12 bước review).</summary>
+    [HttpGet("review-preview")]
+    [ProducesResponseType<AppointmentReviewPreviewResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<AppointmentReviewPreviewResponse>> GetReviewPreview(
+        [FromQuery] GetAppointmentReviewPreviewRequest request,
+        CancellationToken ct)
+        => Ok(await _bookingService.PreviewAsync(GetUserId(), request, ct));
+
     /// <summary>POST /api/v1/appointments — Đặt lịch khám (UC12).</summary>
     [HttpPost]
     [ProducesResponseType<CreateAppointmentResponse>(StatusCodes.Status201Created)]

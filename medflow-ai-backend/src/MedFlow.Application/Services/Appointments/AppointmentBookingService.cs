@@ -1,6 +1,8 @@
 using System.Globalization;
 using MedFlow.Application.DTOs.Appointments;
+using MedFlow.Application.DTOs.Doctors;
 using MedFlow.Application.DTOs.Policies;
+using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Doctors;
@@ -47,6 +49,133 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
         CreateAppointmentRequest request,
         string? ipAddress,
         CancellationToken ct = default)
+    {
+        var selection = await ResolveSelectionAsync(userId, request, ct);
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+        await _bookingLock.AcquireAsync(selection.PatientId, selection.Slot.DoctorId, selection.Slot.Id, ct);
+
+        var slot = await _db.ExaminationSlots
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == selection.Slot.Id, ct)
+            ?? throw new NotFoundException("ExaminationSlot", selection.Slot.Id);
+
+        EnsureSlotBookable(slot, selection.NowLocal, selection.Today, selection.Policy);
+        await EnsureSlotHasCapacityAsync(slot, ct);
+        await EnsurePatientLimitsAsync(selection.PatientId, slot, selection.NowLocal, selection.Policy, ct);
+
+        var appointment = new Appointment
+        {
+            PatientId = selection.PatientId,
+            SlotId = slot.Id,
+            BookingChannel = AppointmentBookingRules.OnlineChannel,
+            Status = AppointmentBookingRules.BookedStatus,
+            BookedByUserId = userId,
+            BookedAt = selection.NowLocal,
+            ReasonForVisit = selection.SymptomNote,
+            IdempotencyKey = null,
+            ReceptionNote = null
+        };
+
+        _db.Appointments.Add(appointment);
+        await _db.SaveChangesAsync(ct);
+
+        appointment.AppointmentCode = $"APT-{selection.NowLocal:yyyyMM}-{appointment.Id:D4}";
+        var appointmentIdStr = appointment.Id.ToString(CultureInfo.InvariantCulture);
+
+        _audit.Add(
+            userId,
+            "APPOINTMENT_BOOK",
+            "APPOINTMENT",
+            appointmentIdStr,
+            new { appointment.AppointmentCode, SlotId = slot.Id, PatientId = selection.PatientId },
+            ipAddress);
+
+        await _db.SaveChangesAsync(ct);
+
+        var queueNumber = await AppointmentBookingRules.ComputeQueueNumberAsync(_db, appointment.Id, slot, ct);
+
+        await tx.CommitAsync(ct);
+
+        return new CreateAppointmentResponse(
+            AppointmentId: appointmentIdStr,
+            AppointmentCode: appointment.AppointmentCode,
+            QueueNumber: queueNumber,
+            Status: AppointmentBookingRules.BookedStatus);
+    }
+
+    public async Task<AppointmentReviewPreviewResponse> PreviewAsync(
+        long userId,
+        GetAppointmentReviewPreviewRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var slotOrShiftId = string.Equals(request.Mode?.Trim(), "service", StringComparison.OrdinalIgnoreCase)
+            ? request.ShiftId
+            : request.SlotId;
+
+        var selection = await ResolveSelectionAsync(
+            userId,
+            new CreateAppointmentRequest
+            {
+                Mode = request.Mode,
+                PatientId = request.PatientId,
+                DoctorId = request.DoctorId,
+                ServiceId = request.ServiceId,
+                ServiceCode = request.ServiceCode,
+                DateIso = request.DateIso,
+                SlotOrShiftId = slotOrShiftId,
+                SymptomNote = request.SymptomNote
+            },
+            ct);
+
+        await EnsureSlotHasCapacityAsync(selection.Slot, ct);
+        await EnsurePatientLimitsAsync(selection.PatientId, selection.Slot, selection.NowLocal, selection.Policy, ct);
+
+        var doctor = selection.Doctor ?? (selection.Slot.DoctorId is long id
+            ? await _doctorCatalog.GetByIdOrCodeAsync(id.ToString(CultureInfo.InvariantCulture), ct)
+            : null);
+
+        var room = selection.Slot.RoomId is long roomId
+            ? await _db.HospitalRooms.AsNoTracking().FirstOrDefaultAsync(r => r.Id == roomId, ct)
+            : null;
+
+        var isSelf = selection.Owned.Self.Id == selection.PatientId;
+        Patient patient;
+        string? relationship = null;
+
+        if (isSelf)
+        {
+            patient = selection.Owned.Self;
+        }
+        else
+        {
+            var link = selection.Owned.FamilyLinks.First(l => l.MemberPatientId == selection.PatientId);
+            patient = link.MemberPatient!;
+            relationship = link.Relationship;
+        }
+
+        return AppointmentReviewPreviewMapper.Map(
+            patient,
+            relationship,
+            isSelf,
+            selection.Owned.Self,
+            selection.SymptomNote,
+            selection.IsDoctorMode,
+            selection.IsMorningShift,
+            selection.Service,
+            doctor,
+            selection.Slot,
+            room,
+            selection.Policy,
+            selection.Today);
+    }
+
+    private async Task<BookingSelection> ResolveSelectionAsync(
+        long userId,
+        CreateAppointmentRequest request,
+        CancellationToken ct)
     {
         if (userId <= 0)
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
@@ -119,10 +248,11 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
 
         var serviceId = long.Parse(serviceDto.Id, CultureInfo.InvariantCulture);
         long? doctorId = null;
+        DoctorDetailDto? doctorDto = null;
 
         if (isDoctorMode)
         {
-            var doctorDto = await _doctorCatalog.GetByIdOrCodeAsync(request.DoctorId!, ct);
+            doctorDto = await _doctorCatalog.GetByIdOrCodeAsync(request.DoctorId!, ct);
             var resolvedDoctorId = long.Parse(doctorDto.Id, CultureInfo.InvariantCulture);
             doctorId = resolvedDoctorId;
 
@@ -178,16 +308,22 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
                 ct);
         }
 
-        await using var tx = await _db.BeginTransactionAsync(ct);
-        await _bookingLock.AcquireAsync(patientId, preselectedSlot.DoctorId, preselectedSlot.Id, ct);
+        return new BookingSelection(
+            IsDoctorMode: isDoctorMode,
+            IsMorningShift: isMorningShift,
+            PatientId: patientId,
+            SymptomNote: symptomNote,
+            Service: serviceDto,
+            Doctor: doctorDto,
+            Owned: owned,
+            Policy: policy,
+            Slot: preselectedSlot,
+            NowLocal: nowLocal,
+            Today: today);
+    }
 
-        var slot = await _db.ExaminationSlots
-            .AsNoTracking()
-            .FirstOrDefaultAsync(s => s.Id == preselectedSlot.Id, ct)
-            ?? throw new NotFoundException("ExaminationSlot", preselectedSlot.Id);
-
-        EnsureSlotBookable(slot, nowLocal, today, policy);
-
+    private async Task EnsureSlotHasCapacityAsync(ExaminationSlot slot, CancellationToken ct)
+    {
         var occupying = await _db.Appointments
             .AsNoTracking()
             .CountAsync(a =>
@@ -196,47 +332,6 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
 
         if (occupying >= (slot.Capacity ?? 0))
             throw new ConflictException("Khung giờ khám vừa hết chỗ. Vui lòng chọn khung giờ khác.");
-
-        await EnsurePatientLimitsAsync(patientId, slot, nowLocal, policy, ct);
-
-        var appointment = new Appointment
-        {
-            PatientId = patientId,
-            SlotId = slot.Id,
-            BookingChannel = AppointmentBookingRules.OnlineChannel,
-            Status = AppointmentBookingRules.BookedStatus,
-            BookedByUserId = userId,
-            BookedAt = nowLocal,
-            ReasonForVisit = symptomNote,
-            IdempotencyKey = null,
-            ReceptionNote = null
-        };
-
-        _db.Appointments.Add(appointment);
-        await _db.SaveChangesAsync(ct);
-
-        appointment.AppointmentCode = $"APT-{nowLocal:yyyyMM}-{appointment.Id:D4}";
-        var appointmentIdStr = appointment.Id.ToString(CultureInfo.InvariantCulture);
-
-        _audit.Add(
-            userId,
-            "APPOINTMENT_BOOK",
-            "APPOINTMENT",
-            appointmentIdStr,
-            new { appointment.AppointmentCode, SlotId = slot.Id, PatientId = patientId },
-            ipAddress);
-
-        await _db.SaveChangesAsync(ct);
-
-        var queueNumber = await AppointmentBookingRules.ComputeQueueNumberAsync(_db, appointment.Id, slot, ct);
-
-        await tx.CommitAsync(ct);
-
-        return new CreateAppointmentResponse(
-            AppointmentId: appointmentIdStr,
-            AppointmentCode: appointment.AppointmentCode,
-            QueueNumber: queueNumber,
-            Status: AppointmentBookingRules.BookedStatus);
     }
 
     private async Task<ExaminationSlot> SelectServiceShiftSlotAsync(
@@ -383,4 +478,17 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
             }
         }
     }
+
+    private sealed record BookingSelection(
+        bool IsDoctorMode,
+        bool IsMorningShift,
+        long PatientId,
+        string? SymptomNote,
+        ExaminationServiceDto Service,
+        DoctorDetailDto? Doctor,
+        AppointmentBookingRules.OwnedPatients Owned,
+        AppointmentPolicyDto Policy,
+        ExaminationSlot Slot,
+        DateTime NowLocal,
+        DateOnly Today);
 }

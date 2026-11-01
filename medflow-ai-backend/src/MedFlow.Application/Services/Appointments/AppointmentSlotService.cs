@@ -389,10 +389,10 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
         return Math.Max(0, age);
     }
 
-    private static string FormatGender(string? gender)
+    internal static string FormatGender(string? gender)
         => string.Equals(gender, "FEMALE", StringComparison.OrdinalIgnoreCase) ? "Nữ" : "Nam";
 
-    private static string FormatRelationshipLabel(string? relationship)
+    internal static string FormatRelationshipLabel(string? relationship)
     {
         return relationship?.Trim().ToUpperInvariant() switch
         {
