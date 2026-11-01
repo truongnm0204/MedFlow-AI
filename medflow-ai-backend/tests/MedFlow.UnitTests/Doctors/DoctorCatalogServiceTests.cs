@@ -36,6 +36,9 @@ public sealed class DoctorCatalogServiceTests : IDisposable
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
         public DbSet<Appointment> Appointments => throw NotUsed();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
+        public DbSet<Visit> Visits => throw NotUsed();
+        public DbSet<QueueEntry> QueueEntries => throw NotUsed();
+        public DbSet<Payment> Payments => throw NotUsed();
 
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => Set<Doctor>();
@@ -64,6 +67,9 @@ public sealed class DoctorCatalogServiceTests : IDisposable
             modelBuilder.Ignore<HospitalPolicy>();
             modelBuilder.Ignore<Appointment>();
             modelBuilder.Ignore<PatientFamilyLink>();
+            modelBuilder.Ignore<Visit>();
+            modelBuilder.Ignore<QueueEntry>();
+            modelBuilder.Ignore<Payment>();
 
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
             modelBuilder.Entity<HospitalRoom>(b =>

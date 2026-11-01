@@ -55,32 +55,12 @@ internal static class AppointmentBookingRules
         DateTime nowLocal,
         CancellationToken ct)
     {
-        var self = await db.Patients
-            .AsNoTracking()
-            .Include(p => p.User)
-            .FirstOrDefaultAsync(p => p.UserId == userId, ct);
-
-        if (self is null)
-            throw new NotFoundException("Patient", userId);
-
-        if (self.User is null || self.User.AccountStatus != AccountStatus.ACTIVE)
-            throw new UnauthorizedAccessException("Tài khoản bệnh nhân chưa kích hoạt hoặc đã bị khóa.");
-
-        if (!string.Equals(self.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
-            throw new UnauthorizedAccessException("Hồ sơ bệnh nhân đang ngừng hoạt động.");
+        var self = await PatientAccessScope.LoadActiveSelfAsync(db, userId, ct);
 
         var familyLinks = await db.PatientFamilyLinks
             .AsNoTracking()
             .Include(l => l.MemberPatient)
-            .Where(l =>
-                l.OwnerPatientId == self.Id &&
-                l.VerificationStatus != null &&
-                l.VerificationStatus.ToUpper() == "VERIFIED" &&
-                l.RevokedAt == null &&
-                (l.ValidUntil == null || l.ValidUntil > nowLocal) &&
-                l.MemberPatient != null &&
-                l.MemberPatient.Status != null &&
-                l.MemberPatient.Status.ToUpper() == "ACTIVE")
+            .WhereActiveMemberOf(self.Id, nowLocal)
             .OrderBy(l => l.MemberPatientId)
             .ToListAsync(ct);
 

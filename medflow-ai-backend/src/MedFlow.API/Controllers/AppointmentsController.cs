@@ -13,13 +13,16 @@ public sealed class AppointmentsController : ControllerBase
 {
     private readonly IAppointmentSlotService _slotService;
     private readonly IAppointmentBookingService _bookingService;
+    private readonly IAppointmentListService _listService;
 
     public AppointmentsController(
         IAppointmentSlotService slotService,
-        IAppointmentBookingService bookingService)
+        IAppointmentBookingService bookingService,
+        IAppointmentListService listService)
     {
         _slotService = slotService;
         _bookingService = bookingService;
+        _listService = listService;
     }
 
     /// <summary>GET /api/v1/appointments/available-slots — Xem ngày/ca/slot còn khả dụng theo bác sĩ và dịch vụ khám.</summary>
@@ -61,6 +64,18 @@ public sealed class AppointmentsController : ControllerBase
         var result = await _bookingService.CreateAsync(GetUserId(), request, GetIp(), ct);
         return Created($"/api/v1/appointments/{result.AppointmentId}", result);
     }
+
+    /// <summary>GET /api/v1/appointments/me — Xem danh sách lịch hẹn sắp tới và lịch sử của bệnh nhân và người thân.</summary>
+    [HttpGet("me")]
+    [ProducesResponseType<AppointmentListResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<AppointmentListResponse>> GetMyAppointments(
+        [FromQuery] GetMyAppointmentsRequest request,
+        CancellationToken ct)
+        => Ok(await _listService.GetMyAppointmentsAsync(GetUserId(), request, ct));
 
     private long GetUserId()
     {

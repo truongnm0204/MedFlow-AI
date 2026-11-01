@@ -375,7 +375,7 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             PatientCode: member.PatientCode);
     }
 
-    private static int CalculateAge(DateOnly? dateOfBirth, DateOnly today)
+    internal static int CalculateAge(DateOnly? dateOfBirth, DateOnly today)
     {
         if (!dateOfBirth.HasValue)
             return 0;
@@ -708,7 +708,7 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
         _ => "Chủ Nhật"
     };
 
-    private static string FormatFullWeekday(DayOfWeek dayOfWeek) => dayOfWeek switch
+    internal static string FormatFullWeekday(DayOfWeek dayOfWeek) => dayOfWeek switch
     {
         DayOfWeek.Monday => "Thứ Hai",
         DayOfWeek.Tuesday => "Thứ Ba",

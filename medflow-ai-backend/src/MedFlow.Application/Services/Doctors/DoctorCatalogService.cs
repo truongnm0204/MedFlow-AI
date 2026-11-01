@@ -456,7 +456,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
         };
     }
 
-    private static string FormatDisplayName(string? fullName, string professionalTitle)
+    internal static string FormatDisplayName(string? fullName, string professionalTitle)
     {
         var cleanName = string.IsNullOrWhiteSpace(fullName) ? "Bác sĩ Chuyên khoa" : fullName.Trim();
         if (string.IsNullOrWhiteSpace(professionalTitle))
