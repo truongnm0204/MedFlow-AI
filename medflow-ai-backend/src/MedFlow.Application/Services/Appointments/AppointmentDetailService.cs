@@ -10,8 +10,6 @@ namespace MedFlow.Application.Services.Appointments;
 
 public sealed class AppointmentDetailService : IAppointmentDetailService
 {
-    private const int MaxIdentifierLength = 40;
-
     private const string ActionCancel = "CANCEL";
     private const string ActionReschedule = "RESCHEDULE";
     private const string ActionUpdateReason = "UPDATE_REASON";
@@ -41,7 +39,7 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
         if (userId <= 0)
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
 
-        var (trimmedIdentifier, appointmentId, appointmentCode) = ParseIdentifier(idOrCode);
+        var (trimmedIdentifier, appointmentId, appointmentCode) = AppointmentBookingRules.ParseAppointmentIdentifier(idOrCode);
 
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
@@ -108,29 +106,6 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
             phone,
             address,
             availableActions);
-    }
-
-    private static (string Trimmed, long? Id, string? Code) ParseIdentifier(string? idOrCode)
-    {
-        if (string.IsNullOrWhiteSpace(idOrCode))
-            throw new ValidationException("Mã lịch hẹn không hợp lệ.");
-
-        var trimmed = idOrCode.Trim();
-        if (trimmed.StartsWith('#'))
-            trimmed = trimmed[1..].TrimStart();
-
-        if (string.IsNullOrEmpty(trimmed) || trimmed.Length > MaxIdentifierLength)
-            throw new ValidationException("Mã lịch hẹn không hợp lệ.");
-
-        if (trimmed.All(char.IsAsciiDigit))
-        {
-            if (!long.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id <= 0)
-                throw new ValidationException("Mã lịch hẹn không hợp lệ.");
-
-            return (trimmed, id, null);
-        }
-
-        return (trimmed, null, trimmed.ToUpperInvariant());
     }
 
     private async Task<IReadOnlyList<string>> BuildAvailableActionsAsync(
