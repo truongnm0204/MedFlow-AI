@@ -26,6 +26,8 @@ public sealed class PatientProfileServiceTests : IDisposable
         public DbSet<RolePermission> RolePermissions => throw NotUsed();
         public DbSet<Staff> Staff => throw NotUsed();
         public DbSet<Doctor> Doctors => throw NotUsed();
+        public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => throw NotUsed();
+        public DbSet<ExaminationSlot> ExaminationSlots => throw NotUsed();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
@@ -47,6 +49,8 @@ public sealed class PatientProfileServiceTests : IDisposable
             modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Staff>();
             modelBuilder.Ignore<Doctor>();
+            modelBuilder.Ignore<DoctorServiceAuthorization>();
+            modelBuilder.Ignore<ExaminationSlot>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuditLog>();
