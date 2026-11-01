@@ -24,5 +24,11 @@ public class VisitConfiguration : IEntityTypeConfiguration<Visit>
         builder.Property(v => v.Status)
             .HasColumnName("status")
             .HasMaxLength(30);
+
+        builder.Property(v => v.CheckedInAt)
+            .HasColumnName("checked_in_at");
+
+        builder.Property(v => v.CompletedAt)
+            .HasColumnName("completed_at");
     }
 }

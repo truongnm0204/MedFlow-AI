@@ -24,5 +24,11 @@ public class QueueEntryConfiguration : IEntityTypeConfiguration<QueueEntry>
         builder.Property(q => q.QueueType)
             .HasColumnName("queue_type")
             .HasMaxLength(20);
+
+        builder.Property(q => q.CalledAt)
+            .HasColumnName("called_at");
+
+        builder.Property(q => q.StartedAt)
+            .HasColumnName("started_at");
     }
 }

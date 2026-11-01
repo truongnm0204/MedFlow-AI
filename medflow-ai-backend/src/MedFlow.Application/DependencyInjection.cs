@@ -3,6 +3,7 @@ using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Auth;
 using MedFlow.Application.Services.Departments;
 using MedFlow.Application.Services.Doctors;
+using MedFlow.Application.Services.ExaminationRooms;
 using MedFlow.Application.Services.Hospitals;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Application.Services.Policies;
@@ -26,12 +27,14 @@ public static class DependencyInjection
         services.AddScoped<IPatientProfileService, PatientProfileService>();
         services.AddScoped<IAppointmentPolicyService, AppointmentPolicyService>();
         services.AddScoped<IDepartmentService, DepartmentService>();
+        services.AddScoped<IExaminationRoomService, ExaminationRoomService>();
         services.AddScoped<IAppointmentSlotService, AppointmentSlotService>();
         services.AddScoped<IAppointmentBookingService, AppointmentBookingService>();
         services.AddScoped<IAppointmentListService, AppointmentListService>();
         services.AddScoped<IAppointmentDetailService, AppointmentDetailService>();
         services.AddScoped<IAppointmentCancelService, AppointmentCancelService>();
         services.AddScoped<IAppointmentRescheduleService, AppointmentRescheduleService>();
+        services.AddScoped<IAppointmentStatusTrackingService, AppointmentStatusTrackingService>();
         return services;
     }
 }
