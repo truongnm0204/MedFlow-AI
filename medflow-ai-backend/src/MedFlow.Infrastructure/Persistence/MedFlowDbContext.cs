@@ -33,6 +33,9 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<HospitalPolicy> HospitalPolicies => Set<HospitalPolicy>();
     public DbSet<Appointment> Appointments => Set<Appointment>();
     public DbSet<PatientFamilyLink> PatientFamilyLinks => Set<PatientFamilyLink>();
+    public DbSet<Visit> Visits => Set<Visit>();
+    public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
+    public DbSet<Payment> Payments => Set<Payment>();
 
     public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => Database.BeginTransactionAsync(ct);
