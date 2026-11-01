@@ -37,6 +37,8 @@ public sealed class PatientProfileServiceTests : IDisposable
         public DbSet<Service> Services => throw NotUsed();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
+        public DbSet<Appointment> Appointments => throw NotUsed();
+        public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
             => Database.BeginTransactionAsync(ct);
@@ -60,6 +62,8 @@ public sealed class PatientProfileServiceTests : IDisposable
             modelBuilder.Ignore<Service>();
             modelBuilder.Ignore<ServicePrice>();
             modelBuilder.Ignore<HospitalPolicy>();
+            modelBuilder.Ignore<Appointment>();
+            modelBuilder.Ignore<PatientFamilyLink>();
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Patient>(b =>

@@ -25,6 +25,8 @@ public interface IApplicationDbContext
     DbSet<Service> Services { get; }
     DbSet<ServicePrice> ServicePrices { get; }
     DbSet<HospitalPolicy> HospitalPolicies { get; }
+    DbSet<Appointment> Appointments { get; }
+    DbSet<PatientFamilyLink> PatientFamilyLinks { get; }
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);

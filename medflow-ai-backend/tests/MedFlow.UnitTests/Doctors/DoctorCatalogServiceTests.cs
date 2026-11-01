@@ -34,6 +34,8 @@ public sealed class DoctorCatalogServiceTests : IDisposable
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
+        public DbSet<Appointment> Appointments => throw NotUsed();
+        public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
 
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => Set<Doctor>();
@@ -60,6 +62,8 @@ public sealed class DoctorCatalogServiceTests : IDisposable
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuditLog>();
             modelBuilder.Ignore<HospitalPolicy>();
+            modelBuilder.Ignore<Appointment>();
+            modelBuilder.Ignore<PatientFamilyLink>();
 
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
             modelBuilder.Entity<HospitalRoom>(b =>

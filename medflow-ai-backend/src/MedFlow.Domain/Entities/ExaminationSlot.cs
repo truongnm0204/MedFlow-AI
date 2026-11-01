@@ -14,4 +14,5 @@ public class ExaminationSlot
     public Service? Service { get; set; }
     public Doctor? Doctor { get; set; }
     public HospitalRoom? Room { get; set; }
+    public ICollection<Appointment> Appointments { get; set; } = new List<Appointment>();
 }
