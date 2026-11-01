@@ -14,15 +14,18 @@ public sealed class AppointmentsController : ControllerBase
     private readonly IAppointmentSlotService _slotService;
     private readonly IAppointmentBookingService _bookingService;
     private readonly IAppointmentListService _listService;
+    private readonly IAppointmentDetailService _detailService;
 
     public AppointmentsController(
         IAppointmentSlotService slotService,
         IAppointmentBookingService bookingService,
-        IAppointmentListService listService)
+        IAppointmentListService listService,
+        IAppointmentDetailService detailService)
     {
         _slotService = slotService;
         _bookingService = bookingService;
         _listService = listService;
+        _detailService = detailService;
     }
 
     /// <summary>GET /api/v1/appointments/available-slots — Xem ngày/ca/slot còn khả dụng theo bác sĩ và dịch vụ khám.</summary>
@@ -90,6 +93,16 @@ public sealed class AppointmentsController : ControllerBase
         CancellationToken ct)
         => Ok(await _listService.GetMyAppointmentsAsync(GetUserId(), request, ct));
 
+
+    /// <summary>GET /api/v1/appointments/{idOrCode} — Xem chi tiết, trạng thái và hành động hợp lệ của một lịch hẹn (UC15).</summary>
+    [HttpGet("{idOrCode}")]
+    [ProducesResponseType<AppointmentDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<AppointmentDetailDto>> GetDetail(string idOrCode, CancellationToken ct)
+        => Ok(await _detailService.GetMyAppointmentDetailAsync(GetUserId(), idOrCode, ct));
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
