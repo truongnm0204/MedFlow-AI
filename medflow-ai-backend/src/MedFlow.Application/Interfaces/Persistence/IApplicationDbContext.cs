@@ -22,6 +22,7 @@ public interface IApplicationDbContext
     DbSet<Specialty> Specialties { get; }
     DbSet<Service> Services { get; }
     DbSet<ServicePrice> ServicePrices { get; }
+    DbSet<HospitalPolicy> HospitalPolicies { get; }
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);

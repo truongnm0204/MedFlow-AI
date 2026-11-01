@@ -39,6 +39,7 @@ public sealed class AuditLoggerTests : IDisposable
         public DbSet<Specialty> Specialties => throw NotUsed();
         public DbSet<Service> Services => throw NotUsed();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
+        public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
 
         public override Task<int> SaveChangesAsync(CancellationToken ct = default)
         {
@@ -67,6 +68,7 @@ public sealed class AuditLoggerTests : IDisposable
             modelBuilder.Ignore<Specialty>();
             modelBuilder.Ignore<Service>();
             modelBuilder.Ignore<ServicePrice>();
+            modelBuilder.Ignore<HospitalPolicy>();
         }
 
         private static NotSupportedException NotUsed()

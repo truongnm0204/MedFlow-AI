@@ -38,6 +38,8 @@ public class ExceptionMiddleware
                 new ProblemDetails { Status = 404, Title = "Không tìm thấy", Detail = nf.Message }),
             UnauthorizedAccessException ua => (HttpStatusCode.Unauthorized,
                 new ProblemDetails { Status = 401, Title = "Không được phép", Detail = ua.Message }),
+            ForbiddenException fe => (HttpStatusCode.Forbidden,
+                new ProblemDetails { Status = 403, Title = "Không có quyền truy cập", Detail = fe.Message }),
             _ => (HttpStatusCode.InternalServerError,
                 new ProblemDetails { Status = 500, Title = "Lỗi hệ thống", Detail = "Đã xảy ra lỗi không mong muốn" }),
         };

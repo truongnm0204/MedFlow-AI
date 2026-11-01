@@ -34,6 +34,7 @@ public sealed class ExaminationServiceCatalogServiceTests : IDisposable
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => Set<Service>();
         public DbSet<ServicePrice> ServicePrices => Set<ServicePrice>();
+        public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
             => Database.BeginTransactionAsync(ct);
@@ -51,6 +52,7 @@ public sealed class ExaminationServiceCatalogServiceTests : IDisposable
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuditLog>();
+            modelBuilder.Ignore<HospitalPolicy>();
 
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
             modelBuilder.Entity<HospitalRoom>(b =>
