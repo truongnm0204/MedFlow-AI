@@ -19,6 +19,7 @@ public interface IApplicationDbContext
     DbSet<AuthSession> AuthSessions { get; }
     DbSet<AuthVerificationChallenge> AuthVerificationChallenges { get; }
     DbSet<AuditLog> AuditLogs { get; }
+    DbSet<Hospital> Hospitals { get; }
     DbSet<Department> Departments { get; }
     DbSet<HospitalRoom> HospitalRooms { get; }
     DbSet<Specialty> Specialties { get; }

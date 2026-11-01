@@ -31,6 +31,7 @@ public sealed class AppointmentSlotServiceTests : IDisposable
         public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => Set<DoctorServiceAuthorization>();
         public DbSet<ExaminationSlot> ExaminationSlots => Set<ExaminationSlot>();
         public DbSet<Appointment> Appointments => Set<Appointment>();
+        public DbSet<Hospital> Hospitals => throw NotUsed();
         public DbSet<Department> Departments => Set<Department>();
         public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => Set<Specialty>();
@@ -54,6 +55,7 @@ public sealed class AppointmentSlotServiceTests : IDisposable
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            modelBuilder.Ignore<Hospital>();
             modelBuilder.Ignore<Role>();
             modelBuilder.Ignore<Permission>();
             modelBuilder.Ignore<UserRole>();

@@ -25,6 +25,7 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<AuthSession> AuthSessions => Set<AuthSession>();
     public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => Set<AuthVerificationChallenge>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<Hospital> Hospitals => Set<Hospital>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
     public DbSet<Specialty> Specialties => Set<Specialty>();
