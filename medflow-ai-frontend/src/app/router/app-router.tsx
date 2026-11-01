@@ -17,6 +17,7 @@ import { AppointmentPrintPreviewPage } from '@/features/appointment/pages/appoin
 import { AppointmentQueueTrackingPage } from '@/features/appointment/pages/appointment-queue-tracking-page';
 import { AppointmentReviewPage } from '@/features/appointment/pages/appointment-review-page';
 import { AppointmentSlotBookingPage } from '@/features/appointment/pages/appointment-slot-booking-page';
+import { BookingEntryPage } from '@/features/appointment/pages/booking-entry-page';
 import { DoctorSearchPage } from '@/features/appointment/pages/doctor-search-page';
 import { ExaminationServiceCatalogPage } from '@/features/appointment/pages/examination-service-catalog-page';
 import { ServiceSlotBookingPage } from '@/features/appointment/pages/service-slot-booking-page';
@@ -39,6 +40,8 @@ export function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      <Route path="/booking" element={<BookingEntryPage />} />
+      <Route path="/appointment/book" element={<BookingEntryPage />} />
       <Route path="/services" element={<ExaminationServiceCatalogPage />} />
       <Route path="/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
       <Route path="/services/:serviceId/booking" element={<ServiceSlotBookingPage />} />

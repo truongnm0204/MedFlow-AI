@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ChevronRight, Home, LayoutDashboard } from 'lucide-react';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
@@ -20,6 +20,7 @@ import { usePatientProfileQuery } from '../hooks/use-patient-profile';
 import type { PatientContact, PatientProfile } from '../types/patient-profile.types';
 
 export function PatientProfilePage() {
+  const navigate = useNavigate();
   const authUser = useAuthStore((s) => s.user);
   const isStaffAccount = isStaffRole(authUser?.roles) && !authUser?.roles?.includes('PATIENT');
   const roleLabel = getRoleDisplayLabel(authUser?.roles);
@@ -92,7 +93,7 @@ export function PatientProfilePage() {
             <aside className="lg:col-span-4 xl:col-span-4">
               <PatientProfileSidebar
                 profile={profile}
-                onOpenBookingModal={() => window.location.assign('/#booking')}
+                onOpenBookingModal={() => navigate('/booking')}
               />
             </aside>
 
