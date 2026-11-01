@@ -3,11 +3,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { resetMockAppointments } from '../data/appointment-list-mock';
+import { AppointmentConfirmationPage } from '../pages/appointment-confirmation-page';
 import { AppointmentReviewPage } from '../pages/appointment-review-page';
 import { useBookingStore } from '../store/booking.store';
 
 function renderAppointmentReviewPage(
-  initialEntry = '/appointment/review?mode=doctor&doctorId=doc-01&serviceCode=DV-TH-01&patientId=pat-self&date=2026-10-13&slotId=slot-0900',
+  initialEntry = '/appointment/review?mode=doctor&doctorId=doc-01&serviceId=srv-th-01&serviceCode=DV-TH-01&patientId=pat-self&date=2026-10-13&slotId=slot-0900',
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -26,6 +28,10 @@ function renderAppointmentReviewPage(
         <Routes>
           <Route path="/appointment/review" element={<AppointmentReviewPage />} />
           <Route
+            path="/appointment/confirmation/:appointmentId"
+            element={<AppointmentConfirmationPage />}
+          />
+          <Route
             path="/appointment/doctors/:doctorId/booking"
             element={<div>Quay lại Chọn Khung Giờ Bác Sĩ Mock</div>}
           />
@@ -33,25 +39,21 @@ function renderAppointmentReviewPage(
             path="/appointment/services/:serviceId/booking"
             element={<div>Quay lại Chọn Ca Khám Dịch Vụ Mock</div>}
           />
-          <Route
-            path="/appointments/:appointmentId"
-            element={<div>Chi Tiết Phiếu Hẹn Đã Cấp STT Mock</div>}
-          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
-describe('AppointmentReviewPage — Soát xét Đặt lịch (SCR-APT-06 · Figma 14:1717)', () => {
+describe('AppointmentReviewPage & AppointmentConfirmationPage (SCR-APT-06 / SCR-APT-07)', () => {
   beforeEach(() => {
+    resetMockAppointments();
     useBookingStore.getState().reset();
   });
 
   it('renders full SCR-APT-06 layout matching Figma 14:1717 in doctor mode', async () => {
     renderAppointmentReviewPage();
 
-    // Header & Stepper
     expect(await screen.findByText('BƯỚC CHUẨN BỊ CUỐI CÙNG')).toBeInTheDocument();
     expect(
       screen.getByRole('heading', { name: 'Soát xét Thông tin Đặt khám Ngoại trú' }),
@@ -62,7 +64,6 @@ describe('AppointmentReviewPage — Soát xét Đặt lịch (SCR-APT-06 · Figm
     expect(screen.getByText('Khoa & Bác sĩ')).toBeInTheDocument();
     expect(screen.getByText('Hoàn tất & Cấp STT')).toBeInTheDocument();
 
-    // Card 1: Patient EHR Info
     expect(await screen.findByText('1. THÔNG TIN NGƯỜI BỆNH')).toBeInTheDocument();
     expect(screen.getByText('Chính chủ tài khoản')).toBeInTheDocument();
     expect(screen.getByText('Nguyễn Văn An')).toBeInTheDocument();
@@ -72,13 +73,7 @@ describe('AppointmentReviewPage — Soát xét Đặt lịch (SCR-APT-06 · Figm
     expect(screen.getByText('0912 345 678')).toBeInTheDocument();
     expect(screen.getByText('001086001234')).toBeInTheDocument();
     expect(screen.getByText('Phường Hàng Trống, Quận Hoàn Kiếm, TP. Hà Nội')).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        /Đau tức vùng thượng vị, ợ chua kéo dài, tái khám theo dõi dạ dày trào ngược GERD\./i,
-      ),
-    ).toBeInTheDocument();
 
-    // Card 2: Schedule & Location
     expect(screen.getByText('2. THỜI GIAN KHÁM & ĐỊA ĐIỂM TIẾP NHẬN')).toBeInTheDocument();
     expect(screen.getByText('25 phút/lượt khám')).toBeInTheDocument();
     expect(screen.getByText('TRƯỞNG KÍP KHÁM - BÁC SĨ ĐIỀU TRỊ CAO CẤP')).toBeInTheDocument();
@@ -92,14 +87,12 @@ describe('AppointmentReviewPage — Soát xét Đặt lịch (SCR-APT-06 · Figm
       screen.getByText('Phòng 204 - Tầng 2, Nhà A (Khu Khám Ngoại Trú Tự Nguyện)'),
     ).toBeInTheDocument();
 
-    // Card 3: Listed Fee Breakdown
     expect(screen.getByText('3. CHI PHÍ DỊCH VỤ NIÊM YẾT')).toBeInTheDocument();
     expect(screen.getByText('Dịch vụ Ngoại trú Tự nguyện')).toBeInTheDocument();
     expect(screen.getByText('Phí khám chuyên khoa Tiêu Hóa (BS.CKII)')).toBeInTheDocument();
     expect(screen.getByText('0 VNĐ (Đã bao gồm trọn gói)')).toBeInTheDocument();
     expect(screen.getAllByText('250.000 VNĐ').length).toBeGreaterThanOrEqual(2);
 
-    // Card 4: Reception & Pre-allocated Queue Policy
     expect(
       screen.getByText('Chính sách Tiếp đón & Cấp Số Thứ Tự (STT) Giữ Trước'),
     ).toBeInTheDocument();
@@ -157,7 +150,9 @@ describe('AppointmentReviewPage — Soát xét Đặt lịch (SCR-APT-06 · Figm
     expect(await screen.findByText('Quay lại Chọn Khung Giờ Bác Sĩ Mock')).toBeInTheDocument();
   });
 
-  it('confirms booking and navigates to appointment detail page with queue number', async () => {
+  it('confirms booking, resets store, and navigates to SCR-APT-07 confirmation page with queue number', async () => {
+    useBookingStore.getState().setSymptomNote('Đau thượng vị');
+
     renderAppointmentReviewPage();
 
     const confirmBtn = await screen.findByRole('button', {
@@ -165,8 +160,14 @@ describe('AppointmentReviewPage — Soát xét Đặt lịch (SCR-APT-06 · Figm
     });
     fireEvent.click(confirmBtn);
 
+    expect(
+      await screen.findByRole('heading', { name: 'ĐẶT LỊCH KHÁM NGOẠI TRÚ THÀNH CÔNG!' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('#APT-2026-1013-0900')).toBeInTheDocument();
+    expect(screen.getByText('STT: 013')).toBeInTheDocument();
+
     await waitFor(() => {
-      expect(screen.getByText('Chi Tiết Phiếu Hẹn Đã Cấp STT Mock')).toBeInTheDocument();
+      expect(useBookingStore.getState().symptomNote).toBe('');
     });
   });
 

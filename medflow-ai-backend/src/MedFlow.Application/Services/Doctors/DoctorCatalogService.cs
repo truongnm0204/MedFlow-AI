@@ -11,6 +11,42 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
 {
     private const decimal DefaultExaminationPrice = 200_000m;
 
+    private static readonly TimeSpan HospitalUtcOffset = TimeSpan.FromHours(7);
+
+    private static readonly IReadOnlyDictionary<string, string> SpecialtyCodeToFrontendSlug =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["GI"] = "tieu-hoa",
+            ["CARD"] = "tim-mach",
+            ["PED"] = "nhi-khoa",
+            ["ENT"] = "tai-mui-hong",
+            ["ENDO"] = "noi-tiet",
+            ["NEU"] = "noi-than-kinh",
+            ["MSK"] = "co-xuong-khop",
+        };
+
+    private static readonly HashSet<string> ValidDegrees = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "GS",
+        "PGS",
+        "TS",
+        "ThS",
+        "BSCKII",
+        "BSCKI",
+    };
+
+    private static readonly IReadOnlyDictionary<DayOfWeek, string> VietnameseDayNames =
+        new Dictionary<DayOfWeek, string>
+        {
+            [DayOfWeek.Monday] = "Thứ Hai",
+            [DayOfWeek.Tuesday] = "Thứ Ba",
+            [DayOfWeek.Wednesday] = "Thứ Tư",
+            [DayOfWeek.Thursday] = "Thứ Năm",
+            [DayOfWeek.Friday] = "Thứ Sáu",
+            [DayOfWeek.Saturday] = "Thứ Bảy",
+            [DayOfWeek.Sunday] = "Chủ Nhật",
+        };
+
     private static readonly IReadOnlyDictionary<string, string> LegacySlugToDoctorCode =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -19,10 +55,121 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
         };
 
     private readonly IApplicationDbContext _db;
+    private readonly TimeProvider _timeProvider;
 
-    public DoctorCatalogService(IApplicationDbContext db)
+    public DoctorCatalogService(IApplicationDbContext db, TimeProvider timeProvider)
     {
         _db = db;
+        _timeProvider = timeProvider;
+    }
+
+    public async Task<DoctorSearchResponseDto> SearchAsync(
+        SearchDoctorsRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var keyword = request.Keyword?.Trim();
+        if (!string.IsNullOrEmpty(keyword) && keyword.Length > 100)
+            throw new ValidationException("Từ khóa tìm kiếm không được vượt quá 100 ký tự.");
+
+        if (request.Page < 1)
+            throw new ValidationException("Số trang phải lớn hơn hoặc bằng 1.");
+
+        if (request.PageSize < 1 || request.PageSize > 50)
+            throw new ValidationException("Kích thước trang phải từ 1 đến 50.");
+
+        string? specialtyFilter = null;
+        if (!string.IsNullOrWhiteSpace(request.Specialty) &&
+            !string.Equals(request.Specialty.Trim(), "ALL", StringComparison.OrdinalIgnoreCase))
+        {
+            specialtyFilter = request.Specialty.Trim();
+            if (specialtyFilter.Length > 50 ||
+                !specialtyFilter.All(ch => char.IsLetterOrDigit(ch) || ch == '-' || ch == '_'))
+            {
+                throw new ValidationException("Chuyên khoa không hợp lệ.");
+            }
+        }
+
+        string? degreeFilter = null;
+        if (!string.IsNullOrWhiteSpace(request.Degree) &&
+            !string.Equals(request.Degree.Trim(), "ALL", StringComparison.OrdinalIgnoreCase))
+        {
+            degreeFilter = request.Degree.Trim();
+            if (!ValidDegrees.Contains(degreeFilter))
+                throw new ValidationException("Học hàm/học vị không hợp lệ.");
+        }
+
+        var doctors = await ActiveDoctorsWithCatalogGraph()
+            .Where(d => d.ServiceAuthorizations.Any(a =>
+                a.IsActive == true &&
+                a.Service != null &&
+                a.Service.IsActive == true &&
+                a.Service.ServiceType == "EXAMINATION" &&
+                a.Service.AllowsOnlineBooking == true))
+            .OrderBy(d => d.Id)
+            .ToListAsync(ct);
+
+        var utcNow = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = DateTime.SpecifyKind(utcNow + HospitalUtcOffset, DateTimeKind.Unspecified);
+        var today = nowLocal.Date;
+        var weekEnd = today.AddDays(6 - (((int)today.DayOfWeek + 6) % 7));
+
+        var mapped = doctors
+            .Select(doctor =>
+            {
+                var core = BuildProfileCore(doctor, utcNow);
+                var dto = MapToSearchItem(doctor, core, nowLocal, today, weekEnd);
+                return (Doctor: doctor, Core: core, Dto: dto);
+            })
+            .ToList();
+
+        IEnumerable<(Doctor Doctor, DoctorProfileCore Core, DoctorSearchItemDto Dto)> filtered = mapped;
+
+        if (!string.IsNullOrEmpty(keyword))
+        {
+            filtered = filtered.Where(item =>
+                item.Dto.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                item.Dto.Specialty.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                item.Core.SpecialtyName.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                item.Dto.RoleTag.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                item.Dto.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                item.Doctor.DoctorCode.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (specialtyFilter is not null)
+        {
+            filtered = filtered.Where(item =>
+                string.Equals(item.Dto.SpecialtyId, specialtyFilter, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(item.Core.SpecialtyCode, specialtyFilter, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (degreeFilter is not null)
+        {
+            filtered = filtered.Where(item =>
+                string.Equals(item.Dto.Title, degreeFilter, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (request.HasScheduleToday)
+            filtered = filtered.Where(item => item.Dto.HasScheduleToday);
+
+        if (request.HasScheduleThisWeek)
+            filtered = filtered.Where(item => item.Dto.HasScheduleThisWeek);
+
+        var filteredList = filtered.Select(item => item.Dto).ToList();
+        var total = filteredList.Count;
+        var totalPages = total == 0 ? 1 : (int)Math.Ceiling((double)total / request.PageSize);
+        var pagedItems = filteredList
+            .Skip((request.Page - 1) * request.PageSize)
+            .Take(request.PageSize)
+            .ToList();
+
+        return new DoctorSearchResponseDto(
+            Items: pagedItems,
+            Total: total,
+            Page: request.Page,
+            PageSize: request.PageSize,
+            TotalPages: totalPages);
     }
 
     public async Task<DoctorDetailDto> GetByIdOrCodeAsync(
@@ -46,7 +193,22 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
         var isNumericId = long.TryParse(resolvedCode, NumberStyles.Integer, CultureInfo.InvariantCulture, out var numericId);
         var upperCode = resolvedCode.ToUpperInvariant();
 
-        var doctor = await _db.Doctors
+        var doctor = await ActiveDoctorsWithCatalogGraph()
+            .FirstOrDefaultAsync(
+                d =>
+                    (isNumericId && d.Id == numericId) ||
+                    d.DoctorCode.ToUpper() == upperCode ||
+                    (d.Staff != null && d.Staff.StaffCode.ToUpper() == upperCode),
+                ct);
+
+        if (doctor is null)
+            throw new NotFoundException("Doctor", normalized);
+
+        return MapToDetailDto(doctor, _timeProvider.GetUtcNow().UtcDateTime);
+    }
+
+    private IQueryable<Doctor> ActiveDoctorsWithCatalogGraph()
+        => _db.Doctors
             .AsNoTracking()
             .Include(d => d.Staff)
                 .ThenInclude(s => s!.Department)
@@ -60,21 +222,21 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
             .Where(d =>
                 d.IsActive == true &&
                 d.Staff != null &&
-                d.Staff.Status == "ACTIVE")
-            .FirstOrDefaultAsync(
-                d =>
-                    (isNumericId && d.Id == numericId) ||
-                    d.DoctorCode.ToUpper() == upperCode ||
-                    (d.Staff != null && d.Staff.StaffCode.ToUpper() == upperCode),
-                ct);
+                d.Staff.Status == "ACTIVE");
 
-        if (doctor is null)
-            throw new NotFoundException("Doctor", normalized);
+    private readonly record struct DoctorProfileCore(
+        string SpecialtyCode,
+        string SpecialtyName,
+        string DepartmentName,
+        string Title,
+        string DisplayName,
+        string QualificationsSummary,
+        string Room,
+        decimal Price,
+        int YearsOfExperience,
+        string AvatarUrl);
 
-        return MapToDetailDto(doctor, DateTime.UtcNow);
-    }
-
-    private static DoctorDetailDto MapToDetailDto(Doctor doctor, DateTime now)
+    private static DoctorProfileCore BuildProfileCore(Doctor doctor, DateTime utcNow)
     {
         var specialtyCode = doctor.Specialty?.SpecialtyCode?.Trim() ?? string.Empty;
         var specialtyName = !string.IsNullOrWhiteSpace(doctor.Specialty?.Name)
@@ -93,13 +255,140 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
             ? doctor.QualificationsSummary!.Trim()
             : "Bác sĩ chuyên khoa";
 
-        var roleTitle = $"{qualificationsSummary} - {departmentName}";
         var room = ResolveDoctorRoom(doctor);
-        var price = ResolveConsultationPrice(doctor, now);
+        var price = ResolveConsultationPrice(doctor, utcNow);
         var yearsOfExperience = Math.Max(0, (int)(doctor.YearsOfExperience ?? 0));
         var avatarUrl = !string.IsNullOrWhiteSpace(doctor.ProfileImageUrl)
             ? doctor.ProfileImageUrl!.Trim()
             : ResolveDefaultAvatarUrl(doctor.Id, specialtyCode);
+
+        return new DoctorProfileCore(
+            SpecialtyCode: specialtyCode,
+            SpecialtyName: specialtyName,
+            DepartmentName: departmentName,
+            Title: normalizedTitle,
+            DisplayName: displayName,
+            QualificationsSummary: qualificationsSummary,
+            Room: room,
+            Price: price,
+            YearsOfExperience: yearsOfExperience,
+            AvatarUrl: avatarUrl);
+    }
+
+    private static DoctorSearchItemDto MapToSearchItem(
+        Doctor doctor,
+        DoctorProfileCore core,
+        DateTime nowLocal,
+        DateTime today,
+        DateTime weekEnd)
+    {
+        var specialtyId = ResolveSpecialtySlug(core.SpecialtyCode);
+
+        var upcoming = (doctor.ExaminationSlots ?? [])
+            .Where(s =>
+                string.Equals(s.Status, "OPEN", StringComparison.OrdinalIgnoreCase) &&
+                s.StartsAt.HasValue &&
+                s.EndsAt.HasValue &&
+                s.StartsAt.Value >= nowLocal)
+            .OrderBy(s => s.StartsAt!.Value)
+            .ThenBy(s => s.Id)
+            .ToList();
+
+        var first = upcoming.FirstOrDefault();
+        var hasScheduleToday = upcoming.Any(s => s.StartsAt!.Value.Date == today);
+        var hasScheduleThisWeek = upcoming.Any(s => s.StartsAt!.Value.Date <= weekEnd);
+
+        string nearestSchedule;
+        if (first is null)
+        {
+            nearestSchedule = "Chưa có lịch trống";
+        }
+        else
+        {
+            var start = first.StartsAt!.Value;
+            var end = first.EndsAt!.Value;
+            var window = $"{start.ToString("HH:mm", CultureInfo.InvariantCulture)} - {end.ToString("HH:mm", CultureInfo.InvariantCulture)}";
+            var slotDate = start.Date;
+
+            if (slotDate == today)
+                nearestSchedule = $"Hôm nay: {window}";
+            else if (slotDate == today.AddDays(1))
+                nearestSchedule = $"Ngày mai: {window}";
+            else if (slotDate <= weekEnd)
+                nearestSchedule = $"{VietnameseDayNames[slotDate.DayOfWeek]}: {window}";
+            else
+                nearestSchedule = $"{start.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)}: {window}";
+        }
+
+        string scheduleStatus;
+        string scheduleStatusText;
+        if (first is null)
+        {
+            scheduleStatus = "ADVANCE_24H";
+            scheduleStatusText = "Chưa mở lịch khám";
+        }
+        else if (first.StartsAt!.Value.Date == today)
+        {
+            scheduleStatus = "AVAILABLE";
+            scheduleStatusText = "Đang nhận lịch";
+        }
+        else if (first.StartsAt!.Value.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+        {
+            scheduleStatus = "WEEKEND";
+            scheduleStatusText = "Lịch khám cuối tuần";
+        }
+        else
+        {
+            var totalCapacity = upcoming.Sum(s => Math.Max(0, s.Capacity ?? 0));
+            if (totalCapacity is >= 1 and <= 2)
+            {
+                scheduleStatus = "ALMOST_FULL";
+                scheduleStatusText = "Sắp kín chỗ";
+            }
+            else if (totalCapacity is >= 3 and <= 5)
+            {
+                scheduleStatus = "FEW_SLOTS";
+                scheduleStatusText = $"Còn {totalCapacity} lượt";
+            }
+            else
+            {
+                scheduleStatus = "AVAILABLE";
+                scheduleStatusText = "Đang nhận lịch";
+            }
+        }
+
+        return new DoctorSearchItemDto(
+            Id: doctor.Id.ToString(CultureInfo.InvariantCulture),
+            Name: core.DisplayName,
+            Title: core.Title,
+            RoleTag: core.QualificationsSummary,
+            Specialty: core.DepartmentName,
+            SpecialtyId: specialtyId,
+            YearsOfExperience: core.YearsOfExperience,
+            Room: core.Room,
+            NearestSchedule: nearestSchedule,
+            ScheduleStatus: scheduleStatus,
+            ScheduleStatusText: scheduleStatusText,
+            Price: core.Price,
+            AvatarUrl: core.AvatarUrl,
+            HasScheduleToday: hasScheduleToday,
+            HasScheduleThisWeek: hasScheduleThisWeek);
+    }
+
+    private static string ResolveSpecialtySlug(string specialtyCode)
+    {
+        if (string.IsNullOrWhiteSpace(specialtyCode))
+            return string.Empty;
+
+        return SpecialtyCodeToFrontendSlug.TryGetValue(specialtyCode, out var slug)
+            ? slug
+            : specialtyCode.ToLowerInvariant();
+    }
+
+    private static DoctorDetailDto MapToDetailDto(Doctor doctor, DateTime now)
+    {
+        var core = BuildProfileCore(doctor, now);
+        var roleTitle = $"{core.QualificationsSummary} - {core.DepartmentName}";
 
         var hasOpenSlotOrOnlineService =
             (doctor.ExaminationSlots?.Any(s => string.Equals(s.Status, "OPEN", StringComparison.OrdinalIgnoreCase)) ?? false) ||
@@ -115,36 +404,36 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
 
         var education = BuildEducationItems(
             doctor.Id,
-            qualificationsSummary,
-            specialtyName,
-            yearsOfExperience,
+            core.QualificationsSummary,
+            core.SpecialtyName,
+            core.YearsOfExperience,
             doctor.LicenseNumber);
 
         var biography = BuildBiography(
             doctor.ProfessionalBio,
-            yearsOfExperience,
-            specialtyCode,
-            specialtyName,
-            departmentName);
+            core.YearsOfExperience,
+            core.SpecialtyCode,
+            core.SpecialtyName,
+            core.DepartmentName);
 
-        var hashtags = BuildHashtags(specialtyCode, specialtyName);
-        var weeklySchedule = BuildWeeklySchedule(doctor, specialtyCode);
+        var hashtags = BuildHashtags(core.SpecialtyCode, core.SpecialtyName);
+        var weeklySchedule = BuildWeeklySchedule(doctor, core.SpecialtyCode);
 
         return new DoctorDetailDto(
             Id: doctor.Id.ToString(CultureInfo.InvariantCulture),
             DoctorCode: doctor.DoctorCode,
             StaffCode: doctor.Staff?.StaffCode ?? string.Empty,
-            Name: displayName,
-            Title: normalizedTitle,
+            Name: core.DisplayName,
+            Title: core.Title,
             RoleTitle: roleTitle,
-            Specialty: departmentName,
-            SpecialtyCode: specialtyCode,
-            DepartmentName: departmentName,
-            Room: room,
+            Specialty: core.DepartmentName,
+            SpecialtyCode: core.SpecialtyCode,
+            DepartmentName: core.DepartmentName,
+            Room: core.Room,
             StatusText: statusText,
-            Price: price,
-            AvatarUrl: avatarUrl,
-            YearsOfExperience: yearsOfExperience,
+            Price: core.Price,
+            AvatarUrl: core.AvatarUrl,
+            YearsOfExperience: core.YearsOfExperience,
             LicenseNumber: doctor.LicenseNumber,
             Education: education,
             Biography: biography,
@@ -167,7 +456,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
         };
     }
 
-    private static string FormatDisplayName(string? fullName, string professionalTitle)
+    internal static string FormatDisplayName(string? fullName, string professionalTitle)
     {
         var cleanName = string.IsNullOrWhiteSpace(fullName) ? "Bác sĩ Chuyên khoa" : fullName.Trim();
         if (string.IsNullOrWhiteSpace(professionalTitle))
@@ -210,7 +499,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
         return "Phòng 101 - Tầng 1, Khu Demo";
     }
 
-    private static string FormatHospitalRoom(HospitalRoom room)
+    internal static string FormatHospitalRoom(HospitalRoom room)
     {
         var roomLabel = ExtractRoomLabel(room);
         var location = !string.IsNullOrWhiteSpace(room.Location)
@@ -222,7 +511,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
             : $"{room.Name} - {location}";
     }
 
-    private static string ExtractRoomLabel(HospitalRoom room)
+    internal static string ExtractRoomLabel(HospitalRoom room)
     {
         if (!string.IsNullOrWhiteSpace(room.Name))
         {

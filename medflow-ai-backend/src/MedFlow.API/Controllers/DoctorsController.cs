@@ -17,6 +17,13 @@ public sealed class DoctorsController : ControllerBase
         _doctorCatalogService = doctorCatalogService;
     }
 
+    /// <summary>GET /api/v1/doctors — Tìm kiếm, lọc và phân trang danh bạ bác sĩ có thể đặt lịch.</summary>
+    [HttpGet]
+    [ProducesResponseType<DoctorSearchResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<DoctorSearchResponseDto>> Search([FromQuery] SearchDoctorsRequest request, CancellationToken ct)
+        => Ok(await _doctorCatalogService.SearchAsync(request, ct));
+
     /// <summary>GET /api/v1/doctors/{idOrCode} — Xem chi tiết hồ sơ chuyên môn bác sĩ theo ID hoặc mã bác sĩ.</summary>
     [HttpGet("{idOrCode}")]
     [ProducesResponseType<DoctorDetailDto>(StatusCodes.Status200OK)]

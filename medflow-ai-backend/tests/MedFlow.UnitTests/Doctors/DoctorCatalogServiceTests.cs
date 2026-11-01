@@ -1,3 +1,4 @@
+using MedFlow.Application.DTOs.Doctors;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Domain.Entities;
@@ -9,6 +10,13 @@ namespace MedFlow.UnitTests.Doctors;
 
 public sealed class DoctorCatalogServiceTests : IDisposable
 {
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+    }
+
+    private static readonly DateTimeOffset DefaultUtcNow = new(2026, 10, 27, 1, 0, 0, TimeSpan.Zero);
+
     private sealed class DoctorTestDbContext : DbContext, IApplicationDbContext
     {
         public DoctorTestDbContext(DbContextOptions<DoctorTestDbContext> options)
@@ -26,11 +34,17 @@ public sealed class DoctorCatalogServiceTests : IDisposable
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
+        public DbSet<Appointment> Appointments => throw NotUsed();
+        public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
+        public DbSet<Visit> Visits => throw NotUsed();
+        public DbSet<QueueEntry> QueueEntries => throw NotUsed();
+        public DbSet<Payment> Payments => throw NotUsed();
 
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => Set<Doctor>();
         public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => Set<DoctorServiceAuthorization>();
         public DbSet<ExaminationSlot> ExaminationSlots => Set<ExaminationSlot>();
+        public DbSet<Hospital> Hospitals => throw NotUsed();
         public DbSet<Department> Departments => Set<Department>();
         public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => Set<Specialty>();
@@ -52,6 +66,12 @@ public sealed class DoctorCatalogServiceTests : IDisposable
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuditLog>();
             modelBuilder.Ignore<HospitalPolicy>();
+            modelBuilder.Ignore<Appointment>();
+            modelBuilder.Ignore<PatientFamilyLink>();
+            modelBuilder.Ignore<Visit>();
+            modelBuilder.Ignore<QueueEntry>();
+            modelBuilder.Ignore<Payment>();
+            modelBuilder.Ignore<Hospital>();
 
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
             modelBuilder.Entity<HospitalRoom>(b =>
@@ -109,7 +129,7 @@ public sealed class DoctorCatalogServiceTests : IDisposable
 
         _db = new DoctorTestDbContext(options);
         SeedDoctorData(_db);
-        _sut = new DoctorCatalogService(_db);
+        _sut = new DoctorCatalogService(_db, new FixedTimeProvider(DefaultUtcNow));
     }
 
     public void Dispose() => _db.Dispose();
@@ -191,6 +211,16 @@ public sealed class DoctorCatalogServiceTests : IDisposable
                 StaffCode = "STF-091",
                 FullName = "BS Ngưng Khám",
                 Status = "ACTIVE",
+            },
+            new Staff
+            {
+                Id = 92,
+                UserId = 92,
+                HospitalId = 1,
+                DepartmentId = 2,
+                StaffCode = "STF-092",
+                FullName = "BS Chỉ Cận Lâm Sàng",
+                Status = "ACTIVE",
             });
 
         db.Doctors.AddRange(
@@ -247,6 +277,17 @@ public sealed class DoctorCatalogServiceTests : IDisposable
                 IsActive = false,
                 YearsOfExperience = 5,
                 LicenseNumber = "DEMO-CCHN-091",
+            },
+            new Doctor
+            {
+                Id = 92,
+                StaffId = 92,
+                HospitalId = 1,
+                DoctorCode = "DOC-NO-ONLINE",
+                SpecialtyId = 1,
+                ProfessionalTitle = "BS.CKI",
+                IsActive = true,
+                YearsOfExperience = 3,
             });
 
         db.Services.AddRange(
@@ -309,7 +350,8 @@ public sealed class DoctorCatalogServiceTests : IDisposable
             new DoctorServiceAuthorization { DoctorId = 1, ServiceId = 5, IsActive = true },
             new DoctorServiceAuthorization { DoctorId = 1, ServiceId = 3, IsActive = true },
             new DoctorServiceAuthorization { DoctorId = 1, ServiceId = 1, IsActive = true },
-            new DoctorServiceAuthorization { DoctorId = 2, ServiceId = 2, IsActive = true });
+            new DoctorServiceAuthorization { DoctorId = 2, ServiceId = 2, IsActive = true },
+            new DoctorServiceAuthorization { DoctorId = 92, ServiceId = 5, IsActive = true });
 
         db.ExaminationSlots.AddRange(
             new ExaminationSlot
@@ -408,5 +450,192 @@ public sealed class DoctorCatalogServiceTests : IDisposable
         await Assert.ThrowsAsync<NotFoundException>(() => _sut.GetByIdOrCodeAsync("999"));
         await Assert.ThrowsAsync<NotFoundException>(() => _sut.GetByIdOrCodeAsync("DOC-INACTIVE"));
         await Assert.ThrowsAsync<NotFoundException>(() => _sut.GetByIdOrCodeAsync("DOC-INACTIVE-STAFF"));
+    }
+
+    [Fact]
+    public async Task SearchAsync_DefaultRequest_ReturnsOnlyBookableDoctorsOrderedById()
+    {
+        var res = await _sut.SearchAsync(new SearchDoctorsRequest());
+
+        Assert.Equal(["1", "2"], res.Items.Select(x => x.Id));
+        Assert.Equal(2, res.Total);
+        Assert.Equal(1, res.Page);
+        Assert.Equal(6, res.PageSize);
+        Assert.Equal(1, res.TotalPages);
+    }
+
+    [Fact]
+    public async Task SearchAsync_MapsCardFieldsFromProfileAndUpcomingSlots()
+    {
+        var res = await _sut.SearchAsync(new SearchDoctorsRequest());
+
+        var doc1 = Assert.Single(res.Items, x => x.Id == "1");
+        Assert.Equal("BS.CKI Nguyễn Minh Đức", doc1.Name);
+        Assert.Equal("BSCKI", doc1.Title);
+        Assert.Equal("Bác sĩ chuyên khoa I", doc1.RoleTag);
+        Assert.Equal("Khoa Tiêu hóa", doc1.Specialty);
+        Assert.Equal("tieu-hoa", doc1.SpecialtyId);
+        Assert.Equal(9, doc1.YearsOfExperience);
+        Assert.Equal("Phòng 101 - Tầng 1, Khu Demo", doc1.Room);
+        Assert.Equal(200_000m, doc1.Price);
+        Assert.Equal("Hôm nay: 09:00 - 09:30", doc1.NearestSchedule);
+        Assert.Equal("AVAILABLE", doc1.ScheduleStatus);
+        Assert.Equal("Đang nhận lịch", doc1.ScheduleStatusText);
+        Assert.True(doc1.HasScheduleToday);
+        Assert.True(doc1.HasScheduleThisWeek);
+
+        var doc2 = Assert.Single(res.Items, x => x.Id == "2");
+        Assert.Equal("ThS", doc2.Title);
+        Assert.Equal("tim-mach", doc2.SpecialtyId);
+        Assert.Equal(220_000m, doc2.Price);
+        Assert.Equal("Ngày mai: 09:00 - 09:30", doc2.NearestSchedule);
+        Assert.Equal("FEW_SLOTS", doc2.ScheduleStatus);
+        Assert.Equal("Còn 3 lượt", doc2.ScheduleStatusText);
+        Assert.False(doc2.HasScheduleToday);
+        Assert.True(doc2.HasScheduleThisWeek);
+    }
+
+    [Theory]
+    [InlineData("thu hà", "ALL", "ALL", false, new[] { "2" })]
+    [InlineData("tiêu hóa", "ALL", "ALL", false, new[] { "1" })]
+    [InlineData("doc-002", "ALL", "ALL", false, new[] { "2" })]
+    [InlineData(null, "tim-mach", "ALL", false, new[] { "2" })]
+    [InlineData(null, "GI", "ALL", false, new[] { "1" })]
+    [InlineData(null, "nhi-khoa", "ALL", false, new string[0])]
+    [InlineData(null, "ALL", "ThS", false, new[] { "2" })]
+    [InlineData(null, "ALL", "bscki", false, new[] { "1" })]
+    [InlineData(null, "ALL", "ALL", true, new[] { "1" })]
+    public async Task SearchAsync_AppliesFilters(
+        string? keyword,
+        string specialty,
+        string degree,
+        bool hasScheduleToday,
+        string[] expectedIds)
+    {
+        var res = await _sut.SearchAsync(new SearchDoctorsRequest
+        {
+            Keyword = keyword,
+            Specialty = specialty,
+            Degree = degree,
+            HasScheduleToday = hasScheduleToday,
+        });
+
+        Assert.Equal(expectedIds, res.Items.Select(x => x.Id));
+    }
+
+    [Fact]
+    public async Task SearchAsync_NoUpcomingSlots_ReturnsAdvanceStatusAndFailsScheduleFilters()
+    {
+        var sut = new DoctorCatalogService(
+            _db,
+            new FixedTimeProvider(new DateTimeOffset(2026, 11, 2, 1, 0, 0, TimeSpan.Zero)));
+
+        var all = await sut.SearchAsync(new SearchDoctorsRequest());
+        Assert.Equal(2, all.Items.Count);
+        Assert.All(all.Items, item =>
+        {
+            Assert.Equal("ADVANCE_24H", item.ScheduleStatus);
+            Assert.Equal("Chưa mở lịch khám", item.ScheduleStatusText);
+            Assert.Equal("Chưa có lịch trống", item.NearestSchedule);
+            Assert.False(item.HasScheduleToday);
+            Assert.False(item.HasScheduleThisWeek);
+        });
+
+        var thisWeekOnly = await sut.SearchAsync(new SearchDoctorsRequest
+        {
+            HasScheduleThisWeek = true,
+        });
+        Assert.Empty(thisWeekOnly.Items);
+        Assert.Equal(0, thisWeekOnly.Total);
+        Assert.Equal(1, thisWeekOnly.TotalPages);
+    }
+
+    [Fact]
+    public async Task SearchAsync_WeekendAndAlmostFullStatuses()
+    {
+        _db.ExaminationSlots.AddRange(
+            new ExaminationSlot
+            {
+                Id = 20,
+                ServiceId = 2,
+                DoctorId = 2,
+                RoomId = 3,
+                StartsAt = new DateTime(2026, 10, 31, 8, 0, 0),
+                EndsAt = new DateTime(2026, 10, 31, 11, 30, 0),
+                Capacity = 10,
+                Status = "OPEN",
+            },
+            new ExaminationSlot
+            {
+                Id = 21,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 2, 8, 0, 0),
+                EndsAt = new DateTime(2026, 11, 2, 8, 30, 0),
+                Capacity = 2,
+                Status = "OPEN",
+            });
+        _db.SaveChanges();
+
+        var sut = new DoctorCatalogService(
+            _db,
+            new FixedTimeProvider(new DateTimeOffset(2026, 10, 30, 1, 0, 0, TimeSpan.Zero)));
+
+        var res = await sut.SearchAsync(new SearchDoctorsRequest());
+
+        var doc2 = Assert.Single(res.Items, x => x.Id == "2");
+        Assert.Equal("WEEKEND", doc2.ScheduleStatus);
+        Assert.Equal("Lịch khám cuối tuần", doc2.ScheduleStatusText);
+        Assert.Equal("Ngày mai: 08:00 - 11:30", doc2.NearestSchedule);
+        Assert.True(doc2.HasScheduleThisWeek);
+
+        var doc1 = Assert.Single(res.Items, x => x.Id == "1");
+        Assert.Equal("ALMOST_FULL", doc1.ScheduleStatus);
+        Assert.Equal("Sắp kín chỗ", doc1.ScheduleStatusText);
+        Assert.Equal("02/11/2026: 08:00 - 08:30", doc1.NearestSchedule);
+        Assert.False(doc1.HasScheduleThisWeek);
+        Assert.False(doc1.HasScheduleToday);
+    }
+
+    [Fact]
+    public async Task SearchAsync_Paginates()
+    {
+        var page2 = await _sut.SearchAsync(new SearchDoctorsRequest { PageSize = 1, Page = 2 });
+        Assert.Equal(["2"], page2.Items.Select(x => x.Id));
+        Assert.Equal(2, page2.Total);
+        Assert.Equal(2, page2.TotalPages);
+        Assert.Equal(2, page2.Page);
+
+        var page3 = await _sut.SearchAsync(new SearchDoctorsRequest { PageSize = 1, Page = 3 });
+        Assert.Empty(page3.Items);
+        Assert.Equal(2, page3.Total);
+    }
+
+    [Theory]
+    [InlineData(101, "ALL", "ALL", 1, 6)]
+    [InlineData(0, "ALL", "ALL", 0, 6)]
+    [InlineData(0, "ALL", "ALL", 1, 0)]
+    [InlineData(0, "ALL", "ALL", 1, 51)]
+    [InlineData(0, "ALL", "XYZ", 1, 6)]
+    [InlineData(0, "tim mach!", "ALL", 1, 6)]
+    [InlineData(0, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "ALL", 1, 6)]
+    public async Task SearchAsync_InvalidRequest_ThrowsValidationException(
+        int keywordLength,
+        string specialty,
+        string degree,
+        int page,
+        int pageSize)
+    {
+        var request = new SearchDoctorsRequest
+        {
+            Keyword = keywordLength > 0 ? new string('a', keywordLength) : null,
+            Specialty = specialty,
+            Degree = degree,
+            Page = page,
+            PageSize = pageSize,
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() => _sut.SearchAsync(request));
     }
 }

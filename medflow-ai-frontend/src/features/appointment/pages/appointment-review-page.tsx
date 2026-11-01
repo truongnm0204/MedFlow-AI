@@ -35,6 +35,7 @@ export function AppointmentReviewPage() {
   const storeShiftId = useBookingStore((s) => s.selectedShiftId);
   const storeSymptomNote = useBookingStore((s) => s.symptomNote);
   const setSymptomNote = useBookingStore((s) => s.setSymptomNote);
+  const resetBooking = useBookingStore((s) => s.reset);
 
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -109,7 +110,10 @@ export function AppointmentReviewPage() {
 
     confirmMutation.mutate(parsed.data, {
       onSuccess: (response) => {
-        navigate(`/appointments/${encodeURIComponent(response.appointmentId)}`);
+        resetBooking();
+        navigate(`/appointment/confirmation/${encodeURIComponent(response.appointmentId)}`, {
+          replace: true,
+        });
       },
       onError: (err) => {
         setSubmitError(getErrorMessage(err));

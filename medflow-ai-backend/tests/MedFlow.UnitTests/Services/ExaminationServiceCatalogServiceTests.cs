@@ -31,12 +31,18 @@ public sealed class ExaminationServiceCatalogServiceTests : IDisposable
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
 
+        public DbSet<Hospital> Hospitals => throw NotUsed();
         public DbSet<Department> Departments => Set<Department>();
         public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => Set<Service>();
         public DbSet<ServicePrice> ServicePrices => Set<ServicePrice>();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
+        public DbSet<Appointment> Appointments => throw NotUsed();
+        public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
+        public DbSet<Visit> Visits => throw NotUsed();
+        public DbSet<QueueEntry> QueueEntries => throw NotUsed();
+        public DbSet<Payment> Payments => throw NotUsed();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
             => Database.BeginTransactionAsync(ct);
@@ -56,7 +62,13 @@ public sealed class ExaminationServiceCatalogServiceTests : IDisposable
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuditLog>();
+            modelBuilder.Ignore<Hospital>();
             modelBuilder.Ignore<HospitalPolicy>();
+            modelBuilder.Ignore<Appointment>();
+            modelBuilder.Ignore<PatientFamilyLink>();
+            modelBuilder.Ignore<Visit>();
+            modelBuilder.Ignore<QueueEntry>();
+            modelBuilder.Ignore<Payment>();
 
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
             modelBuilder.Entity<HospitalRoom>(b =>

@@ -19,12 +19,18 @@ public interface IApplicationDbContext
     DbSet<AuthSession> AuthSessions { get; }
     DbSet<AuthVerificationChallenge> AuthVerificationChallenges { get; }
     DbSet<AuditLog> AuditLogs { get; }
+    DbSet<Hospital> Hospitals { get; }
     DbSet<Department> Departments { get; }
     DbSet<HospitalRoom> HospitalRooms { get; }
     DbSet<Specialty> Specialties { get; }
     DbSet<Service> Services { get; }
     DbSet<ServicePrice> ServicePrices { get; }
     DbSet<HospitalPolicy> HospitalPolicies { get; }
+    DbSet<Appointment> Appointments { get; }
+    DbSet<PatientFamilyLink> PatientFamilyLinks { get; }
+    DbSet<Visit> Visits { get; }
+    DbSet<QueueEntry> QueueEntries { get; }
+    DbSet<Payment> Payments { get; }
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);

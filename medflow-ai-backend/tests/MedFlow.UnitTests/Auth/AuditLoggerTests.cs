@@ -36,12 +36,18 @@ public sealed class AuditLoggerTests : IDisposable
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+        public DbSet<Hospital> Hospitals => throw NotUsed();
         public DbSet<Department> Departments => throw NotUsed();
         public DbSet<HospitalRoom> HospitalRooms => throw NotUsed();
         public DbSet<Specialty> Specialties => throw NotUsed();
         public DbSet<Service> Services => throw NotUsed();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
+        public DbSet<Appointment> Appointments => throw NotUsed();
+        public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
+        public DbSet<Visit> Visits => throw NotUsed();
+        public DbSet<QueueEntry> QueueEntries => throw NotUsed();
+        public DbSet<Payment> Payments => throw NotUsed();
 
         public override Task<int> SaveChangesAsync(CancellationToken ct = default)
         {
@@ -67,12 +73,18 @@ public sealed class AuditLoggerTests : IDisposable
             modelBuilder.Ignore<ExaminationSlot>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuthSession>();
+            modelBuilder.Ignore<Hospital>();
             modelBuilder.Ignore<Department>();
             modelBuilder.Ignore<HospitalRoom>();
             modelBuilder.Ignore<Specialty>();
             modelBuilder.Ignore<Service>();
             modelBuilder.Ignore<ServicePrice>();
             modelBuilder.Ignore<HospitalPolicy>();
+            modelBuilder.Ignore<Appointment>();
+            modelBuilder.Ignore<PatientFamilyLink>();
+            modelBuilder.Ignore<Visit>();
+            modelBuilder.Ignore<QueueEntry>();
+            modelBuilder.Ignore<Payment>();
         }
 
         private static NotSupportedException NotUsed()
