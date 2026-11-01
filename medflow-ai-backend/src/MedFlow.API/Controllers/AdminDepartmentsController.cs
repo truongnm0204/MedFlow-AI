@@ -43,5 +43,40 @@ public sealed class AdminDepartmentsController : ControllerBase
             });
         }
     }
-}
 
+    /// <summary>POST /api/v1/admin/departments — Tạo mới khoa phòng.</summary>
+    [HttpPost]
+    [ProducesResponseType<DepartmentItemDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<DepartmentItemDto>> CreateDepartment(
+        [FromBody] CreateDepartmentRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            var result = await _departmentService.CreateDepartmentAsync(request, ct);
+            return StatusCode(StatusCodes.Status201Created, result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Dữ liệu không hợp lệ",
+                Detail = ex.Message,
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new ProblemDetails
+            {
+                Title = "Xung đột dữ liệu",
+                Detail = ex.Message,
+                Status = StatusCodes.Status409Conflict
+            });
+        }
+    }
+}

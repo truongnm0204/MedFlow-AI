@@ -27,7 +27,6 @@ public sealed class DepartmentServiceTests : IDisposable
         public DbSet<Staff> Staff => throw NotUsed();
         public DbSet<Doctor> Doctors => throw NotUsed();
         public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => throw NotUsed();
-        public DbSet<ExaminationSlot> ExaminationSlots => throw NotUsed();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
@@ -36,6 +35,7 @@ public sealed class DepartmentServiceTests : IDisposable
         public DbSet<Specialty> Specialties => throw NotUsed();
         public DbSet<Service> Services => throw NotUsed();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
+        public DbSet<ExaminationSlot> ExaminationSlots => throw NotUsed();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
@@ -52,7 +52,6 @@ public sealed class DepartmentServiceTests : IDisposable
             modelBuilder.Ignore<Staff>();
             modelBuilder.Ignore<Doctor>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
-            modelBuilder.Ignore<ExaminationSlot>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuditLog>();
@@ -60,6 +59,7 @@ public sealed class DepartmentServiceTests : IDisposable
             modelBuilder.Ignore<Specialty>();
             modelBuilder.Ignore<Service>();
             modelBuilder.Ignore<ServicePrice>();
+            modelBuilder.Ignore<ExaminationSlot>();
             modelBuilder.Ignore<HospitalPolicy>();
 
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
@@ -236,5 +236,99 @@ public sealed class DepartmentServiceTests : IDisposable
         // Overall metrics are still calculated across system
         Assert.Equal(14, result.Metrics.Total);
     }
-}
 
+    [Fact]
+    public async Task CreateDepartmentAsync_ValidData_CreatesSuccessfullyAndReturnsDto()
+    {
+        var request = new CreateDepartmentRequest("dep-new-01", "  Khoa Cấp cứu  ", HospitalId: 1, IsActive: true);
+
+        var result = await _service.CreateDepartmentAsync(request);
+
+        Assert.NotNull(result);
+        Assert.True(result.Id > 0);
+        Assert.Equal("DEP-NEW-01", result.Code);
+        Assert.Equal("Khoa Cấp cứu", result.Name);
+        Assert.Equal(1, result.HospitalId);
+        Assert.Equal("MedFlow Cơ sở 1", result.Facility);
+        Assert.True(result.IsActive);
+        Assert.Equal("ACTIVE", result.Status);
+
+        var saved = await _dbContext.Departments.FirstOrDefaultAsync(d => d.DepartmentCode == "DEP-NEW-01");
+        Assert.NotNull(saved);
+        Assert.Equal("Khoa Cấp cứu", saved.Name);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null!)]
+    public async Task CreateDepartmentAsync_EmptyCode_ThrowsArgumentException(string? code)
+    {
+        var request = new CreateDepartmentRequest(code!, "Khoa Hồi sức");
+
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDepartmentAsync(request));
+    }
+
+    [Fact]
+    public async Task CreateDepartmentAsync_CodeTooLong_ThrowsArgumentException()
+    {
+        var longCode = new string('A', 41);
+        var request = new CreateDepartmentRequest(longCode, "Khoa Hồi sức");
+
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDepartmentAsync(request));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null!)]
+    public async Task CreateDepartmentAsync_EmptyName_ThrowsArgumentException(string? name)
+    {
+        var request = new CreateDepartmentRequest("DEP-ICU", name!);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDepartmentAsync(request));
+    }
+
+    [Fact]
+    public async Task CreateDepartmentAsync_NameTooLong_ThrowsArgumentException()
+    {
+        var longName = new string('B', 201);
+        var request = new CreateDepartmentRequest("DEP-ICU", longName);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDepartmentAsync(request));
+    }
+
+    [Fact]
+    public async Task CreateDepartmentAsync_DuplicateCodeSameHospital_ThrowsInvalidOperationException()
+    {
+        var request = new CreateDepartmentRequest("dep-001", "Khoa Trùng Mã", HospitalId: 1);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateDepartmentAsync(request));
+        Assert.Contains("đã tồn tại trong cơ sở này", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateDepartmentAsync_SameCodeDifferentHospital_Succeeds()
+    {
+        // DEP-001 exists in HospitalId 1, creating in HospitalId 2 should succeed
+        var request = new CreateDepartmentRequest("DEP-001", "Khoa Nội Tiêu hóa CS2", HospitalId: 2);
+
+        var result = await _service.CreateDepartmentAsync(request);
+
+        Assert.NotNull(result);
+        Assert.Equal("DEP-001", result.Code);
+        Assert.Equal(2, result.HospitalId);
+        Assert.Equal("MedFlow Cơ sở 2", result.Facility);
+    }
+
+    [Fact]
+    public async Task CreateDepartmentAsync_IsActiveFalse_CreatesWithInactiveStatus()
+    {
+        var request = new CreateDepartmentRequest("DEP-INACT", "Khoa Tạm Dừng", HospitalId: 1, IsActive: false);
+
+        var result = await _service.CreateDepartmentAsync(request);
+
+        Assert.False(result.IsActive);
+        Assert.Equal("INACTIVE", result.Status);
+    }
+}
