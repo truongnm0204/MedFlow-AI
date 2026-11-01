@@ -3,6 +3,7 @@ using MedFlow.Application.Services.Auth;
 using MedFlow.Application.Services.Departments;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Application.Services.Patients;
+using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -18,6 +19,7 @@ public static class DependencyInjection
         services.AddScoped<IExaminationServiceCatalogService, ExaminationServiceCatalogService>();
         services.AddScoped<IDoctorAdminService, DoctorAdminService>();
         services.AddScoped<IPatientProfileService, PatientProfileService>();
+        services.AddScoped<IAppointmentPolicyService, AppointmentPolicyService>();
         services.AddScoped<IDepartmentService, DepartmentService>();
         return services;
     }
