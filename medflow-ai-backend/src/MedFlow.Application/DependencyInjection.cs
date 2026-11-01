@@ -1,4 +1,5 @@
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Auth;
 using MedFlow.Application.Services.Departments;
 using MedFlow.Application.Services.Doctors;
@@ -18,10 +19,12 @@ public static class DependencyInjection
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IExaminationServiceCatalogService, ExaminationServiceCatalogService>();
         services.AddScoped<IDoctorAdminService, DoctorAdminService>();
+        services.AddSingleton(TimeProvider.System);
         services.AddScoped<IDoctorCatalogService, DoctorCatalogService>();
         services.AddScoped<IPatientProfileService, PatientProfileService>();
         services.AddScoped<IAppointmentPolicyService, AppointmentPolicyService>();
         services.AddScoped<IDepartmentService, DepartmentService>();
+        services.AddScoped<IAppointmentSlotService, AppointmentSlotService>();
         return services;
     }
 }

@@ -1,17 +1,24 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetMockAppointments } from '../data/appointment-list-mock';
 import { AppointmentConfirmationPage } from '../pages/appointment-confirmation-page';
 import { AppointmentReviewPage } from '../pages/appointment-review-page';
 import { useBookingStore } from '../store/booking.store';
 
-function renderBookingCompletionFlow(initialEntry: string) {
+function renderAppointmentReviewPage(
+  initialEntry = '/appointment/review?mode=doctor&doctorId=doc-01&serviceId=srv-th-01&serviceCode=DV-TH-01&patientId=pat-self&date=2026-10-13&slotId=slot-0900',
+) {
   const queryClient = new QueryClient({
     defaultOptions: {
-      queries: { retry: false },
+      queries: {
+        retry: false,
+      },
+      mutations: {
+        retry: false,
+      },
     },
   });
 
@@ -24,8 +31,14 @@ function renderBookingCompletionFlow(initialEntry: string) {
             path="/appointment/confirmation/:appointmentId"
             element={<AppointmentConfirmationPage />}
           />
-          <Route path="/appointment/doctors" element={<div>Danh bạ bác sĩ</div>} />
-          <Route path="/appointment/services" element={<div>Danh mục dịch vụ</div>} />
+          <Route
+            path="/appointment/doctors/:doctorId/booking"
+            element={<div>Quay lại Chọn Khung Giờ Bác Sĩ Mock</div>}
+          />
+          <Route
+            path="/appointment/services/:serviceId/booking"
+            element={<div>Quay lại Chọn Ca Khám Dịch Vụ Mock</div>}
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -34,33 +47,118 @@ function renderBookingCompletionFlow(initialEntry: string) {
 
 describe('AppointmentReviewPage & AppointmentConfirmationPage (SCR-APT-06 / SCR-APT-07)', () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
     resetMockAppointments();
     useBookingStore.getState().reset();
   });
 
-  it('shows invalid state when query params are missing on /appointment/review', () => {
-    renderBookingCompletionFlow('/appointment/review');
+  it('renders full SCR-APT-06 layout matching Figma 14:1717 in doctor mode', async () => {
+    renderAppointmentReviewPage();
+
+    expect(await screen.findByText('BƯỚC CHUẨN BỊ CUỐI CÙNG')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Soát xét Thông tin Đặt khám Ngoại trú' }),
+    ).toBeInTheDocument();
+
+    const currentStep = screen.getByText('Soát xét thông tin').closest('li');
+    expect(currentStep).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByText('Khoa & Bác sĩ')).toBeInTheDocument();
+    expect(screen.getByText('Hoàn tất & Cấp STT')).toBeInTheDocument();
+
+    expect(await screen.findByText('1. THÔNG TIN NGƯỜI BỆNH')).toBeInTheDocument();
+    expect(screen.getByText('Chính chủ tài khoản')).toBeInTheDocument();
+    expect(screen.getByText('Nguyễn Văn An')).toBeInTheDocument();
+    expect(screen.getByText('PAT-8921')).toBeInTheDocument();
+    expect(screen.getByText('15/08/1986')).toBeInTheDocument();
+    expect(screen.getByText('(40 tuổi)')).toBeInTheDocument();
+    expect(screen.getByText('0912 345 678')).toBeInTheDocument();
+    expect(screen.getByText('001086001234')).toBeInTheDocument();
+    expect(screen.getByText('Phường Hàng Trống, Quận Hoàn Kiếm, TP. Hà Nội')).toBeInTheDocument();
+
+    expect(screen.getByText('2. THỜI GIAN KHÁM & ĐỊA ĐIỂM TIẾP NHẬN')).toBeInTheDocument();
+    expect(screen.getByText('25 phút/lượt khám')).toBeInTheDocument();
+    expect(screen.getByText('TRƯỞNG KÍP KHÁM - BÁC SĨ ĐIỀU TRỊ CAO CẤP')).toBeInTheDocument();
+    expect(screen.getByText('BS.CKII Trần Quốc Tuấn')).toBeInTheDocument();
+    expect(screen.getByText('Khoa Tiêu Hóa - Gan Mật')).toBeInTheDocument();
+    expect(screen.getByText('(Mã DV-TH-01)')).toBeInTheDocument();
+    expect(
+      screen.getByText('09:00 - 09:30, Thứ Ba, ngày 13/10/2026 (Ca Sáng)'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Phòng 204 - Tầng 2, Nhà A (Khu Khám Ngoại Trú Tự Nguyện)'),
+    ).toBeInTheDocument();
+
+    expect(screen.getByText('3. CHI PHÍ DỊCH VỤ NIÊM YẾT')).toBeInTheDocument();
+    expect(screen.getByText('Dịch vụ Ngoại trú Tự nguyện')).toBeInTheDocument();
+    expect(screen.getByText('Phí khám chuyên khoa Tiêu Hóa (BS.CKII)')).toBeInTheDocument();
+    expect(screen.getByText('0 VNĐ (Đã bao gồm trọn gói)')).toBeInTheDocument();
+    expect(screen.getAllByText('250.000 VNĐ').length).toBeGreaterThanOrEqual(2);
 
     expect(
-      screen.getByText('Thông tin đặt khám không đầy đủ hoặc khung giờ đã hết chỗ'),
+      screen.getByText('Chính sách Tiếp đón & Cấp Số Thứ Tự (STT) Giữ Trước'),
     ).toBeInTheDocument();
+    expect(screen.getByText('Chính xác theo phút')).toBeInTheDocument();
+    expect(screen.getByText('15 phút (08:45)')).toBeInTheDocument();
   });
 
-  it('renders SCR-APT-06 review summary and confirms booking to SCR-APT-07 confirmation page', async () => {
-    useBookingStore.getState().setSymptomNote('Đau thượng vị');
-
-    renderBookingCompletionFlow(
-      '/appointment/review?mode=doctor&doctorId=doc-01&serviceId=srv-th-01&patientId=pat-self&date=2026-10-13&slotId=slot-0900',
+  it('supports service mode and dependent family member profile', async () => {
+    renderAppointmentReviewPage(
+      '/appointment/review?mode=service&serviceId=srv-th-01&serviceCode=DV-TH-01&patientId=pat-child&date=2026-10-13&shiftId=shift-morning',
     );
 
-    expect(await screen.findByText('BƯỚC 3 — HIỆN TẠI')).toBeInTheDocument();
-    expect(screen.getByText('Nguyễn Văn An')).toBeInTheDocument();
-    expect(screen.getByText('BS.CKII Trần Quốc Tuấn')).toBeInTheDocument();
-    expect(screen.getByText(/09:00 - 09:30/)).toBeInTheDocument();
-    expect(screen.getByText('"Đau thượng vị"')).toBeInTheDocument();
+    expect(await screen.findByText('Ngày & Ca khám')).toBeInTheDocument();
+    expect(screen.getAllByText('Dịch vụ khám').length).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText('Nguyễn Bảo Châu')).toBeInTheDocument();
+    expect(screen.getByText('PAT-9012')).toBeInTheDocument();
+    expect(screen.getByText('Hồ sơ người thân • Con gái')).toBeInTheDocument();
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: /Xác nhận Đặt khám & Cấp Số Thứ Tự/i }));
+  it('validates and updates declared symptom note inline on the review screen', async () => {
+    renderAppointmentReviewPage();
+
+    const editBtn = await screen.findByRole('button', { name: /Chỉnh sửa lý do khám/i });
+    fireEvent.click(editBtn);
+
+    const textarea = screen.getByLabelText('Lý do khám và triệu chứng khai báo ban đầu');
+    fireEvent.change(textarea, { target: { value: 'a' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lưu cập nhật' }));
+    expect(
+      await screen.findByText('Vui lòng mô tả lý do khám tối thiểu 3 ký tự.'),
+    ).toBeInTheDocument();
+
+    fireEvent.change(textarea, {
+      target: { value: 'Đau rát thượng vị sau ăn cay, cần nội soi kiểm tra.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Lưu cập nhật' }));
+
+    expect(
+      await screen.findByText(/Đau rát thượng vị sau ăn cay, cần nội soi kiểm tra\./),
+    ).toBeInTheDocument();
+    expect(useBookingStore.getState().symptomNote).toBe(
+      'Đau rát thượng vị sau ăn cay, cần nội soi kiểm tra.',
+    );
+  });
+
+  it('navigates back to slot selection when clicking back button', async () => {
+    renderAppointmentReviewPage();
+
+    const backBtn = await screen.findByRole('button', {
+      name: /Quay lại chọn khung giờ khác/i,
+    });
+    fireEvent.click(backBtn);
+
+    expect(await screen.findByText('Quay lại Chọn Khung Giờ Bác Sĩ Mock')).toBeInTheDocument();
+  });
+
+  it('confirms booking, resets store, and navigates to SCR-APT-07 confirmation page with queue number', async () => {
+    useBookingStore.getState().setSymptomNote('Đau thượng vị');
+
+    renderAppointmentReviewPage();
+
+    const confirmBtn = await screen.findByRole('button', {
+      name: /Xác nhận Đặt khám & Cấp Số Thứ Tự/i,
+    });
+    fireEvent.click(confirmBtn);
 
     expect(
       await screen.findByRole('heading', { name: 'ĐẶT LỊCH KHÁM NGOẠI TRÚ THÀNH CÔNG!' }),
@@ -73,13 +171,19 @@ describe('AppointmentReviewPage & AppointmentConfirmationPage (SCR-APT-06 / SCR-
     });
   });
 
-  it('shows invalid state when selected slot is FULL (slot-0730)', async () => {
-    renderBookingCompletionFlow(
-      '/appointment/review?mode=doctor&doctorId=doc-01&serviceId=srv-th-01&patientId=pat-self&date=2026-10-13&slotId=slot-0730',
+  it('displays an accessible error alert when slot is already full/conflicted', async () => {
+    renderAppointmentReviewPage(
+      '/appointment/review?mode=doctor&doctorId=doc-01&serviceCode=DV-TH-01&patientId=pat-self&date=2026-10-13&slotId=slot-0730',
     );
 
-    expect(
-      await screen.findByText('Thông tin đặt khám không đầy đủ hoặc khung giờ đã hết chỗ'),
-    ).toBeInTheDocument();
+    const confirmBtn = await screen.findByRole('button', {
+      name: /Xác nhận Đặt khám & Cấp Số Thứ Tự/i,
+    });
+    fireEvent.click(confirmBtn);
+
+    const alertBox = await screen.findByRole('alert');
+    expect(alertBox).toHaveTextContent(
+      /Khung giờ khám vừa hết chỗ do bệnh nhân khác vừa hoàn tất đặt lịch/i,
+    );
   });
 });

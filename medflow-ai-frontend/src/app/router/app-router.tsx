@@ -59,6 +59,7 @@ export function AppRouter() {
         path="/appointment/confirmation/:appointmentId"
         element={<AppointmentConfirmationPage />}
       />
+      <Route path="/appointments/review" element={<AppointmentReviewPage />} />
       <Route path="/appointments" element={<AppointmentListPage />} />
       <Route path="/appointments/:appointmentId/print" element={<AppointmentPrintPreviewPage />} />
       <Route path="/appointments/:appointmentId/queue" element={<AppointmentQueueTrackingPage />} />

@@ -17,7 +17,8 @@ database/
 │   ├── 002_v41_priority1_schema.sql               # v4.1 schema (verbatim from upstream)
 │   ├── 003_v41_priority1_seed.sql                 # v4.1 demo seed (PBKDF2-rehashed)
 │   ├── 004_readd_auth_verification_challenges.sql # OTP table dropped in v4.1 — re-added for AuthOtpService
-│   └── 005_readd_auth_session_and_audit_cols.sql  # auth_sessions + audit_logs.ip_address re-added
+│   ├── 005_readd_auth_session_and_audit_cols.sql  # auth_sessions + audit_logs.ip_address re-added
+│   └── 006_seed_upcoming_examination_slots.sql    # upcoming 14-day OPEN examination slots seed for demo/booking
 └── README.md
 ```
 
@@ -29,6 +30,7 @@ psql -h localhost -U postgres -d medflow_db -v ON_ERROR_STOP=1 -f database/migra
 psql -h localhost -U postgres -d medflow_db -v ON_ERROR_STOP=1 -f database/migrations/003_v41_priority1_seed.sql
 psql -h localhost -U postgres -d medflow_db -v ON_ERROR_STOP=1 -f database/migrations/004_readd_auth_verification_challenges.sql
 psql -h localhost -U postgres -d medflow_db -v ON_ERROR_STOP=1 -f database/migrations/005_readd_auth_session_and_audit_cols.sql
+psql -h localhost -U postgres -d medflow_db -v ON_ERROR_STOP=1 -f database/migrations/006_seed_upcoming_examination_slots.sql
 ```
 
 For the Docker dev container (`medflow-postgres` on port 5433):
