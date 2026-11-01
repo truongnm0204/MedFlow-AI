@@ -11,7 +11,10 @@ import { ExaminationSlotCreatePage } from '@/features/admin-slots/pages/examinat
 import { ExaminationSlotListPage } from '@/features/admin-slots/pages/examination-slot-list-page';
 import { SlotEditModal } from '@/features/admin-slots/pages/slot-edit-modal';
 import { AppointmentDetailPage } from '@/features/appointment/pages/appointment-detail-page';
+import { AppointmentConfirmationPage } from '@/features/appointment/pages/appointment-confirmation-page';
 import { AppointmentListPage } from '@/features/appointment/pages/appointment-list-page';
+import { AppointmentPrintPreviewPage } from '@/features/appointment/pages/appointment-print-preview-page';
+import { AppointmentQueueTrackingPage } from '@/features/appointment/pages/appointment-queue-tracking-page';
 import { AppointmentReviewPage } from '@/features/appointment/pages/appointment-review-page';
 import { AppointmentSlotBookingPage } from '@/features/appointment/pages/appointment-slot-booking-page';
 import { DoctorSearchPage } from '@/features/appointment/pages/doctor-search-page';
@@ -52,8 +55,14 @@ export function AppRouter() {
         element={<AppointmentSlotBookingPage />}
       />
       <Route path="/appointment/review" element={<AppointmentReviewPage />} />
+      <Route
+        path="/appointment/confirmation/:appointmentId"
+        element={<AppointmentConfirmationPage />}
+      />
       <Route path="/appointments/review" element={<AppointmentReviewPage />} />
       <Route path="/appointments" element={<AppointmentListPage />} />
+      <Route path="/appointments/:appointmentId/print" element={<AppointmentPrintPreviewPage />} />
+      <Route path="/appointments/:appointmentId/queue" element={<AppointmentQueueTrackingPage />} />
       <Route path="/appointments/:appointmentId" element={<AppointmentDetailPage />} />
       <Route
         path="/patient"

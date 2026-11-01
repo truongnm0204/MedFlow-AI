@@ -1,3 +1,4 @@
+import { createMockAppointment } from './appointment-booking-mock';
 import { MOCK_APPOINTMENTS } from './appointment-list-mock';
 import { MOCK_DOCTORS } from './doctor-search-mock';
 import { MOCK_EXAMINATION_SERVICES } from './service-search-mock';
@@ -295,42 +296,26 @@ export function getMockAppointmentReviewPayload(
 export function buildMockConfirmBookingResponse(
   request: ConfirmBookingRequest,
 ): ConfirmBookingResponse {
-  const review = getMockAppointmentReviewPayload({
+  const created = createMockAppointment({
     mode: request.mode,
-    doctorId: request.doctorId,
-    serviceId: request.serviceId,
-    serviceCode: request.serviceCode,
+    doctorId: request.mode === 'doctor' ? (request.doctorId ?? 'doc-01') : null,
+    serviceId: request.serviceId ?? request.serviceCode ?? 'srv-th-01',
     patientId: request.patientId,
     dateIso: request.dateIso,
-    slotId: request.mode === 'doctor' ? request.slotOrShiftId : undefined,
-    shiftId: request.mode === 'service' ? request.slotOrShiftId : undefined,
-    symptomNote: request.symptomNote,
+    slotId: request.mode === 'doctor' ? request.slotOrShiftId : null,
+    shiftId: request.mode === 'service' ? request.slotOrShiftId : null,
+    reasonForVisit: request.symptomNote ?? '',
   });
 
-  // Synchronize MOCK_APPOINTMENTS[0] so navigating to /appointments/apt-1013-0902 reflects the confirmed booking
-  const targetAppointment = MOCK_APPOINTMENTS[0];
-  if (targetAppointment) {
-    targetAppointment.patientCode = review.patientInfo.patientCode;
-    targetAppointment.patientName = review.patientInfo.fullName;
-    targetAppointment.patientBirthDateLabel = `${review.patientInfo.dateOfBirth} ${review.patientInfo.ageLabel} • ${review.patientInfo.gender}`;
-    targetAppointment.patientPhone = review.patientInfo.phone;
-    targetAppointment.patientNationalId = review.patientInfo.nationalId;
-    targetAppointment.patientAddress = review.patientInfo.currentAddress;
-    targetAppointment.doctorName = review.scheduleLocation.doctorName;
-    targetAppointment.departmentName = review.scheduleLocation.specialtyName;
-    targetAppointment.serviceCode = review.scheduleLocation.serviceCode;
-    targetAppointment.serviceName = review.scheduleLocation.serviceName;
-    targetAppointment.scheduledDate = review.scheduleLocation.dateIso;
-    targetAppointment.checkInDeadlineTime = review.scheduleLocation.checkInDeadlineTime;
-    targetAppointment.listedFee = review.feeSummary.totalAmount;
-    targetAppointment.reasonForVisit = review.patientInfo.symptomNote;
-    targetAppointment.status = 'CONFIRMED';
+  const targetAppointment = MOCK_APPOINTMENTS.find((item) => item.id === 'apt-1013-0902');
+  if (targetAppointment && request.symptomNote) {
+    targetAppointment.reasonForVisit = request.symptomNote;
   }
 
   return {
-    appointmentId: 'apt-1013-0902',
-    appointmentCode: 'APT-2026-1013-0902',
-    queueNumber: '012',
+    appointmentId: created.id,
+    appointmentCode: created.appointmentCode,
+    queueNumber: created.queueNumber ?? '013',
     status: 'CONFIRMED',
   };
 }
