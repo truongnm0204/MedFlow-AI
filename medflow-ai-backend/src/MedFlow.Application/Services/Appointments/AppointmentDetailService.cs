@@ -39,7 +39,7 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
         if (userId <= 0)
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
 
-        var (trimmedIdentifier, appointmentId, appointmentCode) = AppointmentBookingRules.ParseAppointmentIdentifier(idOrCode);
+        var (trimmedIdentifier, appointmentId, appointmentCode) = AppointmentReadModel.ParseIdentifier(idOrCode);
 
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
@@ -116,14 +116,14 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
     {
         var actions = new List<string>(6);
         var start = slot.StartsAt!.Value;
-        var modifiable = status is "BOOKED" or "CONFIRMED" or "PENDING" && start > nowLocal;
+        var modifiable = AppointmentReadModel.IsModifiableStatus(status) && start > nowLocal;
 
         if (modifiable)
         {
             var hospitalId = slot.Service?.HospitalId ?? slot.Doctor?.HospitalId ?? 0L;
             var policy = await _policyService.GetEffectiveAsync(hospitalId, ct);
 
-            if (start >= nowLocal.AddHours(policy.CancelMinimumHours))
+            if (AppointmentReadModel.IsWithinCancelWindow(start, nowLocal, policy.CancelMinimumHours))
                 actions.Add(ActionCancel);
 
             if (start >= nowLocal.AddHours(policy.RescheduleMinimumHours))

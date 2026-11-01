@@ -4,6 +4,7 @@ using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Application.Services.Services;
 using MedFlow.Domain.Entities;
+using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.Application.Services.Appointments;
@@ -306,7 +307,7 @@ internal static class AppointmentReadModel
             PaymentSubNote: paymentSubNote,
             ReasonForVisit: visit?.ReasonForVisit ?? a.ReasonForVisit,
             ClinicalSummary: null,
-            CancellationReason: null,
+            CancellationReason: status == "CANCELLED" ? a.CancellationReason : null,
             SlotReleaseNote: null,
             RebookSpecialtyLabel: null,
             BookedAt: bookedAt);
@@ -333,6 +334,15 @@ internal static class AppointmentReadModel
 
     public static bool IsCancelledStatus(string status)
         => status is "CANCELLED" or "NO_SHOW";
+
+    public static bool IsModifiableStatus(string status)
+        => status is "BOOKED" or "CONFIRMED" or "PENDING";
+
+    public static bool IsWithinCancelWindow(DateTime startsAt, DateTime nowLocal, int cancelMinimumHours)
+        => startsAt > nowLocal && startsAt >= nowLocal.AddHours(cancelMinimumHours);
+
+    public static (string Trimmed, long? Id, string? Code) ParseIdentifier(string? idOrCode)
+        => AppointmentBookingRules.ParseAppointmentIdentifier(idOrCode);
 
     public static string ResolveStatusBannerLabel(string status) => status switch
     {

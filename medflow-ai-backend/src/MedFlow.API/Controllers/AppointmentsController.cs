@@ -15,6 +15,7 @@ public sealed class AppointmentsController : ControllerBase
     private readonly IAppointmentBookingService _bookingService;
     private readonly IAppointmentListService _listService;
     private readonly IAppointmentDetailService _detailService;
+    private readonly IAppointmentCancelService _cancelService;
     private readonly IAppointmentRescheduleService _rescheduleService;
 
     public AppointmentsController(
@@ -22,12 +23,14 @@ public sealed class AppointmentsController : ControllerBase
         IAppointmentBookingService bookingService,
         IAppointmentListService listService,
         IAppointmentDetailService detailService,
+        IAppointmentCancelService cancelService,
         IAppointmentRescheduleService rescheduleService)
     {
         _slotService = slotService;
         _bookingService = bookingService;
         _listService = listService;
         _detailService = detailService;
+        _cancelService = cancelService;
         _rescheduleService = rescheduleService;
     }
 
@@ -106,6 +109,20 @@ public sealed class AppointmentsController : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<AppointmentDetailDto>> GetDetail(string idOrCode, CancellationToken ct)
         => Ok(await _detailService.GetMyAppointmentDetailAsync(GetUserId(), idOrCode, ct));
+
+    /// <summary>POST /api/v1/appointments/{idOrCode}/cancel — Hủy lịch hẹn còn đủ điều kiện kèm lý do (UC14).</summary>
+    [HttpPost("{idOrCode}/cancel")]
+    [ProducesResponseType<AppointmentDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<AppointmentDetailDto>> Cancel(
+        string idOrCode,
+        [FromBody] CancelAppointmentRequest request,
+        CancellationToken ct)
+        => Ok(await _cancelService.CancelMyAppointmentAsync(GetUserId(), idOrCode, request, GetIp(), ct));
 
     /// <summary>POST /api/v1/appointments/{idOrCode}/reschedule — Đổi lịch hẹn sang khung giờ khác còn khả dụng (UC13).</summary>
     [HttpPost("{idOrCode}/reschedule")]

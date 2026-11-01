@@ -50,6 +50,16 @@ public class AppointmentConfiguration : IEntityTypeConfiguration<Appointment>
             .HasColumnName("booked_at")
             .HasColumnType("timestamp without time zone");
 
+        builder.Property(a => a.CancellationReason)
+            .HasColumnName("cancellation_reason");
+
+        builder.Property(a => a.CancelledAt)
+            .HasColumnName("cancelled_at")
+            .HasColumnType("timestamp without time zone");
+
+        builder.Property(a => a.CancelledByUserId)
+            .HasColumnName("cancelled_by_user_id");
+
         builder.HasOne(a => a.Slot)
             .WithMany(s => s.Appointments)
             .HasForeignKey(a => a.SlotId)
