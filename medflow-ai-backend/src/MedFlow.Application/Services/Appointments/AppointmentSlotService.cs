@@ -15,11 +15,8 @@ namespace MedFlow.Application.Services.Appointments;
 
 public sealed class AppointmentSlotService : IAppointmentSlotService
 {
-    private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
-    private static readonly TimeSpan AfternoonShiftStart = new(12, 0, 0);
     private const int StripDays = 7;
     private const int FewSlotsThreshold = 5;
-    private const string CancelledAppointmentStatus = "CANCELLED";
 
     private const string MorningShiftDescription =
         "Phù hợp khi cần thực hiện xét nghiệm máu nhịn ăn sáng, siêu âm ổ bụng hoặc nội soi tiêu hóa trong ngày.";
@@ -111,11 +108,11 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
         if (!serviceDto.IsOnlineBookingActive)
             throw new ValidationException("Dịch vụ khám này không hỗ trợ đặt lịch trực tuyến.");
 
-        var nowLocal = GetVietnamNow();
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
 
         var profiles = await LoadPatientProfilesAsync(userId, nowLocal, today, ct);
-        var hospitalId = await ResolveHospitalIdAsync(serviceId, doctorId, ct);
+        var hospitalId = await AppointmentBookingRules.ResolveHospitalIdAsync(_db, serviceId, doctorId, ct);
         var policy = await _policyService.GetEffectiveAsync(hospitalId, ct);
 
         var bookableSlots = await LoadBookableSlotsAsync(
@@ -181,11 +178,11 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
 
         var serviceId = long.Parse(serviceDto.Id, CultureInfo.InvariantCulture);
 
-        var nowLocal = GetVietnamNow();
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
 
         var profiles = await LoadPatientProfilesAsync(userId, nowLocal, today, ct);
-        var hospitalId = await ResolveHospitalIdAsync(serviceId, doctorId: null, ct);
+        var hospitalId = await AppointmentBookingRules.ResolveHospitalIdAsync(_db, serviceId, doctorId: null, ct);
         var policy = await _policyService.GetEffectiveAsync(hospitalId, ct);
 
         var bookableSlots = await LoadBookableSlotsAsync(
@@ -216,9 +213,6 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             Shifts: shifts);
     }
 
-    private DateTime GetVietnamNow()
-        => DateTime.SpecifyKind(_timeProvider.GetUtcNow().UtcDateTime.Add(VietnamOffset), DateTimeKind.Unspecified);
-
     private static DateOnly? ParseRequestedDate(string? dateIso)
     {
         if (string.IsNullOrWhiteSpace(dateIso))
@@ -229,27 +223,6 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             throw new ValidationException("Ngày khám không hợp lệ (định dạng yyyy-MM-dd).");
 
         return parsed;
-    }
-
-    private async Task<long> ResolveHospitalIdAsync(long serviceId, long? doctorId, CancellationToken ct)
-    {
-        var hospitalId = await _db.Services
-            .AsNoTracking()
-            .Where(s => s.Id == serviceId)
-            .Select(s => s.HospitalId)
-            .FirstOrDefaultAsync(ct);
-
-        if (hospitalId is null && doctorId.HasValue)
-        {
-            var docId = doctorId.Value;
-            hospitalId = await _db.Doctors
-                .AsNoTracking()
-                .Where(d => d.Id == docId)
-                .Select(d => d.HospitalId)
-                .FirstOrDefaultAsync(ct);
-        }
-
-        return hospitalId ?? 0L;
     }
 
     private async Task<List<BookableSlotItem>> LoadBookableSlotsAsync(
@@ -304,7 +277,7 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             .Where(a =>
                 a.SlotId != null &&
                 slotIds.Contains((long)a.SlotId) &&
-                (a.Status == null || a.Status.ToUpper() != CancelledAppointmentStatus))
+                (a.Status == null || a.Status.ToUpper() != AppointmentBookingRules.CancelledStatus))
             .GroupBy(a => a.SlotId!.Value)
             .Select(g => new { SlotId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.SlotId, x => x.Count, ct);
@@ -316,7 +289,7 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
                 var remaining = Math.Max(0, (s.Capacity ?? 0) - booked);
                 var startsAt = s.StartsAt!.Value;
                 var endsAt = s.EndsAt!.Value;
-                var shift = startsAt.TimeOfDay < AfternoonShiftStart ? "MORNING" : "AFTERNOON";
+                var shift = startsAt.TimeOfDay < AppointmentBookingRules.AfternoonShiftStart ? "MORNING" : "AFTERNOON";
 
                 return new BookableSlotItem(s.Id, startsAt, endsAt, remaining, shift);
             })
@@ -329,34 +302,7 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
         DateOnly today,
         CancellationToken ct)
     {
-        var self = await _db.Patients
-            .AsNoTracking()
-            .Include(p => p.User)
-            .FirstOrDefaultAsync(p => p.UserId == userId, ct);
-
-        if (self is null)
-            throw new NotFoundException("Patient", userId);
-
-        if (self.User is null || self.User.AccountStatus != AccountStatus.ACTIVE)
-            throw new UnauthorizedAccessException("Tài khoản bệnh nhân chưa kích hoạt hoặc đã bị khóa.");
-
-        if (!string.Equals(self.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
-            throw new UnauthorizedAccessException("Hồ sơ bệnh nhân đang ngừng hoạt động.");
-
-        var familyLinks = await _db.PatientFamilyLinks
-            .AsNoTracking()
-            .Include(l => l.MemberPatient)
-            .Where(l =>
-                l.OwnerPatientId == self.Id &&
-                l.VerificationStatus != null &&
-                l.VerificationStatus.ToUpper() == "VERIFIED" &&
-                l.RevokedAt == null &&
-                (l.ValidUntil == null || l.ValidUntil > nowLocal) &&
-                l.MemberPatient != null &&
-                l.MemberPatient.Status != null &&
-                l.MemberPatient.Status.ToUpper() == "ACTIVE")
-            .OrderBy(l => l.MemberPatientId)
-            .ToListAsync(ct);
+        var (self, familyLinks) = await AppointmentBookingRules.LoadOwnedPatientsAsync(_db, userId, nowLocal, ct);
 
         var profiles = new List<BookingPatientProfileDto>(1 + familyLinks.Count)
         {
