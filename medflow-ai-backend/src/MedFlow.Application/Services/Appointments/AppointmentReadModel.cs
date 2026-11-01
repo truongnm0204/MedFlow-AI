@@ -25,6 +25,13 @@ internal static class AppointmentReadModel
         IReadOnlyDictionary<long, QueueEntry> QueueByAppointmentId,
         IReadOnlyDictionary<long, Payment> PaidByVisitId);
 
+    internal sealed record OwnedAppointmentView(
+        Appointment Appointment,
+        ScopeMember ScopeMember,
+        Visit? Visit,
+        QueueEntry? Queue,
+        Payment? Paid);
+
     public static IQueryable<Appointment> IncludeDisplayGraph(this IQueryable<Appointment> query)
         => query
             .Include(a => a.Patient)
@@ -133,6 +140,70 @@ internal static class AppointmentReadModel
 
         return list;
     }
+
+    public static async Task<OwnedAppointmentView> LoadOwnedAppointmentViewAsync(
+        IApplicationDbContext db,
+        long userId,
+        string? idOrCode,
+        DateTime nowLocal,
+        string forbiddenMessage,
+        CancellationToken ct)
+    {
+        if (userId <= 0)
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+
+        var (trimmedIdentifier, appointmentId, appointmentCode) = ParseIdentifier(idOrCode);
+
+        var today = DateOnly.FromDateTime(nowLocal);
+
+        var owned = await AppointmentBookingRules.LoadOwnedPatientsAsync(db, userId, nowLocal, ct);
+        var scope = BuildScopeMembers(owned.Self, owned.FamilyLinks, today);
+
+        var query = db.Appointments
+            .AsNoTracking()
+            .IncludeDisplayGraph();
+
+        var appointment = appointmentId.HasValue
+            ? await query.FirstOrDefaultAsync(a => a.Id == appointmentId.Value, ct)
+            : await query.FirstOrDefaultAsync(
+                a => a.AppointmentCode != null && a.AppointmentCode.ToUpper() == appointmentCode,
+                ct);
+
+        if (appointment is null)
+            throw new NotFoundException("Appointment", trimmedIdentifier);
+
+        var scopeMember = appointment.PatientId.HasValue
+            ? scope.FirstOrDefault(m => m.Patient.Id == appointment.PatientId.Value)
+            : null;
+
+        if (scopeMember is null)
+            throw new ForbiddenException(forbiddenMessage);
+
+        if (appointment.Slot is null || appointment.Slot.StartsAt is null || appointment.Slot.EndsAt is null)
+            throw new NotFoundException("Appointment", trimmedIdentifier);
+
+        var related = await LoadRelatedAsync(db, [appointment.Id], ct);
+        related.VisitsByAppointmentId.TryGetValue(appointment.Id, out var visit);
+        related.QueueByAppointmentId.TryGetValue(appointment.Id, out var queue);
+        Payment? paid = null;
+        if (visit is not null)
+            related.PaidByVisitId.TryGetValue(visit.Id, out paid);
+
+        return new OwnedAppointmentView(appointment, scopeMember, visit, queue, paid);
+    }
+
+    public static async Task<string?> ResolveDisplayQueueNumberAsync(
+        IApplicationDbContext db,
+        AppointmentListItemDto item,
+        Appointment appointment,
+        CancellationToken ct)
+        => item.QueueNumber is null && item.Status is "BOOKED" or "CONFIRMED" or "PENDING"
+            ? await AppointmentBookingRules.ComputeQueueNumberAsync(db, appointment.Id, appointment.Slot!, ct)
+            : item.QueueNumber;
+
+    public static string FormatVietnamTimestamp(DateTime local)
+        => new DateTimeOffset(DateTime.SpecifyKind(local, DateTimeKind.Unspecified), VietnamOffset)
+            .ToString("yyyy-MM-ddTHH:mm:sszzz", CultureInfo.InvariantCulture);
 
     public static string FormatRelationshipLabel(string? relationship)
     {
@@ -262,10 +333,7 @@ internal static class AppointmentReadModel
                 : null;
         }
 
-        var bookedAt = a.BookedAt is { } b
-            ? new DateTimeOffset(DateTime.SpecifyKind(b, DateTimeKind.Unspecified), VietnamOffset)
-                .ToString("yyyy-MM-ddTHH:mm:sszzz", vi)
-            : "";
+        var bookedAt = a.BookedAt is { } b ? FormatVietnamTimestamp(b) : "";
 
         return new AppointmentListItemDto(
             Id: id,

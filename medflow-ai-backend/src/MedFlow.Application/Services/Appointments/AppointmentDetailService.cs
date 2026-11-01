@@ -3,8 +3,6 @@ using MedFlow.Application.DTOs.Appointments;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Domain.Entities;
-using MedFlow.Domain.Exceptions;
-using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.Application.Services.Appointments;
 
@@ -36,67 +34,39 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
         string? idOrCode,
         CancellationToken ct = default)
     {
-        if (userId <= 0)
-            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
-
-        var (trimmedIdentifier, appointmentId, appointmentCode) = AppointmentReadModel.ParseIdentifier(idOrCode);
-
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
 
-        var owned = await AppointmentBookingRules.LoadOwnedPatientsAsync(_db, userId, nowLocal, ct);
-        var scope = AppointmentReadModel.BuildScopeMembers(owned.Self, owned.FamilyLinks, today);
-
-        var query = _db.Appointments
-            .AsNoTracking()
-            .IncludeDisplayGraph();
-
-        var appointment = appointmentId.HasValue
-            ? await query.FirstOrDefaultAsync(a => a.Id == appointmentId.Value, ct)
-            : await query.FirstOrDefaultAsync(
-                a => a.AppointmentCode != null && a.AppointmentCode.ToUpper() == appointmentCode,
-                ct);
-
-        if (appointment is null)
-            throw new NotFoundException("Appointment", trimmedIdentifier);
-
-        var scopeMember = appointment.PatientId.HasValue
-            ? scope.FirstOrDefault(m => m.Patient.Id == appointment.PatientId.Value)
-            : null;
-
-        if (scopeMember is null)
-            throw new ForbiddenException("Bạn không có quyền xem chi tiết lịch hẹn này.");
-
-        if (appointment.Slot is null || appointment.Slot.StartsAt is null || appointment.Slot.EndsAt is null)
-            throw new NotFoundException("Appointment", trimmedIdentifier);
-
-        var related = await AppointmentReadModel.LoadRelatedAsync(_db, [appointment.Id], ct);
-        related.VisitsByAppointmentId.TryGetValue(appointment.Id, out var visit);
-        related.QueueByAppointmentId.TryGetValue(appointment.Id, out var queue);
-        Payment? paid = null;
-        if (visit is not null)
-            related.PaidByVisitId.TryGetValue(visit.Id, out paid);
+        var view = await AppointmentReadModel.LoadOwnedAppointmentViewAsync(
+            _db,
+            userId,
+            idOrCode,
+            nowLocal,
+            "Bạn không có quyền xem chi tiết lịch hẹn này.",
+            ct);
 
         var item = AppointmentReadModel.MapItem(
-            appointment,
-            scopeMember,
-            visit,
-            queue,
-            paid,
+            view.Appointment,
+            view.ScopeMember,
+            view.Visit,
+            view.Queue,
+            view.Paid,
             nowLocal,
             today);
 
-        var queueNumber = item.QueueNumber is null && item.Status is "BOOKED" or "CONFIRMED" or "PENDING"
-            ? await AppointmentBookingRules.ComputeQueueNumberAsync(_db, appointment.Id, appointment.Slot, ct)
-            : item.QueueNumber;
+        var queueNumber = await AppointmentReadModel.ResolveDisplayQueueNumberAsync(
+            _db,
+            item,
+            view.Appointment,
+            ct);
 
         var availableActions = await BuildAvailableActionsAsync(
-            appointment.Slot,
+            view.Appointment.Slot!,
             item.Status,
             nowLocal,
             ct);
 
-        var (birthYearLabel, birthDateLabel, phone, address) = BuildPatientPhiFields(scopeMember.Patient, today);
+        var (birthYearLabel, birthDateLabel, phone, address) = BuildPatientPhiFields(view.ScopeMember.Patient, today);
 
         return ToDetail(
             item,

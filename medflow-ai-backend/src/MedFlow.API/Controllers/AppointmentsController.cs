@@ -17,6 +17,7 @@ public sealed class AppointmentsController : ControllerBase
     private readonly IAppointmentDetailService _detailService;
     private readonly IAppointmentCancelService _cancelService;
     private readonly IAppointmentRescheduleService _rescheduleService;
+    private readonly IAppointmentStatusTrackingService _statusTrackingService;
 
     public AppointmentsController(
         IAppointmentSlotService slotService,
@@ -24,7 +25,8 @@ public sealed class AppointmentsController : ControllerBase
         IAppointmentListService listService,
         IAppointmentDetailService detailService,
         IAppointmentCancelService cancelService,
-        IAppointmentRescheduleService rescheduleService)
+        IAppointmentRescheduleService rescheduleService,
+        IAppointmentStatusTrackingService statusTrackingService)
     {
         _slotService = slotService;
         _bookingService = bookingService;
@@ -32,6 +34,7 @@ public sealed class AppointmentsController : ControllerBase
         _detailService = detailService;
         _cancelService = cancelService;
         _rescheduleService = rescheduleService;
+        _statusTrackingService = statusTrackingService;
     }
 
     /// <summary>GET /api/v1/appointments/available-slots — Xem ngày/ca/slot còn khả dụng theo bác sĩ và dịch vụ khám.</summary>
@@ -109,6 +112,16 @@ public sealed class AppointmentsController : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<AppointmentDetailDto>> GetDetail(string idOrCode, CancellationToken ct)
         => Ok(await _detailService.GetMyAppointmentDetailAsync(GetUserId(), idOrCode, ct));
+
+    /// <summary>GET /api/v1/appointments/{idOrCode}/status-tracking — Theo dõi trạng thái hiện tại, các mốc và bước tiếp theo của lịch hẹn (UC15 / M2-008).</summary>
+    [HttpGet("{idOrCode}/status-tracking")]
+    [ProducesResponseType<AppointmentStatusTrackingDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<AppointmentStatusTrackingDto>> GetStatusTracking(string idOrCode, CancellationToken ct)
+        => Ok(await _statusTrackingService.GetMyAppointmentStatusAsync(GetUserId(), idOrCode, ct));
 
     /// <summary>POST /api/v1/appointments/{idOrCode}/cancel — Hủy lịch hẹn còn đủ điều kiện kèm lý do (UC14).</summary>
     [HttpPost("{idOrCode}/cancel")]
