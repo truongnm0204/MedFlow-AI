@@ -23,6 +23,7 @@ internal static class AppointmentReadTestDb
         public DbSet<Doctor> Doctors => Set<Doctor>();
         public DbSet<ExaminationSlot> ExaminationSlots => Set<ExaminationSlot>();
         public DbSet<Appointment> Appointments => Set<Appointment>();
+        public DbSet<Hospital> Hospitals => throw NotUsed();
         public DbSet<Department> Departments => Set<Department>();
         public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => Set<Specialty>();
@@ -47,6 +48,7 @@ internal static class AppointmentReadTestDb
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            modelBuilder.Ignore<Hospital>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<Role>();
             modelBuilder.Ignore<Permission>();
