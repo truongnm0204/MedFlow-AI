@@ -16,19 +16,22 @@ public sealed class AppointmentsController : ControllerBase
     private readonly IAppointmentListService _listService;
     private readonly IAppointmentDetailService _detailService;
     private readonly IAppointmentCancelService _cancelService;
+    private readonly IAppointmentRescheduleService _rescheduleService;
 
     public AppointmentsController(
         IAppointmentSlotService slotService,
         IAppointmentBookingService bookingService,
         IAppointmentListService listService,
         IAppointmentDetailService detailService,
-        IAppointmentCancelService cancelService)
+        IAppointmentCancelService cancelService,
+        IAppointmentRescheduleService rescheduleService)
     {
         _slotService = slotService;
         _bookingService = bookingService;
         _listService = listService;
         _detailService = detailService;
         _cancelService = cancelService;
+        _rescheduleService = rescheduleService;
     }
 
     /// <summary>GET /api/v1/appointments/available-slots — Xem ngày/ca/slot còn khả dụng theo bác sĩ và dịch vụ khám.</summary>
@@ -120,6 +123,18 @@ public sealed class AppointmentsController : ControllerBase
         [FromBody] CancelAppointmentRequest request,
         CancellationToken ct)
         => Ok(await _cancelService.CancelMyAppointmentAsync(GetUserId(), idOrCode, request, GetIp(), ct));
+
+    /// <summary>POST /api/v1/appointments/{idOrCode}/reschedule — Đổi lịch hẹn sang khung giờ khác còn khả dụng (UC13).</summary>
+    [HttpPost("{idOrCode}/reschedule")]
+    [ProducesResponseType<AppointmentDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<AppointmentDetailDto>> Reschedule(
+        string idOrCode, [FromBody] RescheduleAppointmentRequest request, CancellationToken ct)
+        => Ok(await _rescheduleService.RescheduleAsync(GetUserId(), idOrCode, request, GetIp(), ct));
 
     private long GetUserId()
     {

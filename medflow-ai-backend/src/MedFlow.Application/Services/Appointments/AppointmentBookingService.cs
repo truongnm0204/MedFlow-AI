@@ -60,9 +60,9 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
             .FirstOrDefaultAsync(s => s.Id == selection.Slot.Id, ct)
             ?? throw new NotFoundException("ExaminationSlot", selection.Slot.Id);
 
-        EnsureSlotBookable(slot, selection.NowLocal, selection.Today, selection.Policy);
-        await EnsureSlotHasCapacityAsync(slot, ct);
-        await EnsurePatientLimitsAsync(selection.PatientId, slot, selection.NowLocal, selection.Policy, ct);
+        AppointmentBookingRules.EnsureSlotBookable(slot, selection.NowLocal, selection.Today, selection.Policy);
+        await AppointmentBookingRules.EnsureSlotHasCapacityAsync(_db, slot, ct);
+        await AppointmentBookingRules.EnsurePatientLimitsAsync(_db, selection.PatientId, slot, selection.NowLocal, selection.Policy, null, ct);
 
         var appointment = new Appointment
         {
@@ -130,8 +130,8 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
             },
             ct);
 
-        await EnsureSlotHasCapacityAsync(selection.Slot, ct);
-        await EnsurePatientLimitsAsync(selection.PatientId, selection.Slot, selection.NowLocal, selection.Policy, ct);
+        await AppointmentBookingRules.EnsureSlotHasCapacityAsync(_db, selection.Slot, ct);
+        await AppointmentBookingRules.EnsurePatientLimitsAsync(_db, selection.PatientId, selection.Slot, selection.NowLocal, selection.Policy, null, ct);
 
         var doctor = selection.Doctor ?? (selection.Slot.DoctorId is long id
             ? await _doctorCatalog.GetByIdOrCodeAsync(id.ToString(CultureInfo.InvariantCulture), ct)
@@ -293,7 +293,7 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
                 throw new ValidationException("Khung giờ khám không khớp với bác sĩ, dịch vụ hoặc ngày đã chọn.");
             }
 
-            EnsureSlotBookable(candidate, nowLocal, today, policy);
+            AppointmentBookingRules.EnsureSlotBookable(candidate, nowLocal, today, policy);
             preselectedSlot = candidate;
         }
         else
@@ -320,18 +320,6 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
             Slot: preselectedSlot,
             NowLocal: nowLocal,
             Today: today);
-    }
-
-    private async Task EnsureSlotHasCapacityAsync(ExaminationSlot slot, CancellationToken ct)
-    {
-        var occupying = await _db.Appointments
-            .AsNoTracking()
-            .CountAsync(a =>
-                a.SlotId == slot.Id &&
-                (a.Status == null || a.Status.ToUpper() != AppointmentBookingRules.CancelledStatus), ct);
-
-        if (occupying >= (slot.Capacity ?? 0))
-            throw new ConflictException("Khung giờ khám vừa hết chỗ. Vui lòng chọn khung giờ khác.");
     }
 
     private async Task<ExaminationSlot> SelectServiceShiftSlotAsync(
@@ -397,86 +385,6 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
             throw new ConflictException("Ca khám đã hết chỗ. Vui lòng chọn ca hoặc ngày khác.");
 
         return selected;
-    }
-
-    private static void EnsureSlotBookable(
-        ExaminationSlot slot,
-        DateTime nowLocal,
-        DateOnly today,
-        AppointmentPolicyDto policy)
-    {
-        if (!string.Equals(slot.Status, "OPEN", StringComparison.OrdinalIgnoreCase) ||
-            slot.StartsAt is null ||
-            slot.EndsAt is null)
-        {
-            throw new ConflictException("Khung giờ khám không còn mở để đặt lịch.");
-        }
-
-        if (slot.StartsAt.Value < nowLocal.AddHours(policy.BookingLeadHours))
-            throw new ValidationException($"Chỉ được đặt lịch trước giờ khám tối thiểu {policy.BookingLeadHours} giờ.");
-
-        if (DateOnly.FromDateTime(slot.StartsAt.Value) > today.AddDays(policy.BookingWindowDays))
-            throw new ValidationException($"Chỉ được đặt lịch trong vòng {policy.BookingWindowDays} ngày tới.");
-    }
-
-    private async Task EnsurePatientLimitsAsync(
-        long patientId,
-        ExaminationSlot slot,
-        DateTime nowLocal,
-        AppointmentPolicyDto policy,
-        CancellationToken ct)
-    {
-        var slotStartsAt = slot.StartsAt!.Value;
-        var slotEndsAt = slot.EndsAt!.Value;
-
-        var hasOverlap = await _db.Appointments
-            .AsNoTracking()
-            .AnyAsync(a =>
-                a.PatientId == patientId &&
-                (a.Status == null || !AppointmentBookingRules.InactiveStatuses.Contains(a.Status.ToUpper())) &&
-                a.Slot != null &&
-                a.Slot.StartsAt != null &&
-                a.Slot.EndsAt != null &&
-                a.Slot.StartsAt < slotEndsAt &&
-                a.Slot.EndsAt > slotStartsAt, ct);
-
-        if (hasOverlap)
-            throw new ConflictException("Hồ sơ này đã có lịch khám trùng thời gian.");
-
-        var activeCount = await _db.Appointments
-            .AsNoTracking()
-            .CountAsync(a =>
-                a.PatientId == patientId &&
-                (a.Status == null || !AppointmentBookingRules.InactiveStatuses.Contains(a.Status.ToUpper())) &&
-                a.Slot != null &&
-                a.Slot.EndsAt != null &&
-                a.Slot.EndsAt > nowLocal, ct);
-
-        if (activeCount >= policy.MaxActiveBookings)
-            throw new ConflictException($"Hồ sơ này đã đạt tối đa {policy.MaxActiveBookings} lịch khám đang hoạt động.");
-
-        if (policy.NoShowBlockDays > 0)
-        {
-            var lookbackStart = nowLocal.AddDays(-policy.NoShowLookbackDays);
-            var noShowStarts = await _db.Appointments
-                .AsNoTracking()
-                .Where(a =>
-                    a.PatientId == patientId &&
-                    a.Status != null &&
-                    a.Status.ToUpper() == AppointmentBookingRules.NoShowStatus &&
-                    a.Slot != null &&
-                    a.Slot.StartsAt != null &&
-                    a.Slot.StartsAt >= lookbackStart)
-                .Select(a => a.Slot!.StartsAt!.Value)
-                .ToListAsync(ct);
-
-            if (noShowStarts.Count >= policy.NoShowMaxCount)
-            {
-                var latestNoShowStartsAt = noShowStarts.Max();
-                if (latestNoShowStartsAt.AddDays(policy.NoShowBlockDays) > nowLocal)
-                    throw new ConflictException("Hồ sơ đang bị tạm khóa đặt lịch trực tuyến do vắng mặt nhiều lần.");
-            }
-        }
     }
 
     private sealed record BookingSelection(

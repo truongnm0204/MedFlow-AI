@@ -39,7 +39,7 @@ internal static class AppointmentReadTestDb
         public DbSet<RolePermission> RolePermissions => throw NotUsed();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
-        public DbSet<AuditLog> AuditLogs => throw NotUsed();
+        public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
@@ -54,7 +54,12 @@ internal static class AppointmentReadTestDb
             modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<AuditLog>();
+            modelBuilder.Entity<AuditLog>(b =>
+            {
+                b.HasKey(a => a.Id);
+                b.Ignore(a => a.ActorUser);
+                b.Ignore(a => a.IpAddress);
+            });
             modelBuilder.Ignore<HospitalPolicy>();
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);

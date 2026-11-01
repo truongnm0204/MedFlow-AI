@@ -29,6 +29,7 @@ public static class DependencyInjection
         services.AddScoped<IAppointmentListService, AppointmentListService>();
         services.AddScoped<IAppointmentDetailService, AppointmentDetailService>();
         services.AddScoped<IAppointmentCancelService, AppointmentCancelService>();
+        services.AddScoped<IAppointmentRescheduleService, AppointmentRescheduleService>();
         return services;
     }
 }
