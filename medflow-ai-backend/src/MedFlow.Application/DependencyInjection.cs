@@ -7,7 +7,6 @@ using MedFlow.Application.Services.Patients;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Services;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace MedFlow.Application;
 
@@ -20,12 +19,12 @@ public static class DependencyInjection
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IExaminationServiceCatalogService, ExaminationServiceCatalogService>();
         services.AddScoped<IDoctorAdminService, DoctorAdminService>();
+        services.AddSingleton(TimeProvider.System);
         services.AddScoped<IDoctorCatalogService, DoctorCatalogService>();
         services.AddScoped<IPatientProfileService, PatientProfileService>();
         services.AddScoped<IAppointmentPolicyService, AppointmentPolicyService>();
         services.AddScoped<IDepartmentService, DepartmentService>();
         services.AddScoped<IAppointmentSlotService, AppointmentSlotService>();
-        services.TryAddSingleton(TimeProvider.System);
         return services;
     }
 }

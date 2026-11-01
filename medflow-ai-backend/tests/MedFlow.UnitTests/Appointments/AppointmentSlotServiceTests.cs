@@ -195,12 +195,13 @@ public sealed class AppointmentSlotServiceTests : IDisposable
 
     private AppointmentSlotService CreateSut(int windowDays = 30, int leadHours = 2)
     {
+        var timeProvider = new FixedTimeProvider(DefaultUtcNow);
         return new AppointmentSlotService(
             _db,
-            new DoctorCatalogService(_db),
+            new DoctorCatalogService(_db, timeProvider),
             new ExaminationServiceCatalogService(_db),
             new StubPolicyService(windowDays, leadHours),
-            new FixedTimeProvider(DefaultUtcNow));
+            timeProvider);
     }
 
     private static void SeedBaseData(SlotTestDbContext db)
