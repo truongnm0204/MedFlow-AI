@@ -1,4 +1,4 @@
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
@@ -7,6 +7,9 @@ import { OperationalReportsPage } from '@/features/admin-reports/pages/operation
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
+import { ExaminationSlotCreatePage } from '@/features/admin-slots/pages/examination-slot-create-page';
+import { ExaminationSlotListPage } from '@/features/admin-slots/pages/examination-slot-list-page';
+import { SlotEditModal } from '@/features/admin-slots/pages/slot-edit-modal';
 import { AppointmentDetailPage } from '@/features/appointment/pages/appointment-detail-page';
 import { AppointmentListPage } from '@/features/appointment/pages/appointment-list-page';
 import { AppointmentReviewPage } from '@/features/appointment/pages/appointment-review-page';
@@ -117,6 +120,16 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <Navigate to="/admin/services" replace />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/doctors"
         element={
           <RequireAuth>
@@ -178,6 +191,50 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <ExaminationServiceCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/slots"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ExaminationSlotListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      >
+        <Route path=":slotId/edit" element={<SlotEditModal />} />
+      </Route>
+      <Route
+        path="/admin/slots/new"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ExaminationSlotCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/examination-slots"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ExaminationSlotListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      >
+        <Route path=":slotId/edit" element={<SlotEditModal />} />
+      </Route>
+      <Route
+        path="/admin/examination-slots/new"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ExaminationSlotCreatePage />
             </RequireAdmin>
           </RequireAuth>
         }

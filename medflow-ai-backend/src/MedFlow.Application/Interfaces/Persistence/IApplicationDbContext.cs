@@ -13,6 +13,7 @@ public interface IApplicationDbContext
     DbSet<RolePermission> RolePermissions { get; }
     DbSet<Patient> Patients { get; }
     DbSet<Staff> Staff { get; }
+    DbSet<Doctor> Doctors { get; }
     DbSet<AuthSession> AuthSessions { get; }
     DbSet<AuthVerificationChallenge> AuthVerificationChallenges { get; }
     DbSet<AuditLog> AuditLogs { get; }
@@ -21,6 +22,7 @@ public interface IApplicationDbContext
     DbSet<Specialty> Specialties { get; }
     DbSet<Service> Services { get; }
     DbSet<ServicePrice> ServicePrices { get; }
+    DbSet<HospitalPolicy> HospitalPolicies { get; }
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);
