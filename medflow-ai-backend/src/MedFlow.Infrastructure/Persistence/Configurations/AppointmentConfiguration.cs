@@ -36,6 +36,9 @@ public class AppointmentConfiguration : IEntityTypeConfiguration<Appointment>
         builder.Property(a => a.ReceptionNote)
             .HasColumnName("reception_note");
 
+        builder.Property(a => a.ReasonForVisit)
+            .HasColumnName("reason_for_visit");
+
         builder.Property(a => a.Status)
             .HasColumnName("status")
             .HasMaxLength(20);

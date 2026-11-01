@@ -9,6 +9,7 @@ public class Appointment
     public string? BookingChannel { get; set; }
     public string? IdempotencyKey { get; set; }
     public string? ReceptionNote { get; set; }
+    public string? ReasonForVisit { get; set; }
     public string? Status { get; set; }
     public long? BookedByUserId { get; set; }
     public DateTime? BookedAt { get; set; }

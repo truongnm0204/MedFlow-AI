@@ -186,6 +186,7 @@ CREATE TABLE "appointments" (
     "booking_channel" varchar(12),
     "idempotency_key" varchar(100),
     "reception_note" text,
+    "reason_for_visit" text,
     "status" varchar(20),
     "booked_by_user_id" bigint,
     "booked_at" timestamp without time zone
