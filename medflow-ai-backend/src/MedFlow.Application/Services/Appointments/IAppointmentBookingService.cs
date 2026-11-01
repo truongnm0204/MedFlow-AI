@@ -9,4 +9,9 @@ public interface IAppointmentBookingService
         CreateAppointmentRequest request,
         string? ipAddress,
         CancellationToken ct = default);
+
+    Task<AppointmentReviewPreviewResponse> PreviewAsync(
+        long userId,
+        GetAppointmentReviewPreviewRequest request,
+        CancellationToken ct = default);
 }

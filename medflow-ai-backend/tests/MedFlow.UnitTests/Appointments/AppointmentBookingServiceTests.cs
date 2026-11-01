@@ -1086,4 +1086,204 @@ public sealed class AppointmentBookingServiceTests : IDisposable
             }, null));
         Assert.Equal("Mã dịch vụ khám không khớp với dịch vụ đã chọn.", badServiceCode.Message);
     }
+
+    [Fact]
+    public async Task PreviewAsync_DoctorModeFamilyMember_ReturnsMappedPayloadWithoutPersisting()
+    {
+        _db.ExaminationSlots.Add(new ExaminationSlot
+        {
+            Id = 101,
+            ServiceId = 1,
+            DoctorId = 1,
+            RoomId = 1,
+            StartsAt = new DateTime(2026, 11, 3, 9, 0, 0),
+            EndsAt = new DateTime(2026, 11, 3, 9, 30, 0),
+            Capacity = 3,
+            Status = "OPEN",
+        });
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut();
+        var result = await sut.PreviewAsync(
+            userId: 1,
+            new GetAppointmentReviewPreviewRequest
+            {
+                Mode = "doctor",
+                PatientId = "3",
+                DoctorId = "DOC-001",
+                ServiceId = "EX-GI-01",
+                ServiceCode = "EX-GI-01",
+                DateIso = "2026-11-03",
+                SlotId = "101",
+                ShiftId = "shift-morning",
+                SymptomNote = "  Ho kéo dài  ",
+            });
+
+        Assert.Equal("Hồ sơ người thân • Con", result.PatientInfo.RelationshipBadgeLabel);
+        Assert.False(result.PatientInfo.IsPrimaryAccount);
+        Assert.Equal("Nữ", result.PatientInfo.Gender);
+        Assert.Equal("(8 tuổi)", result.PatientInfo.AgeLabel);
+        Assert.Equal("01/06/2018", result.PatientInfo.DateOfBirth);
+        Assert.Equal("0901234567", result.PatientInfo.Phone);
+        Assert.Equal("Chưa xác thực CCCD", result.PatientInfo.NationalId);
+        Assert.Equal("Ho kéo dài", result.PatientInfo.SymptomNote);
+
+        Assert.Equal("doctor", result.ScheduleLocation.Mode);
+        Assert.Equal("101", result.ScheduleLocation.SlotOrShiftId);
+        Assert.Equal("09:00 - 09:30, Thứ Ba, ngày 03/11/2026 (Ca Sáng)", result.ScheduleLocation.ScheduledSlotDisplay);
+        Assert.Equal("08:45", result.ScheduleLocation.CheckInDeadlineTime);
+        Assert.Equal("Phòng 101 - Tầng 1, Khu Demo", result.ScheduleLocation.AllocatedRoomTitle);
+        Assert.Equal("101", result.ScheduleLocation.ShortRoomNumber);
+        Assert.Equal("Khám chuyên khoa Tiêu hóa (Mã EX-GI-01)", result.ScheduleLocation.ServiceDisplayLabel);
+
+        Assert.Equal(300000m, result.FeeSummary.TotalAmount);
+        Assert.Equal(2, result.FeeSummary.Items.Count);
+
+        Assert.Equal(15, result.ReceptionPolicy.LateGraceMinutes);
+        Assert.Equal(15, result.ReceptionPolicy.EarlyArrivalMinutes);
+
+        Assert.Empty(_db.Appointments);
+        Assert.Empty(_db.AuditLogs);
+        Assert.Empty(_lock.Calls);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_ServiceModeAfternoon_PicksFirstSlotWithCapacityAndUsesShiftId()
+    {
+        _db.ExaminationSlots.AddRange(
+            new ExaminationSlot
+            {
+                Id = 201,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 3, 13, 30, 0),
+                EndsAt = new DateTime(2026, 11, 3, 14, 0, 0),
+                Capacity = 1,
+                Status = "OPEN",
+            },
+            new ExaminationSlot
+            {
+                Id = 202,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 3, 14, 0, 0),
+                EndsAt = new DateTime(2026, 11, 3, 14, 30, 0),
+                Capacity = 3,
+                Status = "OPEN",
+            });
+
+        _db.Appointments.Add(new Appointment
+        {
+            Id = 500,
+            PatientId = 4,
+            SlotId = 201,
+            BookingChannel = "ONLINE",
+            Status = "BOOKED",
+            BookedByUserId = 1,
+            BookedAt = new DateTime(2026, 11, 1, 10, 0, 0),
+        });
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut();
+        var result = await sut.PreviewAsync(
+            userId: 1,
+            new GetAppointmentReviewPreviewRequest
+            {
+                Mode = "service",
+                PatientId = "1",
+                DoctorId = "doc-01",
+                ServiceId = "EX-GI-01",
+                DateIso = "2026-11-03",
+                SlotId = "999",
+                ShiftId = "shift-afternoon",
+            });
+
+        Assert.Equal("shift-afternoon", result.ScheduleLocation.SlotOrShiftId);
+        Assert.StartsWith("14:00 - 14:30", result.ScheduleLocation.ScheduledSlotDisplay);
+        Assert.EndsWith("(Ca Chiều)", result.ScheduleLocation.ScheduledSlotDisplay);
+        Assert.Equal("1", result.ScheduleLocation.DoctorId);
+        Assert.Equal("BÁC SĨ PHỤ TRÁCH CA TRỰC CHUYÊN KHOA", result.ScheduleLocation.DoctorRoleBadge);
+        Assert.Equal("Chính chủ tài khoản", result.PatientInfo.RelationshipBadgeLabel);
+        Assert.Equal("****** (Đã xác thực CCCD)", result.PatientInfo.NationalId);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_RevokedFamilyMember_ThrowsForbidden()
+    {
+        _db.ExaminationSlots.Add(new ExaminationSlot
+        {
+            Id = 101,
+            ServiceId = 1,
+            DoctorId = 1,
+            RoomId = 1,
+            StartsAt = new DateTime(2026, 11, 3, 9, 0, 0),
+            EndsAt = new DateTime(2026, 11, 3, 9, 30, 0),
+            Capacity = 3,
+            Status = "OPEN",
+        });
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut();
+        var ex = await Assert.ThrowsAsync<ForbiddenException>(() =>
+            sut.PreviewAsync(
+                userId: 1,
+                new GetAppointmentReviewPreviewRequest
+                {
+                    Mode = "doctor",
+                    PatientId = "4",
+                    DoctorId = "DOC-001",
+                    ServiceId = "EX-GI-01",
+                    DateIso = "2026-11-03",
+                    SlotId = "101",
+                    ShiftId = "shift-morning",
+                }));
+
+        Assert.Equal("Bạn không có quyền đặt lịch khám cho hồ sơ không thuộc quyền quản lý.", ex.Message);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_FullSlot_ThrowsConflict()
+    {
+        _db.ExaminationSlots.Add(new ExaminationSlot
+        {
+            Id = 101,
+            ServiceId = 1,
+            DoctorId = 1,
+            RoomId = 1,
+            StartsAt = new DateTime(2026, 11, 3, 9, 0, 0),
+            EndsAt = new DateTime(2026, 11, 3, 9, 30, 0),
+            Capacity = 1,
+            Status = "OPEN",
+        });
+        _db.Appointments.Add(new Appointment
+        {
+            Id = 501,
+            PatientId = 4,
+            SlotId = 101,
+            BookingChannel = "ONLINE",
+            Status = "BOOKED",
+            BookedByUserId = 1,
+            BookedAt = new DateTime(2026, 11, 1, 10, 0, 0),
+        });
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut();
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            sut.PreviewAsync(
+                userId: 1,
+                new GetAppointmentReviewPreviewRequest
+                {
+                    Mode = "doctor",
+                    PatientId = "1",
+                    DoctorId = "DOC-001",
+                    ServiceId = "EX-GI-01",
+                    DateIso = "2026-11-03",
+                    SlotId = "101",
+                    ShiftId = "shift-morning",
+                }));
+
+        Assert.Equal("Khung giờ khám vừa hết chỗ. Vui lòng chọn khung giờ khác.", ex.Message);
+    }
 }
