@@ -43,5 +43,51 @@ public sealed class AdminDepartmentsController : ControllerBase
             });
         }
     }
-}
 
+    /// <summary>PUT /api/v1/admin/departments/{id} — Cập nhật thông tin khoa phòng.</summary>
+    [HttpPut("{id:long}")]
+    [ProducesResponseType<DepartmentItemDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<DepartmentItemDto>> UpdateDepartment(
+        [FromRoute] long id,
+        [FromBody] UpdateDepartmentRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            var result = await _departmentService.UpdateDepartmentAsync(id, request, ct);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new ProblemDetails
+            {
+                Title = "Không tìm thấy khoa phòng",
+                Detail = ex.Message,
+                Status = StatusCodes.Status404NotFound
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Yêu cầu không hợp lệ",
+                Detail = ex.Message,
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new ProblemDetails
+            {
+                Title = "Xung đột dữ liệu",
+                Detail = ex.Message,
+                Status = StatusCodes.Status409Conflict
+            });
+        }
+    }
+}
