@@ -2,6 +2,7 @@ using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MedFlow.UnitTests.Appointments;
@@ -138,6 +139,7 @@ internal static class AppointmentReadTestDb
     {
         var options = new DbContextOptionsBuilder<Context>()
             .UseInMemoryDatabase($"AppointmentReadTests_{Guid.NewGuid():N}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         var db = new Context(options);

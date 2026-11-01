@@ -10,8 +10,6 @@ namespace MedFlow.Application.Services.Appointments;
 
 public sealed class AppointmentDetailService : IAppointmentDetailService
 {
-    private const int MaxIdentifierLength = 40;
-
     private const string ActionCancel = "CANCEL";
     private const string ActionReschedule = "RESCHEDULE";
     private const string ActionUpdateReason = "UPDATE_REASON";
@@ -41,7 +39,7 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
         if (userId <= 0)
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
 
-        var (trimmedIdentifier, appointmentId, appointmentCode) = ParseIdentifier(idOrCode);
+        var (trimmedIdentifier, appointmentId, appointmentCode) = AppointmentReadModel.ParseIdentifier(idOrCode);
 
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
@@ -110,29 +108,6 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
             availableActions);
     }
 
-    private static (string Trimmed, long? Id, string? Code) ParseIdentifier(string? idOrCode)
-    {
-        if (string.IsNullOrWhiteSpace(idOrCode))
-            throw new ValidationException("Mã lịch hẹn không hợp lệ.");
-
-        var trimmed = idOrCode.Trim();
-        if (trimmed.StartsWith('#'))
-            trimmed = trimmed[1..].TrimStart();
-
-        if (string.IsNullOrEmpty(trimmed) || trimmed.Length > MaxIdentifierLength)
-            throw new ValidationException("Mã lịch hẹn không hợp lệ.");
-
-        if (trimmed.All(char.IsAsciiDigit))
-        {
-            if (!long.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id <= 0)
-                throw new ValidationException("Mã lịch hẹn không hợp lệ.");
-
-            return (trimmed, id, null);
-        }
-
-        return (trimmed, null, trimmed.ToUpperInvariant());
-    }
-
     private async Task<IReadOnlyList<string>> BuildAvailableActionsAsync(
         ExaminationSlot slot,
         string status,
@@ -141,14 +116,14 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
     {
         var actions = new List<string>(6);
         var start = slot.StartsAt!.Value;
-        var modifiable = status is "BOOKED" or "CONFIRMED" or "PENDING" && start > nowLocal;
+        var modifiable = AppointmentReadModel.IsModifiableStatus(status) && start > nowLocal;
 
         if (modifiable)
         {
             var hospitalId = slot.Service?.HospitalId ?? slot.Doctor?.HospitalId ?? 0L;
             var policy = await _policyService.GetEffectiveAsync(hospitalId, ct);
 
-            if (start >= nowLocal.AddHours(policy.CancelMinimumHours))
+            if (AppointmentReadModel.IsWithinCancelWindow(start, nowLocal, policy.CancelMinimumHours))
                 actions.Add(ActionCancel);
 
             if (start >= nowLocal.AddHours(policy.RescheduleMinimumHours))

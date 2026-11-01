@@ -13,6 +13,9 @@ public class Appointment
     public string? Status { get; set; }
     public long? BookedByUserId { get; set; }
     public DateTime? BookedAt { get; set; }
+    public string? CancellationReason { get; set; }
+    public DateTime? CancelledAt { get; set; }
+    public long? CancelledByUserId { get; set; }
 
     public ExaminationSlot? Slot { get; set; }
     public Patient? Patient { get; set; }

@@ -15,17 +15,20 @@ public sealed class AppointmentsController : ControllerBase
     private readonly IAppointmentBookingService _bookingService;
     private readonly IAppointmentListService _listService;
     private readonly IAppointmentDetailService _detailService;
+    private readonly IAppointmentCancelService _cancelService;
 
     public AppointmentsController(
         IAppointmentSlotService slotService,
         IAppointmentBookingService bookingService,
         IAppointmentListService listService,
-        IAppointmentDetailService detailService)
+        IAppointmentDetailService detailService,
+        IAppointmentCancelService cancelService)
     {
         _slotService = slotService;
         _bookingService = bookingService;
         _listService = listService;
         _detailService = detailService;
+        _cancelService = cancelService;
     }
 
     /// <summary>GET /api/v1/appointments/available-slots — Xem ngày/ca/slot còn khả dụng theo bác sĩ và dịch vụ khám.</summary>
@@ -103,6 +106,21 @@ public sealed class AppointmentsController : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<AppointmentDetailDto>> GetDetail(string idOrCode, CancellationToken ct)
         => Ok(await _detailService.GetMyAppointmentDetailAsync(GetUserId(), idOrCode, ct));
+
+    /// <summary>POST /api/v1/appointments/{idOrCode}/cancel — Hủy lịch hẹn còn đủ điều kiện kèm lý do (UC14).</summary>
+    [HttpPost("{idOrCode}/cancel")]
+    [ProducesResponseType<AppointmentDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<AppointmentDetailDto>> Cancel(
+        string idOrCode,
+        [FromBody] CancelAppointmentRequest request,
+        CancellationToken ct)
+        => Ok(await _cancelService.CancelMyAppointmentAsync(GetUserId(), idOrCode, request, GetIp(), ct));
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)

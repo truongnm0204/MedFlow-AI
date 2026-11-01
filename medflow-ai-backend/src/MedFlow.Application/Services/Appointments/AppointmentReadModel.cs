@@ -4,6 +4,7 @@ using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Application.Services.Services;
 using MedFlow.Domain.Entities;
+using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.Application.Services.Appointments;
@@ -13,6 +14,7 @@ internal static class AppointmentReadModel
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
     public static readonly TimeSpan AfternoonShiftStart = new(12, 0, 0);
     public const string FeePolicyNoteText = "Giá niêm yết dịch vụ khám • Không áp dụng BHYT";
+    private const int MaxIdentifierLength = 40;
 
     internal sealed record ScopeMember(
         Patient Patient,
@@ -306,7 +308,7 @@ internal static class AppointmentReadModel
             PaymentSubNote: paymentSubNote,
             ReasonForVisit: visit?.ReasonForVisit ?? a.ReasonForVisit,
             ClinicalSummary: null,
-            CancellationReason: null,
+            CancellationReason: status == "CANCELLED" ? a.CancellationReason : null,
             SlotReleaseNote: null,
             RebookSpecialtyLabel: null,
             BookedAt: bookedAt);
@@ -333,6 +335,35 @@ internal static class AppointmentReadModel
 
     public static bool IsCancelledStatus(string status)
         => status is "CANCELLED" or "NO_SHOW";
+
+    public static bool IsModifiableStatus(string status)
+        => status is "BOOKED" or "CONFIRMED" or "PENDING";
+
+    public static bool IsWithinCancelWindow(DateTime startsAt, DateTime nowLocal, int cancelMinimumHours)
+        => startsAt > nowLocal && startsAt >= nowLocal.AddHours(cancelMinimumHours);
+
+    public static (string Trimmed, long? Id, string? Code) ParseIdentifier(string? idOrCode)
+    {
+        if (string.IsNullOrWhiteSpace(idOrCode))
+            throw new ValidationException("Mã lịch hẹn không hợp lệ.");
+
+        var trimmed = idOrCode.Trim();
+        if (trimmed.StartsWith('#'))
+            trimmed = trimmed[1..].TrimStart();
+
+        if (string.IsNullOrEmpty(trimmed) || trimmed.Length > MaxIdentifierLength)
+            throw new ValidationException("Mã lịch hẹn không hợp lệ.");
+
+        if (trimmed.All(char.IsAsciiDigit))
+        {
+            if (!long.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id <= 0)
+                throw new ValidationException("Mã lịch hẹn không hợp lệ.");
+
+            return (trimmed, id, null);
+        }
+
+        return (trimmed, null, trimmed.ToUpperInvariant());
+    }
 
     public static string ResolveStatusBannerLabel(string status) => status switch
     {
