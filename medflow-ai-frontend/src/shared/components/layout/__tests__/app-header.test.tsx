@@ -16,13 +16,13 @@ const patient: UserDto = {
   patientCode: 'PAT-0001',
 };
 
-function renderHeader() {
+function renderHeader(initialPath = '/') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialPath]}>
         <AppHeader />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -43,6 +43,23 @@ describe('AppHeader', () => {
   it('guest → render PublicNavbar với nút Đăng nhập', () => {
     renderHeader();
     expect(screen.getByText('Đăng nhập')).toBeDefined();
+  });
+
+  it('guest ở /doctors → link Bác sĩ aria-current="page", CTA Đặt lịch khám href=/booking', () => {
+    renderHeader('/doctors');
+    const doctorLink = screen.getByRole('link', { name: 'Bác sĩ' });
+    expect(doctorLink).toHaveAttribute('aria-current', 'page');
+    const cta = screen.getByRole('link', { name: /Đặt lịch khám/ });
+    expect(cta).toHaveAttribute('href', '/booking');
+  });
+
+  it('patient ở /booking → link Đặt lịch khám aria-current="page", Trang chủ không active', () => {
+    useAuthStore.setState({ user: patient, isAuthenticated: true });
+    renderHeader('/booking');
+    const bookingLink = screen.getByRole('link', { name: 'Đặt lịch khám' });
+    expect(bookingLink).toHaveAttribute('aria-current', 'page');
+    const homeLink = screen.getByRole('link', { name: 'Trang chủ' });
+    expect(homeLink).not.toHaveAttribute('aria-current');
   });
 
   it('đã login → render PatientNavbar với tên user, không có nút Đăng nhập', () => {
