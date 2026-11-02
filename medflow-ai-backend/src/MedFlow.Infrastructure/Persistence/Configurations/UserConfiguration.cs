@@ -36,6 +36,11 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
             .HasForeignKey<Patient>(p => p.UserId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        builder.HasOne(u => u.Staff)
+            .WithOne(s => s.User)
+            .HasForeignKey<Staff>(s => s.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasMany(u => u.UserRoles)
             .WithOne(ur => ur.User)
             .HasForeignKey(ur => ur.UserId)

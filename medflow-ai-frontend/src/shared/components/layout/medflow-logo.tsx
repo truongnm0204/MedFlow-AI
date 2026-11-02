@@ -28,7 +28,7 @@ export function MedflowLogo({
     <img
       src={SOURCES[`${variant}-${tone}`]}
       alt="MedFlow AI"
-      className={className}
+      className={`max-w-none shrink-0 object-contain ${className}`}
       loading="eager"
       decoding="async"
     />
