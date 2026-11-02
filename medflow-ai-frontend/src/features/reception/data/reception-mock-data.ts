@@ -154,4 +154,11 @@ export const QUICK_ACTIONS_MOCK: QuickAction[] = [
     icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z',
     accent: 'amber',
   },
+  {
+    id: 'transfer-room',
+    label: 'Chuyển buồng khám',
+    description: 'Điều phối bệnh nhân sang buồng dự phòng',
+    icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4',
+    accent: 'sky',
+  },
 ];
