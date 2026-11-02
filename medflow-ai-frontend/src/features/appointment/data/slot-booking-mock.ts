@@ -24,6 +24,10 @@ export const MOCK_BOOKING_PROFILES: BookingPatientProfile[] = [
     metaPrimary: 'SĐT: 0912 345 678',
     metaSecondary: 'Định danh đã đối chiếu',
     patientCode: 'PAT-8821',
+    phone: '0912 345 678',
+    birthDateLabel: '15/08/1986',
+    nationalId: '001086001234',
+    address: 'Phường Hàng Trống, Quận Hoàn Kiếm, TP. Hà Nội',
   },
   {
     id: 'pat-child',
