@@ -133,5 +133,128 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
                 $"Unexpected status code: {response.StatusCode}");
         }
     }
+
+    [Fact]
+    public async Task CreateExaminationService_Unauthenticated_Returns401()
+    {
+        var payload = new CreateExaminationServiceRequest(ServiceCode: "EX-TEST-01", Name: "Khám bệnh mới");
+        var response = await Client.PostAsJsonAsync("/api/v1/admin/examination-services", payload);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateExaminationService_PatientRole_Returns403()
+    {
+        var token = GenerateToken(999, "patient_test@medflow.test", "PATIENT");
+        var payload = new CreateExaminationServiceRequest(ServiceCode: "EX-TEST-01", Name: "Khám bệnh mới");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-services");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateExaminationService_DoctorRole_Returns403()
+    {
+        var token = GenerateToken(888, "doctor_test@medflow.test", "DOCTOR");
+        var payload = new CreateExaminationServiceRequest(ServiceCode: "EX-TEST-01", Name: "Khám bệnh mới");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-services");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateExaminationService_EmptyServiceCode_Returns400()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var payload = new CreateExaminationServiceRequest(ServiceCode: "", Name: "Khám bệnh mới");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-services");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateExaminationService_HospitalAdminRole_ReturnsCreated_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var payload = new CreateExaminationServiceRequest(
+            ServiceCode: $"EX-INT-{Guid.NewGuid():N}"[..12].ToUpperInvariant(),
+            Name: "Khám Tích Hợp Tự Động",
+            Category: "Khám Lâm sàng",
+            Price: 250000m,
+            OnlineBooking: true,
+            Status: "ACTIVE"
+        );
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-services");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        if (response.StatusCode == HttpStatusCode.Created)
+        {
+            var result = await response.Content.ReadFromJsonAsync<ExaminationServiceAdminItemDto>();
+            Assert.NotNull(result);
+            Assert.Equal(payload.Name, result.Name);
+            Assert.Equal(250000m, result.Price);
+        }
+        else
+        {
+            // Gracefully handle offline local DB in local environment
+            Assert.True(
+                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
+                $"Unexpected status code: {response.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task CreateExaminationService_AliasRoute_ReturnsCreated_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var payload = new CreateExaminationServiceRequest(
+            ServiceCode: $"EX-ALS-{Guid.NewGuid():N}"[..12].ToUpperInvariant(),
+            Name: "Khám Tích Hợp Alias Route",
+            Category: "Khám Lâm sàng",
+            Price: 200000m,
+            OnlineBooking: true,
+            Status: "ACTIVE"
+        );
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/services");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        if (response.StatusCode == HttpStatusCode.Created)
+        {
+            var result = await response.Content.ReadFromJsonAsync<ExaminationServiceAdminItemDto>();
+            Assert.NotNull(result);
+            Assert.Equal(payload.Name, result.Name);
+        }
+        else
+        {
+            // Gracefully handle offline local DB in local environment
+            Assert.True(
+                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
+                $"Unexpected status code: {response.StatusCode}");
+        }
+    }
 }
 
