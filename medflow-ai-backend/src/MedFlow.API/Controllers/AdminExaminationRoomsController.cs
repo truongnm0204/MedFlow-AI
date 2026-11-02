@@ -44,4 +44,50 @@ public sealed class AdminExaminationRoomsController : ControllerBase
             });
         }
     }
+
+    /// <summary>POST /api/v1/admin/examination-rooms — Tạo mới buồng khám / phòng kỹ thuật.</summary>
+    [HttpPost]
+    [ProducesResponseType<ExaminationRoomItemDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ExaminationRoomItemDto>> CreateExaminationRoom(
+        [FromBody] CreateExaminationRoomRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            var result = await _examinationRoomService.CreateExaminationRoomAsync(request, ct);
+            return StatusCode(StatusCodes.Status201Created, result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new ProblemDetails
+            {
+                Title = "Không tìm thấy dữ liệu liên quan",
+                Detail = ex.Message,
+                Status = StatusCodes.Status404NotFound
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Dữ liệu không hợp lệ",
+                Detail = ex.Message,
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new ProblemDetails
+            {
+                Title = "Xung đột dữ liệu",
+                Detail = ex.Message,
+                Status = StatusCodes.Status409Conflict
+            });
+        }
+    }
 }
