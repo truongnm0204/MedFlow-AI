@@ -474,5 +474,327 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
             }
         }
     }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_Unauthenticated_Returns401()
+    {
+        var payload = new UpdateExaminationSlotRequest(Capacity: 10);
+        var response = await Client.PutAsJsonAsync("/api/v1/admin/examination-slots/1", payload);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_PatientRole_Returns403()
+    {
+        var token = GenerateToken(999, "patient_test@medflow.test", "PATIENT");
+        var payload = new UpdateExaminationSlotRequest(Capacity: 10);
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-slots/1");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_DoctorRole_Returns403()
+    {
+        var token = GenerateToken(888, "doctor_test@medflow.test", "DOCTOR");
+        var payload = new UpdateExaminationSlotRequest(Capacity: 10);
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-slots/1");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task UpdateExaminationSlot_InvalidId_Returns400(long id)
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var payload = new UpdateExaminationSlotRequest(Capacity: 10);
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/admin/examination-slots/{id}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    [InlineData(105)]
+    public async Task UpdateExaminationSlot_InvalidCapacity_Returns400(int capacity)
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var payload = new UpdateExaminationSlotRequest(Capacity: capacity);
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-slots/1");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_InvalidTime_Returns400()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var payload = new UpdateExaminationSlotRequest(
+            StartTime: "11:30",
+            EndTime: "10:30" // End before start
+        );
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-slots/1");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_NonExistentId_Returns404_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var payload = new UpdateExaminationSlotRequest(Capacity: 10);
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-slots/999999");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+        else
+        {
+            Assert.True(
+                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {response.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_HospitalAdminRole_UpdatesSlotSuccessfully_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+
+        // Create a unique test slot first
+        var createPayload = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1,
+            RoomId: 1,
+            Date: "2026-12-10",
+            StartTime: "15:00",
+            EndTime: "15:30",
+            Capacity: 6,
+            Status: "OPEN"
+        );
+
+        using var createReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-slots");
+        createReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        createReq.Content = JsonContent.Create(createPayload);
+
+        long createdId = 0;
+        try
+        {
+            var createRes = await Client.SendAsync(createReq);
+            if (createRes.StatusCode == HttpStatusCode.Created)
+            {
+                var created = await createRes.Content.ReadFromJsonAsync<ExaminationSlotAdminItemDto>();
+                Assert.NotNull(created);
+                createdId = created.Id;
+
+                var updatePayload = new UpdateExaminationSlotRequest(
+                    Capacity: 12,
+                    Status: "CLOSED"
+                );
+
+                using var updateReq = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/admin/examination-slots/{created.Id}");
+                updateReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                updateReq.Content = JsonContent.Create(updatePayload);
+
+                var response = await Client.SendAsync(updateReq);
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+                var result = await response.Content.ReadFromJsonAsync<ExaminationSlotAdminItemDto>();
+                Assert.NotNull(result);
+                Assert.Equal(12, result.CapacityMax);
+                Assert.Equal("CLOSED", result.Status);
+            }
+            else
+            {
+                Assert.True(
+                    createRes.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
+                    $"Unexpected status code: {createRes.StatusCode}");
+            }
+        }
+        finally
+        {
+            if (createdId > 0)
+            {
+                await Db.ExaminationSlots.Where(s => s.Id == createdId).ExecuteDeleteAsync();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_AliasRoute_ReturnsSuccess_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+
+        var createPayload = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            RoomId: 1,
+            Date: "2026-12-11",
+            StartTime: "16:00",
+            EndTime: "16:30",
+            Capacity: 8
+        );
+
+        using var createReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/slots");
+        createReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        createReq.Content = JsonContent.Create(createPayload);
+
+        long createdId = 0;
+        try
+        {
+            var createRes = await Client.SendAsync(createReq);
+            if (createRes.StatusCode == HttpStatusCode.Created)
+            {
+                var created = await createRes.Content.ReadFromJsonAsync<ExaminationSlotAdminItemDto>();
+                Assert.NotNull(created);
+                createdId = created.Id;
+
+                var updatePayload = new UpdateExaminationSlotRequest(
+                    Capacity: 15
+                );
+
+                using var updateReq = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/admin/slots/{created.Id}");
+                updateReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                updateReq.Content = JsonContent.Create(updatePayload);
+
+                var response = await Client.SendAsync(updateReq);
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+                var result = await response.Content.ReadFromJsonAsync<ExaminationSlotAdminItemDto>();
+                Assert.NotNull(result);
+                Assert.Equal(15, result.CapacityMax);
+            }
+            else
+            {
+                Assert.True(
+                    createRes.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
+                    $"Unexpected status code: {createRes.StatusCode}");
+            }
+        }
+        finally
+        {
+            if (createdId > 0)
+            {
+                await Db.ExaminationSlots.Where(s => s.Id == createdId).ExecuteDeleteAsync();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_DoctorConflict_Returns409_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+
+        // Create Slot A: Doctor 1 at 2026-12-12 09:00 - 09:30
+        var slotAPayload = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1,
+            RoomId: 1,
+            Date: "2026-12-12",
+            StartTime: "09:00",
+            EndTime: "09:30"
+        );
+
+        // Create Slot B: Doctor 2 at 2026-12-12 11:00 - 11:30
+        var slotBPayload = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 2,
+            RoomId: 1,
+            Date: "2026-12-12",
+            StartTime: "11:00",
+            EndTime: "11:30"
+        );
+
+        long slotAId = 0;
+        long slotBId = 0;
+
+        try
+        {
+            using var reqA = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-slots");
+            reqA.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            reqA.Content = JsonContent.Create(slotAPayload);
+            var resA = await Client.SendAsync(reqA);
+
+            using var reqB = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-slots");
+            reqB.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            reqB.Content = JsonContent.Create(slotBPayload);
+            var resB = await Client.SendAsync(reqB);
+
+            if (resA.StatusCode == HttpStatusCode.Created && resB.StatusCode == HttpStatusCode.Created)
+            {
+                var createdA = await resA.Content.ReadFromJsonAsync<ExaminationSlotAdminItemDto>();
+                var createdB = await resB.Content.ReadFromJsonAsync<ExaminationSlotAdminItemDto>();
+                Assert.NotNull(createdA);
+                Assert.NotNull(createdB);
+                slotAId = createdA.Id;
+                slotBId = createdB.Id;
+
+                // Try to update Slot B to assign Doctor 1 at overlapping time (09:15 - 09:45)
+                var conflictPayload = new UpdateExaminationSlotRequest(
+                    DoctorId: 1,
+                    StartTime: "09:15",
+                    EndTime: "09:45"
+                );
+
+                using var updateReq = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/admin/examination-slots/{slotBId}");
+                updateReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                updateReq.Content = JsonContent.Create(conflictPayload);
+
+                var response = await Client.SendAsync(updateReq);
+                Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            }
+            else
+            {
+                Assert.True(
+                    resA.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
+                    $"Unexpected status code: {resA.StatusCode}");
+            }
+        }
+        finally
+        {
+            if (slotAId > 0)
+            {
+                await Db.ExaminationSlots.Where(s => s.Id == slotAId).ExecuteDeleteAsync();
+            }
+            if (slotBId > 0)
+            {
+                await Db.ExaminationSlots.Where(s => s.Id == slotBId).ExecuteDeleteAsync();
+            }
+        }
+    }
 }
 

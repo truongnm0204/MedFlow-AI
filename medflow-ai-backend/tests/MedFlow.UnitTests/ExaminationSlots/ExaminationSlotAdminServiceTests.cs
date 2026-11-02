@@ -842,4 +842,253 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         Assert.Equal("08:30", result.EndTime);
         Assert.Equal(5, result.CapacityMax);
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // Update Examination Slot Tests
+    // ─────────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task UpdateExaminationSlot_InvalidId_ThrowsArgumentException(long id)
+    {
+        var request = new UpdateExaminationSlotRequest(Capacity: 10);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(id, request));
+        Assert.Contains("Mã khung giờ khám không hợp lệ", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_NullRequest_ThrowsArgumentNullException()
+    {
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.UpdateExaminationSlotAsync(1, null!));
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_NonExistentSlotId_ThrowsKeyNotFoundException()
+    {
+        var request = new UpdateExaminationSlotRequest(Capacity: 10);
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationSlotAsync(9999, request));
+        Assert.Contains("Không tìm thấy khung giờ khám", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_EndTimeBeforeStartTime_ThrowsArgumentException()
+    {
+        var request = new UpdateExaminationSlotRequest(
+            StartTime: "11:00",
+            EndTime: "10:00"
+        );
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        Assert.Contains("Giờ kết thúc phải sau giờ bắt đầu", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    [InlineData(105)]
+    public async Task UpdateExaminationSlot_CapacityOutOfRange_ThrowsArgumentException(int capacity)
+    {
+        var request = new UpdateExaminationSlotRequest(Capacity: capacity);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        Assert.Contains("Sức chứa phải từ 1 đến 100", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_ReduceCapacityBelowActiveBookings_ThrowsArgumentException()
+    {
+        // Slot 1 has 2 active appointments (appt 1 and appt 2)
+        var request = new UpdateExaminationSlotRequest(Capacity: 1);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        Assert.Contains("Không thể giảm sức chứa xuống 1 vì đã có 2 lượt đặt chỗ", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_InvalidStatus_ThrowsArgumentException()
+    {
+        var request = new UpdateExaminationSlotRequest(Status: "UNKNOWN");
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        Assert.Contains("Trạng thái khung giờ không hợp lệ", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_NonExistentServiceId_ThrowsKeyNotFoundException()
+    {
+        var request = new UpdateExaminationSlotRequest(ServiceId: 9999);
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        Assert.Contains("Không tìm thấy dịch vụ khám", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_NonExistentDoctorId_ThrowsKeyNotFoundException()
+    {
+        var request = new UpdateExaminationSlotRequest(DoctorId: 9999);
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        Assert.Contains("Không tìm thấy bác sĩ", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_NonExistentRoomId_ThrowsKeyNotFoundException()
+    {
+        var request = new UpdateExaminationSlotRequest(RoomId: 9999);
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        Assert.Contains("Không tìm thấy buồng khám", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_InactiveService_ThrowsArgumentException()
+    {
+        var inactiveService = new Service
+        {
+            Id = 60,
+            Name = "Dịch vụ ngưng",
+            ServiceCode = "EX-INACT2",
+            IsActive = false
+        };
+        _db.Services.Add(inactiveService);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateExaminationSlotRequest(ServiceId: 60);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        Assert.Contains("tạm ngưng hoặc không hoạt động", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_InactiveDoctor_ThrowsArgumentException()
+    {
+        var inactiveDoctor = new Doctor
+        {
+            Id = 60,
+            DoctorCode = "DOC-INACT2",
+            IsActive = false
+        };
+        _db.Doctors.Add(inactiveDoctor);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateExaminationSlotRequest(DoctorId: 60);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        Assert.Contains("không ở trạng thái hoạt động", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_InactiveRoom_ThrowsArgumentException()
+    {
+        var inactiveRoom = new HospitalRoom
+        {
+            Id = 60,
+            RoomCode = "PK-INACT2",
+            Name = "Phòng sửa chữa",
+            Status = "INACTIVE"
+        };
+        _db.HospitalRooms.Add(inactiveRoom);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateExaminationSlotRequest(RoomId: 60);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        Assert.Contains("Buồng khám đang ngừng hoạt động", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_DoctorScheduleConflict_ThrowsInvalidOperationException()
+    {
+        // Slot 2 has Doctor 2 at 2026-10-27 08:30 - 09:00
+        // Attempting to move Slot 1 to overlap with Doctor 2 while assigning Doctor 2
+        var request = new UpdateExaminationSlotRequest(
+            DoctorId: 2,
+            Date: "2026-10-27",
+            StartTime: "08:45",
+            EndTime: "09:15"
+        );
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        Assert.Contains("Xung đột lịch bác sĩ", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_RoomScheduleConflict_ThrowsInvalidOperationException()
+    {
+        // Slot 2 has Room 2 at 2026-10-27 08:30 - 09:00
+        // Attempting to move Slot 1 to Room 2 at overlapping time
+        var request = new UpdateExaminationSlotRequest(
+            RoomId: 2,
+            Date: "2026-10-27",
+            StartTime: "08:45",
+            EndTime: "09:15"
+        );
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        Assert.Contains("Xung đột buồng khám", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_UpdateCapacityAndStatus_Success()
+    {
+        // Slot 1 has capacity 8, activeBookings 2. Update to capacity 12, CLOSED.
+        var request = new UpdateExaminationSlotRequest(
+            Capacity: 12,
+            Status: "CLOSED"
+        );
+
+        var result = await _service.UpdateExaminationSlotAsync(1, request);
+
+        Assert.NotNull(result);
+        Assert.Equal(1, result.Id);
+        Assert.Equal(12, result.CapacityMax);
+        Assert.Equal(2, result.CapacityBooked);
+        Assert.Equal("CLOSED", result.Status);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_UpdateDoctorAndRoom_Success()
+    {
+        // Move slot 4 (at future 2026-11-15 10:00 - 10:30) to Doctor 1 and Room 1
+        var request = new UpdateExaminationSlotRequest(
+            DoctorId: 1,
+            RoomId: 1
+        );
+
+        var result = await _service.UpdateExaminationSlotAsync(4, request);
+
+        Assert.NotNull(result);
+        Assert.Equal(4, result.Id);
+        Assert.Equal(1, result.DoctorId);
+        Assert.Equal("BS. Nguyễn Thu Lan", result.DoctorName);
+        Assert.Equal(1, result.RoomId);
+        Assert.Equal("PK-102", result.Room);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_UpdateDirectStartsAtEndsAt_Success()
+    {
+        var newStart = new DateTime(2026, 11, 25, 9, 0, 0);
+        var newEnd = new DateTime(2026, 11, 25, 9, 30, 0);
+
+        var request = new UpdateExaminationSlotRequest(
+            StartsAt: newStart,
+            EndsAt: newEnd,
+            Capacity: 10
+        );
+
+        var result = await _service.UpdateExaminationSlotAsync(4, request);
+
+        Assert.NotNull(result);
+        Assert.Equal("2026-11-25", result.Date);
+        Assert.Equal("09:00", result.StartTime);
+        Assert.Equal("09:30", result.EndTime);
+        Assert.Equal(10, result.CapacityMax);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationSlot_SelfNotConflictingWithOwnTime_Success()
+    {
+        // Updating slot 1 capacity without changing its own time shouldn't conflict with itself
+        var request = new UpdateExaminationSlotRequest(
+            Capacity: 10
+        );
+
+        var result = await _service.UpdateExaminationSlotAsync(1, request);
+
+        Assert.NotNull(result);
+        Assert.Equal(10, result.CapacityMax);
+        Assert.Equal("2026-10-27", result.Date);
+        Assert.Equal("08:00", result.StartTime);
+        Assert.Equal("08:30", result.EndTime);
+    }
 }
