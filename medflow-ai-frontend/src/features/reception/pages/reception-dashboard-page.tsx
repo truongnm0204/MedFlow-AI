@@ -6,6 +6,7 @@ import { useLogout } from '@/features/auth/hooks/use-auth';
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
+import { ExaminationTicketModal } from '../components/examination-ticket-modal';
 import { PatientDetailModal } from '../components/patient-detail-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
 import { QueuePreviewTable } from '../components/queue-preview-table';
@@ -17,6 +18,7 @@ import {
   RECEPTION_STATS_MOCK,
   TODAY_APPOINTMENTS_MOCK,
 } from '../data/reception-mock-data';
+import { EXAMINATION_TICKET_MOCK } from '../data/examination-ticket-mock';
 import { findPatientDetailByCode } from '../data/patient-detail-mock';
 import type { TodayAppointment } from '../types/reception.types';
 
@@ -36,6 +38,7 @@ export function ReceptionDashboardPage() {
   const logout = useLogout();
   const [selectedPatientCode, setSelectedPatientCode] = useState<string | null>(null);
   const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
+  const [ticketOpen, setTicketOpen] = useState(false);
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
 
   return (
@@ -134,6 +137,7 @@ export function ReceptionDashboardPage() {
                       if (id === 'search' || id === 'new-patient') {
                         navigate('/reception/patients');
                       }
+                      if (id === 'print-ticket') setTicketOpen(true);
                     }}
                   />
                 </CardContent>
@@ -174,6 +178,10 @@ export function ReceptionDashboardPage() {
         <PatientDetailModal
           patient={selectedPatient}
           onClose={() => setSelectedPatientCode(null)}
+        />
+        <ExaminationTicketModal
+          ticket={ticketOpen ? EXAMINATION_TICKET_MOCK : null}
+          onClose={() => setTicketOpen(false)}
         />
       </div>
     </div>
