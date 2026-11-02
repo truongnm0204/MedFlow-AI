@@ -425,6 +425,280 @@ public sealed class ExaminationServiceAdminService : IExaminationServiceAdminSer
         );
     }
 
+    public async Task<ExaminationServiceAdminItemDto> UpdateExaminationServiceAsync(
+        long id,
+        UpdateExaminationServiceRequest request,
+        CancellationToken ct = default)
+    {
+        if (id <= 0)
+        {
+            throw new ArgumentException("ID dịch vụ khám phải lớn hơn 0.", nameof(id));
+        }
+
+        ArgumentNullException.ThrowIfNull(request);
+
+        // Pre-validate ServiceCode format if provided
+        var rawCode = request.ServiceCode ?? request.Code;
+        string? newCode = null;
+        if (!string.IsNullOrWhiteSpace(rawCode))
+        {
+            newCode = rawCode.Trim().ToUpperInvariant();
+            if (newCode.Length < 2)
+            {
+                throw new ArgumentException("Mã dịch vụ phải có ít nhất 2 ký tự.", nameof(request.ServiceCode));
+            }
+
+            if (newCode.Length > 40)
+            {
+                throw new ArgumentException("Mã dịch vụ không được vượt quá 40 ký tự.", nameof(request.ServiceCode));
+            }
+        }
+
+        // Pre-validate Name if provided
+        string? newName = null;
+        if (request.Name is not null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Name))
+            {
+                throw new ArgumentException("Tên dịch vụ khám không được để trống.", nameof(request.Name));
+            }
+
+            newName = request.Name.Trim();
+            if (newName.Length < 3)
+            {
+                throw new ArgumentException("Tên dịch vụ phải có ít nhất 3 ký tự.", nameof(request.Name));
+            }
+
+            if (newName.Length > 200)
+            {
+                throw new ArgumentException("Tên dịch vụ không được vượt quá 200 ký tự.", nameof(request.Name));
+            }
+        }
+
+        // Pre-validate Category / ServiceType if provided
+        var rawCategory = request.Category ?? request.ServiceType;
+        string? newServiceType = null;
+        if (!string.IsNullOrWhiteSpace(rawCategory))
+        {
+            var cat = rawCategory.Trim().ToLowerInvariant();
+            if (cat is "khám lâm sàng" or "examination")
+            {
+                newServiceType = "EXAMINATION";
+            }
+            else if (cat is "hội chẩn lâm sàng" or "consultation")
+            {
+                newServiceType = "CONSULTATION";
+            }
+            else if (cat is "cận lâm sàng kỹ thuật" or "diagnostic")
+            {
+                newServiceType = "DIAGNOSTIC";
+            }
+            else
+            {
+                throw new ArgumentException("Phân loại dịch vụ không hợp lệ. Cho phép: Khám Lâm sàng (EXAMINATION), Hội chẩn Lâm sàng (CONSULTATION), Cận lâm sàng kỹ thuật (DIAGNOSTIC).", nameof(request.Category));
+            }
+        }
+
+        // Pre-validate Price if provided
+        if (request.Price.HasValue && request.Price.Value < 0)
+        {
+            throw new ArgumentException("Giá dịch vụ không được là số âm.", nameof(request.Price));
+        }
+
+        var service = await _db.Services
+            .Include(s => s.Department)
+            .Include(s => s.Specialty)
+            .Include(s => s.ServicePrices)
+            .FirstOrDefaultAsync(s => s.Id == id, ct);
+
+        if (service is null)
+        {
+            throw new KeyNotFoundException($"Không tìm thấy dịch vụ khám với ID {id}.");
+        }
+
+        // 1. ServiceCode update & duplicate check
+        if (newCode is not null)
+        {
+            var targetHospitalId = request.HospitalId ?? service.HospitalId ?? 1;
+            if (!string.Equals(service.ServiceCode, newCode, StringComparison.OrdinalIgnoreCase) ||
+                (request.HospitalId.HasValue && request.HospitalId.Value != service.HospitalId))
+            {
+                var isDuplicate = await _db.Services.AnyAsync(
+                    s => s.Id != id && (s.HospitalId ?? 1) == targetHospitalId && s.ServiceCode.ToLower() == newCode.ToLower(), ct);
+
+                if (isDuplicate)
+                {
+                    throw new InvalidOperationException($"Mã dịch vụ '{newCode}' đã tồn tại trong cơ sở y tế.");
+                }
+            }
+
+            service.ServiceCode = newCode;
+        }
+
+        // 2. Name
+        if (newName is not null)
+        {
+            service.Name = newName;
+        }
+
+        // 3. Category / ServiceType
+        if (newServiceType is not null)
+        {
+            service.ServiceType = newServiceType;
+        }
+
+        // 4. Department
+        if (request.DepartmentId.HasValue)
+        {
+            var dept = await _db.Departments.FirstOrDefaultAsync(d => d.Id == request.DepartmentId.Value, ct);
+            if (dept is null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy khoa phòng với mã {request.DepartmentId.Value}.");
+            }
+            service.DepartmentId = dept.Id;
+            service.Department = dept;
+        }
+        else if (!string.IsNullOrWhiteSpace(request.Department))
+        {
+            var deptQuery = request.Department.Trim().ToLower();
+            var dept = await _db.Departments.FirstOrDefaultAsync(
+                d => d.Name.ToLower() == deptQuery || d.DepartmentCode.ToLower() == deptQuery, ct);
+            if (dept is null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy khoa phòng: {request.Department.Trim()}.");
+            }
+            service.DepartmentId = dept.Id;
+            service.Department = dept;
+        }
+
+        // 5. Specialty
+        if (request.SpecialtyId.HasValue)
+        {
+            var spec = await _db.Specialties.FirstOrDefaultAsync(s => s.Id == request.SpecialtyId.Value, ct);
+            if (spec is null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy chuyên khoa với mã {request.SpecialtyId.Value}.");
+            }
+            service.SpecialtyId = spec.Id;
+            service.Specialty = spec;
+        }
+
+        // 6. HospitalId
+        if (request.HospitalId.HasValue)
+        {
+            service.HospitalId = request.HospitalId.Value;
+        }
+
+        // 7. Description
+        if (request.Description is not null)
+        {
+            service.Description = request.Description.Trim();
+        }
+
+        // 8. Online Booking
+        var allowsOnline = request.AllowsOnlineBooking ?? request.OnlineBooking;
+        if (allowsOnline.HasValue)
+        {
+            service.AllowsOnlineBooking = allowsOnline.Value;
+        }
+
+        // 9. RequiresResultVerification
+        if (request.RequiresResultVerification.HasValue)
+        {
+            service.RequiresResultVerification = request.RequiresResultVerification.Value;
+        }
+        else if (service.ServiceType == "DIAGNOSTIC" && !service.RequiresResultVerification.HasValue)
+        {
+            service.RequiresResultVerification = true;
+        }
+
+        // 10. Status / IsActive
+        if (request.IsActive.HasValue)
+        {
+            service.IsActive = request.IsActive.Value;
+        }
+        else if (!string.IsNullOrWhiteSpace(request.Status))
+        {
+            var st = request.Status.Trim();
+            service.IsActive = !string.Equals(st, "SUSPENDED", StringComparison.OrdinalIgnoreCase)
+                           && !string.Equals(st, "INACTIVE", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // 11. Price update if provided
+        if (request.Price.HasValue)
+        {
+            if (request.Price.Value < 0)
+            {
+                throw new ArgumentException("Giá dịch vụ không được là số âm.", nameof(request.Price));
+            }
+
+            var nowUtc = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+
+            // Close existing active prices
+            foreach (var existingPrice in service.ServicePrices.Where(p => !p.EffectiveTo.HasValue || p.EffectiveTo > nowUtc))
+            {
+                existingPrice.EffectiveTo = nowUtc;
+            }
+
+            var newPrice = new ServicePrice
+            {
+                ServiceId = service.Id,
+                PriceAmount = request.Price.Value,
+                EffectiveFrom = nowUtc,
+                EffectiveTo = null
+            };
+            service.ServicePrices.Add(newPrice);
+            _db.ServicePrices.Add(newPrice);
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        // 12. Resolve effective price and return DTO
+        var now = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+        var activePrice = service.ServicePrices
+            .Where(p => (!p.EffectiveFrom.HasValue || p.EffectiveFrom.Value <= now)
+                     && (!p.EffectiveTo.HasValue || p.EffectiveTo.Value > now))
+            .OrderByDescending(p => p.EffectiveFrom ?? DateTime.MinValue)
+            .ThenByDescending(p => p.Id)
+            .Select(p => p.PriceAmount)
+            .FirstOrDefault()
+            ?? service.ServicePrices.OrderByDescending(p => p.Id).Select(p => p.PriceAmount).FirstOrDefault()
+            ?? 0m;
+
+        var priceFormatted = activePrice.ToString("N0", new CultureInfo("vi-VN")) + " đ";
+        var hospitalIdVal = service.HospitalId.GetValueOrDefault(1);
+        var facility = hospitalIdVal > 1 ? $"MedFlow Cơ sở {hospitalIdVal}" : "MedFlow Cơ sở 1";
+        var categoryName = ResolveCategory(service.ServiceType);
+        var onlineFlag = service.AllowsOnlineBooking ?? false;
+        var bookingChannel = onlineFlag ? "ONLINE_ALLOWED" : "COUNTER_ONLY";
+        var isActiveFlag = service.IsActive ?? true;
+        var statusStr = isActiveFlag ? "ACTIVE" : "SUSPENDED";
+
+        return new ExaminationServiceAdminItemDto(
+            Id: service.Id,
+            ServiceCode: service.ServiceCode,
+            Name: service.Name,
+            Description: service.Description,
+            ServiceType: service.ServiceType,
+            Category: categoryName,
+            HospitalId: service.HospitalId,
+            Facility: facility,
+            DepartmentId: service.DepartmentId,
+            DepartmentCode: service.Department?.DepartmentCode,
+            DepartmentName: service.Department?.Name,
+            SpecialtyId: service.SpecialtyId,
+            SpecialtyCode: service.Specialty?.SpecialtyCode,
+            SpecialtyName: service.Specialty?.Name,
+            Price: activePrice,
+            PriceFormatted: priceFormatted,
+            AllowsOnlineBooking: onlineFlag,
+            BookingChannel: bookingChannel,
+            RequiresResultVerification: service.RequiresResultVerification ?? false,
+            IsActive: isActiveFlag,
+            Status: statusStr
+        );
+    }
+
     private static string ResolveCategory(string? serviceType)
     {
         if (string.Equals(serviceType, "DIAGNOSTIC", StringComparison.OrdinalIgnoreCase))
