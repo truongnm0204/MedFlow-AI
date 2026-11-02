@@ -11,5 +11,10 @@ public interface IExaminationSlotAdminService
     Task<ExaminationSlotAdminItemDto> CreateExaminationSlotAsync(
         CreateExaminationSlotRequest request,
         CancellationToken ct = default);
+
+    Task<ExaminationSlotAdminItemDto> UpdateExaminationSlotAsync(
+        long id,
+        UpdateExaminationSlotRequest request,
+        CancellationToken ct = default);
 }
 

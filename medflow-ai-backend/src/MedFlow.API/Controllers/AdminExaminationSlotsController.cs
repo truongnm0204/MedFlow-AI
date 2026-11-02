@@ -80,7 +80,54 @@ public sealed class AdminExaminationSlotsController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException ex) when (!ex.Message.Contains("transient failure", StringComparison.OrdinalIgnoreCase))
+        {
+            return Conflict(new ProblemDetails
+            {
+                Title = "Xung đột lịch khám",
+                Detail = ex.Message,
+                Status = StatusCodes.Status409Conflict
+            });
+        }
+    }
+
+    /// <summary>PUT /api/v1/admin/examination-slots/{id} — Cập nhật thông tin khung giờ khám, sức chứa và trạng thái hoạt động.</summary>
+    [HttpPut("{id:long}")]
+    [ProducesResponseType<ExaminationSlotAdminItemDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ExaminationSlotAdminItemDto>> UpdateExaminationSlot(
+        [FromRoute] long id,
+        [FromBody] UpdateExaminationSlotRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            var result = await _service.UpdateExaminationSlotAsync(id, request, ct);
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Dữ liệu không hợp lệ",
+                Detail = ex.Message,
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new ProblemDetails
+            {
+                Title = "Không tìm thấy tài nguyên",
+                Detail = ex.Message,
+                Status = StatusCodes.Status404NotFound
+            });
+        }
+        catch (InvalidOperationException ex) when (!ex.Message.Contains("transient failure", StringComparison.OrdinalIgnoreCase))
         {
             return Conflict(new ProblemDetails
             {

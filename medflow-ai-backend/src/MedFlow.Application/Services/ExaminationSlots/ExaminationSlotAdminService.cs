@@ -579,5 +579,404 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             NeedsReview: false
         );
     }
+
+    public async Task<ExaminationSlotAdminItemDto> UpdateExaminationSlotAsync(
+        long id,
+        UpdateExaminationSlotRequest request,
+        CancellationToken ct = default)
+    {
+        if (id <= 0)
+        {
+            throw new ArgumentException("Mã khung giờ khám không hợp lệ.", nameof(id));
+        }
+
+        ArgumentNullException.ThrowIfNull(request);
+
+        // Fail-fast input validation before database calls
+        if (request.Capacity.HasValue && (request.Capacity.Value < 1 || request.Capacity.Value > 100))
+        {
+            throw new ArgumentException("Sức chứa phải từ 1 đến 100 lượt.", nameof(request.Capacity));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Status))
+        {
+            var st = request.Status.Trim().ToUpperInvariant();
+            if (st != "OPEN" && st != "CLOSED" && st != "FULL")
+            {
+                throw new ArgumentException("Trạng thái khung giờ không hợp lệ.", nameof(request.Status));
+            }
+        }
+
+        if (request.ServiceId.HasValue && request.ServiceId.Value <= 0)
+        {
+            throw new ArgumentException("Mã dịch vụ không hợp lệ.", nameof(request.ServiceId));
+        }
+
+        if (request.DoctorId.HasValue && request.DoctorId.Value <= 0)
+        {
+            throw new ArgumentException("Mã bác sĩ không hợp lệ.", nameof(request.DoctorId));
+        }
+
+        if (request.RoomId.HasValue && request.RoomId.Value <= 0)
+        {
+            throw new ArgumentException("Mã buồng khám không hợp lệ.", nameof(request.RoomId));
+        }
+
+        if (request.StartsAt.HasValue && request.EndsAt.HasValue && request.EndsAt.Value <= request.StartsAt.Value)
+        {
+            throw new ArgumentException("Giờ kết thúc phải sau giờ bắt đầu.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.StartTime) && !string.IsNullOrWhiteSpace(request.EndTime))
+        {
+            var hasStart = TimeOnly.TryParseExact(request.StartTime.Trim(), "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var sTime)
+                           || TimeOnly.TryParse(request.StartTime.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out sTime);
+            var hasEnd = TimeOnly.TryParseExact(request.EndTime.Trim(), "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var eTime)
+                         || TimeOnly.TryParse(request.EndTime.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out eTime);
+            if (hasStart && hasEnd && eTime <= sTime)
+            {
+                throw new ArgumentException("Giờ kết thúc phải sau giờ bắt đầu.", nameof(request.EndTime));
+            }
+        }
+
+        var slot = await _db.ExaminationSlots
+            .Include(s => s.Doctor).ThenInclude(d => d!.Staff)
+            .Include(s => s.Doctor).ThenInclude(d => d!.Specialty)
+            .Include(s => s.Service).ThenInclude(srv => srv!.Specialty)
+            .Include(s => s.Room).ThenInclude(r => r!.Department)
+            .FirstOrDefaultAsync(s => s.Id == id, ct);
+
+        if (slot == null)
+        {
+            throw new KeyNotFoundException($"Không tìm thấy khung giờ khám với ID {id}.");
+        }
+
+        // Check active bookings count (Do not invalidate existing bookings)
+        var activeBookings = await _db.Appointments.AsNoTracking()
+            .CountAsync(a => a.SlotId == id && (a.Status == null || a.Status.ToUpper() != "CANCELLED"), ct);
+
+        // 1. Resolve & validate time window
+        DateTime targetStart;
+        DateTime targetEnd;
+
+        if (request.StartsAt.HasValue && request.EndsAt.HasValue)
+        {
+            targetStart = request.StartsAt.Value;
+            targetEnd = request.EndsAt.Value;
+        }
+        else if (!string.IsNullOrWhiteSpace(request.Date) ||
+                 !string.IsNullOrWhiteSpace(request.StartTime) ||
+                 !string.IsNullOrWhiteSpace(request.EndTime))
+        {
+            var baseDate = slot.StartsAt ?? DateTime.Today;
+
+            if (!string.IsNullOrWhiteSpace(request.Date))
+            {
+                if (!DateTime.TryParseExact(request.Date.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate)
+                    && !DateTime.TryParse(request.Date.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out parsedDate))
+                {
+                    throw new ArgumentException("Định dạng ngày không hợp lệ (YYYY-MM-DD).", nameof(request.Date));
+                }
+                baseDate = parsedDate.Date;
+            }
+
+            var startTime = slot.StartsAt.HasValue ? TimeOnly.FromDateTime(slot.StartsAt.Value) : new TimeOnly(8, 0);
+            if (!string.IsNullOrWhiteSpace(request.StartTime))
+            {
+                if (!TimeOnly.TryParseExact(request.StartTime.Trim(), "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedStart)
+                    && !TimeOnly.TryParse(request.StartTime.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out parsedStart))
+                {
+                    throw new ArgumentException("Định dạng giờ bắt đầu không hợp lệ (HH:mm).", nameof(request.StartTime));
+                }
+                startTime = parsedStart;
+            }
+
+            var endTime = slot.EndsAt.HasValue ? TimeOnly.FromDateTime(slot.EndsAt.Value) : new TimeOnly(8, 30);
+            if (!string.IsNullOrWhiteSpace(request.EndTime))
+            {
+                if (!TimeOnly.TryParseExact(request.EndTime.Trim(), "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedEnd)
+                    && !TimeOnly.TryParse(request.EndTime.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out parsedEnd))
+                {
+                    throw new ArgumentException("Định dạng giờ kết thúc không hợp lệ (HH:mm).", nameof(request.EndTime));
+                }
+                endTime = parsedEnd;
+            }
+
+            targetStart = baseDate.Date.Add(startTime.ToTimeSpan());
+            targetEnd = baseDate.Date.Add(endTime.ToTimeSpan());
+        }
+        else
+        {
+            targetStart = slot.StartsAt ?? DateTime.Today;
+            targetEnd = slot.EndsAt ?? targetStart.AddMinutes(30);
+        }
+
+        if (targetEnd <= targetStart)
+        {
+            throw new ArgumentException("Giờ kết thúc phải sau giờ bắt đầu.");
+        }
+
+        // 2. Validate capacity & status
+        int targetCapacity;
+        if (request.Capacity.HasValue)
+        {
+            if (request.Capacity.Value < 1 || request.Capacity.Value > 100)
+            {
+                throw new ArgumentException("Sức chứa phải từ 1 đến 100 lượt.", nameof(request.Capacity));
+            }
+
+            if (request.Capacity.Value < activeBookings)
+            {
+                throw new ArgumentException($"Không thể giảm sức chứa xuống {request.Capacity.Value} vì đã có {activeBookings} lượt đặt chỗ hiện tại.", nameof(request.Capacity));
+            }
+
+            targetCapacity = request.Capacity.Value;
+        }
+        else
+        {
+            targetCapacity = slot.Capacity ?? 8;
+        }
+
+        string targetStatus;
+        if (!string.IsNullOrWhiteSpace(request.Status))
+        {
+            var st = request.Status.Trim().ToUpperInvariant();
+            if (st != "OPEN" && st != "CLOSED" && st != "FULL")
+            {
+                throw new ArgumentException("Trạng thái khung giờ không hợp lệ.", nameof(request.Status));
+            }
+            targetStatus = st;
+        }
+        else
+        {
+            targetStatus = string.IsNullOrWhiteSpace(slot.Status) ? "OPEN" : slot.Status.Trim().ToUpperInvariant();
+        }
+
+        // 3. Resolve & validate entities
+        long? targetServiceId = slot.ServiceId;
+        Service? service = slot.Service;
+        if (request.ServiceId.HasValue)
+        {
+            if (request.ServiceId.Value <= 0)
+            {
+                throw new ArgumentException("Mã dịch vụ không hợp lệ.", nameof(request.ServiceId));
+            }
+
+            service = await _db.Services
+                .Include(s => s.Specialty)
+                .FirstOrDefaultAsync(s => s.Id == request.ServiceId.Value, ct);
+
+            if (service == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy dịch vụ khám với ID {request.ServiceId.Value}.");
+            }
+
+            targetServiceId = service.Id;
+        }
+        else if (!string.IsNullOrWhiteSpace(request.ServiceCode))
+        {
+            var sCode = request.ServiceCode.Trim().ToLowerInvariant();
+            service = await _db.Services
+                .Include(s => s.Specialty)
+                .FirstOrDefaultAsync(s => s.ServiceCode.ToLower() == sCode, ct);
+
+            if (service == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy dịch vụ khám với mã {request.ServiceCode}.");
+            }
+
+            targetServiceId = service.Id;
+        }
+
+        if (service != null && service.IsActive == false)
+        {
+            throw new ArgumentException("Dịch vụ khám đang bị tạm ngưng hoặc không hoạt động.");
+        }
+
+        long? targetDoctorId = slot.DoctorId;
+        Doctor? doctor = slot.Doctor;
+        if (request.DoctorId.HasValue)
+        {
+            if (request.DoctorId.Value <= 0)
+            {
+                throw new ArgumentException("Mã bác sĩ không hợp lệ.", nameof(request.DoctorId));
+            }
+
+            doctor = await _db.Doctors
+                .Include(d => d.Staff)
+                .Include(d => d.Specialty)
+                .FirstOrDefaultAsync(d => d.Id == request.DoctorId.Value, ct);
+
+            if (doctor == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy bác sĩ với ID {request.DoctorId.Value}.");
+            }
+
+            targetDoctorId = doctor.Id;
+        }
+        else if (!string.IsNullOrWhiteSpace(request.DoctorCode))
+        {
+            var dCode = request.DoctorCode.Trim().ToLowerInvariant();
+            doctor = await _db.Doctors
+                .Include(d => d.Staff)
+                .Include(d => d.Specialty)
+                .FirstOrDefaultAsync(d => d.DoctorCode.ToLower() == dCode, ct);
+
+            if (doctor == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy bác sĩ với mã {request.DoctorCode}.");
+            }
+
+            targetDoctorId = doctor.Id;
+        }
+
+        if (doctor != null && !doctor.IsActive)
+        {
+            throw new ArgumentException("Bác sĩ đang không ở trạng thái hoạt động.");
+        }
+
+        long? targetRoomId = slot.RoomId;
+        HospitalRoom? room = slot.Room;
+        if (request.RoomId.HasValue)
+        {
+            if (request.RoomId.Value <= 0)
+            {
+                throw new ArgumentException("Mã buồng khám không hợp lệ.", nameof(request.RoomId));
+            }
+
+            room = await _db.HospitalRooms
+                .Include(r => r.Department)
+                .FirstOrDefaultAsync(r => r.Id == request.RoomId.Value, ct);
+
+            if (room == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy buồng khám với ID {request.RoomId.Value}.");
+            }
+
+            targetRoomId = room.Id;
+        }
+        else if (!string.IsNullOrWhiteSpace(request.RoomCode))
+        {
+            var rCode = request.RoomCode.Trim().ToLowerInvariant();
+            room = await _db.HospitalRooms
+                .Include(r => r.Department)
+                .FirstOrDefaultAsync(r => r.RoomCode.ToLower() == rCode, ct);
+
+            if (room == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy buồng khám với mã {request.RoomCode}.");
+            }
+
+            targetRoomId = room.Id;
+        }
+
+        if (room != null && string.Equals(room.Status, "INACTIVE", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("Buồng khám đang ngừng hoạt động.");
+        }
+
+        // 4. Check conflicts on update (excluding current slot id)
+        if (targetDoctorId.HasValue && targetStatus != "CLOSED")
+        {
+            var doctorConflict = await _db.ExaminationSlots.AsNoTracking()
+                .AnyAsync(s => s.Id != id
+                            && s.DoctorId == targetDoctorId.Value
+                            && s.Status.ToUpper() != "CLOSED"
+                            && s.StartsAt < targetEnd
+                            && s.EndsAt > targetStart, ct);
+
+            if (doctorConflict)
+            {
+                var docName = doctor?.Staff?.FullName ?? doctor?.DoctorCode ?? targetDoctorId.Value.ToString();
+                throw new InvalidOperationException($"Xung đột lịch bác sĩ: Bác sĩ {docName} đã có ca khám trùng khoảng thời gian từ {targetStart:HH:mm} đến {targetEnd:HH:mm}.");
+            }
+        }
+
+        if (targetRoomId.HasValue && targetStatus != "CLOSED")
+        {
+            var roomConflict = await _db.ExaminationSlots.AsNoTracking()
+                .AnyAsync(s => s.Id != id
+                            && s.RoomId == targetRoomId.Value
+                            && s.Status.ToUpper() != "CLOSED"
+                            && s.StartsAt < targetEnd
+                            && s.EndsAt > targetStart, ct);
+
+            if (roomConflict)
+            {
+                var roomName = room?.RoomCode ?? room?.Name ?? targetRoomId.Value.ToString();
+                throw new InvalidOperationException($"Xung đột buồng khám: Phòng {roomName} đã được xếp lịch cho ca khám khác trong khoảng thời gian từ {targetStart:HH:mm} đến {targetEnd:HH:mm}.");
+            }
+        }
+
+        // 5. Update slot entity
+        slot.ServiceId = targetServiceId;
+        slot.DoctorId = targetDoctorId;
+        slot.RoomId = targetRoomId;
+        slot.StartsAt = targetStart;
+        slot.EndsAt = targetEnd;
+        slot.Capacity = targetCapacity;
+        slot.Status = targetStatus;
+
+        await _db.SaveChangesAsync(ct);
+
+        // 6. Map and return
+        var doctorName = doctor?.Staff?.FullName ?? doctor?.DoctorCode ?? string.Empty;
+        var serviceName = service?.Name ?? string.Empty;
+        var serviceCode = service?.ServiceCode ?? string.Empty;
+        var serviceType = service?.ServiceType ?? "OUTPATIENT";
+        if (string.Equals(serviceType, "EXAMINATION", StringComparison.OrdinalIgnoreCase))
+        {
+            serviceType = "OUTPATIENT";
+        }
+
+        var specialty = doctor?.Specialty?.Name ?? service?.Specialty?.Name ?? string.Empty;
+        var roomCode = room?.RoomCode ?? room?.Name ?? string.Empty;
+        var facility = room?.Department?.Name ?? "MedFlow Cơ sở 1";
+
+        string displayStatus;
+        if (targetStatus == "CLOSED")
+        {
+            displayStatus = "CLOSED";
+        }
+        else if (targetStatus == "FULL" || (targetCapacity > 0 && activeBookings >= targetCapacity))
+        {
+            displayStatus = "FULL";
+        }
+        else
+        {
+            displayStatus = "OPEN";
+        }
+
+        var needsReview = (targetCapacity > 0 && activeBookings > targetCapacity) ||
+                          targetDoctorId == null ||
+                          targetServiceId == null ||
+                          targetRoomId == null ||
+                          (doctor != null && !doctor.IsActive) ||
+                          (service != null && service.IsActive == false) ||
+                          (room != null && string.Equals(room.Status, "INACTIVE", StringComparison.OrdinalIgnoreCase));
+
+        return new ExaminationSlotAdminItemDto(
+            Id: slot.Id,
+            Code: $"SLT-{slot.Id:D3}",
+            DoctorId: slot.DoctorId,
+            DoctorName: doctorName,
+            ServiceId: slot.ServiceId,
+            ServiceName: serviceName,
+            ServiceCode: serviceCode,
+            ServiceType: serviceType,
+            Specialty: specialty,
+            RoomId: slot.RoomId,
+            Room: roomCode,
+            CapacityBooked: activeBookings,
+            CapacityMax: targetCapacity,
+            Date: targetStart.ToString("yyyy-MM-dd"),
+            DateDisplay: targetStart.ToString("dd/MM"),
+            StartTime: targetStart.ToString("HH:mm"),
+            EndTime: targetEnd.ToString("HH:mm"),
+            Status: displayStatus,
+            Facility: facility,
+            NeedsReview: needsReview
+        );
+    }
 }
 
