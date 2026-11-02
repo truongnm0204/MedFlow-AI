@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { useLogout } from '@/features/auth/hooks/use-auth';
@@ -38,6 +39,7 @@ async function createPatientLocally(data: CreatePatientFormData): Promise<Create
 }
 
 export function ReceptionDashboardPage() {
+  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
   const [createOpen, setCreateOpen] = useState(false);
@@ -47,7 +49,12 @@ export function ReceptionDashboardPage() {
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
-      <ReceptionSidebar activeItem="dashboard" />
+      <ReceptionSidebar
+        activeItem="dashboard"
+        onItemSelect={(item) => {
+          if (item === 'patients') navigate('/reception/patients');
+        }}
+      />
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
@@ -133,7 +140,11 @@ export function ReceptionDashboardPage() {
                   <QuickActionsPanel
                     actions={QUICK_ACTIONS_MOCK}
                     onAction={(id) => {
-                      if (id === 'new-patient') setCreateOpen(true);
+                      if (id === 'new-patient') {
+                        setCreateOpen(true);
+                      } else if (id === 'search') {
+                        navigate('/reception/patients');
+                      }
                     }}
                   />
                 </CardContent>
