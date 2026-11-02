@@ -186,9 +186,13 @@ CREATE TABLE "appointments" (
     "booking_channel" varchar(12),
     "idempotency_key" varchar(100),
     "reception_note" text,
+    "reason_for_visit" text,
     "status" varchar(20),
     "booked_by_user_id" bigint,
-    "booked_at" timestamp without time zone
+    "booked_at" timestamp without time zone,
+    "cancellation_reason" text,
+    "cancelled_at" timestamp without time zone,
+    "cancelled_by_user_id" bigint
 );
 
 CREATE TABLE "visits" (
@@ -533,6 +537,7 @@ ALTER TABLE "examination_slots" ADD CONSTRAINT "fk_examination_slots_room_id" FO
 ALTER TABLE "appointments" ADD CONSTRAINT "fk_appointments_patient_id" FOREIGN KEY ("patient_id") REFERENCES "patients" ("id");
 ALTER TABLE "appointments" ADD CONSTRAINT "fk_appointments_slot_id" FOREIGN KEY ("slot_id") REFERENCES "examination_slots" ("id");
 ALTER TABLE "appointments" ADD CONSTRAINT "fk_appointments_booked_by_user_id" FOREIGN KEY ("booked_by_user_id") REFERENCES "users" ("id");
+ALTER TABLE "appointments" ADD CONSTRAINT "fk_appointments_cancelled_by_user_id" FOREIGN KEY ("cancelled_by_user_id") REFERENCES "users" ("id");
 ALTER TABLE "visits" ADD CONSTRAINT "fk_visits_patient_id" FOREIGN KEY ("patient_id") REFERENCES "patients" ("id");
 ALTER TABLE "visits" ADD CONSTRAINT "fk_visits_appointment_id" FOREIGN KEY ("appointment_id") REFERENCES "appointments" ("id");
 ALTER TABLE "visits" ADD CONSTRAINT "fk_visits_assigned_doctor_id" FOREIGN KEY ("assigned_doctor_id") REFERENCES "doctors" ("id");

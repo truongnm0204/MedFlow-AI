@@ -1,10 +1,13 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
+import { CreatePatientModal } from '../components/create-patient-modal';
+import { PatientDetailModal } from '../components/patient-detail-modal';
 import { UpdatePatientModal } from '../components/update-patient-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
 import { QueuePreviewTable } from '../components/queue-preview-table';
@@ -17,6 +20,8 @@ import {
   RECEPTION_STATS_MOCK,
   TODAY_APPOINTMENTS_MOCK,
 } from '../data/reception-mock-data';
+import type { CreatePatientFormData, CreatedPatientResult } from '../types/create-patient.types';
+import { findPatientDetailByCode } from '../data/patient-detail-mock';
 import type { TodayAppointment } from '../types/reception.types';
 import type { UpdatePatientFormData } from '../types/update-patient.types';
 
@@ -30,16 +35,31 @@ const APPOINTMENT_STATUS_LABEL: Record<
   NO_SHOW: { label: 'Không đến', tone: 'slate' },
 };
 
+// TODO(M2): thay bằng API tạo bệnh nhân khi backend sẵn sàng; hiện sinh mã cục bộ.
+async function createPatientLocally(data: CreatePatientFormData): Promise<CreatedPatientResult> {
+  const seq = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+  return { patientCode: `BN-${new Date().getFullYear()}-${seq}`, fullName: data.fullName };
+}
+
 export function ReceptionDashboardPage() {
+  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [selectedPatientCode, setSelectedPatientCode] = useState<string | null>(null);
+  const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
   const [editingPatient, setEditingPatient] = useState<UpdatePatientFormData | null>(null);
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
-      <ReceptionSidebar activeItem="dashboard" />
+      <ReceptionSidebar
+        activeItem="dashboard"
+        onItemSelect={(item) => {
+          if (item === 'patients') navigate('/reception/patients');
+        }}
+      />
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
@@ -117,7 +137,10 @@ export function ReceptionDashboardPage() {
                 <Badge tone="sky">Trực tiếp</Badge>
               </CardHeader>
               <CardContent className="p-0 px-6 pb-4">
-                <QueuePreviewTable entries={QUEUE_ENTRIES_MOCK} />
+                <QueuePreviewTable
+                  entries={QUEUE_ENTRIES_MOCK}
+                  onSelectPatient={setSelectedPatientCode}
+                />
               </CardContent>
             </Card>
 
@@ -130,9 +153,12 @@ export function ReceptionDashboardPage() {
                 <CardContent className="pt-0">
                   <QuickActionsPanel
                     actions={QUICK_ACTIONS_MOCK}
-                    // TODO(M2): wire quick actions toi flow that (check-in, walk-in, new patient, search).
                     onAction={(id) => {
-                      if (id === 'update-patient') {
+                      if (id === 'new-patient') {
+                        setCreateOpen(true);
+                      } else if (id === 'search') {
+                        navigate('/reception/patients');
+                      } else if (id === 'update-patient') {
                         setUpdateNotice(null);
                         setEditingPatient(PATIENT_UPDATE_MOCK);
                       }
@@ -172,7 +198,18 @@ export function ReceptionDashboardPage() {
             </div>
           </div>
         </main>
+
+        <PatientDetailModal
+          patient={selectedPatient}
+          onClose={() => setSelectedPatientCode(null)}
+        />
       </div>
+
+      <CreatePatientModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSubmit={createPatientLocally}
+      />
 
       {editingPatient && (
         <UpdatePatientModal
