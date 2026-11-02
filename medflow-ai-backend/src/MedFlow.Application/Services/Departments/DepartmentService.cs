@@ -1,6 +1,7 @@
 using MedFlow.Application.DTOs.Departments;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.Application.Services.Departments;
@@ -113,5 +114,154 @@ public sealed class DepartmentService : IDepartmentService
             Metrics: metrics
         );
     }
-}
 
+    public async Task<DepartmentItemDto> CreateDepartmentAsync(
+        CreateDepartmentRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (string.IsNullOrWhiteSpace(request.Code))
+        {
+            throw new ArgumentException("Mã khoa phòng không được để trống.", nameof(request.Code));
+        }
+
+        var normalizedCode = request.Code.Trim().ToUpperInvariant();
+        if (normalizedCode.Length > 40)
+        {
+            throw new ArgumentException("Mã khoa phòng không được vượt quá 40 ký tự.", nameof(request.Code));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Name))
+        {
+            throw new ArgumentException("Tên khoa phòng không được để trống.", nameof(request.Name));
+        }
+
+        var normalizedName = request.Name.Trim();
+        if (normalizedName.Length > 200)
+        {
+            throw new ArgumentException("Tên khoa phòng không được vượt quá 200 ký tự.", nameof(request.Name));
+        }
+
+        var hospitalId = request.HospitalId ?? 1;
+
+        var exists = await _dbContext.Departments.AnyAsync(
+            d => d.HospitalId == hospitalId && d.DepartmentCode.ToLower() == normalizedCode.ToLower(),
+            ct);
+
+        if (exists)
+        {
+            throw new InvalidOperationException($"Mã khoa phòng '{normalizedCode}' đã tồn tại trong cơ sở này.");
+        }
+
+        var isActive = request.IsActive ?? true;
+
+        var department = new Department
+        {
+            HospitalId = hospitalId,
+            DepartmentCode = normalizedCode,
+            Name = normalizedName,
+            IsActive = isActive
+        };
+
+        _dbContext.Departments.Add(department);
+        await _dbContext.SaveChangesAsync(ct);
+
+        var facility = hospitalId > 1
+            ? $"MedFlow Cơ sở {hospitalId}"
+            : "MedFlow Cơ sở 1";
+
+        return new DepartmentItemDto(
+            Id: department.Id,
+            Code: department.DepartmentCode,
+            Name: department.Name,
+            HospitalId: department.HospitalId,
+            Facility: facility,
+            IsActive: isActive,
+            Status: isActive ? "ACTIVE" : "INACTIVE"
+        );
+    }
+
+    public async Task<DepartmentItemDto> UpdateDepartmentAsync(
+        long id,
+        UpdateDepartmentRequest request,
+        CancellationToken ct = default)
+    {
+        if (id <= 0)
+        {
+            throw new ArgumentException("ID khoa phòng phải lớn hơn 0.", nameof(id));
+        }
+
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (string.IsNullOrWhiteSpace(request.Code))
+        {
+            throw new ArgumentException("Mã khoa phòng không được để trống.", nameof(request.Code));
+        }
+
+        var normalizedCode = request.Code.Trim().ToUpperInvariant();
+        if (normalizedCode.Length > 40)
+        {
+            throw new ArgumentException("Mã khoa phòng không được vượt quá 40 ký tự.", nameof(request.Code));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Name))
+        {
+            throw new ArgumentException("Tên khoa phòng không được để trống.", nameof(request.Name));
+        }
+
+        var normalizedName = request.Name.Trim();
+        if (normalizedName.Length > 200)
+        {
+            throw new ArgumentException("Tên khoa phòng không được vượt quá 200 ký tự.", nameof(request.Name));
+        }
+
+        var dept = await _dbContext.Departments.FirstOrDefaultAsync(d => d.Id == id, ct);
+        if (dept == null)
+        {
+            throw new KeyNotFoundException($"Không tìm thấy khoa phòng với ID {id}.");
+        }
+
+        var targetHospitalId = request.HospitalId.HasValue && request.HospitalId.Value > 0
+            ? request.HospitalId.Value
+            : (dept.HospitalId ?? 1);
+
+        // Composite uniqueness check: (hospital_id, department_code) excluding current entity
+        var isDuplicate = await _dbContext.Departments.AnyAsync(d =>
+            d.Id != id &&
+            d.HospitalId == targetHospitalId &&
+            d.DepartmentCode.ToLower() == normalizedCode.ToLower(),
+            ct);
+
+        if (isDuplicate)
+        {
+            throw new InvalidOperationException($"Mã khoa phòng '{normalizedCode}' đã tồn tại trong cơ sở y tế này.");
+        }
+
+        dept.DepartmentCode = normalizedCode;
+        dept.Name = normalizedName;
+        dept.HospitalId = targetHospitalId;
+
+        if (request.IsActive.HasValue)
+        {
+            dept.IsActive = request.IsActive.Value;
+        }
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        var isActive = dept.IsActive ?? true;
+        var facility = dept.HospitalId.HasValue && dept.HospitalId.Value > 1
+            ? $"MedFlow Cơ sở {dept.HospitalId.Value}"
+            : "MedFlow Cơ sở 1";
+
+        return new DepartmentItemDto(
+            Id: dept.Id,
+            Code: dept.DepartmentCode,
+            Name: dept.Name,
+            HospitalId: dept.HospitalId,
+            Facility: facility,
+            IsActive: isActive,
+            Status: isActive ? "ACTIVE" : "INACTIVE"
+        );
+    }
+}
