@@ -8,11 +8,13 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import { CreatePatientModal } from '../components/create-patient-modal';
 import { PatientDetailModal } from '../components/patient-detail-modal';
+import { UpdatePatientModal } from '../components/update-patient-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
 import { QueuePreviewTable } from '../components/queue-preview-table';
 import { ReceptionSidebar } from '../components/reception-sidebar';
 import { ReceptionStatCards } from '../components/reception-stat-cards';
 import {
+  PATIENT_UPDATE_MOCK,
   QUEUE_ENTRIES_MOCK,
   QUICK_ACTIONS_MOCK,
   RECEPTION_STATS_MOCK,
@@ -21,6 +23,7 @@ import {
 import type { CreatePatientFormData, CreatedPatientResult } from '../types/create-patient.types';
 import { findPatientDetailByCode } from '../data/patient-detail-mock';
 import type { TodayAppointment } from '../types/reception.types';
+import type { UpdatePatientFormData } from '../types/update-patient.types';
 
 const APPOINTMENT_STATUS_LABEL: Record<
   TodayAppointment['status'],
@@ -46,6 +49,8 @@ export function ReceptionDashboardPage() {
   const [selectedPatientCode, setSelectedPatientCode] = useState<string | null>(null);
   const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
+  const [editingPatient, setEditingPatient] = useState<UpdatePatientFormData | null>(null);
+  const [updateNotice, setUpdateNotice] = useState<string | null>(null);
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
@@ -108,6 +113,15 @@ export function ReceptionDashboardPage() {
 
         {/* Main */}
         <main className="flex-1 p-6 space-y-6 overflow-y-auto">
+          {updateNotice && (
+            <div
+              role="status"
+              className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700"
+            >
+              {updateNotice}
+            </div>
+          )}
+
           <ReceptionStatCards stats={RECEPTION_STATS_MOCK} />
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -144,6 +158,9 @@ export function ReceptionDashboardPage() {
                         setCreateOpen(true);
                       } else if (id === 'search') {
                         navigate('/reception/patients');
+                      } else if (id === 'update-patient') {
+                        setUpdateNotice(null);
+                        setEditingPatient(PATIENT_UPDATE_MOCK);
                       }
                     }}
                   />
@@ -193,6 +210,19 @@ export function ReceptionDashboardPage() {
         onClose={() => setCreateOpen(false)}
         onSubmit={createPatientLocally}
       />
+
+      {editingPatient && (
+        <UpdatePatientModal
+          open
+          patient={editingPatient}
+          onClose={() => setEditingPatient(null)}
+          onSubmit={(code, values) => {
+            // TODO(M2): goi API cap nhat ho so khi backend san sang.
+            setEditingPatient(null);
+            setUpdateNotice(`Đã cập nhật hồ sơ ${code} — ${values.fullName}`);
+          }}
+        />
+      )}
     </div>
   );
 }
