@@ -19,8 +19,8 @@ import { Link } from 'react-router-dom';
 
 import { useDoctorDemoStore } from '@/features/admin-doctors/store/doctor-demo.store';
 import { useExaminationServiceStore } from '@/features/admin-services/store/examination-service.store';
+import { useExaminationSlotStore } from '@/features/admin-slots/store/examination-slot.store';
 import { useAuthStore } from '@/features/auth/store/auth.store';
-
 import { MedflowLogo } from './medflow-logo';
 
 export type AdminPortalTab =
@@ -41,6 +41,7 @@ export interface AdminPortalBreadcrumb {
 export interface AdminPortalShellProps {
   children: ReactNode;
   showTabs?: boolean;
+  showSidebar?: boolean;
   activeTab?: AdminPortalTab;
   breadcrumbText?: string;
   breadcrumbCode?: string;
@@ -54,7 +55,7 @@ const TABS: { name: AdminPortalTab; href?: string; icon: LucideIcon }[] = [
   { name: 'Bác sĩ & Nhân sự Y tế', href: '/admin/doctors', icon: UserCheck },
   { name: 'Danh mục Dịch vụ & Kỹ thuật', href: '/admin/services', icon: ClipboardList },
   { name: 'Bảng giá & Biểu phí', icon: CreditCard },
-  { name: 'Quản lý Slot khám', icon: CalendarClock },
+  { name: 'Quản lý Slot khám', href: '/admin/slots', icon: CalendarClock },
   { name: 'Chính sách hẹn', icon: SlidersHorizontal },
   { name: 'Báo cáo vận hành', href: '/admin/reports', icon: BarChart3 },
 ];
@@ -70,7 +71,7 @@ export function AdminPortalShell({
   const user = useAuthStore((state) => state.user);
   const doctorCount = useDoctorDemoStore((state) => state.doctors.length);
   const serviceCount = useExaminationServiceStore((state) => state.services.length);
-
+  const slotCount = useExaminationSlotStore((state) => state.slots.length);
   const displayName = user?.fullName ?? user?.email ?? 'DS. Nguyễn Văn Quản';
   const roleLabel = user?.roles.includes('SYSTEM_ADMIN') ? 'SYSTEM_ADMIN' : 'ADM-001';
 
@@ -85,19 +86,24 @@ export function AdminPortalShell({
       >
         <div>
           {/* Sidebar Brand + Collapse Toggle */}
-          <div className="flex h-16 items-center justify-between border-b border-border px-4">
+          <div
+            className={`relative flex h-16 items-center border-b border-border ${
+              isCollapsed ? 'justify-center px-2' : 'justify-between px-4'
+            }`}
+          >
             <div className="flex items-center gap-2.5 overflow-hidden">
-              <MedflowLogo
-                variant={isCollapsed ? 'icon' : 'full'}
-                className={isCollapsed ? 'h-8 w-auto shrink-0' : 'h-9 w-auto shrink-0'}
-              />
+              <MedflowLogo variant="full" className="h-9 w-auto shrink-0" />
             </div>
             <button
               type="button"
               onClick={() => setIsCollapsed((prev) => !prev)}
               aria-label={isCollapsed ? 'Mở rộng thanh bên' : 'Thu gọn thanh bên'}
               aria-expanded={!isCollapsed}
-              className="rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+              className={
+                isCollapsed
+                  ? 'absolute -right-3 top-1/2 -translate-y-1/2 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-white text-slate-500 shadow-xs transition-colors hover:bg-slate-100 hover:text-slate-700'
+                  : 'rounded-md p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700'
+              }
               title={isCollapsed ? 'Mở rộng' : 'Thu gọn'}
             >
               {isCollapsed ? (
@@ -141,8 +147,9 @@ export function AdminPortalShell({
                   ? doctorCount
                   : tab.name === 'Danh mục Dịch vụ & Kỹ thuật'
                     ? serviceCount
-                    : undefined;
-
+                    : tab.name === 'Quản lý Slot khám'
+                      ? slotCount
+                      : undefined;
               const itemClassName = `flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
                 isActive
                   ? 'bg-primary text-white shadow-sm'
