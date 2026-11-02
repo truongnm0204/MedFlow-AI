@@ -61,13 +61,13 @@ export function PatientHomeHub({ user }: PatientHomeHubProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            <a
-              href="#booking"
+            <Link
+              to="/booking"
               className="inline-flex items-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2.5 text-xs font-bold text-white shadow-xs transition-colors hover:bg-sky-700"
             >
-              <Calendar className="h-4 w-4" />
+              <Calendar className="h-4 w-4" aria-hidden="true" />
               Đặt lịch khám mới
-            </a>
+            </Link>
             <Link
               to="/profile"
               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
