@@ -123,6 +123,9 @@ export function AppointmentDetailPage() {
           setFeedbackBanner(
             `Đổi lịch khám thành công sang khung giờ ${updated.scheduledTimeRange} (${updated.scheduledDateFullLabel}) • STT giữ trước mới: ${updated.queueNumber ?? '005'}.`,
           );
+          if (updated.id && updated.id !== appointment.id) {
+            navigate(`/appointments/${updated.id}`, { replace: true });
+          }
         },
       },
     );
