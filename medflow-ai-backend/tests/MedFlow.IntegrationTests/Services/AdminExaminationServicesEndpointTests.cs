@@ -332,30 +332,51 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     public async Task UpdateExaminationService_HospitalAdminRole_ReturnsSuccess_WhenDatabaseAvailable()
     {
         var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
-        var payload = new UpdateExaminationServiceRequest(
-            Name: "Khám Cập Nhật Qua Admin Endpoint",
-            AllowsOnlineBooking: false,
-            Status: "ACTIVE"
+
+        // Create a unique test service first so seeded services are not affected
+        var createPayload = new CreateExaminationServiceRequest(
+            ServiceCode: $"EX-UPD-{Guid.NewGuid():N}"[..12].ToUpperInvariant(),
+            Name: "Khám Ban Đầu Trước Update",
+            Category: "Khám Lâm sàng",
+            AllowsOnlineBooking: true,
+            Price: 150000m
         );
 
-        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-services/1");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        request.Content = JsonContent.Create(payload);
+        using var createReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-services");
+        createReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        createReq.Content = JsonContent.Create(createPayload);
 
-        var response = await Client.SendAsync(request);
-
-        if (response.StatusCode == HttpStatusCode.OK)
+        var createRes = await Client.SendAsync(createReq);
+        if (createRes.StatusCode == HttpStatusCode.Created)
         {
+            var created = await createRes.Content.ReadFromJsonAsync<ExaminationServiceAdminItemDto>();
+            Assert.NotNull(created);
+
+            var updatePayload = new UpdateExaminationServiceRequest(
+                Name: "Khám Cập Nhật Qua Admin Endpoint",
+                AllowsOnlineBooking: false,
+                Status: "ACTIVE",
+                Price: 180000m
+            );
+
+            using var updateReq = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/admin/examination-services/{created.Id}");
+            updateReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            updateReq.Content = JsonContent.Create(updatePayload);
+
+            var response = await Client.SendAsync(updateReq);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
             var result = await response.Content.ReadFromJsonAsync<ExaminationServiceAdminItemDto>();
             Assert.NotNull(result);
-            Assert.Equal(payload.Name, result.Name);
+            Assert.Equal(updatePayload.Name, result.Name);
             Assert.False(result.AllowsOnlineBooking);
+            Assert.Equal(180000m, result.Price);
         }
         else
         {
             Assert.True(
-                response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
-                $"Unexpected status code: {response.StatusCode}");
+                createRes.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
+                $"Unexpected status code: {createRes.StatusCode}");
         }
     }
 
@@ -363,28 +384,45 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     public async Task UpdateExaminationService_AliasRoute_ReturnsSuccess_WhenDatabaseAvailable()
     {
         var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
-        var payload = new UpdateExaminationServiceRequest(
-            Name: "Khám Cập Nhật Qua Alias Endpoint",
+
+        var createPayload = new CreateExaminationServiceRequest(
+            ServiceCode: $"EX-ALS-{Guid.NewGuid():N}"[..12].ToUpperInvariant(),
+            Name: "Khám Ban Đầu Alias",
+            Category: "Khám Lâm sàng",
             AllowsOnlineBooking: true
         );
 
-        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/services/1");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        request.Content = JsonContent.Create(payload);
+        using var createReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/services");
+        createReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        createReq.Content = JsonContent.Create(createPayload);
 
-        var response = await Client.SendAsync(request);
-
-        if (response.StatusCode == HttpStatusCode.OK)
+        var createRes = await Client.SendAsync(createReq);
+        if (createRes.StatusCode == HttpStatusCode.Created)
         {
+            var created = await createRes.Content.ReadFromJsonAsync<ExaminationServiceAdminItemDto>();
+            Assert.NotNull(created);
+
+            var updatePayload = new UpdateExaminationServiceRequest(
+                Name: "Khám Cập Nhật Qua Alias Endpoint",
+                AllowsOnlineBooking: true
+            );
+
+            using var updateReq = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/admin/services/{created.Id}");
+            updateReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            updateReq.Content = JsonContent.Create(updatePayload);
+
+            var response = await Client.SendAsync(updateReq);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
             var result = await response.Content.ReadFromJsonAsync<ExaminationServiceAdminItemDto>();
             Assert.NotNull(result);
-            Assert.Equal(payload.Name, result.Name);
+            Assert.Equal(updatePayload.Name, result.Name);
         }
         else
         {
             Assert.True(
-                response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
-                $"Unexpected status code: {response.StatusCode}");
+                createRes.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
+                $"Unexpected status code: {createRes.StatusCode}");
         }
     }
 }
