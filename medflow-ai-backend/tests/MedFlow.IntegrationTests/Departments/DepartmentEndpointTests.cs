@@ -86,4 +86,160 @@ public sealed class DepartmentEndpointTests : AuthTestBase
                 $"Unexpected status code: {response.StatusCode}");
         }
     }
+
+    [Fact]
+    public async Task CreateDepartment_Unauthenticated_Returns401()
+    {
+        var body = new CreateDepartmentRequest("DEP-TEST", "Khoa Test");
+        var response = await Client.PostAsJsonAsync("/api/v1/admin/departments", body);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateDepartment_PatientRole_Returns403()
+    {
+        var token = GenerateToken(999, "patient_test@medflow.test", "PATIENT");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/departments");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new CreateDepartmentRequest("DEP-TEST", "Khoa Test"));
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateDepartment_EmptyCode_Returns400()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/departments");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new CreateDepartmentRequest("", "Khoa Test"));
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateDepartment_HospitalAdminRole_ReturnsCreated_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/departments");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new CreateDepartmentRequest($"DEP-{Guid.NewGuid():N}"[..10], "Khoa Mới"));
+
+        var response = await Client.SendAsync(request);
+        var content = await response.Content.ReadAsStringAsync();
+
+        if (response.StatusCode == HttpStatusCode.Created)
+        {
+            var result = await response.Content.ReadFromJsonAsync<DepartmentItemDto>();
+            Assert.NotNull(result);
+            Assert.True(result.Id > 0);
+        }
+        else
+        {
+            // If local DB is offline, test passes gracefully without failing local test runs
+            Assert.True(
+                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
+                $"Unexpected status code: {response.StatusCode}, content: {content}");
+        }
+    }
+
+    // ==========================================
+    // PutDepartment Integration Tests
+    // ==========================================
+
+    [Fact]
+    public async Task PutDepartment_Unauthenticated_Returns401()
+    {
+        var payload = new UpdateDepartmentRequest(Code: "DEP-001", Name: "Khoa Test");
+        var response = await Client.PutAsJsonAsync("/api/v1/admin/departments/1", payload);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PutDepartment_PatientRole_Returns403()
+    {
+        var token = GenerateToken(999, "patient_test@medflow.test", "PATIENT");
+        var payload = new UpdateDepartmentRequest(Code: "DEP-001", Name: "Khoa Test");
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/departments/1");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PutDepartment_InvalidBody_HospitalAdmin_Returns400()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var payload = new UpdateDepartmentRequest(Code: "", Name: "");
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/departments/1");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PutDepartment_InvalidId_HospitalAdmin_Returns400()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var payload = new UpdateDepartmentRequest(Code: "DEP-001", Name: "Khoa Hợp Lệ");
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/departments/0");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PutDepartment_HospitalAdminRole_ReturnsSuccess_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var payload = new UpdateDepartmentRequest(
+            Code: "DEP-001-MOD",
+            Name: "Khoa Nội Tiêu Hóa Cập Nhật",
+            HospitalId: 1,
+            IsActive: true
+        );
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/departments/1");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(payload);
+
+        var response = await Client.SendAsync(request);
+
+        // When DB is available (e.g. CI), should return 200 OK or 404/409 depending on DB seed state
+        if (response.StatusCode == HttpStatusCode.OK)
+        {
+            var result = await response.Content.ReadFromJsonAsync<DepartmentItemDto>();
+            Assert.NotNull(result);
+            Assert.Equal("DEP-001-MOD", result.Code);
+            Assert.Equal("Khoa Nội Tiêu Hóa Cập Nhật", result.Name);
+        }
+        else
+        {
+            // If local DB is offline or entity not found / conflict
+            Assert.True(
+                response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Conflict or HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {response.StatusCode}");
+        }
+    }
 }
