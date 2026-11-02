@@ -361,4 +361,227 @@ public sealed class BookAppointmentEndpointTests : AuthTestBase
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    [Fact]
+    public async Task Create_ServiceMode_UsesEarliestAvailableShiftSlot()
+    {
+        var vnNow = DateTime.SpecifyKind(DateTime.UtcNow.AddHours(7), DateTimeKind.Unspecified);
+        var targetDate = DateOnly.FromDateTime(vnNow).AddDays(20);
+        var targetDateIso = targetDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        var laterSlot = new ExaminationSlot
+        {
+            ServiceId = 1,
+            DoctorId = 1,
+            RoomId = 1,
+            StartsAt = targetDate.ToDateTime(new TimeOnly(5, 30), DateTimeKind.Unspecified),
+            EndsAt = targetDate.ToDateTime(new TimeOnly(6, 0), DateTimeKind.Unspecified),
+            Capacity = 2,
+            Status = "OPEN",
+        };
+        var earliestSlot = new ExaminationSlot
+        {
+            ServiceId = 1,
+            DoctorId = 1,
+            RoomId = 1,
+            StartsAt = targetDate.ToDateTime(new TimeOnly(5, 0), DateTimeKind.Unspecified),
+            EndsAt = targetDate.ToDateTime(new TimeOnly(5, 30), DateTimeKind.Unspecified),
+            Capacity = 2,
+            Status = "OPEN",
+        };
+
+        Db.ExaminationSlots.AddRange(laterSlot, earliestSlot);
+        await Db.SaveChangesAsync();
+
+        try
+        {
+            var tokens = await LoginAsync("patient01@medflow.test", "Demo@12345");
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, BookEndpoint)
+            {
+                Content = JsonContent.Create(new CreateAppointmentRequest
+                {
+                    Mode = "service",
+                    PatientId = "1",
+                    ServiceId = "EX-GI-01",
+                    ServiceCode = "EX-GI-01",
+                    DateIso = targetDateIso,
+                    SlotOrShiftId = "shift-morning",
+                    SymptomNote = "Đặt theo dịch vụ ca sáng",
+                }),
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
+            var response = await Client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            var dto = await response.Content.ReadFromJsonAsync<CreateAppointmentResponse>();
+            Assert.NotNull(dto);
+            Assert.Equal("BOOKED", dto.Status);
+
+            var apptId = long.Parse(dto.AppointmentId, CultureInfo.InvariantCulture);
+            var dbRow = await Db.Appointments.AsNoTracking().SingleAsync(a => a.Id == apptId);
+            Assert.Equal(earliestSlot.Id, dbRow.SlotId);
+        }
+        finally
+        {
+            var apptIds = await Db.Appointments
+                .Where(a => a.SlotId == earliestSlot.Id || a.SlotId == laterSlot.Id)
+                .Select(a => a.Id.ToString())
+                .ToListAsync();
+
+            if (apptIds.Count > 0)
+            {
+                await Db.AuditLogs
+                    .Where(l => l.EntityType == "APPOINTMENT" && l.EntityId != null && apptIds.Contains(l.EntityId))
+                    .ExecuteDeleteAsync();
+            }
+
+            await Db.Appointments
+                .Where(a => a.SlotId == earliestSlot.Id || a.SlotId == laterSlot.Id)
+                .ExecuteDeleteAsync();
+            await Db.ExaminationSlots
+                .Where(s => s.Id == earliestSlot.Id || s.Id == laterSlot.Id)
+                .ExecuteDeleteAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Create_BookingWindowExceeded_Returns400()
+    {
+        var vnNow = DateTime.SpecifyKind(DateTime.UtcNow.AddHours(7), DateTimeKind.Unspecified);
+        var beyondWindowDate = DateOnly.FromDateTime(vnNow).AddDays(31);
+        var beyondWindowIso = beyondWindowDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        var slot = new ExaminationSlot
+        {
+            ServiceId = 1,
+            DoctorId = 1,
+            RoomId = 1,
+            StartsAt = beyondWindowDate.ToDateTime(new TimeOnly(9, 0), DateTimeKind.Unspecified),
+            EndsAt = beyondWindowDate.ToDateTime(new TimeOnly(9, 30), DateTimeKind.Unspecified),
+            Capacity = 2,
+            Status = "OPEN",
+        };
+
+        Db.ExaminationSlots.Add(slot);
+        await Db.SaveChangesAsync();
+
+        try
+        {
+            var tokens = await LoginAsync("patient01@medflow.test", "Demo@12345");
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, BookEndpoint)
+            {
+                Content = JsonContent.Create(new CreateAppointmentRequest
+                {
+                    Mode = "doctor",
+                    PatientId = "1",
+                    DoctorId = "DOC-001",
+                    ServiceId = "EX-GI-01",
+                    DateIso = beyondWindowIso,
+                    SlotOrShiftId = slot.Id.ToString(CultureInfo.InvariantCulture),
+                }),
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
+            var response = await Client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+            Assert.NotNull(problem);
+            Assert.Equal("Chỉ được đặt lịch trong vòng 30 ngày tới.", problem.Detail);
+        }
+        finally
+        {
+            await Db.Appointments.Where(a => a.SlotId == slot.Id).ExecuteDeleteAsync();
+            await Db.ExaminationSlots.Where(s => s.Id == slot.Id).ExecuteDeleteAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Create_BookingLeadViolated_Returns400()
+    {
+        var vnNow = DateTime.SpecifyKind(DateTime.UtcNow.AddHours(7), DateTimeKind.Unspecified);
+        var startsAt = vnNow.AddMinutes(30);
+        var endsAt = startsAt.AddMinutes(30);
+        var slotDateIso = DateOnly.FromDateTime(startsAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        var slot = new ExaminationSlot
+        {
+            ServiceId = 1,
+            DoctorId = 1,
+            RoomId = 1,
+            StartsAt = startsAt,
+            EndsAt = endsAt,
+            Capacity = 2,
+            Status = "OPEN",
+        };
+
+        Db.ExaminationSlots.Add(slot);
+        await Db.SaveChangesAsync();
+
+        try
+        {
+            var tokens = await LoginAsync("patient01@medflow.test", "Demo@12345");
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, BookEndpoint)
+            {
+                Content = JsonContent.Create(new CreateAppointmentRequest
+                {
+                    Mode = "doctor",
+                    PatientId = "1",
+                    DoctorId = "DOC-001",
+                    ServiceId = "EX-GI-01",
+                    DateIso = slotDateIso,
+                    SlotOrShiftId = slot.Id.ToString(CultureInfo.InvariantCulture),
+                }),
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
+            var response = await Client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+            Assert.NotNull(problem);
+            Assert.Equal("Chỉ được đặt lịch trước giờ khám tối thiểu 2 giờ.", problem.Detail);
+        }
+        finally
+        {
+            await Db.Appointments.Where(a => a.SlotId == slot.Id).ExecuteDeleteAsync();
+            await Db.ExaminationSlots.Where(s => s.Id == slot.Id).ExecuteDeleteAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Create_SymptomNoteOver500_Returns400()
+    {
+        var vnNow = DateTime.SpecifyKind(DateTime.UtcNow.AddHours(7), DateTimeKind.Unspecified);
+        var tomorrow = DateOnly.FromDateTime(vnNow).AddDays(1);
+        var tomorrowIso = tomorrow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        var tokens = await LoginAsync("patient01@medflow.test", "Demo@12345");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, BookEndpoint)
+        {
+            Content = JsonContent.Create(new CreateAppointmentRequest
+            {
+                Mode = "doctor",
+                PatientId = "1",
+                DoctorId = "DOC-001",
+                ServiceId = "EX-GI-01",
+                DateIso = tomorrowIso,
+                SlotOrShiftId = "1",
+                SymptomNote = new string('a', 501),
+            }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal("Lý do khám tối đa 500 ký tự.", problem.Detail);
+    }
 }
