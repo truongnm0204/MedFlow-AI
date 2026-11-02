@@ -5,4 +5,5 @@ public sealed record UserDto(
     string Email,
     string? FullName,
     string[] Roles,
-    string? PatientCode);
+    string? PatientCode,
+    string? StaffCode = null);
