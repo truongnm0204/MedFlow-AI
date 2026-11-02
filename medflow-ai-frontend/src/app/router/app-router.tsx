@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { DepartmentCreatePage } from '@/features/admin-departments/pages/department-create-page';
+import { DepartmentEditPage } from '@/features/admin-departments/pages/department-edit-page';
 import { DepartmentListPage } from '@/features/admin-departments/pages/department-list-page';
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
@@ -225,6 +226,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <DepartmentCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/departments/:id/edit"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <DepartmentEditPage />
             </RequireAdmin>
           </RequireAuth>
         }
