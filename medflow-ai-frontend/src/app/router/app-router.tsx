@@ -11,6 +11,7 @@ import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-m
 import { ExaminationSlotCreatePage } from '@/features/admin-slots/pages/examination-slot-create-page';
 import { ExaminationSlotListPage } from '@/features/admin-slots/pages/examination-slot-list-page';
 import { SlotEditModal } from '@/features/admin-slots/pages/slot-edit-modal';
+import { StaffAccountListPage } from '@/features/admin-staff/pages/staff-account-list-page';
 import { AppointmentDetailPage } from '@/features/appointment/pages/appointment-detail-page';
 import { AppointmentConfirmationPage } from '@/features/appointment/pages/appointment-confirmation-page';
 import { AppointmentListPage } from '@/features/appointment/pages/appointment-list-page';
@@ -138,6 +139,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <Navigate to="/admin/services" replace />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/staff"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <StaffAccountListPage />
             </RequireAdmin>
           </RequireAuth>
         }
