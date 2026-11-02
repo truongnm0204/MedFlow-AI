@@ -5,6 +5,7 @@ using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Domain.Entities;
 using MedFlow.IntegrationTests.Auth;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace MedFlow.IntegrationTests.Services;
@@ -205,21 +206,34 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Content = JsonContent.Create(payload);
 
-        var response = await Client.SendAsync(request);
+        long createdId = 0;
+        try
+        {
+            var response = await Client.SendAsync(request);
 
-        if (response.StatusCode == HttpStatusCode.Created)
-        {
-            var result = await response.Content.ReadFromJsonAsync<ExaminationServiceAdminItemDto>();
-            Assert.NotNull(result);
-            Assert.Equal(payload.Name, result.Name);
-            Assert.Equal(250000m, result.Price);
+            if (response.StatusCode == HttpStatusCode.Created)
+            {
+                var result = await response.Content.ReadFromJsonAsync<ExaminationServiceAdminItemDto>();
+                Assert.NotNull(result);
+                createdId = result.Id;
+                Assert.Equal(payload.Name, result.Name);
+                Assert.Equal(250000m, result.Price);
+            }
+            else
+            {
+                // Gracefully handle offline local DB in local environment
+                Assert.True(
+                    response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
+                    $"Unexpected status code: {response.StatusCode}");
+            }
         }
-        else
+        finally
         {
-            // Gracefully handle offline local DB in local environment
-            Assert.True(
-                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
-                $"Unexpected status code: {response.StatusCode}");
+            if (createdId > 0)
+            {
+                await Db.ServicePrices.Where(p => p.ServiceId == createdId).ExecuteDeleteAsync();
+                await Db.Services.Where(s => s.Id == createdId).ExecuteDeleteAsync();
+            }
         }
     }
 
@@ -240,21 +254,33 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Content = JsonContent.Create(payload);
 
-        var response = await Client.SendAsync(request);
+        long createdId = 0;
+        try
+        {
+            var response = await Client.SendAsync(request);
 
-        if (response.StatusCode == HttpStatusCode.Created)
-        {
-            var result = await response.Content.ReadFromJsonAsync<ExaminationServiceAdminItemDto>();
-            Assert.NotNull(result);
-            Assert.Equal(payload.Name, result.Name);
+            if (response.StatusCode == HttpStatusCode.Created)
+            {
+                var result = await response.Content.ReadFromJsonAsync<ExaminationServiceAdminItemDto>();
+                Assert.NotNull(result);
+                createdId = result.Id;
+                Assert.Equal(payload.Name, result.Name);
+            }
+            else
+            {
+                // Gracefully handle offline local DB in local environment
+                Assert.True(
+                    response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
+                    $"Unexpected status code: {response.StatusCode}");
+            }
         }
-        else
+        finally
         {
-            // Gracefully handle offline local DB in local environment
-            Assert.True(
-                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable or HttpStatusCode.Conflict,
-                $"Unexpected status code: {response.StatusCode}");
+            if (createdId > 0)
+            {
+                await Db.ServicePrices.Where(p => p.ServiceId == createdId).ExecuteDeleteAsync();
+                await Db.Services.Where(s => s.Id == createdId).ExecuteDeleteAsync();
+            }
         }
     }
 }
-
