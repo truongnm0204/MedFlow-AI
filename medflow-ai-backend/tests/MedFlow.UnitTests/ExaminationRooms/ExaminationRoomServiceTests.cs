@@ -354,4 +354,256 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         await Assert.ThrowsAsync<ArgumentNullException>(() => _service.GetExaminationRoomListAsync(null!));
     }
+
+    // ==========================================
+    // CreateExaminationRoomAsync Unit Tests
+    // ==========================================
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_ValidData_CreatesSuccessfullyAndReturnsDto()
+    {
+        var request = new CreateExaminationRoomRequest(
+            RoomCode: "bk-new-01",
+            Name: "Phòng Khám Đa Khoa Mới",
+            DepartmentId: 1,
+            HospitalId: 1,
+            RoomType: "EXAMINATION",
+            Location: "Tầng 3 Tòa B",
+            Capacity: 2,
+            Status: "ACTIVE"
+        );
+
+        var result = await _service.CreateExaminationRoomAsync(request);
+
+        Assert.NotNull(result);
+        Assert.True(result.Id > 0);
+        Assert.Equal("BK-NEW-01", result.RoomCode);
+        Assert.Equal("Phòng Khám Đa Khoa Mới", result.Name);
+        Assert.Equal(1, result.HospitalId);
+        Assert.Equal("MedFlow Cơ sở 1", result.Facility);
+        Assert.Equal(1, result.DepartmentId);
+        Assert.Equal("DEP-001", result.DepartmentCode);
+        Assert.Equal("Khoa Nội Tiêu hóa", result.DepartmentName);
+        Assert.Equal("EXAMINATION", result.RoomType);
+        Assert.Equal("Tầng 3 Tòa B", result.Location);
+        Assert.Equal(2, result.Capacity);
+        Assert.Equal("ACTIVE", result.Status);
+        Assert.True(result.IsActive);
+        Assert.True(result.IsAvailable);
+
+        // Verify entity in DbContext
+        var saved = await _dbContext.HospitalRooms.FirstOrDefaultAsync(r => r.RoomCode == "BK-NEW-01");
+        Assert.NotNull(saved);
+        Assert.Equal("Phòng Khám Đa Khoa Mới", saved.Name);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_DiagnosticRoomType_CreatesSuccessfully()
+    {
+        var request = new CreateExaminationRoomRequest(
+            RoomCode: "PKT-MRI-01",
+            Name: "Phòng Chụp Cộng Hưởng Từ MRI 01",
+            DepartmentId: 2,
+            HospitalId: 1,
+            RoomType: "DIAGNOSTIC",
+            Location: "Tầng Hầm B1",
+            Capacity: 1,
+            Status: "ACTIVE"
+        );
+
+        var result = await _service.CreateExaminationRoomAsync(request);
+
+        Assert.NotNull(result);
+        Assert.Equal("PKT-MRI-01", result.RoomCode);
+        Assert.Equal("DIAGNOSTIC", result.RoomType);
+        Assert.True(result.IsAvailable);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_InactiveStatus_ReturnsIsActiveFalse()
+    {
+        var request = new CreateExaminationRoomRequest(
+            RoomCode: "BK-INACT-01",
+            Name: "Phòng Khám Tạm Dừng Hoạt Động",
+            Status: "INACTIVE"
+        );
+
+        var result = await _service.CreateExaminationRoomAsync(request);
+
+        Assert.NotNull(result);
+        Assert.Equal("BK-INACT-01", result.RoomCode);
+        Assert.Equal("INACTIVE", result.Status);
+        Assert.False(result.IsActive);
+        Assert.False(result.IsAvailable);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_WithCodeFieldInsteadOfRoomCode_CreatesSuccessfully()
+    {
+        var request = new CreateExaminationRoomRequest(
+            Code: "BK-ALT-01",
+            Name: "Phòng Khám Dùng Trường Code Thay Vì RoomCode"
+        );
+
+        var result = await _service.CreateExaminationRoomAsync(request);
+
+        Assert.NotNull(result);
+        Assert.Equal("BK-ALT-01", result.RoomCode);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_NormalizesWhitespaceAndUppercase()
+    {
+        var request = new CreateExaminationRoomRequest(
+            RoomCode: "   bk-norm-01   ",
+            Name: "   Phòng Khám Chuẩn Hóa Cắt Khoảng Trắng   ",
+            RoomType: "   examination   ",
+            Location: "   Tầng 2   "
+        );
+
+        var result = await _service.CreateExaminationRoomAsync(request);
+
+        Assert.Equal("BK-NORM-01", result.RoomCode);
+        Assert.Equal("Phòng Khám Chuẩn Hóa Cắt Khoảng Trắng", result.Name);
+        Assert.Equal("EXAMINATION", result.RoomType);
+        Assert.Equal("Tầng 2", result.Location);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_WhenHospitalIdNull_DefaultsTo1()
+    {
+        var request = new CreateExaminationRoomRequest(
+            RoomCode: "BK-DEFAULT-HOSP",
+            Name: "Phòng Khám Mặc Định Cơ Sở 1",
+            HospitalId: null
+        );
+
+        var result = await _service.CreateExaminationRoomAsync(request);
+
+        Assert.Equal(1, result.HospitalId);
+        Assert.Equal("MedFlow Cơ sở 1", result.Facility);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_WhenDepartmentIdNull_SucceedsWithoutDepartment()
+    {
+        var request = new CreateExaminationRoomRequest(
+            RoomCode: "BK-NO-DEPT",
+            Name: "Phòng Khám Đa Năng Chưa Gán Khoa",
+            DepartmentId: null
+        );
+
+        var result = await _service.CreateExaminationRoomAsync(request);
+
+        Assert.Null(result.DepartmentId);
+        Assert.Null(result.DepartmentCode);
+        Assert.Null(result.DepartmentName);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null!)]
+    public async Task CreateExaminationRoomAsync_EmptyRoomCode_ThrowsArgumentException(string? code)
+    {
+        var request = new CreateExaminationRoomRequest(RoomCode: code!, Name: "Phòng Khám Hợp Lệ");
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(request));
+        Assert.Contains("Mã buồng khám không được để trống", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_RoomCodeTooLong_ThrowsArgumentException()
+    {
+        var longCode = new string('R', 41);
+        var request = new CreateExaminationRoomRequest(RoomCode: longCode, Name: "Phòng Khám Hợp Lệ");
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(request));
+        Assert.Contains("Mã buồng khám không được vượt quá 40 ký tự", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null!)]
+    public async Task CreateExaminationRoomAsync_EmptyName_ThrowsArgumentException(string? name)
+    {
+        var request = new CreateExaminationRoomRequest(RoomCode: "BK-001", Name: name!);
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(request));
+        Assert.Contains("Tên buồng khám không được để trống", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_NameTooLong_ThrowsArgumentException()
+    {
+        var longName = new string('N', 201);
+        var request = new CreateExaminationRoomRequest(RoomCode: "BK-001", Name: longName);
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(request));
+        Assert.Contains("Tên buồng khám không được vượt quá 200 ký tự", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(-10)]
+    public async Task CreateExaminationRoomAsync_InvalidCapacity_ThrowsArgumentException(int capacity)
+    {
+        var request = new CreateExaminationRoomRequest(RoomCode: "BK-001", Name: "Phòng Khám Hợp Lệ", Capacity: capacity);
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(request));
+        Assert.Contains("Sức chứa buồng khám phải lớn hơn 0", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_DuplicateRoomCodeSameHospital_ThrowsInvalidOperationException()
+    {
+        // RM-101 already exists in Hospital 1
+        var request = new CreateExaminationRoomRequest(
+            RoomCode: "rm-101",
+            Name: "Phòng Khám Trùng Mã Cơ Sở 1",
+            HospitalId: 1
+        );
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateExaminationRoomAsync(request));
+        Assert.Contains("đã tồn tại trong cơ sở y tế này", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_SameRoomCodeDifferentHospital_Succeeds()
+    {
+        // RM-101 exists in Hospital 1, creating in Hospital 2 should succeed
+        var request = new CreateExaminationRoomRequest(
+            RoomCode: "RM-101",
+            Name: "Phòng Khám Cơ Sở 2 Dùng Chung Mã",
+            HospitalId: 2
+        );
+
+        var result = await _service.CreateExaminationRoomAsync(request);
+
+        Assert.NotNull(result);
+        Assert.Equal("RM-101", result.RoomCode);
+        Assert.Equal(2, result.HospitalId);
+        Assert.Equal("MedFlow Cơ sở 2", result.Facility);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_DepartmentNotFound_ThrowsKeyNotFoundException()
+    {
+        var request = new CreateExaminationRoomRequest(
+            RoomCode: "BK-INVALID-DEPT",
+            Name: "Phòng Khám Sai Khoa",
+            DepartmentId: 9999
+        );
+
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateExaminationRoomAsync(request));
+        Assert.Contains("Không tìm thấy khoa phòng với ID 9999", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_NullRequest_ThrowsArgumentNullException()
+    {
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.CreateExaminationRoomAsync(null!));
+    }
 }

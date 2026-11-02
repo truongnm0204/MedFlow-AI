@@ -7,4 +7,8 @@ public interface IExaminationRoomService
     Task<ExaminationRoomListResponseDto> GetExaminationRoomListAsync(
         GetExaminationRoomListRequest request,
         CancellationToken ct = default);
+
+    Task<ExaminationRoomItemDto> CreateExaminationRoomAsync(
+        CreateExaminationRoomRequest request,
+        CancellationToken ct = default);
 }
