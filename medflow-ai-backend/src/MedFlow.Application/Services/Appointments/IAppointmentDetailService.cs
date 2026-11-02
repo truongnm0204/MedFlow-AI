@@ -8,4 +8,10 @@ public interface IAppointmentDetailService
         long userId,
         string? idOrCode,
         CancellationToken ct = default);
+
+    Task<AppointmentDetailDto> UpdateReasonAsync(
+        long userId,
+        string? idOrCode,
+        UpdateAppointmentReasonRequest request,
+        CancellationToken ct = default);
 }
