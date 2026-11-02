@@ -496,4 +496,350 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         Assert.Equal(1, result.TotalPages);
         Assert.Equal(5, result.Metrics.Total); // Metrics still reflect overall DB count
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // Create Examination Slot Tests
+    // ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateExaminationSlot_NullRequest_ThrowsArgumentNullException()
+    {
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.CreateExaminationSlotAsync(null!));
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_MissingTimeWindow_ThrowsArgumentException()
+    {
+        var request = new CreateExaminationSlotRequest(ServiceId: 1, DoctorId: 1);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("Thời gian bắt đầu và kết thúc", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_InvalidDateFormat_ThrowsArgumentException()
+    {
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1,
+            Date: "invalid-date",
+            StartTime: "09:00",
+            EndTime: "09:30"
+        );
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("Định dạng ngày không hợp lệ", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_EndTimeBeforeStartTime_ThrowsArgumentException()
+    {
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1,
+            Date: "2026-10-30",
+            StartTime: "10:00",
+            EndTime: "09:00"
+        );
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("Giờ kết thúc phải sau giờ bắt đầu", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-2)]
+    [InlineData(101)]
+    public async Task CreateExaminationSlot_CapacityOutOfRange_ThrowsArgumentException(int capacity)
+    {
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1,
+            Date: "2026-10-30",
+            StartTime: "10:00",
+            EndTime: "10:30",
+            Capacity: capacity
+        );
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("Sức chứa phải từ 1 đến 100", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_InvalidStatus_ThrowsArgumentException()
+    {
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1,
+            Date: "2026-10-30",
+            StartTime: "10:00",
+            EndTime: "10:30",
+            Status: "INVALID_STATUS"
+        );
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("Trạng thái khung giờ không hợp lệ", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_NoServiceAndNoDoctor_ThrowsArgumentException()
+    {
+        var request = new CreateExaminationSlotRequest(
+            Date: "2026-10-30",
+            StartTime: "10:00",
+            EndTime: "10:30"
+        );
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("Vui lòng chỉ định dịch vụ khám hoặc bác sĩ", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_NonExistentServiceId_ThrowsKeyNotFoundException()
+    {
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 9999,
+            DoctorId: 1,
+            Date: "2026-10-30",
+            StartTime: "10:00",
+            EndTime: "10:30"
+        );
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("Không tìm thấy dịch vụ khám", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_NonExistentDoctorId_ThrowsKeyNotFoundException()
+    {
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 9999,
+            Date: "2026-10-30",
+            StartTime: "10:00",
+            EndTime: "10:30"
+        );
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("Không tìm thấy bác sĩ", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_NonExistentRoomId_ThrowsKeyNotFoundException()
+    {
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1,
+            RoomId: 9999,
+            Date: "2026-10-30",
+            StartTime: "10:00",
+            EndTime: "10:30"
+        );
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("Không tìm thấy buồng khám", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_InactiveService_ThrowsArgumentException()
+    {
+        var inactiveService = new Service
+        {
+            Id = 50,
+            Name = "Dịch vụ ngừng hoạt động",
+            ServiceCode = "EX-INACT",
+            IsActive = false
+        };
+        _db.Services.Add(inactiveService);
+        await _db.SaveChangesAsync();
+
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 50,
+            DoctorId: 1,
+            Date: "2026-10-30",
+            StartTime: "10:00",
+            EndTime: "10:30"
+        );
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("tạm ngưng hoặc không hoạt động", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_InactiveDoctor_ThrowsArgumentException()
+    {
+        var inactiveDoctor = new Doctor
+        {
+            Id = 50,
+            DoctorCode = "DOC-INACT",
+            IsActive = false
+        };
+        _db.Doctors.Add(inactiveDoctor);
+        await _db.SaveChangesAsync();
+
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 50,
+            Date: "2026-10-30",
+            StartTime: "10:00",
+            EndTime: "10:30"
+        );
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("không ở trạng thái hoạt động", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_InactiveRoom_ThrowsArgumentException()
+    {
+        var inactiveRoom = new HospitalRoom
+        {
+            Id = 50,
+            RoomCode = "PK-INACT",
+            Name = "Phòng bảo trì",
+            Status = "INACTIVE"
+        };
+        _db.HospitalRooms.Add(inactiveRoom);
+        await _db.SaveChangesAsync();
+
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1,
+            RoomId: 50,
+            Date: "2026-10-30",
+            StartTime: "10:00",
+            EndTime: "10:30"
+        );
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("Buồng khám đang ngừng hoạt động", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_DoctorScheduleConflict_ThrowsInvalidOperationException()
+    {
+        // Doctor 1 already has slot 1 at 2026-10-27 08:00 - 08:30
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1,
+            Date: "2026-10-27",
+            StartTime: "08:15",
+            EndTime: "08:45"
+        );
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("Xung đột lịch bác sĩ", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_RoomScheduleConflict_ThrowsInvalidOperationException()
+    {
+        // Room 2 (PK-108) already has slot 2 at 2026-10-27 08:30 - 09:00
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1, // Doc 1 is free at this time
+            RoomId: 2,   // But Room 2 is occupied by slot 2
+            Date: "2026-10-27",
+            StartTime: "08:45",
+            EndTime: "09:15"
+        );
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateExaminationSlotAsync(request));
+        Assert.Contains("Xung đột buồng khám", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_ValidDoctorAndService_Success()
+    {
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1,
+            RoomId: 1,
+            Date: "2026-10-30",
+            StartTime: "14:00",
+            EndTime: "14:30",
+            Capacity: 6,
+            Status: "OPEN"
+        );
+
+        var result = await _service.CreateExaminationSlotAsync(request);
+
+        Assert.NotNull(result);
+        Assert.True(result.Id > 0);
+        Assert.Equal($"SLT-{result.Id:D3}", result.Code);
+        Assert.Equal(1, result.DoctorId);
+        Assert.Equal("BS. Nguyễn Thu Lan", result.DoctorName);
+        Assert.Equal(1, result.ServiceId);
+        Assert.Equal("Khám Nội tiết", result.ServiceName);
+        Assert.Equal("EX-1-01", result.ServiceCode);
+        Assert.Equal("OUTPATIENT", result.ServiceType);
+        Assert.Equal("Nội tiết", result.Specialty);
+        Assert.Equal(1, result.RoomId);
+        Assert.Equal("PK-102", result.Room);
+        Assert.Equal(6, result.CapacityMax);
+        Assert.Equal(0, result.CapacityBooked);
+        Assert.Equal("2026-10-30", result.Date);
+        Assert.Equal("30/10", result.DateDisplay);
+        Assert.Equal("14:00", result.StartTime);
+        Assert.Equal("14:30", result.EndTime);
+        Assert.Equal("OPEN", result.Status);
+        Assert.False(result.NeedsReview);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_ServiceBasedOnly_Success()
+    {
+        // Diagnostic service without specific doctor assigned
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 2,
+            RoomId: 2,
+            Date: "2026-10-30",
+            StartTime: "15:00",
+            EndTime: "15:30",
+            Capacity: 10
+        );
+
+        var result = await _service.CreateExaminationSlotAsync(request);
+
+        Assert.NotNull(result);
+        Assert.True(result.Id > 0);
+        Assert.Null(result.DoctorId);
+        Assert.Equal(string.Empty, result.DoctorName);
+        Assert.Equal(2, result.ServiceId);
+        Assert.Equal("Khám Tim mạch", result.ServiceName);
+        Assert.Equal(10, result.CapacityMax);
+        Assert.Equal("OPEN", result.Status);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_LookupByCodes_Success()
+    {
+        var request = new CreateExaminationSlotRequest(
+            ServiceCode: "EX-1-01",
+            DoctorCode: "DOC-001",
+            RoomCode: "PK-102",
+            Date: "2026-10-31",
+            StartTime: "09:00",
+            EndTime: "09:30"
+        );
+
+        var result = await _service.CreateExaminationSlotAsync(request);
+
+        Assert.NotNull(result);
+        Assert.Equal(1, result.DoctorId);
+        Assert.Equal(1, result.ServiceId);
+        Assert.Equal(1, result.RoomId);
+        Assert.Equal("BS. Nguyễn Thu Lan", result.DoctorName);
+        Assert.Equal("Khám Nội tiết", result.ServiceName);
+        Assert.Equal("PK-102", result.Room);
+    }
+
+    [Fact]
+    public async Task CreateExaminationSlot_WithDirectStartsAtEndsAt_Success()
+    {
+        var start = new DateTime(2026, 11, 1, 8, 0, 0);
+        var end = new DateTime(2026, 11, 1, 8, 30, 0);
+
+        var request = new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1,
+            StartsAt: start,
+            EndsAt: end,
+            Capacity: 5
+        );
+
+        var result = await _service.CreateExaminationSlotAsync(request);
+
+        Assert.NotNull(result);
+        Assert.Equal("2026-11-01", result.Date);
+        Assert.Equal("08:00", result.StartTime);
+        Assert.Equal("08:30", result.EndTime);
+        Assert.Equal(5, result.CapacityMax);
+    }
 }
