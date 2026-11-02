@@ -4,6 +4,7 @@ import type {
   ReceptionStats,
   TodayAppointment,
 } from '../types/reception.types';
+import type { UpdatePatientFormData } from '../types/update-patient.types';
 
 // Mock data cho M1 role-landing — se duoc thay bang API M2.
 export const RECEPTION_STATS_MOCK: ReceptionStats = {
@@ -154,4 +155,28 @@ export const QUICK_ACTIONS_MOCK: QuickAction[] = [
     icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z',
     accent: 'amber',
   },
+  {
+    id: 'update-patient',
+    label: 'Cập nhật hồ sơ bệnh nhân',
+    description: 'Chỉnh sửa thông tin hành chính, BHYT, liên hệ',
+    icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
+    accent: 'sky',
+  },
 ];
+
+export const PATIENT_UPDATE_MOCK: UpdatePatientFormData = {
+  patientCode: 'BN-2024-0018',
+  fullName: 'Nguyễn Văn An',
+  dateOfBirth: '1985-03-12',
+  gender: 'MALE',
+  ethnicity: 'Kinh',
+  nationalId: '079085001234',
+  phone: '0912345678',
+  email: 'an.nguyen@example.com',
+  address: '12 Nguyễn Huệ, Quận 1, TP.HCM',
+  insuranceNumber: 'DN4797912345678',
+  insuranceFacility: 'Bệnh viện Quận 1',
+  emergencyContactName: 'Nguyễn Thị Lan',
+  emergencyContactRelationship: 'Vợ',
+  emergencyContactPhone: '0987654321',
+};
