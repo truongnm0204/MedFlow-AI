@@ -33,6 +33,7 @@ import { FamilyProfileListPage } from '@/features/family/pages/family-profile-li
 import { HomePage } from '@/features/home/pages/home-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
+import { AssignRoomPage } from '@/features/reception/pages/assign-room-page';
 import { PatientSearchPage } from '@/features/reception/pages/patient-search-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
@@ -115,6 +116,14 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <PatientSearchPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/reception/assign-room"
+        element={
+          <RequireAuth>
+            <AssignRoomPage />
           </RequireAuth>
         }
       />
