@@ -11,7 +11,7 @@ export const PATIENT_QUICK_ACTIONS: PatientQuickAction[] = [
     id: 'book-appointment',
     label: 'Đặt lịch khám mới',
     description: 'Chọn chuyên khoa, bác sĩ và khung giờ khám ngoại trú tự nguyện',
-    href: '#booking',
+    href: '/booking',
     badgeText: 'Còn slot hôm nay',
     accent: 'sky',
   },
@@ -19,7 +19,7 @@ export const PATIENT_QUICK_ACTIONS: PatientQuickAction[] = [
     id: 'search-doctor',
     label: 'Tìm bác sĩ & dịch vụ',
     description: 'Tra cứu đội ngũ Tiến sĩ, BS.CKII và bảng giá niêm yết công khai',
-    href: '#doctors',
+    href: '/doctors',
     accent: 'emerald',
   },
   {

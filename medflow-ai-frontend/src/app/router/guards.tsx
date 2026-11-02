@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation, useSearchParams } from 'react-router-dom';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { resolvePostLoginRedirect } from '@/features/auth/utils/role-landing';
 
 /** Chặn route cần đăng nhập — chưa login → /login?returnUrl=<current>. */
 export function RequireAuth({ children }: { children: ReactNode }) {
@@ -18,7 +19,11 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 /** Chặn route chỉ dành cho khách — đã login → về '/'. */
 export function GuestOnly({ children }: { children: ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  if (isAuthenticated) return <Navigate to="/" replace />;
+  const user = useAuthStore((s) => s.user);
+  const [params] = useSearchParams();
+  if (isAuthenticated) {
+    return <Navigate to={resolvePostLoginRedirect(params.get('returnUrl'), user?.roles)} replace />;
+  }
   return children;
 }
 
