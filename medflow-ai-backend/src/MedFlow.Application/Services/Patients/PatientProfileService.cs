@@ -9,7 +9,7 @@ namespace MedFlow.Application.Services.Patients;
 
 public sealed class PatientProfileService : IPatientProfileService
 {
-    private const string MaskedVerifiedIdentityText = "****** (Đã xác thực CCCD)";
+    internal const string MaskedVerifiedIdentityText = "****** (Đã xác thực CCCD)";
 
     private static readonly IReadOnlyList<string> DefaultAllowedActions =
     [

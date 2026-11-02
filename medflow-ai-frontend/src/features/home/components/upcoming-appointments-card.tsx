@@ -40,12 +40,12 @@ export function UpcomingAppointmentsCard({ appointments }: UpcomingAppointmentsC
           <p className="text-xs font-medium text-slate-500">
             Bạn chưa có lịch hẹn khám ngoại trú nào sắp tới.
           </p>
-          <a
-            href="#booking"
+          <Link
+            to="/booking"
             className="mt-3 inline-block rounded-lg bg-sky-50 px-3 py-1.5 text-xs font-bold text-sky-700 hover:bg-sky-100"
           >
             Đặt lịch khám ngay
-          </a>
+          </Link>
         </div>
       ) : (
         <ul className="space-y-3">

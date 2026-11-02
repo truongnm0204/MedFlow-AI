@@ -5,6 +5,7 @@ import { useLogout } from '@/features/auth/hooks/use-auth';
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
+import { PatientDetailModal } from '../components/patient-detail-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
 import { QueuePreviewTable } from '../components/queue-preview-table';
 import { ReceptionSidebar } from '../components/reception-sidebar';
@@ -15,6 +16,7 @@ import {
   RECEPTION_STATS_MOCK,
   TODAY_APPOINTMENTS_MOCK,
 } from '../data/reception-mock-data';
+import { findPatientDetailByCode } from '../data/patient-detail-mock';
 import type { TodayAppointment } from '../types/reception.types';
 
 const APPOINTMENT_STATUS_LABEL: Record<
@@ -30,6 +32,8 @@ const APPOINTMENT_STATUS_LABEL: Record<
 export function ReceptionDashboardPage() {
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
+  const [selectedPatientCode, setSelectedPatientCode] = useState<string | null>(null);
+  const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
 
   return (
@@ -103,7 +107,10 @@ export function ReceptionDashboardPage() {
                 <Badge tone="sky">Trực tiếp</Badge>
               </CardHeader>
               <CardContent className="p-0 px-6 pb-4">
-                <QueuePreviewTable entries={QUEUE_ENTRIES_MOCK} />
+                <QueuePreviewTable
+                  entries={QUEUE_ENTRIES_MOCK}
+                  onSelectPatient={setSelectedPatientCode}
+                />
               </CardContent>
             </Card>
 
@@ -153,6 +160,11 @@ export function ReceptionDashboardPage() {
             </div>
           </div>
         </main>
+
+        <PatientDetailModal
+          patient={selectedPatient}
+          onClose={() => setSelectedPatientCode(null)}
+        />
       </div>
     </div>
   );

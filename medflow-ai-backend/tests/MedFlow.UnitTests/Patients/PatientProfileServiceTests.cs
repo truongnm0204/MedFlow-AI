@@ -25,14 +25,24 @@ public sealed class PatientProfileServiceTests : IDisposable
         public DbSet<UserRole> UserRoles => throw NotUsed();
         public DbSet<RolePermission> RolePermissions => throw NotUsed();
         public DbSet<Staff> Staff => throw NotUsed();
+        public DbSet<Doctor> Doctors => throw NotUsed();
+        public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => throw NotUsed();
+        public DbSet<ExaminationSlot> ExaminationSlots => throw NotUsed();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
+        public DbSet<Hospital> Hospitals => throw NotUsed();
         public DbSet<Department> Departments => throw NotUsed();
         public DbSet<HospitalRoom> HospitalRooms => throw NotUsed();
         public DbSet<Specialty> Specialties => throw NotUsed();
         public DbSet<Service> Services => throw NotUsed();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
+        public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
+        public DbSet<Appointment> Appointments => throw NotUsed();
+        public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
+        public DbSet<Visit> Visits => throw NotUsed();
+        public DbSet<QueueEntry> QueueEntries => throw NotUsed();
+        public DbSet<Payment> Payments => throw NotUsed();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
             => Database.BeginTransactionAsync(ct);
@@ -44,14 +54,24 @@ public sealed class PatientProfileServiceTests : IDisposable
             modelBuilder.Ignore<UserRole>();
             modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Staff>();
+            modelBuilder.Ignore<Doctor>();
+            modelBuilder.Ignore<DoctorServiceAuthorization>();
+            modelBuilder.Ignore<ExaminationSlot>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuditLog>();
+            modelBuilder.Ignore<Hospital>();
             modelBuilder.Ignore<Department>();
             modelBuilder.Ignore<HospitalRoom>();
             modelBuilder.Ignore<Specialty>();
             modelBuilder.Ignore<Service>();
             modelBuilder.Ignore<ServicePrice>();
+            modelBuilder.Ignore<HospitalPolicy>();
+            modelBuilder.Ignore<Appointment>();
+            modelBuilder.Ignore<PatientFamilyLink>();
+            modelBuilder.Ignore<Visit>();
+            modelBuilder.Ignore<QueueEntry>();
+            modelBuilder.Ignore<Payment>();
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Patient>(b =>
