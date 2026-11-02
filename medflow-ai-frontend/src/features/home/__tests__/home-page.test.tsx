@@ -96,7 +96,9 @@ describe('HomePage & PatientHomeHub (M1-009)', () => {
       expect(screen.getByText('#MF-261028-08')).toBeInTheDocument();
     });
 
-    expect(screen.getAllByText('Đặt lịch khám mới').length).toBeGreaterThan(0);
+    for (const link of screen.getAllByRole('link', { name: /Đặt lịch khám mới/ })) {
+      expect(link).toHaveAttribute('href', '/booking');
+    }
     expect(screen.getAllByText('Hồ sơ cá nhân').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Hồ sơ người thân').length).toBeGreaterThan(0);
   });

@@ -79,6 +79,7 @@ export function AppointmentSlotBookingPage() {
     const params = new URLSearchParams();
     params.set('mode', 'doctor');
     params.set('doctorId', payload.doctorService.doctorId);
+    params.set('serviceId', payload.doctorService.serviceId);
     params.set('serviceCode', payload.doctorService.serviceCode);
     if (selectedProfile) params.set('patientId', selectedProfile.id);
     if (selectedDate) params.set('date', selectedDate.dateIso);

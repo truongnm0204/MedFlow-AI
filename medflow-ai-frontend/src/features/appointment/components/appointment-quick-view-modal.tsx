@@ -1,16 +1,9 @@
-import {
-  Building2,
-  Calendar,
-  CheckCircle2,
-  Clock,
-  Printer,
-  QrCode,
-  ShieldCheck,
-} from 'lucide-react';
+import { Building2, Calendar, CheckCircle2, Clock, Printer, ShieldCheck } from 'lucide-react';
 
 import { Modal } from '@/shared/ui/modal';
 
 import type { AppointmentListItem } from '../types/appointment-list.types';
+import { AppointmentCheckinQr } from './appointment-checkin-qr';
 
 interface AppointmentQuickViewModalProps {
   appointment: AppointmentListItem | null;
@@ -66,10 +59,10 @@ export function AppointmentQuickViewModal({
             </span>
           </div>
 
-          <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-white p-2.5">
-            <QrCode className="h-12 w-12 text-ink" aria-hidden="true" />
-            <span className="mt-1 text-[10px] font-semibold text-sub">Quét check-in tại Quầy</span>
-          </div>
+          <AppointmentCheckinQr
+            appointmentCode={appointment.appointmentCode}
+            caption="Quét check-in tại Quầy"
+          />
         </div>
 
         {/* Patient & Clinical Info */}

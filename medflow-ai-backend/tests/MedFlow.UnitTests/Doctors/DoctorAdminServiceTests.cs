@@ -26,14 +26,23 @@ public sealed class DoctorAdminServiceTests : IDisposable
         public DbSet<Patient> Patients => throw NotUsed();
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => Set<Doctor>();
+        public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => throw NotUsed();
+        public DbSet<ExaminationSlot> ExaminationSlots => throw NotUsed();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
+        public DbSet<Hospital> Hospitals => throw NotUsed();
         public DbSet<Department> Departments => Set<Department>();
         public DbSet<HospitalRoom> HospitalRooms => throw NotUsed();
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => throw NotUsed();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
+        public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
+        public DbSet<Appointment> Appointments => throw NotUsed();
+        public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
+        public DbSet<Visit> Visits => throw NotUsed();
+        public DbSet<QueueEntry> QueueEntries => throw NotUsed();
+        public DbSet<Payment> Payments => throw NotUsed();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
             => Database.BeginTransactionAsync(ct);
@@ -48,9 +57,18 @@ public sealed class DoctorAdminServiceTests : IDisposable
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuditLog>();
+            modelBuilder.Ignore<Hospital>();
             modelBuilder.Ignore<HospitalRoom>();
             modelBuilder.Ignore<Service>();
             modelBuilder.Ignore<ServicePrice>();
+            modelBuilder.Ignore<HospitalPolicy>();
+            modelBuilder.Ignore<DoctorServiceAuthorization>();
+            modelBuilder.Ignore<ExaminationSlot>();
+            modelBuilder.Ignore<Appointment>();
+            modelBuilder.Ignore<PatientFamilyLink>();
+            modelBuilder.Ignore<Visit>();
+            modelBuilder.Ignore<QueueEntry>();
+            modelBuilder.Ignore<Payment>();
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
@@ -177,6 +195,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     [InlineData("005923", "DOC-0002")]
     [InlineData("DOC-0003", "DOC-0003")]
     [InlineData("Tim mạch", "DOC-0003")]
+    [InlineData("  nv-1002  ", "DOC-0002")]
     public async Task GetDoctorList_FilterByKeyword_ReturnsMatchingDoctors(string keyword, string expectedDoctorCode)
     {
         // Act
@@ -244,5 +263,63 @@ public sealed class DoctorAdminServiceTests : IDisposable
     {
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() => _service.GetDoctorListAsync(null!));
+    }
+
+    [Theory]
+    [InlineData(0, 0, 1, 10)]
+    [InlineData(-5, 101, 1, 100)]
+    [InlineData(1, 100, 1, 100)]
+    public async Task GetDoctorList_OutOfRangePaging_ClampsPageAndPageSize(
+        int page,
+        int pageSize,
+        int expectedPage,
+        int expectedPageSize)
+    {
+        var result = await _service.GetDoctorListAsync(
+            new GetDoctorListAdminRequest(Page: page, PageSize: pageSize));
+
+        Assert.Equal(expectedPage, result.Page);
+        Assert.Equal(expectedPageSize, result.PageSize);
+        Assert.Equal(3, result.Total);
+    }
+
+    [Fact]
+    public async Task GetDoctorList_NoMatch_ReturnsZeroTotalPages()
+    {
+        var result = await _service.GetDoctorListAsync(
+            new GetDoctorListAdminRequest(Keyword: "khong-ton-tai"));
+
+        Assert.Equal(0, result.Total);
+        Assert.Equal(0, result.TotalPages);
+        Assert.Empty(result.Data);
+        Assert.Equal(1, result.Page);
+    }
+
+    [Fact]
+    public async Task GetDoctorList_PageBeyondLast_ReturnsEmptyDataWithTotals()
+    {
+        var result = await _service.GetDoctorListAsync(
+            new GetDoctorListAdminRequest(Page: 5, PageSize: 2));
+
+        Assert.Empty(result.Data);
+        Assert.Equal(3, result.Total);
+        Assert.Equal(2, result.TotalPages);
+        Assert.Equal(5, result.Page);
+    }
+
+    [Fact]
+    public async Task GetDoctorList_CombinedFilters_AppliesAllConditions()
+    {
+        var activeInSpec1 = await _service.GetDoctorListAsync(
+            new GetDoctorListAdminRequest(SpecialtyId: 1, IsActive: true));
+
+        Assert.Single(activeInSpec1.Data);
+        Assert.Equal("DOC-0001", activeInSpec1.Data[0].DoctorCode);
+
+        var bytInDept2 = await _service.GetDoctorListAsync(
+            new GetDoctorListAdminRequest(Keyword: "BYT", DepartmentId: 2));
+
+        Assert.Single(bytInDept2.Data);
+        Assert.Equal("DOC-0003", bytInDept2.Data[0].DoctorCode);
     }
 }

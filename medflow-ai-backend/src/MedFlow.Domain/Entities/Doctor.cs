@@ -17,5 +17,7 @@ public class Doctor
 
     public Staff? Staff { get; set; }
     public Specialty? Specialty { get; set; }
+    public ICollection<DoctorServiceAuthorization> ServiceAuthorizations { get; set; } = new List<DoctorServiceAuthorization>();
+    public ICollection<ExaminationSlot> ExaminationSlots { get; set; } = new List<ExaminationSlot>();
 }
 

@@ -357,7 +357,7 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
         return (null, null);
     }
 
-    private static string FormatVndPrice(decimal price)
+    internal static string FormatVndPrice(decimal price)
     {
         var truncated = decimal.Truncate(price);
         var formattedNumber = truncated.ToString("N0", CultureInfo.InvariantCulture).Replace(',', '.');
