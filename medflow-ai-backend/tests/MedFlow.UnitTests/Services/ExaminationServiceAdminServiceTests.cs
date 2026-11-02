@@ -704,4 +704,219 @@ public sealed class ExaminationServiceAdminServiceTests : IDisposable
         var prices = await _db.ServicePrices.Where(p => p.ServiceId == result.Id).ToListAsync();
         Assert.Empty(prices);
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task UpdateExaminationServiceAsync_InvalidId_ThrowsArgumentException(long id)
+    {
+        var request = new UpdateExaminationServiceRequest(Name: "Tên mới");
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.UpdateExaminationServiceAsync(id, request));
+
+        Assert.Contains("ID dịch vụ khám phải lớn hơn 0", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_NullRequest_ThrowsArgumentNullException()
+    {
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            _sut.UpdateExaminationServiceAsync(1, null!));
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_NotFoundId_ThrowsKeyNotFoundException()
+    {
+        var request = new UpdateExaminationServiceRequest(Name: "Tên mới");
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            _sut.UpdateExaminationServiceAsync(9999, request));
+
+        Assert.Contains("Không tìm thấy dịch vụ khám", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_ServiceCodeTooShort_ThrowsArgumentException()
+    {
+        var request = new UpdateExaminationServiceRequest(ServiceCode: "A");
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.UpdateExaminationServiceAsync(1, request));
+
+        Assert.Contains("ít nhất 2 ký tự", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_ServiceCodeTooLong_ThrowsArgumentException()
+    {
+        var longCode = new string('A', 41);
+        var request = new UpdateExaminationServiceRequest(ServiceCode: longCode);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.UpdateExaminationServiceAsync(1, request));
+
+        Assert.Contains("vượt quá 40 ký tự", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_DuplicateServiceCode_ThrowsInvalidOperationException()
+    {
+        // Try updating service 2's code to "KB-01" which is already used by service 1
+        var request = new UpdateExaminationServiceRequest(ServiceCode: "kb-01");
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _sut.UpdateExaminationServiceAsync(2, request));
+
+        Assert.Contains("đã tồn tại trong cơ sở y tế", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_KeepExistingServiceCode_DoesNotThrowDuplicateConflict()
+    {
+        // Updating service 1 keeping its own code "KB-01"
+        var request = new UpdateExaminationServiceRequest(ServiceCode: "KB-01", Name: "Khám Nội tổng quát Đã Cập Nhật");
+        var result = await _sut.UpdateExaminationServiceAsync(1, request);
+
+        Assert.NotNull(result);
+        Assert.Equal("KB-01", result.ServiceCode);
+        Assert.Equal("Khám Nội tổng quát Đã Cập Nhật", result.Name);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task UpdateExaminationServiceAsync_EmptyName_ThrowsArgumentException(string emptyName)
+    {
+        var request = new UpdateExaminationServiceRequest(Name: emptyName);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.UpdateExaminationServiceAsync(1, request));
+
+        Assert.Contains("Tên dịch vụ khám không được để trống", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_NameTooShort_ThrowsArgumentException()
+    {
+        var request = new UpdateExaminationServiceRequest(Name: "AB");
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.UpdateExaminationServiceAsync(1, request));
+
+        Assert.Contains("ít nhất 3 ký tự", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_NameTooLong_ThrowsArgumentException()
+    {
+        var longName = new string('A', 201);
+        var request = new UpdateExaminationServiceRequest(Name: longName);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.UpdateExaminationServiceAsync(1, request));
+
+        Assert.Contains("vượt quá 200 ký tự", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_InvalidCategory_ThrowsArgumentException()
+    {
+        var request = new UpdateExaminationServiceRequest(Category: "Không hợp lệ");
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.UpdateExaminationServiceAsync(1, request));
+
+        Assert.Contains("Phân loại dịch vụ không hợp lệ", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_NonExistentDepartmentId_ThrowsKeyNotFoundException()
+    {
+        var request = new UpdateExaminationServiceRequest(DepartmentId: 8888);
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            _sut.UpdateExaminationServiceAsync(1, request));
+
+        Assert.Contains("Không tìm thấy khoa phòng", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_NonExistentDepartmentName_ThrowsKeyNotFoundException()
+    {
+        var request = new UpdateExaminationServiceRequest(Department: "Khoa Giả Định Không Tồn Tại");
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            _sut.UpdateExaminationServiceAsync(1, request));
+
+        Assert.Contains("Không tìm thấy khoa phòng", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_NonExistentSpecialtyId_ThrowsKeyNotFoundException()
+    {
+        var request = new UpdateExaminationServiceRequest(SpecialtyId: 8888);
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            _sut.UpdateExaminationServiceAsync(1, request));
+
+        Assert.Contains("Không tìm thấy chuyên khoa", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_NegativePrice_ThrowsArgumentException()
+    {
+        var request = new UpdateExaminationServiceRequest(Price: -50000m);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.UpdateExaminationServiceAsync(1, request));
+
+        Assert.Contains("không được là số âm", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_ValidRequest_UpdatesFieldsAndAddsNewPrice()
+    {
+        var request = new UpdateExaminationServiceRequest(
+            Name: "Khám Nội tổng quát và Tiêu hóa Chuyên sâu",
+            Category: "Hội chẩn Lâm sàng",
+            DepartmentId: 2,
+            SpecialtyId: 2,
+            Description: "Phạm vi khám mở rộng có hội chẩn chuyên sâu",
+            AllowsOnlineBooking: false,
+            Status: "SUSPENDED",
+            Price: 450000m
+        );
+
+        var result = await _sut.UpdateExaminationServiceAsync(1, request);
+
+        Assert.NotNull(result);
+        Assert.Equal(1, result.Id);
+        Assert.Equal("KB-01", result.ServiceCode);
+        Assert.Equal("Khám Nội tổng quát và Tiêu hóa Chuyên sâu", result.Name);
+        Assert.Equal("Hội chẩn Lâm sàng", result.Category);
+        Assert.Equal("CONSULTATION", result.ServiceType);
+        Assert.Equal(2, result.DepartmentId);
+        Assert.Equal("Khoa Tim mạch", result.DepartmentName);
+        Assert.Equal(2, result.SpecialtyId);
+        Assert.Equal("Tim mạch can thiệp", result.SpecialtyName);
+        Assert.Equal("Phạm vi khám mở rộng có hội chẩn chuyên sâu", result.Description);
+        Assert.False(result.AllowsOnlineBooking);
+        Assert.Equal("COUNTER_ONLY", result.BookingChannel);
+        Assert.False(result.IsActive);
+        Assert.Equal("SUSPENDED", result.Status);
+        Assert.Equal(450000m, result.Price);
+        Assert.Equal("450.000 đ", result.PriceFormatted);
+
+        // Verify old prices have EffectiveTo set and new price is in database
+        var prices = await _db.ServicePrices.Where(p => p.ServiceId == 1).ToListAsync();
+        Assert.True(prices.Count >= 2);
+        var activePrice = prices.FirstOrDefault(p => !p.EffectiveTo.HasValue);
+        Assert.NotNull(activePrice);
+        Assert.Equal(450000m, activePrice.PriceAmount);
+    }
+
+    [Fact]
+    public async Task UpdateExaminationServiceAsync_DiagnosticWithDepartmentName_SetsDepartmentAndVerification()
+    {
+        var request = new UpdateExaminationServiceRequest(
+            Category: "Cận lâm sàng kỹ thuật",
+            Department: "Khoa Khám bệnh"
+        );
+
+        var result = await _sut.UpdateExaminationServiceAsync(1, request);
+
+        Assert.NotNull(result);
+        Assert.Equal("Cận lâm sàng kỹ thuật", result.Category);
+        Assert.Equal("DIAGNOSTIC", result.ServiceType);
+        Assert.Equal(1, result.DepartmentId);
+        Assert.Equal("Khoa Khám bệnh", result.DepartmentName);
+    }
 }
