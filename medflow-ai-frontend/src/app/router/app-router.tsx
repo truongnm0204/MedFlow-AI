@@ -1,5 +1,6 @@
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 
+import { DepartmentListPage } from '@/features/admin-departments/pages/department-list-page';
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
@@ -7,7 +8,18 @@ import { OperationalReportsPage } from '@/features/admin-reports/pages/operation
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
+import { ExaminationSlotCreatePage } from '@/features/admin-slots/pages/examination-slot-create-page';
+import { ExaminationSlotListPage } from '@/features/admin-slots/pages/examination-slot-list-page';
+import { SlotEditModal } from '@/features/admin-slots/pages/slot-edit-modal';
+import { StaffAccountListPage } from '@/features/admin-staff/pages/staff-account-list-page';
+import { AppointmentDetailPage } from '@/features/appointment/pages/appointment-detail-page';
+import { AppointmentConfirmationPage } from '@/features/appointment/pages/appointment-confirmation-page';
+import { AppointmentListPage } from '@/features/appointment/pages/appointment-list-page';
+import { AppointmentPrintPreviewPage } from '@/features/appointment/pages/appointment-print-preview-page';
+import { AppointmentQueueTrackingPage } from '@/features/appointment/pages/appointment-queue-tracking-page';
+import { AppointmentReviewPage } from '@/features/appointment/pages/appointment-review-page';
 import { AppointmentSlotBookingPage } from '@/features/appointment/pages/appointment-slot-booking-page';
+import { BookingEntryPage } from '@/features/appointment/pages/booking-entry-page';
 import { DoctorSearchPage } from '@/features/appointment/pages/doctor-search-page';
 import { ExaminationServiceCatalogPage } from '@/features/appointment/pages/examination-service-catalog-page';
 import { ServiceSlotBookingPage } from '@/features/appointment/pages/service-slot-booking-page';
@@ -30,6 +42,8 @@ export function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      <Route path="/booking" element={<BookingEntryPage />} />
+      <Route path="/appointment/book" element={<BookingEntryPage />} />
       <Route path="/services" element={<ExaminationServiceCatalogPage />} />
       <Route path="/services/:serviceId" element={<ExaminationServiceCatalogPage />} />
       <Route path="/services/:serviceId/booking" element={<ServiceSlotBookingPage />} />
@@ -45,6 +59,16 @@ export function AppRouter() {
         path="/appointment/doctors/:doctorId/booking"
         element={<AppointmentSlotBookingPage />}
       />
+      <Route path="/appointment/review" element={<AppointmentReviewPage />} />
+      <Route
+        path="/appointment/confirmation/:appointmentId"
+        element={<AppointmentConfirmationPage />}
+      />
+      <Route path="/appointments/review" element={<AppointmentReviewPage />} />
+      <Route path="/appointments" element={<AppointmentListPage />} />
+      <Route path="/appointments/:appointmentId/print" element={<AppointmentPrintPreviewPage />} />
+      <Route path="/appointments/:appointmentId/queue" element={<AppointmentQueueTrackingPage />} />
+      <Route path="/appointments/:appointmentId" element={<AppointmentDetailPage />} />
       <Route
         path="/patient"
         element={
@@ -110,6 +134,26 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <Navigate to="/admin/services" replace />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/staff"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <StaffAccountListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/doctors"
         element={
           <RequireAuth>
@@ -127,6 +171,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <DoctorCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/departments"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <DepartmentListPage />
             </RequireAdmin>
           </RequireAuth>
         }
@@ -176,7 +230,71 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin/slots"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ExaminationSlotListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      >
+        <Route path=":slotId/edit" element={<SlotEditModal />} />
+      </Route>
+      <Route
+        path="/admin/slots/new"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ExaminationSlotCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/examination-slots"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ExaminationSlotListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      >
+        <Route path=":slotId/edit" element={<SlotEditModal />} />
+      </Route>
+      <Route
+        path="/admin/examination-slots/new"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ExaminationSlotCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/reports"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <OperationalReportsPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/hospital-admin"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <OperationalReportsPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/system-admin"
         element={
           <RequireAuth>
             <RequireAdmin>

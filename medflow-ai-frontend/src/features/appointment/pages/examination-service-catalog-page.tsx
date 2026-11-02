@@ -12,7 +12,10 @@ import { ServiceGrid } from '../components/service-grid';
 import { ServicePagination } from '../components/service-pagination';
 import { ServiceSearchBar } from '../components/service-search-bar';
 import { MOCK_EXAMINATION_SERVICES } from '../data/service-search-mock';
-import { useExaminationServicesQuery } from '../hooks/use-service-search';
+import {
+  useExaminationServiceDetailQuery,
+  useExaminationServicesQuery,
+} from '../hooks/use-service-search';
 import { useBookingStore } from '../store/booking.store';
 import type {
   ExaminationService,
@@ -28,22 +31,6 @@ export function ExaminationServiceCatalogPage() {
 
   const [selectedService, setSelectedService] = useState<ExaminationService | null>(null);
 
-  // Derive active service from state or URL parameter
-  const targetServiceId = serviceId ?? searchParams.get('serviceId');
-  const activeService = useMemo(() => {
-    if (selectedService) return selectedService;
-    if (targetServiceId) {
-      return (
-        MOCK_EXAMINATION_SERVICES.find(
-          (s) =>
-            s.id === targetServiceId ||
-            s.serviceCode.toLowerCase() === targetServiceId.toLowerCase(),
-        ) ?? null
-      );
-    }
-    return null;
-  }, [selectedService, targetServiceId]);
-
   const [filters, setFilters] = useState<ServiceSearchParams>({
     query: '',
     category: 'all',
@@ -55,10 +42,46 @@ export function ExaminationServiceCatalogPage() {
 
   const { data, isLoading } = useExaminationServicesQuery(filters);
 
-  const services = data?.data ?? [];
+  const services = useMemo(() => data?.data ?? [], [data?.data]);
   const total = data?.total ?? 0;
   const page = data?.page ?? 1;
   const totalPages = data?.totalPages ?? 1;
+
+  // Derive active service from state or URL parameter and always resolve full detail from API
+  const targetServiceId = serviceId ?? searchParams.get('serviceId');
+  const detailLookupId = selectedService?.id ?? targetServiceId;
+  const { data: detailService } = useExaminationServiceDetailQuery(detailLookupId);
+
+  const activeService = useMemo(() => {
+    if (!detailLookupId) return null;
+
+    if (
+      detailService &&
+      (detailService.id === detailLookupId ||
+        detailService.serviceCode.toLowerCase() === detailLookupId.toLowerCase() ||
+        (selectedService && detailService.id === selectedService.id))
+    ) {
+      return detailService;
+    }
+
+    if (selectedService) return selectedService;
+
+    if (targetServiceId) {
+      const fromCurrentPage = services.find(
+        (s) =>
+          s.id === targetServiceId || s.serviceCode.toLowerCase() === targetServiceId.toLowerCase(),
+      );
+      if (fromCurrentPage) return fromCurrentPage;
+      return (
+        MOCK_EXAMINATION_SERVICES.find(
+          (s) =>
+            s.id === targetServiceId ||
+            s.serviceCode.toLowerCase() === targetServiceId.toLowerCase(),
+        ) ?? null
+      );
+    }
+    return null;
+  }, [detailLookupId, detailService, selectedService, targetServiceId, services]);
 
   const hasActiveFilters = Boolean(
     filters.query ||
