@@ -14,3 +14,4 @@ public sealed record ExaminationSlotAdminListResponseDto(
     [JsonPropertyName("items")]
     public IReadOnlyList<ExaminationSlotAdminItemDto> Items => Data;
 }
+

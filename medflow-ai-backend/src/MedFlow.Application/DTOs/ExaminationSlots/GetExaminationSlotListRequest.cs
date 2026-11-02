@@ -14,3 +14,4 @@ public sealed record GetExaminationSlotListRequest(
     int Page = 1,
     int PageSize = 20
 );
+

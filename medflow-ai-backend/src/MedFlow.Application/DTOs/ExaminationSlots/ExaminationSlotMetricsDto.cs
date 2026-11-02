@@ -7,3 +7,4 @@ public sealed record ExaminationSlotMetricsDto(
     int UpcomingCount,
     int ReviewCount
 );
+

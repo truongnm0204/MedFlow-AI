@@ -8,3 +8,4 @@ public interface IExaminationSlotAdminService
         GetExaminationSlotListRequest request,
         CancellationToken ct = default);
 }
+

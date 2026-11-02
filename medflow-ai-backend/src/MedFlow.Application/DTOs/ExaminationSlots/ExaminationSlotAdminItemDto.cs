@@ -22,3 +22,4 @@ public sealed record ExaminationSlotAdminItemDto(
     string? Facility = null,
     bool NeedsReview = false
 );
+
