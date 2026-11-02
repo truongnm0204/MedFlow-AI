@@ -156,4 +156,118 @@ public sealed class MyAppointmentsEndpointTests : AuthTestBase
 
         Assert.DoesNotContain(dto.Items, i => i.AppointmentCode == "APT-202610-0001");
     }
+
+    [Fact]
+    public async Task List_KeywordSearch_MatchesAppointmentCode()
+    {
+        var vnNow = DateTime.SpecifyKind(DateTime.UtcNow.AddHours(7), DateTimeKind.Unspecified);
+        var tomorrow = DateOnly.FromDateTime(vnNow).AddDays(1);
+
+        var slot = new ExaminationSlot
+        {
+            ServiceId = 1,
+            DoctorId = 1,
+            RoomId = 1,
+            StartsAt = tomorrow.ToDateTime(new TimeOnly(18, 0), DateTimeKind.Unspecified),
+            EndsAt = tomorrow.ToDateTime(new TimeOnly(18, 30), DateTimeKind.Unspecified),
+            Capacity = 2,
+            Status = "OPEN",
+        };
+
+        Db.ExaminationSlots.Add(slot);
+        await Db.SaveChangesAsync();
+
+        var apptCode = $"APT-KW-{Guid.NewGuid():N}"[..24].ToUpperInvariant();
+        var appointment = new Appointment
+        {
+            PatientId = 1,
+            SlotId = slot.Id,
+            AppointmentCode = apptCode,
+            BookingChannel = "ONLINE",
+            Status = "BOOKED",
+            BookedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified),
+        };
+
+        Db.Appointments.Add(appointment);
+        await Db.SaveChangesAsync();
+
+        try
+        {
+            var tokens = await LoginAsync("patient01@medflow.test", "Demo@12345");
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{Endpoint}?keyword={Uri.EscapeDataString(apptCode)}");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
+            var response = await Client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var dto = await response.Content.ReadFromJsonAsync<AppointmentListResponse>();
+            Assert.NotNull(dto);
+
+            var matched = Assert.Single(dto.Items);
+            Assert.Equal(apptCode, matched.AppointmentCode);
+        }
+        finally
+        {
+            await Db.Appointments.Where(a => a.Id == appointment.Id).ExecuteDeleteAsync();
+            await Db.ExaminationSlots.Where(s => s.Id == slot.Id).ExecuteDeleteAsync();
+        }
+    }
+
+    [Fact]
+    public async Task List_PastBooked_StillCountsAsUpcoming()
+    {
+        var vnNow = DateTime.SpecifyKind(DateTime.UtcNow.AddHours(7), DateTimeKind.Unspecified);
+        var pastDate = DateOnly.FromDateTime(vnNow).AddDays(-2);
+
+        var slot = new ExaminationSlot
+        {
+            ServiceId = 1,
+            DoctorId = 1,
+            RoomId = 1,
+            StartsAt = pastDate.ToDateTime(new TimeOnly(9, 0), DateTimeKind.Unspecified),
+            EndsAt = pastDate.ToDateTime(new TimeOnly(9, 30), DateTimeKind.Unspecified),
+            Capacity = 2,
+            Status = "OPEN",
+        };
+
+        Db.ExaminationSlots.Add(slot);
+        await Db.SaveChangesAsync();
+
+        var apptCode = $"APT-PB-{Guid.NewGuid():N}"[..24].ToUpperInvariant();
+        var appointment = new Appointment
+        {
+            PatientId = 1,
+            SlotId = slot.Id,
+            AppointmentCode = apptCode,
+            BookingChannel = "ONLINE",
+            Status = "BOOKED",
+            BookedAt = DateTime.SpecifyKind(DateTime.UtcNow.AddDays(-3), DateTimeKind.Unspecified),
+        };
+
+        Db.Appointments.Add(appointment);
+        await Db.SaveChangesAsync();
+
+        try
+        {
+            var tokens = await LoginAsync("patient01@medflow.test", "Demo@12345");
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{Endpoint}?tab=UPCOMING&pageSize=50");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
+            var response = await Client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var dto = await response.Content.ReadFromJsonAsync<AppointmentListResponse>();
+            Assert.NotNull(dto);
+
+            var matched = Assert.Single(dto.Items, i => i.AppointmentCode == apptCode);
+            Assert.Equal("BOOKED", matched.Status);
+        }
+        finally
+        {
+            await Db.Appointments.Where(a => a.Id == appointment.Id).ExecuteDeleteAsync();
+            await Db.ExaminationSlots.Where(s => s.Id == slot.Id).ExecuteDeleteAsync();
+        }
+    }
 }
