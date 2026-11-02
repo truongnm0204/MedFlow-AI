@@ -8,3 +8,4 @@ public sealed record ExaminationServiceAdminListResponseDto(
     int TotalPages,
     ExaminationServiceAdminMetricsDto Metrics
 );
+

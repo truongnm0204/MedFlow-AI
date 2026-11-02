@@ -232,3 +232,4 @@ public sealed class ExaminationServiceAdminService : IExaminationServiceAdminSer
         return "Khám Lâm sàng";
     }
 }
+

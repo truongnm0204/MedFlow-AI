@@ -23,3 +23,4 @@ public sealed record ExaminationServiceAdminItemDto(
     bool IsActive,
     string Status
 );
+

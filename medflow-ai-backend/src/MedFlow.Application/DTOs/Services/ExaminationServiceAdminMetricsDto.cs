@@ -7,3 +7,4 @@ public sealed record ExaminationServiceAdminMetricsDto(
     int OnlineBookingCount,
     int DepartmentsCount
 );
+

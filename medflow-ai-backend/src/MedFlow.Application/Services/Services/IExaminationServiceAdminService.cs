@@ -8,3 +8,4 @@ public interface IExaminationServiceAdminService
         GetExaminationServiceListAdminRequest request,
         CancellationToken ct = default);
 }
+
