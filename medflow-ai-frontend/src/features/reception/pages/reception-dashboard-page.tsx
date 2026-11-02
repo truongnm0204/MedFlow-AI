@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { useLogout } from '@/features/auth/hooks/use-auth';
@@ -6,6 +7,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import { CheckInModal } from '../components/checkin-modal';
+import { PatientDetailModal } from '../components/patient-detail-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
 import { SCHEDULED_CHECKIN_APPOINTMENTS_MOCK } from '../data/checkin-mock';
 import type { ScheduledCheckInAppointment } from '../types/checkin.types';
@@ -18,6 +20,7 @@ import {
   RECEPTION_STATS_MOCK,
   TODAY_APPOINTMENTS_MOCK,
 } from '../data/reception-mock-data';
+import { findPatientDetailByCode } from '../data/patient-detail-mock';
 import type { TodayAppointment } from '../types/reception.types';
 
 const APPOINTMENT_STATUS_LABEL: Record<
@@ -31,15 +34,23 @@ const APPOINTMENT_STATUS_LABEL: Record<
 };
 
 export function ReceptionDashboardPage() {
+  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
+  const [selectedPatientCode, setSelectedPatientCode] = useState<string | null>(null);
+  const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
   const [appointments, setAppointments] = useState(TODAY_APPOINTMENTS_MOCK);
   const [selectedCheckIn, setSelectedCheckIn] = useState<ScheduledCheckInAppointment | null>(null);
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
-      <ReceptionSidebar activeItem="dashboard" />
+      <ReceptionSidebar
+        activeItem="dashboard"
+        onItemSelect={(item) => {
+          if (item === 'patients') navigate('/reception/patients');
+        }}
+      />
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
@@ -108,7 +119,10 @@ export function ReceptionDashboardPage() {
                 <Badge tone="sky">Trực tiếp</Badge>
               </CardHeader>
               <CardContent className="p-0 px-6 pb-4">
-                <QueuePreviewTable entries={QUEUE_ENTRIES_MOCK} />
+                <QueuePreviewTable
+                  entries={QUEUE_ENTRIES_MOCK}
+                  onSelectPatient={setSelectedPatientCode}
+                />
               </CardContent>
             </Card>
 
@@ -124,6 +138,8 @@ export function ReceptionDashboardPage() {
                     onAction={(id) => {
                       if (id === 'check-in') {
                         setSelectedCheckIn(SCHEDULED_CHECKIN_APPOINTMENTS_MOCK[0]);
+                      } else if (id === 'search' || id === 'new-patient') {
+                        navigate('/reception/patients');
                       }
                     }}
                   />
@@ -191,6 +207,11 @@ export function ReceptionDashboardPage() {
             </div>
           </div>
         </main>
+
+        <PatientDetailModal
+          patient={selectedPatient}
+          onClose={() => setSelectedPatientCode(null)}
+        />
       </div>
 
       <CheckInModal
