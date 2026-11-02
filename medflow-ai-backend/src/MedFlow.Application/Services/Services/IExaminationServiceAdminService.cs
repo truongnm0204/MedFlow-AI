@@ -7,5 +7,9 @@ public interface IExaminationServiceAdminService
     Task<ExaminationServiceAdminListResponseDto> GetExaminationServiceListAsync(
         GetExaminationServiceListAdminRequest request,
         CancellationToken ct = default);
+
+    Task<ExaminationServiceAdminItemDto> CreateExaminationServiceAsync(
+        CreateExaminationServiceRequest request,
+        CancellationToken ct = default);
 }
 

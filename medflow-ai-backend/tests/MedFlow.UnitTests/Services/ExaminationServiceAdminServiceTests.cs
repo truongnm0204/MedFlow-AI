@@ -432,4 +432,276 @@ public sealed class ExaminationServiceAdminServiceTests : IDisposable
         Assert.Equal(0m, item.Price);
         Assert.Equal("0 đ", item.PriceFormatted);
     }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_NullRequest_ThrowsArgumentNullException()
+    {
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            _sut.CreateExaminationServiceAsync(null!));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CreateExaminationServiceAsync_EmptyServiceCode_ThrowsArgumentException(string? code)
+    {
+        var request = new CreateExaminationServiceRequest(ServiceCode: code, Name: "Dịch vụ mẫu");
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.CreateExaminationServiceAsync(request));
+
+        Assert.Contains("Mã dịch vụ khám không được để trống", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_ServiceCodeTooShort_ThrowsArgumentException()
+    {
+        var request = new CreateExaminationServiceRequest(ServiceCode: "A", Name: "Dịch vụ mẫu");
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.CreateExaminationServiceAsync(request));
+
+        Assert.Contains("ít nhất 2 ký tự", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_ServiceCodeTooLong_ThrowsArgumentException()
+    {
+        var longCode = new string('X', 41);
+        var request = new CreateExaminationServiceRequest(ServiceCode: longCode, Name: "Dịch vụ mẫu");
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.CreateExaminationServiceAsync(request));
+
+        Assert.Contains("vượt quá 40 ký tự", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CreateExaminationServiceAsync_EmptyName_ThrowsArgumentException(string? name)
+    {
+        var request = new CreateExaminationServiceRequest(ServiceCode: "EX-TEST", Name: name);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.CreateExaminationServiceAsync(request));
+
+        Assert.Contains("Tên dịch vụ khám không được để trống", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_NameTooShort_ThrowsArgumentException()
+    {
+        var request = new CreateExaminationServiceRequest(ServiceCode: "EX-TEST", Name: "AB");
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.CreateExaminationServiceAsync(request));
+
+        Assert.Contains("ít nhất 3 ký tự", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_NameTooLong_ThrowsArgumentException()
+    {
+        var longName = new string('A', 201);
+        var request = new CreateExaminationServiceRequest(ServiceCode: "EX-TEST", Name: longName);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.CreateExaminationServiceAsync(request));
+
+        Assert.Contains("vượt quá 200 ký tự", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_InvalidCategory_ThrowsArgumentException()
+    {
+        var request = new CreateExaminationServiceRequest(
+            ServiceCode: "EX-TEST",
+            Name: "Dịch vụ thử nghiệm",
+            Category: "Danh mục không tồn tại"
+        );
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.CreateExaminationServiceAsync(request));
+
+        Assert.Contains("Phân loại dịch vụ không hợp lệ", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_NonExistentDepartmentId_ThrowsKeyNotFoundException()
+    {
+        var request = new CreateExaminationServiceRequest(
+            ServiceCode: "EX-TEST",
+            Name: "Dịch vụ thử nghiệm",
+            DepartmentId: 9999
+        );
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            _sut.CreateExaminationServiceAsync(request));
+
+        Assert.Contains("Không tìm thấy khoa phòng", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_NonExistentDepartmentName_ThrowsKeyNotFoundException()
+    {
+        var request = new CreateExaminationServiceRequest(
+            ServiceCode: "EX-TEST",
+            Name: "Dịch vụ thử nghiệm",
+            Department: "Khoa Không Tồn Tại"
+        );
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            _sut.CreateExaminationServiceAsync(request));
+
+        Assert.Contains("Không tìm thấy khoa phòng", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_NonExistentSpecialtyId_ThrowsKeyNotFoundException()
+    {
+        var request = new CreateExaminationServiceRequest(
+            ServiceCode: "EX-TEST",
+            Name: "Dịch vụ thử nghiệm",
+            SpecialtyId: 9999
+        );
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            _sut.CreateExaminationServiceAsync(request));
+
+        Assert.Contains("Không tìm thấy chuyên khoa", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_DuplicateServiceCode_ThrowsInvalidOperationException()
+    {
+        var request = new CreateExaminationServiceRequest(
+            ServiceCode: "kb-01", // Already exists
+            Name: "Khám lại nội tổng quát",
+            HospitalId: 1
+        );
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _sut.CreateExaminationServiceAsync(request));
+
+        Assert.Contains("đã tồn tại trong cơ sở y tế", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_NegativePrice_ThrowsArgumentException()
+    {
+        var request = new CreateExaminationServiceRequest(
+            ServiceCode: "EX-TEST-PRICE",
+            Name: "Dịch vụ giá âm",
+            Price: -1000m
+        );
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.CreateExaminationServiceAsync(request));
+
+        Assert.Contains("không được là số âm", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_ValidExaminationRequest_CreatesServiceAndReturnsDto()
+    {
+        var request = new CreateExaminationServiceRequest(
+            Code: "ex-2-09",
+            Name: "Khám Chuyên khoa Nội Tiêu hóa & Gan Mật",
+            Category: "Khám Lâm sàng",
+            DepartmentId: 1,
+            SpecialtyId: 1,
+            HospitalId: 1,
+            Description: "Thăm khám, chẩn đoán phân biệt và tư vấn phác đồ điều trị chuyên sâu",
+            Price: 300000m,
+            OnlineBooking: true,
+            Status: "ACTIVE"
+        );
+
+        var result = await _sut.CreateExaminationServiceAsync(request);
+
+        Assert.NotNull(result);
+        Assert.True(result.Id > 0);
+        Assert.Equal("EX-2-09", result.ServiceCode);
+        Assert.Equal("Khám Chuyên khoa Nội Tiêu hóa & Gan Mật", result.Name);
+        Assert.Equal("Khám Lâm sàng", result.Category);
+        Assert.Equal("EXAMINATION", result.ServiceType);
+        Assert.Equal(1, result.DepartmentId);
+        Assert.Equal("Khoa Khám bệnh", result.DepartmentName);
+        Assert.Equal("KKB", result.DepartmentCode);
+        Assert.Equal(1, result.SpecialtyId);
+        Assert.Equal("Nội tổng quát", result.SpecialtyName);
+        Assert.Equal("NTQ", result.SpecialtyCode);
+        Assert.Equal(300000m, result.Price);
+        Assert.Equal("300.000 đ", result.PriceFormatted);
+        Assert.True(result.AllowsOnlineBooking);
+        Assert.Equal("ONLINE_ALLOWED", result.BookingChannel);
+        Assert.False(result.RequiresResultVerification);
+        Assert.True(result.IsActive);
+        Assert.Equal("ACTIVE", result.Status);
+        Assert.Equal("MedFlow Cơ sở 1", result.Facility);
+
+        // Verify entity persisted in database
+        var inDb = await _db.Services.FirstOrDefaultAsync(s => s.Id == result.Id);
+        Assert.NotNull(inDb);
+        Assert.Equal("EX-2-09", inDb.ServiceCode);
+
+        // Verify price entity persisted
+        var priceInDb = await _db.ServicePrices.FirstOrDefaultAsync(p => p.ServiceId == result.Id);
+        Assert.NotNull(priceInDb);
+        Assert.Equal(300000m, priceInDb.PriceAmount);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_DiagnosticWithDepartmentName_CreatesServiceWithAutoVerification()
+    {
+        var request = new CreateExaminationServiceRequest(
+            ServiceCode: "CLS-XRAY-01",
+            Name: "Chụp X-quang tim phổi thẳng",
+            Category: "Cận lâm sàng kỹ thuật",
+            Department: "Khoa Tim mạch",
+            SpecialtyId: 2,
+            HospitalId: 2,
+            AllowsOnlineBooking: false,
+            Status: "ACTIVE",
+            Price: 120000m
+        );
+
+        var result = await _sut.CreateExaminationServiceAsync(request);
+
+        Assert.NotNull(result);
+        Assert.Equal("CLS-XRAY-01", result.ServiceCode);
+        Assert.Equal("Cận lâm sàng kỹ thuật", result.Category);
+        Assert.Equal("DIAGNOSTIC", result.ServiceType);
+        Assert.Equal(2, result.DepartmentId);
+        Assert.Equal("Khoa Tim mạch", result.DepartmentName);
+        Assert.False(result.AllowsOnlineBooking);
+        Assert.Equal("COUNTER_ONLY", result.BookingChannel);
+        Assert.True(result.RequiresResultVerification);
+        Assert.Equal("MedFlow Cơ sở 2", result.Facility);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_SuspendedStatus_CreatesInactiveService()
+    {
+        var request = new CreateExaminationServiceRequest(
+            ServiceCode: "EX-SUSP-01",
+            Name: "Dịch vụ tạm ngưng ngay khi tạo",
+            Status: "SUSPENDED"
+        );
+
+        var result = await _sut.CreateExaminationServiceAsync(request);
+
+        Assert.NotNull(result);
+        Assert.False(result.IsActive);
+        Assert.Equal("SUSPENDED", result.Status);
+    }
+
+    [Fact]
+    public async Task CreateExaminationServiceAsync_WithoutPrice_DefaultsToZeroPrice()
+    {
+        var request = new CreateExaminationServiceRequest(
+            ServiceCode: "EX-FREE-01",
+            Name: "Dịch vụ miễn phí tư vấn"
+        );
+
+        var result = await _sut.CreateExaminationServiceAsync(request);
+
+        Assert.NotNull(result);
+        Assert.Equal(0m, result.Price);
+        Assert.Equal("0 đ", result.PriceFormatted);
+
+        var prices = await _db.ServicePrices.Where(p => p.ServiceId == result.Id).ToListAsync();
+        Assert.Empty(prices);
+    }
 }
