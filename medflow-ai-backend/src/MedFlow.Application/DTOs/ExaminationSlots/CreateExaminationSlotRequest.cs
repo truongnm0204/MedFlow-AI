@@ -15,3 +15,4 @@ public sealed record CreateExaminationSlotRequest(
     int? Capacity = null,
     string? Status = null
 );
+
