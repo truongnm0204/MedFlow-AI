@@ -69,7 +69,8 @@ describe('DeactivateStaffModal (SCR-ADM-DOC-05)', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Ngừng hoạt động Lê Hoàng Minh' }));
     fireEvent.click(screen.getByRole('button', { name: 'Xác nhận ngừng hoạt động' }));
-    expect(screen.getByText('DISABLED')).toBeInTheDocument();
+    expect(screen.getAllByText('DISABLED')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Ngừng hoạt động Lê Hoàng Minh' })).toBeDisabled();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

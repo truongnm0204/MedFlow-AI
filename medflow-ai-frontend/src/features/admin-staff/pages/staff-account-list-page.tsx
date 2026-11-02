@@ -1,87 +1,141 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
 
 import { DeactivateStaffModal } from '../components/deactivate-staff-modal';
-import type { StaffAccountStatus, StaffTargetSummary } from '../types/deactivate-staff.types';
+import { StaffAccountFilterBar } from '../components/staff-account-filters';
+import { StaffAccountMetricsCards } from '../components/staff-account-metrics';
+import { StaffAccountTable } from '../components/staff-account-table';
+import {
+  STAFF_ACCOUNT_METRICS,
+  STAFF_ACCOUNTS,
+  STAFF_STATUS_LABELS,
+} from '../data/staff-account-mock-data';
+import type { DeactivateStaffPayload, StaffTargetSummary } from '../types/deactivate-staff.types';
+import type {
+  StaffAccountFilters,
+  StaffAccountItem,
+  StaffAccountMetrics,
+} from '../types/staff-account.types';
 
-const INITIAL_STAFF: StaffTargetSummary[] = [
-  {
-    id: 'stf-0142',
-    staffCode: 'STF-0142',
-    fullName: 'Lê Hoàng Minh',
-    role: 'Bác sĩ',
-    department: 'Khoa Nội Tiêu hóa',
-    email: 'minh.lh@medflow.vn',
-    pendingAssignments: 0,
-  },
-  {
-    id: 'stf-0150',
-    staffCode: 'STF-0150',
-    fullName: 'Trần Thu Hà',
-    role: 'Điều dưỡng',
-    department: 'Khoa Nội Tiêu hóa',
-    email: 'ha.tt@medflow.vn',
-    pendingAssignments: 3,
-  },
-];
+const PAGE_SIZE = 8;
 
+function downloadCsv(items: StaffAccountItem[]) {
+  const quote = (value: string) => `"${value.replaceAll('"', '""').replace(/^[=+\-@]/, "'$&")}"`;
+  const rows = [
+    ['Mã NV', 'Họ tên', 'Email', 'Vai trò', 'Khoa công tác', 'Cơ sở', 'Trạng thái'],
+    ...items.map((item) => [
+      item.code,
+      item.fullName,
+      item.email,
+      item.role,
+      item.department,
+      item.facility,
+      STAFF_STATUS_LABELS[item.status],
+    ]),
+  ];
+  const csv = '\uFEFF' + rows.map((row) => row.map(quote).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'danh-sach-tai-khoan-nhan-su.csv';
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/** SCR-ADM-STAFF-01 — staff account list (synthetic data). */
 export function StaffAccountListPage() {
-  const [statuses, setStatuses] = useState<Record<string, StaffAccountStatus>>({});
+  const [accounts, setAccounts] = useState<StaffAccountItem[]>(STAFF_ACCOUNTS);
+  const [metrics, setMetrics] = useState<StaffAccountMetrics>(STAFF_ACCOUNT_METRICS);
+  const [filters, setFilters] = useState<StaffAccountFilters>({
+    query: '',
+    department: '',
+    role: '',
+    status: '',
+  });
+  const [page, setPage] = useState(1);
   const [target, setTarget] = useState<StaffTargetSummary | null>(null);
+
+  const filtered = useMemo(() => {
+    const q = filters.query.trim().toLowerCase();
+    return accounts.filter(
+      (item) =>
+        (!q ||
+          item.code.toLowerCase().includes(q) ||
+          item.fullName.toLowerCase().includes(q) ||
+          item.email.toLowerCase().includes(q)) &&
+        (!filters.department || item.department === filters.department) &&
+        (!filters.role || item.role === filters.role) &&
+        (!filters.status || item.status === filters.status),
+    );
+  }, [accounts, filters]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const visible = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  const updateFilters = (patch: Partial<StaffAccountFilters>) => {
+    setFilters((prev) => ({ ...prev, ...patch }));
+    setPage(1);
+  };
+
+  const handleDeactivate = (item: StaffAccountItem) => {
+    setTarget({
+      id: item.id,
+      staffCode: item.code,
+      fullName: item.fullName,
+      role: item.role,
+      department: item.department,
+      email: item.email,
+      pendingAssignments:
+        (item as StaffAccountItem & { pendingAssignments?: number }).pendingAssignments ?? 0,
+    });
+  };
+
+  const handleConfirmDeactivate = ({ staffId }: DeactivateStaffPayload) => {
+    setAccounts((prev) =>
+      prev.map((acc) => (acc.id === staffId ? { ...acc, status: 'DISABLED' } : acc)),
+    );
+    setMetrics((prev) => ({
+      ...prev,
+      active: Math.max(0, prev.active - 1),
+      disabled: prev.disabled + 1,
+    }));
+    setTarget(null);
+  };
 
   return (
     <AdminPortalShell
-      showTabs={false}
       activeTab="Bác sĩ & Nhân sự Y tế"
-      breadcrumbText="Tài khoản nhân sự"
-      breadcrumbCode="SCR-ADM-DOC-05"
-      breadcrumbLink="/admin/staff"
+      breadcrumbs={[{ label: 'Cấu hình Cơ sở' }, { label: 'Tài khoản nhân sự' }]}
     >
-      <div className="p-6">
-        <h1 className="mb-4 text-lg font-bold text-navy">Tài khoản nhân sự</h1>
-        <table className="w-full text-left text-sm">
-          <thead className="text-xs uppercase text-sub">
-            <tr>
-              <th className="py-2">Mã nhân sự</th>
-              <th className="py-2">Họ và tên</th>
-              <th className="py-2">Trạng thái</th>
-              <th className="py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {INITIAL_STAFF.map((staff) => {
-              const status = statuses[staff.id] ?? 'ACTIVE';
-              return (
-                <tr key={staff.id} className="border-t border-border">
-                  <td className="py-2 font-mono">{staff.staffCode}</td>
-                  <td className="py-2 text-ink">{staff.fullName}</td>
-                  <td className="py-2">{status}</td>
-                  <td className="py-2 text-right">
-                    <button
-                      type="button"
-                      disabled={status === 'DISABLED'}
-                      onClick={() => setTarget(staff)}
-                      aria-label={`Ngừng hoạt động ${staff.fullName}`}
-                      className="text-sm font-semibold text-red-600 disabled:opacity-40"
-                    >
-                      Ngừng hoạt động
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-navy">Tài khoản nhân sự</h1>
+          <p className="mt-1 text-sm text-sub">Quản lý tài khoản đăng nhập của nhân sự y tế.</p>
+        </div>
+        <StaffAccountMetricsCards metrics={metrics} />
+        <StaffAccountFilterBar
+          filters={filters}
+          onChange={updateFilters}
+          onExport={() => downloadCsv(filtered)}
+          onAdd={() => undefined}
+        />
+        <StaffAccountTable
+          items={visible}
+          total={filtered.length}
+          page={currentPage}
+          totalPages={totalPages}
+          pageSize={PAGE_SIZE}
+          onPageChange={setPage}
+          onDeactivate={handleDeactivate}
+        />
       </div>
       {target && (
         <DeactivateStaffModal
           staff={target}
           onCancel={() => setTarget(null)}
-          onConfirm={({ staffId }) => {
-            setStatuses((prev) => ({ ...prev, [staffId]: 'DISABLED' }));
-            setTarget(null);
-          }}
+          onConfirm={handleConfirmDeactivate}
         />
       )}
     </AdminPortalShell>
