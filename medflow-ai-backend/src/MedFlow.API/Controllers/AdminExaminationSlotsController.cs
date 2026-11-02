@@ -44,5 +44,51 @@ public sealed class AdminExaminationSlotsController : ControllerBase
             });
         }
     }
+
+    /// <summary>POST /api/v1/admin/examination-slots — Tạo mới khung giờ khám (examination slot).</summary>
+    [HttpPost]
+    [ProducesResponseType<ExaminationSlotAdminItemDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ExaminationSlotAdminItemDto>> CreateExaminationSlot(
+        [FromBody] CreateExaminationSlotRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            var result = await _service.CreateExaminationSlotAsync(request, ct);
+            return StatusCode(StatusCodes.Status201Created, result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Dữ liệu không hợp lệ",
+                Detail = ex.Message,
+                Status = StatusCodes.Status400BadRequest
+            });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new ProblemDetails
+            {
+                Title = "Không tìm thấy tài nguyên",
+                Detail = ex.Message,
+                Status = StatusCodes.Status404NotFound
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new ProblemDetails
+            {
+                Title = "Xung đột lịch khám",
+                Detail = ex.Message,
+                Status = StatusCodes.Status409Conflict
+            });
+        }
+    }
 }
 
