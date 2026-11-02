@@ -4,6 +4,7 @@ import type { QueueEntry, QueueStatus } from '../types/reception.types';
 
 interface QueuePreviewTableProps {
   entries: QueueEntry[];
+  onSelectPatient?: (patientCode: string) => void;
 }
 
 const STATUS_META: Record<
@@ -24,7 +25,7 @@ const PRIORITY_LABEL: Record<QueueEntry['priority'], string> = {
   PREGNANT: 'Phụ nữ mang thai',
 };
 
-export function QueuePreviewTable({ entries }: QueuePreviewTableProps) {
+export function QueuePreviewTable({ entries, onSelectPatient }: QueuePreviewTableProps) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
@@ -47,7 +48,14 @@ export function QueuePreviewTable({ entries }: QueuePreviewTableProps) {
             >
               <td className="py-2.5 pr-3 font-mono font-bold text-slate-800">{entry.ticketNo}</td>
               <td className="py-2.5 pr-3">
-                <div className="font-semibold text-slate-800">{entry.patientName}</div>
+                <button
+                  type="button"
+                  onClick={() => onSelectPatient?.(entry.patientCode)}
+                  aria-label={`Xem chi tiết bệnh nhân ${entry.patientName}`}
+                  className="font-semibold text-navy hover:text-primary hover:underline text-left"
+                >
+                  {entry.patientName}
+                </button>
                 <div className="text-[10px] text-slate-400 font-mono">{entry.patientCode}</div>
               </td>
               <td className="py-2.5 pr-3">
