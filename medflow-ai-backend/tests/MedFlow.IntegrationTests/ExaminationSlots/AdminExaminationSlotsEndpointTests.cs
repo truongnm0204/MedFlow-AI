@@ -71,8 +71,6 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var response = await Client.SendAsync(request);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Fail($"Status: {response.StatusCode}, Body: {body}");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -89,8 +87,6 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var response = await Client.SendAsync(request);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Fail($"Status: {response.StatusCode}, Body: {body}");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -268,8 +264,6 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
         request.Content = JsonContent.Create(payload);
 
         var response = await Client.SendAsync(request);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Fail($"Status: {response.StatusCode}, Body: {body}");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -295,8 +289,6 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
         request.Content = JsonContent.Create(payload);
 
         var response = await Client.SendAsync(request);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Fail($"Status: {response.StatusCode}, Body: {body}");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -316,8 +308,6 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
         request.Content = JsonContent.Create(payload);
 
         var response = await Client.SendAsync(request);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Fail($"Status: {response.StatusCode}, Body: {body}");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -537,8 +527,6 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
         request.Content = JsonContent.Create(payload);
 
         var response = await Client.SendAsync(request);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Fail($"Status: {response.StatusCode}, Body: {body}");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -557,8 +545,6 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
         request.Content = JsonContent.Create(payload);
 
         var response = await Client.SendAsync(request);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Fail($"Status: {response.StatusCode}, Body: {body}");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -577,8 +563,6 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
         request.Content = JsonContent.Create(payload);
 
         var response = await Client.SendAsync(request);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Fail($"Status: {response.StatusCode}, Body: {body}");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }

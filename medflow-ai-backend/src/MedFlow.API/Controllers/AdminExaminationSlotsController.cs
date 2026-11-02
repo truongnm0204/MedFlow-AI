@@ -80,7 +80,7 @@ public sealed class AdminExaminationSlotsController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException ex) when (!ex.Message.Contains("transient failure", StringComparison.OrdinalIgnoreCase))
         {
             return Conflict(new ProblemDetails
             {
@@ -127,7 +127,7 @@ public sealed class AdminExaminationSlotsController : ControllerBase
                 Status = StatusCodes.Status404NotFound
             });
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException ex) when (!ex.Message.Contains("transient failure", StringComparison.OrdinalIgnoreCase))
         {
             return Conflict(new ProblemDetails
             {
