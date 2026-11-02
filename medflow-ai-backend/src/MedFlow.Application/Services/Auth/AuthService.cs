@@ -141,6 +141,7 @@ public class AuthService : IAuthService
         var user = await _db.Users
             .Include(u => u.UserRoles).ThenInclude(ur => ur.Role)
             .Include(u => u.Patient)
+            .Include(u => u.Staff)
             .FirstOrDefaultAsync(u => u.Email == email, ct);
 
         // Generic message chống enumeration
@@ -204,8 +205,13 @@ public class AuthService : IAuthService
     }
 
     private static UserDto BuildUserDto(User user, string[] roles)
-        => new(user.Id, user.Email,
-            user.Patient?.FullName, roles, user.Patient?.PatientCode);
+        => new(
+            user.Id,
+            user.Email,
+            user.Patient?.FullName ?? user.Staff?.FullName,
+            roles,
+            user.Patient?.PatientCode,
+            user.Staff?.StaffCode);
 
     // ── Refresh ───────────────────────────────────────────────────────────
     public async Task<RefreshResponse> RefreshAsync(RefreshRequest request, string? ipAddress, CancellationToken ct = default)
@@ -258,6 +264,7 @@ public class AuthService : IAuthService
         var user = await _db.Users
             .Include(u => u.UserRoles).ThenInclude(ur => ur.Role)
             .Include(u => u.Patient)
+            .Include(u => u.Staff)
             .FirstOrDefaultAsync(u => u.Id == userId, ct)
             ?? throw new NotFoundException("User", userId);
 

@@ -101,7 +101,7 @@ export function DoctorListPage() {
 
   return (
     <AdminDoctorShell showTabs>
-      <main className="mx-auto max-w-[1720px] space-y-6 px-6 py-6">
+      <main className="space-y-6 px-6 py-6">
         <DoctorMetrics doctors={doctors} />
         <section
           className="space-y-3 rounded-lg border border-border bg-white p-4 shadow-sm"

@@ -80,13 +80,13 @@ export function PharmacySidebar({
       }`}
     >
       {/* Brand + collapse toggle */}
-      <div className="flex h-16 items-center justify-between border-b border-border px-4">
+      <div
+        className={`relative flex h-16 items-center border-b border-border ${
+          isCollapsed ? 'justify-center px-2' : 'justify-between px-4'
+        }`}
+      >
         <div className="flex items-center gap-2.5 overflow-hidden">
-          <MedflowLogo
-            variant={isCollapsed ? 'icon' : 'full'}
-            className={isCollapsed ? 'h-8 w-auto shrink-0' : 'h-9 w-auto shrink-0'}
-            linkToHome={false}
-          />
+          <MedflowLogo variant="full" className="h-9 w-auto shrink-0" linkToHome={false} />
           {!isCollapsed && (
             <div className="truncate font-mono text-[9px] uppercase text-sub">Khối Dược • CS1</div>
           )}
@@ -96,7 +96,11 @@ export function PharmacySidebar({
           onClick={() => setIsCollapsed(!isCollapsed)}
           aria-label={isCollapsed ? 'Mở rộng thanh bên' : 'Thu gọn thanh bên'}
           aria-expanded={!isCollapsed}
-          className="rounded-md p-1 text-sub transition-colors hover:bg-slate-100 hover:text-ink focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+          className={
+            isCollapsed
+              ? 'absolute -right-3 top-1/2 -translate-y-1/2 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-white text-sub shadow-xs transition-colors hover:bg-slate-100 hover:text-ink focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none'
+              : 'rounded-md p-1 text-sub transition-colors hover:bg-slate-100 hover:text-ink focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none'
+          }
           title={isCollapsed ? 'Mở rộng' : 'Thu gọn'}
         >
           {isCollapsed ? (
