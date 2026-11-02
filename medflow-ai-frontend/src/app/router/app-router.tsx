@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import { DepartmentListPage } from '@/features/admin-departments/pages/department-list-page';
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
@@ -10,6 +11,7 @@ import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-m
 import { ExaminationSlotCreatePage } from '@/features/admin-slots/pages/examination-slot-create-page';
 import { ExaminationSlotListPage } from '@/features/admin-slots/pages/examination-slot-list-page';
 import { SlotEditModal } from '@/features/admin-slots/pages/slot-edit-modal';
+import { StaffAccountListPage } from '@/features/admin-staff/pages/staff-account-list-page';
 import { AppointmentDetailPage } from '@/features/appointment/pages/appointment-detail-page';
 import { AppointmentConfirmationPage } from '@/features/appointment/pages/appointment-confirmation-page';
 import { AppointmentListPage } from '@/features/appointment/pages/appointment-list-page';
@@ -31,6 +33,7 @@ import { FamilyProfileListPage } from '@/features/family/pages/family-profile-li
 import { HomePage } from '@/features/home/pages/home-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
+import { PatientSearchPage } from '@/features/reception/pages/patient-search-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
@@ -108,6 +111,14 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/reception/patients"
+        element={
+          <RequireAuth>
+            <PatientSearchPage />
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/doctor"
         element={
           <RequireAuth>
@@ -142,6 +153,16 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin/staff"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <StaffAccountListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/doctors"
         element={
           <RequireAuth>
@@ -159,6 +180,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <DoctorCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/departments"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <DepartmentListPage />
             </RequireAdmin>
           </RequireAuth>
         }

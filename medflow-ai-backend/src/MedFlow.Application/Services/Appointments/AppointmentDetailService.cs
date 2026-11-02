@@ -3,7 +3,7 @@ using MedFlow.Application.DTOs.Appointments;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Domain.Entities;
-
+using MedFlow.Domain.Exceptions;
 namespace MedFlow.Application.Services.Appointments;
 
 public sealed class AppointmentDetailService : IAppointmentDetailService
@@ -76,6 +76,46 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
             phone,
             address,
             availableActions);
+    }
+
+    public async Task<AppointmentDetailDto> UpdateReasonAsync(
+        long userId,
+        string? idOrCode,
+        UpdateAppointmentReasonRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var trimmedReason = request.ReasonForVisit?.Trim() ?? string.Empty;
+        if (trimmedReason.Length < 5)
+            throw new ValidationException("Vui lòng mô tả lý do khám tối thiểu 5 ký tự để Bác sĩ nắm trước thông tin.");
+        if (trimmedReason.Length > 500)
+            throw new ValidationException("Lý do khám không được vượt quá 500 ký tự.");
+
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var view = await AppointmentReadModel.LoadOwnedAppointmentViewAsync(
+            _db,
+            userId,
+            idOrCode,
+            nowLocal,
+            "Bạn không có quyền cập nhật lịch hẹn này.",
+            ct);
+
+        var status = AppointmentReadModel.ResolveEffectiveStatus(view.Appointment, view.Visit);
+        var slotStart = view.Appointment.Slot?.StartsAt;
+        if (!AppointmentReadModel.IsModifiableStatus(status) || !slotStart.HasValue || slotStart.Value <= nowLocal)
+            throw new ConflictException("Lịch hẹn ở trạng thái hiện tại không thể cập nhật lý do khám.");
+
+        var tracked = await _db.Appointments.FindAsync([view.Appointment.Id], ct)
+            ?? throw new NotFoundException("Appointment", view.Appointment.Id);
+
+        tracked.ReasonForVisit = trimmedReason;
+        await _db.SaveChangesAsync(ct);
+
+        return await GetMyAppointmentDetailAsync(
+            userId,
+            view.Appointment.Id.ToString(CultureInfo.InvariantCulture),
+            ct);
     }
 
     private async Task<IReadOnlyList<string>> BuildAvailableActionsAsync(
