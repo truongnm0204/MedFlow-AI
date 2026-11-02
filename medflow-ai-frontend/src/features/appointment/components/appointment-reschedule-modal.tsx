@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -10,7 +10,10 @@ import {
 
 import { Modal } from '@/shared/ui/modal';
 
-import { getProposedRescheduleSlots } from '../api/appointment-detail.api';
+import {
+  fetchProposedRescheduleSlotsApi,
+  getProposedRescheduleSlots,
+} from '../api/appointment-detail.api';
 import { rescheduleAppointmentSchema } from '../schemas/appointment-detail.schema';
 import type { AppointmentListItem } from '../types/appointment-list.types';
 
@@ -27,10 +30,27 @@ export function AppointmentRescheduleModal({
   onClose,
   onConfirmReschedule,
 }: AppointmentRescheduleModalProps) {
-  const proposedSlots = appointment ? getProposedRescheduleSlots(appointment) : [];
+  const [proposedSlots, setProposedSlots] = useState(() =>
+    appointment ? getProposedRescheduleSlots(appointment) : [],
+  );
   const [selectedSlotId, setSelectedSlotId] = useState<string>(
     () => proposedSlots[0]?.slotId ?? 'slot-2026-1016-0830',
   );
+
+  useEffect(() => {
+    if (!appointment) return;
+
+    let cancelled = false;
+    void fetchProposedRescheduleSlotsApi(appointment).then((slots) => {
+      if (!cancelled && slots.length > 0) {
+        setProposedSlots(slots);
+        setSelectedSlotId(slots[0].slotId);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [appointment]);
   const [rescheduleNote, setRescheduleNote] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
