@@ -3,6 +3,7 @@ import {
   CalendarCheck,
   ChevronDown,
   FileText,
+  LayoutDashboard,
   FolderHeart,
   Search,
   Settings,
@@ -12,11 +13,18 @@ import {
 import { Popover } from '../../ui/popover';
 import { Avatar } from '../../ui/avatar';
 import { Badge } from '../../ui/badge';
+import {
+  getRoleDisplayLabel,
+  getRoleLandingRoute,
+  isStaffRole,
+} from '@/features/auth/utils/role-landing';
 
 export interface UserMenuUser {
   fullName?: string | null;
   email?: string | null;
   patientCode?: string | null;
+  staffCode?: string | null;
+  roles?: string[] | null;
 }
 
 interface UserMenuProps {
@@ -37,7 +45,10 @@ const ITEMS = [
 
 /** Menu người dùng theo Figma `10:139` (chip avatar + popover items). */
 export function UserMenu({ user, upcomingAppointments = 0, onLogout }: UserMenuProps) {
-  const displayName = user?.fullName ?? 'Khách';
+  const displayName = user?.fullName?.trim() || user?.email?.split('@')[0]?.trim() || 'Khách';
+  const roleLabel = getRoleDisplayLabel(user?.roles);
+  const showStaffWorkbench = isStaffRole(user?.roles);
+  const workbenchRoute = getRoleLandingRoute(user?.roles);
 
   return (
     <Popover
@@ -51,22 +62,34 @@ export function UserMenu({ user, upcomingAppointments = 0, onLogout }: UserMenuP
           <span className="text-[13px] font-semibold text-navy">{displayName}</span>
           <ChevronDown
             className={`h-3.5 w-3.5 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+            aria-hidden="true"
           />
         </span>
       )}
     >
       <div className="border-b border-border bg-canvas px-3 py-2">
-        <p className="text-[11px] font-bold uppercase tracking-wide text-sub">
-          Tài khoản bệnh nhân
-        </p>
+        <p className="text-[11px] font-bold uppercase tracking-wide text-sub">{roleLabel}</p>
         <p className="text-base font-semibold text-navy">{displayName}</p>
-        <p className="font-mono text-xs text-sub">{user?.email ?? ''}</p>
         {user?.patientCode && (
-          <p className="font-mono text-[11px] text-slate-400">Mã BN: {user.patientCode}</p>
+          <p className="font-sans text-[11px] text-slate-400">Mã BN: {user.patientCode}</p>
+        )}
+        {user?.staffCode && (
+          <p className="font-sans text-[11px] text-slate-400">Mã NV: {user.staffCode}</p>
         )}
       </div>
 
       <ul className="flex flex-col gap-0.5 py-1">
+        {showStaffWorkbench && (
+          <li className="border-b border-border pb-1 mb-0.5">
+            <Link
+              to={workbenchRoute}
+              className="flex items-center gap-2.5 rounded-lg bg-primary/5 px-3 py-1.5 text-sm font-semibold text-primary transition-colors hover:bg-sky-100"
+            >
+              <LayoutDashboard className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="flex-1">Bàn làm việc ({roleLabel})</span>
+            </Link>
+          </li>
+        )}
         {ITEMS.map(({ icon: Icon, label, to, badge, divider }) => (
           <li key={label} className={divider ? 'border-t border-border' : undefined}>
             <Link
@@ -77,7 +100,7 @@ export function UserMenu({ user, upcomingAppointments = 0, onLogout }: UserMenuP
                   : 'text-sub'
               }`}
             >
-              <Icon className="h-4 w-4 shrink-0" />
+              <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span className="flex-1">{label}</span>
               {badge && upcomingAppointments > 0 && <Badge solid>{upcomingAppointments}</Badge>}
             </Link>
@@ -89,7 +112,7 @@ export function UserMenu({ user, upcomingAppointments = 0, onLogout }: UserMenuP
             onClick={onLogout}
             className="flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-danger transition-colors hover:bg-rose-50"
           >
-            <LogOut className="h-4 w-4" />
+            <LogOut className="h-4 w-4" aria-hidden="true" />
             Đăng xuất
           </button>
         </li>

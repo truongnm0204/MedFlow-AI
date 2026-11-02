@@ -18,14 +18,20 @@ export interface WeeklyScheduleDay {
 
 export interface DoctorDetailProfile {
   id: string;
+  doctorCode?: string;
+  staffCode?: string;
   name: string;
   title: string;
   roleTitle: string;
   specialty: string;
+  specialtyCode?: string;
+  departmentName?: string;
   room: string;
   statusText: string;
   price: number;
   avatarUrl: string;
+  yearsOfExperience?: number;
+  licenseNumber?: string | null;
   education: EducationItem[];
   biography: string;
   hashtags: string[];

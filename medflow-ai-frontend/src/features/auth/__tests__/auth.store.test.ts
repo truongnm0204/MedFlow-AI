@@ -52,6 +52,31 @@ describe('auth.store', () => {
     expect(s.user).toEqual(mockUser);
   });
 
+  it('setUser cập nhật thông tin user (bao gồm staffCode và fullName) và giữ nguyên tokens', () => {
+    useAuthStore.getState().setAuth({
+      user: mockUser,
+      accessToken: 'token-a',
+      refreshToken: 'token-r',
+    });
+
+    const updatedStaffUser: UserDto = {
+      id: 2,
+      email: 'doctor01@medflow.test',
+      fullName: 'BS Nguyễn Minh Đức',
+      roles: ['DOCTOR'],
+      patientCode: null,
+      staffCode: 'STF-001',
+    };
+
+    useAuthStore.getState().setUser(updatedStaffUser);
+
+    const s = useAuthStore.getState();
+    expect(s.user).toEqual(updatedStaffUser);
+    expect(s.accessToken).toBe('token-a');
+    expect(s.refreshToken).toBe('token-r');
+    expect(s.isAuthenticated).toBe(true);
+  });
+
   it('clearAuth xoá state + localStorage', () => {
     useAuthStore.getState().setAuth({
       user: mockUser,
