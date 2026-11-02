@@ -9,6 +9,7 @@ import { OperationalReportsPage } from '@/features/admin-reports/pages/operation
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
+import { StaffAccountCreatePage } from '@/features/admin-staff/pages/staff-account-create-page';
 import { ExaminationSlotCreatePage } from '@/features/admin-slots/pages/examination-slot-create-page';
 import { ExaminationSlotListPage } from '@/features/admin-slots/pages/examination-slot-list-page';
 import { SlotEditModal } from '@/features/admin-slots/pages/slot-edit-modal';
@@ -181,6 +182,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <DoctorCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/staff/new"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <StaffAccountCreatePage />
             </RequireAdmin>
           </RequireAuth>
         }
