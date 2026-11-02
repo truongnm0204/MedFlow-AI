@@ -2,6 +2,7 @@ using System.Globalization;
 using MedFlow.Application.DTOs.ExaminationSlots;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.Application.Services.ExaminationSlots;
@@ -315,6 +316,267 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             PageSize: request.PageSize,
             TotalPages: totalPages,
             Metrics: metrics
+        );
+    }
+
+    public async Task<ExaminationSlotAdminItemDto> CreateExaminationSlotAsync(
+        CreateExaminationSlotRequest request,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // 1. Resolve & validate time window
+        DateTime start;
+        DateTime end;
+
+        if (request.StartsAt.HasValue && request.EndsAt.HasValue)
+        {
+            start = request.StartsAt.Value;
+            end = request.EndsAt.Value;
+        }
+        else if (!string.IsNullOrWhiteSpace(request.Date) &&
+                 !string.IsNullOrWhiteSpace(request.StartTime) &&
+                 !string.IsNullOrWhiteSpace(request.EndTime))
+        {
+            if (!DateTime.TryParseExact(request.Date.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate)
+                && !DateTime.TryParse(request.Date.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out parsedDate))
+            {
+                throw new ArgumentException("Định dạng ngày không hợp lệ (YYYY-MM-DD).", nameof(request.Date));
+            }
+
+            if (!TimeOnly.TryParseExact(request.StartTime.Trim(), "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var startTime)
+                && !TimeOnly.TryParse(request.StartTime.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out startTime))
+            {
+                throw new ArgumentException("Định dạng giờ bắt đầu không hợp lệ (HH:mm).", nameof(request.StartTime));
+            }
+
+            if (!TimeOnly.TryParseExact(request.EndTime.Trim(), "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var endTime)
+                && !TimeOnly.TryParse(request.EndTime.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.None, out endTime))
+            {
+                throw new ArgumentException("Định dạng giờ kết thúc không hợp lệ (HH:mm).", nameof(request.EndTime));
+            }
+
+            start = parsedDate.Date.Add(startTime.ToTimeSpan());
+            end = parsedDate.Date.Add(endTime.ToTimeSpan());
+        }
+        else
+        {
+            throw new ArgumentException("Thời gian bắt đầu và kết thúc của khung giờ khám là bắt buộc.");
+        }
+
+        if (end <= start)
+        {
+            throw new ArgumentException("Giờ kết thúc phải sau giờ bắt đầu.");
+        }
+
+        // 2. Validate capacity & status
+        var capacity = request.Capacity ?? 8;
+        if (capacity < 1 || capacity > 100)
+        {
+            throw new ArgumentException("Sức chứa phải từ 1 đến 100 lượt.", nameof(request.Capacity));
+        }
+
+        var status = string.IsNullOrWhiteSpace(request.Status) ? "OPEN" : request.Status.Trim().ToUpperInvariant();
+        if (status != "OPEN" && status != "CLOSED" && status != "FULL")
+        {
+            throw new ArgumentException("Trạng thái khung giờ không hợp lệ.", nameof(request.Status));
+        }
+
+        // 3. Resolve & validate entities
+        Service? service = null;
+        if (request.ServiceId.HasValue)
+        {
+            if (request.ServiceId.Value <= 0)
+            {
+                throw new ArgumentException("Mã dịch vụ không hợp lệ.", nameof(request.ServiceId));
+            }
+
+            service = await _db.Services
+                .Include(s => s.Specialty)
+                .FirstOrDefaultAsync(s => s.Id == request.ServiceId.Value, ct);
+
+            if (service == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy dịch vụ khám với ID {request.ServiceId.Value}.");
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(request.ServiceCode))
+        {
+            var sCode = request.ServiceCode.Trim().ToLowerInvariant();
+            service = await _db.Services
+                .Include(s => s.Specialty)
+                .FirstOrDefaultAsync(s => s.ServiceCode.ToLower() == sCode, ct);
+
+            if (service == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy dịch vụ khám với mã {request.ServiceCode}.");
+            }
+        }
+
+        if (service != null && service.IsActive == false)
+        {
+            throw new ArgumentException("Dịch vụ khám đang bị tạm ngưng hoặc không hoạt động.");
+        }
+
+        Doctor? doctor = null;
+        if (request.DoctorId.HasValue)
+        {
+            if (request.DoctorId.Value <= 0)
+            {
+                throw new ArgumentException("Mã bác sĩ không hợp lệ.", nameof(request.DoctorId));
+            }
+
+            doctor = await _db.Doctors
+                .Include(d => d.Staff)
+                .Include(d => d.Specialty)
+                .FirstOrDefaultAsync(d => d.Id == request.DoctorId.Value, ct);
+
+            if (doctor == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy bác sĩ với ID {request.DoctorId.Value}.");
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(request.DoctorCode))
+        {
+            var dCode = request.DoctorCode.Trim().ToLowerInvariant();
+            doctor = await _db.Doctors
+                .Include(d => d.Staff)
+                .Include(d => d.Specialty)
+                .FirstOrDefaultAsync(d => d.DoctorCode.ToLower() == dCode, ct);
+
+            if (doctor == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy bác sĩ với mã {request.DoctorCode}.");
+            }
+        }
+
+        if (doctor != null && !doctor.IsActive)
+        {
+            throw new ArgumentException("Bác sĩ đang không ở trạng thái hoạt động.");
+        }
+
+        HospitalRoom? room = null;
+        if (request.RoomId.HasValue)
+        {
+            if (request.RoomId.Value <= 0)
+            {
+                throw new ArgumentException("Mã buồng khám không hợp lệ.", nameof(request.RoomId));
+            }
+
+            room = await _db.HospitalRooms
+                .Include(r => r.Department)
+                .FirstOrDefaultAsync(r => r.Id == request.RoomId.Value, ct);
+
+            if (room == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy buồng khám với ID {request.RoomId.Value}.");
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(request.RoomCode))
+        {
+            var rCode = request.RoomCode.Trim().ToLowerInvariant();
+            room = await _db.HospitalRooms
+                .Include(r => r.Department)
+                .FirstOrDefaultAsync(r => r.RoomCode.ToLower() == rCode, ct);
+
+            if (room == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy buồng khám với mã {request.RoomCode}.");
+            }
+        }
+
+        if (room != null && string.Equals(room.Status, "INACTIVE", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("Buồng khám đang ngừng hoạt động.");
+        }
+
+        // Must assign at least a doctor or a service
+        if (service == null && doctor == null)
+        {
+            throw new ArgumentException("Vui lòng chỉ định dịch vụ khám hoặc bác sĩ cho khung giờ khám.");
+        }
+
+        // 4. Check for schedule conflicts (Doctor or Room overlapping)
+        if (doctor != null)
+        {
+            var doctorConflict = await _db.ExaminationSlots.AsNoTracking()
+                .AnyAsync(s => s.DoctorId == doctor.Id
+                            && s.Status.ToUpper() != "CLOSED"
+                            && s.StartsAt < end
+                            && s.EndsAt > start, ct);
+
+            if (doctorConflict)
+            {
+                var docName = doctor.Staff?.FullName ?? doctor.DoctorCode;
+                throw new InvalidOperationException($"Xung đột lịch bác sĩ: Bác sĩ {docName} đã có ca khám trùng khoảng thời gian từ {start:HH:mm} đến {end:HH:mm}.");
+            }
+        }
+
+        if (room != null)
+        {
+            var roomConflict = await _db.ExaminationSlots.AsNoTracking()
+                .AnyAsync(s => s.RoomId == room.Id
+                            && s.Status.ToUpper() != "CLOSED"
+                            && s.StartsAt < end
+                            && s.EndsAt > start, ct);
+
+            if (roomConflict)
+            {
+                var roomName = room.RoomCode ?? room.Name;
+                throw new InvalidOperationException($"Xung đột buồng khám: Phòng {roomName} đã được xếp lịch cho ca khám khác trong khoảng thời gian từ {start:HH:mm} đến {end:HH:mm}.");
+            }
+        }
+
+        // 5. Persist slot
+        var slot = new ExaminationSlot
+        {
+            ServiceId = service?.Id,
+            DoctorId = doctor?.Id,
+            RoomId = room?.Id,
+            StartsAt = start,
+            EndsAt = end,
+            Capacity = capacity,
+            Status = status
+        };
+
+        _db.ExaminationSlots.Add(slot);
+        await _db.SaveChangesAsync(ct);
+
+        // 6. Map and return created slot DTO
+        var doctorName = doctor?.Staff?.FullName ?? doctor?.DoctorCode ?? string.Empty;
+        var serviceName = service?.Name ?? string.Empty;
+        var serviceCode = service?.ServiceCode ?? string.Empty;
+        var serviceType = service?.ServiceType ?? "OUTPATIENT";
+        if (string.Equals(serviceType, "EXAMINATION", StringComparison.OrdinalIgnoreCase))
+        {
+            serviceType = "OUTPATIENT";
+        }
+
+        var specialty = doctor?.Specialty?.Name ?? service?.Specialty?.Name ?? string.Empty;
+        var roomCode = room?.RoomCode ?? room?.Name ?? string.Empty;
+        var facility = room?.Department?.Name ?? "MedFlow Cơ sở 1";
+
+        return new ExaminationSlotAdminItemDto(
+            Id: slot.Id,
+            Code: $"SLT-{slot.Id:D3}",
+            DoctorId: slot.DoctorId,
+            DoctorName: doctorName,
+            ServiceId: slot.ServiceId,
+            ServiceName: serviceName,
+            ServiceCode: serviceCode,
+            ServiceType: serviceType,
+            Specialty: specialty,
+            RoomId: slot.RoomId,
+            Room: roomCode,
+            CapacityBooked: 0,
+            CapacityMax: capacity,
+            Date: start.ToString("yyyy-MM-dd"),
+            DateDisplay: start.ToString("dd/MM"),
+            StartTime: start.ToString("HH:mm"),
+            EndTime: end.ToString("HH:mm"),
+            Status: status,
+            Facility: facility,
+            NeedsReview: false
         );
     }
 }

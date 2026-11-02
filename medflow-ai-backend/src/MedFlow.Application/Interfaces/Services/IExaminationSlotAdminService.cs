@@ -7,5 +7,9 @@ public interface IExaminationSlotAdminService
     Task<ExaminationSlotAdminListResponseDto> GetExaminationSlotListAsync(
         GetExaminationSlotListRequest request,
         CancellationToken ct = default);
+
+    Task<ExaminationSlotAdminItemDto> CreateExaminationSlotAsync(
+        CreateExaminationSlotRequest request,
+        CancellationToken ct = default);
 }
 
