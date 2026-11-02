@@ -167,7 +167,7 @@ export function AppointmentListPage() {
             </div>
 
             <Link
-              to="/appointment/services"
+              to="/booking"
               className="inline-flex w-fit items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-primary-dark"
             >
               <PlusCircle className="h-4 w-4" aria-hidden="true" />

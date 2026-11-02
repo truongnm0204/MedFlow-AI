@@ -23,6 +23,7 @@ public static class DependencyInjection
 
         services.AddScoped<IApplicationDbContext>(sp =>
             sp.GetRequiredService<MedFlowDbContext>());
+        services.AddScoped<IAppointmentBookingLock, AppointmentBookingLock>();
 
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<IAuthSessionService, AuthSessionService>();

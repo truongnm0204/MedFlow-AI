@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
+  Activity,
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
@@ -122,6 +123,9 @@ export function AppointmentDetailPage() {
           setFeedbackBanner(
             `Đổi lịch khám thành công sang khung giờ ${updated.scheduledTimeRange} (${updated.scheduledDateFullLabel}) • STT giữ trước mới: ${updated.queueNumber ?? '005'}.`,
           );
+          if (updated.id && updated.id !== appointment.id) {
+            navigate(`/appointments/${updated.id}`, { replace: true });
+          }
         },
       },
     );
@@ -619,6 +623,16 @@ export function AppointmentDetailPage() {
                         <QrCode className="h-5 w-5" aria-hidden="true" />
                       </button>
                     </div>
+
+                    {!isCancelled && !isCompleted && (
+                      <Link
+                        to={`/appointments/${appointment.id}/queue`}
+                        className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-sky-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-sky-600"
+                      >
+                        <Activity className="h-4 w-4" aria-hidden="true" />
+                        <span>Theo dõi hàng đợi trực tiếp</span>
+                      </Link>
+                    )}
                   </section>
 
                   {/* Card 4: Biểu Phí Niêm Yết (Figma 17:1340) */}

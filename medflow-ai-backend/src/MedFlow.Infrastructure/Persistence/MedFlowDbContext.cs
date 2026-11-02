@@ -20,14 +20,23 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<Patient> Patients => Set<Patient>();
     public DbSet<Staff> Staff => Set<Staff>();
     public DbSet<Doctor> Doctors => Set<Doctor>();
+    public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => Set<DoctorServiceAuthorization>();
+    public DbSet<ExaminationSlot> ExaminationSlots => Set<ExaminationSlot>();
     public DbSet<AuthSession> AuthSessions => Set<AuthSession>();
     public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => Set<AuthVerificationChallenge>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<Hospital> Hospitals => Set<Hospital>();
     public DbSet<Department> Departments => Set<Department>();
     public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
     public DbSet<Specialty> Specialties => Set<Specialty>();
     public DbSet<Service> Services => Set<Service>();
     public DbSet<ServicePrice> ServicePrices => Set<ServicePrice>();
+    public DbSet<HospitalPolicy> HospitalPolicies => Set<HospitalPolicy>();
+    public DbSet<Appointment> Appointments => Set<Appointment>();
+    public DbSet<PatientFamilyLink> PatientFamilyLinks => Set<PatientFamilyLink>();
+    public DbSet<Visit> Visits => Set<Visit>();
+    public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
+    public DbSet<Payment> Payments => Set<Payment>();
 
     public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => Database.BeginTransactionAsync(ct);

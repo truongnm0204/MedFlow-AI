@@ -11,6 +11,10 @@ export interface BookingPatientProfile {
   metaPrimary: string;
   metaSecondary: string;
   patientCode?: string;
+  phone?: string;
+  birthDateLabel?: string;
+  nationalId?: string;
+  address?: string;
 }
 
 export type DateScheduleStatus = 'FULL' | 'AVAILABLE' | 'FEW_SLOTS' | 'OFF';
