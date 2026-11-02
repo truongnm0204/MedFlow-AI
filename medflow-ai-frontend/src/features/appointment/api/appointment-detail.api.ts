@@ -7,6 +7,7 @@ import type {
   AppointmentListItem,
   ProposedRescheduleSlotOption,
 } from '../types/appointment-list.types';
+import type { AvailableSlotsPayload } from '../types/slot-booking.types';
 
 function shouldFallbackToMock(error: unknown): boolean {
   if (!axios.isAxiosError(error)) return false;
@@ -80,6 +81,61 @@ export function getProposedRescheduleSlots(
     roomName: appointment.roomName || slot.roomName,
     doctorName: `${appointment.doctorName} (${appointment.departmentName})`,
   }));
+}
+
+export async function fetchProposedRescheduleSlotsApi(
+  appointment: AppointmentListItem,
+): Promise<ProposedRescheduleSlotOption[]> {
+  const fallback = getProposedRescheduleSlots(appointment);
+  const hasToken =
+    typeof window !== 'undefined' && Boolean(window.localStorage?.getItem('medflow.access_token'));
+
+  if (!hasToken) return fallback;
+
+  try {
+    const { data } = await apiClient.get<AvailableSlotsPayload>('/appointments/available-slots', {
+      params: {
+        doctorId: appointment.doctorId || undefined,
+        serviceId: appointment.serviceId || undefined,
+      },
+    });
+
+    const activeDate =
+      data.dates?.find((d) => d.status !== 'OFF' && d.status !== 'FULL') ?? data.dates?.[0];
+    const allOpen = [...(data.morningSlots ?? []), ...(data.afternoonSlots ?? [])].filter(
+      (s) =>
+        s.status !== 'FULL' &&
+        /^\d+$/.test(s.id) &&
+        !(
+          activeDate?.dateIso === appointment.scheduledDate &&
+          s.timeRange === appointment.scheduledTimeRange
+        ),
+    );
+
+    if (allOpen.length === 0) return fallback;
+
+    return allOpen.slice(0, 3).map((slot, index) => {
+      const startPart = slot.timeRange.split('-')[0]?.trim() ?? '08:00';
+      return {
+        slotId: slot.id,
+        scheduledDate: activeDate?.dateIso ?? appointment.scheduledDate,
+        scheduledDateBadge: activeDate
+          ? `${activeDate.dayTopLabel}, ${activeDate.subDateLabel}`
+          : appointment.scheduledDateBadge,
+        scheduledDateFullLabel:
+          activeDate?.fullDateDisplay ??
+          `${appointment.scheduledDateBadge} (${slot.shift === 'AFTERNOON' ? 'Ca Chiều' : 'Ca Sáng'})`,
+        scheduledTimeRange: slot.timeRange,
+        checkInDeadlineTime: startPart,
+        estimatedQueueNumber: String(index + 1).padStart(3, '0'),
+        roomCode: appointment.roomCode,
+        roomName: appointment.roomName,
+        doctorName: `${appointment.doctorName} (${appointment.departmentName})`,
+      };
+    });
+  } catch {
+    return fallback;
+  }
 }
 
 export interface RescheduleAppointmentPayload {

@@ -149,6 +149,20 @@ public sealed class AppointmentsController : ControllerBase
         string idOrCode, [FromBody] RescheduleAppointmentRequest request, CancellationToken ct)
         => Ok(await _rescheduleService.RescheduleAsync(GetUserId(), idOrCode, request, GetIp(), ct));
 
+    /// <summary>PATCH /api/v1/appointments/{idOrCode}/reason — Cập nhật lý do khám / triệu chứng ban đầu cho lịch hẹn sắp tới.</summary>
+    [HttpPatch("{idOrCode}/reason")]
+    [ProducesResponseType<AppointmentDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<AppointmentDetailDto>> UpdateReason(
+        string idOrCode,
+        [FromBody] UpdateAppointmentReasonRequest request,
+        CancellationToken ct)
+        => Ok(await _detailService.UpdateReasonAsync(GetUserId(), idOrCode, request, ct));
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)

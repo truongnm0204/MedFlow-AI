@@ -195,6 +195,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     [InlineData("005923", "DOC-0002")]
     [InlineData("DOC-0003", "DOC-0003")]
     [InlineData("Tim mạch", "DOC-0003")]
+    [InlineData("  nv-1002  ", "DOC-0002")]
     public async Task GetDoctorList_FilterByKeyword_ReturnsMatchingDoctors(string keyword, string expectedDoctorCode)
     {
         // Act
@@ -262,5 +263,63 @@ public sealed class DoctorAdminServiceTests : IDisposable
     {
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() => _service.GetDoctorListAsync(null!));
+    }
+
+    [Theory]
+    [InlineData(0, 0, 1, 10)]
+    [InlineData(-5, 101, 1, 100)]
+    [InlineData(1, 100, 1, 100)]
+    public async Task GetDoctorList_OutOfRangePaging_ClampsPageAndPageSize(
+        int page,
+        int pageSize,
+        int expectedPage,
+        int expectedPageSize)
+    {
+        var result = await _service.GetDoctorListAsync(
+            new GetDoctorListAdminRequest(Page: page, PageSize: pageSize));
+
+        Assert.Equal(expectedPage, result.Page);
+        Assert.Equal(expectedPageSize, result.PageSize);
+        Assert.Equal(3, result.Total);
+    }
+
+    [Fact]
+    public async Task GetDoctorList_NoMatch_ReturnsZeroTotalPages()
+    {
+        var result = await _service.GetDoctorListAsync(
+            new GetDoctorListAdminRequest(Keyword: "khong-ton-tai"));
+
+        Assert.Equal(0, result.Total);
+        Assert.Equal(0, result.TotalPages);
+        Assert.Empty(result.Data);
+        Assert.Equal(1, result.Page);
+    }
+
+    [Fact]
+    public async Task GetDoctorList_PageBeyondLast_ReturnsEmptyDataWithTotals()
+    {
+        var result = await _service.GetDoctorListAsync(
+            new GetDoctorListAdminRequest(Page: 5, PageSize: 2));
+
+        Assert.Empty(result.Data);
+        Assert.Equal(3, result.Total);
+        Assert.Equal(2, result.TotalPages);
+        Assert.Equal(5, result.Page);
+    }
+
+    [Fact]
+    public async Task GetDoctorList_CombinedFilters_AppliesAllConditions()
+    {
+        var activeInSpec1 = await _service.GetDoctorListAsync(
+            new GetDoctorListAdminRequest(SpecialtyId: 1, IsActive: true));
+
+        Assert.Single(activeInSpec1.Data);
+        Assert.Equal("DOC-0001", activeInSpec1.Data[0].DoctorCode);
+
+        var bytInDept2 = await _service.GetDoctorListAsync(
+            new GetDoctorListAdminRequest(Keyword: "BYT", DepartmentId: 2));
+
+        Assert.Single(bytInDept2.Data);
+        Assert.Equal("DOC-0003", bytInDept2.Data[0].DoctorCode);
     }
 }
