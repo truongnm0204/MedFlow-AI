@@ -3,6 +3,7 @@ namespace MedFlow.Domain.Entities;
 public class Visit
 {
     public long Id { get; set; }
+    public long? PatientId { get; set; }
     public long? AppointmentId { get; set; }
     public string? ReasonForVisit { get; set; }
     public string? Status { get; set; }
