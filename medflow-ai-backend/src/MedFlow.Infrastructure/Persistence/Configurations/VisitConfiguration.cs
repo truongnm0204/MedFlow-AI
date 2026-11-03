@@ -15,9 +15,11 @@ public class VisitConfiguration : IEntityTypeConfiguration<Visit>
             .HasColumnName("id")
             .UseIdentityByDefaultColumn();
 
+        builder.Property(v => v.PatientId)
+            .HasColumnName("patient_id");
+
         builder.Property(v => v.AppointmentId)
             .HasColumnName("appointment_id");
-
         builder.Property(v => v.ReasonForVisit)
             .HasColumnName("reason_for_visit");
 
@@ -26,9 +28,11 @@ public class VisitConfiguration : IEntityTypeConfiguration<Visit>
             .HasMaxLength(30);
 
         builder.Property(v => v.CheckedInAt)
-            .HasColumnName("checked_in_at");
+            .HasColumnName("checked_in_at")
+            .HasColumnType("timestamp without time zone");
 
         builder.Property(v => v.CompletedAt)
-            .HasColumnName("completed_at");
+            .HasColumnName("completed_at")
+            .HasColumnType("timestamp without time zone");
     }
 }

@@ -37,10 +37,14 @@ Frontend (#49) đã cố định hợp đồng gọi API tại `medflow-ai-front
    - `DateOnly(StartsAt) > today.AddDays(policy.BookingWindowDays)` → 400 `$"Chỉ được đặt lịch trong vòng {policy.BookingWindowDays} ngày tới."`.
 6. **Kiểm tra sức chứa (Capacity)**:
    - Số chỗ đang chiếm là số `appointments` của slot có `Status == null || Status.ToUpper() != "CANCELLED"`. Nếu `occupying >= (slot.Capacity ?? 0)` → 409 `"Khung giờ khám vừa hết chỗ. Vui lòng chọn khung giờ khác."`.
-7. **Giới hạn trên hồ sơ bệnh nhân (Patient limits)**:
-   - Lịch khám đang hoạt động ("active booking") là bản ghi có `Status == null` hoặc `Status.ToUpper()` không thuộc `{"CANCELLED", "COMPLETED", "NO_SHOW", "CHECKED_IN"}`.
-   - **Trùng giờ (Overlap)**: nếu bệnh nhân đã có lịch khám đang hoạt động giao với `[slot.StartsAt, slot.EndsAt)` (`other.StartsAt < slot.EndsAt && other.EndsAt > slot.StartsAt`) → 409 `"Hồ sơ này đã có lịch khám trùng thời gian."` (đồng thời chặn double-submit cùng slot).
-   - **Số lịch tối đa (Max active)**: nếu số lịch đang hoạt động có `Slot.EndsAt > nowLocal` đạt `>= policy.MaxActiveBookings` → 409 `$"Hồ sơ này đã đạt tối đa {policy.MaxActiveBookings} lịch khám đang hoạt động."`.
+7. **Giới hạn trên hồ sơ bệnh nhân (Patient limits & GBR-APT-09)**:
+   - Áp dụng độc lập theo từng `patient_id` (không áp theo `booked_by_user_id`).
+   - **GBR-APT-09 (Một lịch khám hoạt động / bệnh nhân / ngày khám)**:
+     - Trên cùng ngày khám `DateOnly(slot.StartsAt)`:
+       - Nếu bệnh nhân có bất kỳ `Visit` nào đang hoạt động (`CHECKED_IN`, `WAITING`, `IN_CONSULTATION`, `AWAITING_DIAGNOSTIC`, `RETURN_CONSULTATION`, tức chưa `COMPLETED`/`CANCELLED`), hoặc có lịch `CHECKED_IN` mà `Visit` chưa `COMPLETED`/`CANCELLED` → 409 `"Bệnh nhân đang trong quá trình khám bệnh. Vui lòng hoàn tất lượt khám hiện tại trước khi đặt lịch khám mới trong cùng ngày."`.
+       - Nếu bệnh nhân đã có lịch `BOOKED` (hoặc `CONFIRMED`/`PENDING`) trong cùng ngày khám mà chưa có `Visit` `COMPLETED` → 409 `"Bệnh nhân đã có lịch khám đang hoạt động trong ngày này. Vui lòng hoàn thành hoặc hủy lịch khám hiện tại trước khi đặt lịch mới."`.
+       - Nếu lượt khám trước trong ngày đã có `Visit.status == COMPLETED` (hoặc lịch trước đã `CANCELLED`/`NO_SHOW` và không có `Visit` active), bệnh nhân **được phép** đặt lịch mới cùng ngày nếu khung giờ mới `starts_at > nowLocal` và còn chỗ trống.
+   - **Số lịch tối đa (Max active)**: nếu số lịch đang hoạt động (chưa hủy/vắng mặt và chưa có `Visit` `COMPLETED`/`CANCELLED`) có `Slot.EndsAt > nowLocal` đạt `>= policy.MaxActiveBookings` → 409 `$"Hồ sơ này đã đạt tối đa {policy.MaxActiveBookings} lịch khám đang hoạt động."`.
    - **Khóa do vắng mặt (No-show block)**: khi `policy.NoShowBlockDays > 0`, đếm số lịch `Status.ToUpper() == "NO_SHOW"` có `Slot.StartsAt >= nowLocal.AddDays(-policy.NoShowLookbackDays)`. Nếu số lượng `>= policy.NoShowMaxCount` và `latestNoShowStartsAt.AddDays(policy.NoShowBlockDays) > nowLocal` → 409 `"Hồ sơ đang bị tạm khóa đặt lịch trực tuyến do vắng mặt nhiều lần."`.
 8. **Lưu trữ, mã lịch hẹn, kiểm toán và số thứ tự (Persistence, Code, Audit & Queue Number)**:
    - Bản ghi `appointments` được lưu với `BookingChannel = "ONLINE"`, `Status = "BOOKED"`, `BookedByUserId = userId`, `BookedAt = nowLocal`, `ReasonForVisit = trimmedNoteOrNull`.

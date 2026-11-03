@@ -5,16 +5,14 @@ import { AlertCircle, ArrowLeft, ArrowRight, ChevronRight, Loader2 } from 'lucid
 import { AppHeader } from '@/shared/components/layout/app-header';
 import { PatientFooter } from '@/shared/components/layout/patient-footer';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { toast } from '@/shared/ui/toast';
 
 import { ReviewFeeBreakdownCard } from '../components/review-fee-breakdown-card';
 import { ReviewHeroStepperCard } from '../components/review-hero-stepper-card';
 import { ReviewPatientInfoCard } from '../components/review-patient-info-card';
 import { ReviewReceptionPolicyCard } from '../components/review-reception-policy-card';
 import { ReviewScheduleLocationCard } from '../components/review-schedule-location-card';
-import {
-  DEFAULT_REVIEW_SYMPTOM_NOTE,
-  getMockAppointmentReviewPayload,
-} from '../data/review-booking-mock';
+import { getMockAppointmentReviewPayload } from '../data/review-booking-mock';
 import {
   useAppointmentReviewPreview,
   useConfirmAppointmentBooking,
@@ -47,6 +45,8 @@ export function AppointmentReviewPage() {
   const dateIso = searchParams.get('date') ?? storeDateIso ?? '2026-10-13';
   const slotId = searchParams.get('slotId') ?? storeSlotId ?? 'slot-0900';
   const shiftId = searchParams.get('shiftId') ?? storeShiftId ?? 'shift-morning';
+  const querySymptomNote = searchParams.get('symptomNote')?.trim() ?? '';
+  const currentSymptomNote = storeSymptomNote.trim() || querySymptomNote;
 
   const queryParams = useMemo(
     () => ({
@@ -58,9 +58,19 @@ export function AppointmentReviewPage() {
       dateIso,
       slotId,
       shiftId,
-      symptomNote: storeSymptomNote,
+      symptomNote: currentSymptomNote,
     }),
-    [mode, doctorId, serviceId, serviceCode, patientId, dateIso, slotId, shiftId, storeSymptomNote],
+    [
+      mode,
+      doctorId,
+      serviceId,
+      serviceCode,
+      patientId,
+      dateIso,
+      slotId,
+      shiftId,
+      currentSymptomNote,
+    ],
   );
 
   const { data, isLoading, isError, error } = useAppointmentReviewPreview(queryParams);
@@ -71,9 +81,7 @@ export function AppointmentReviewPage() {
     [data, queryParams],
   );
 
-  const effectiveSymptomNote = storeSymptomNote.trim()
-    ? storeSymptomNote.trim()
-    : reviewPayload.patientInfo.symptomNote || DEFAULT_REVIEW_SYMPTOM_NOTE;
+  const effectiveSymptomNote = currentSymptomNote;
 
   const handleBackToSlotSelection = () => {
     if (mode === 'service') {
@@ -102,21 +110,25 @@ export function AppointmentReviewPage() {
 
     const parsed = confirmBookingSchema.safeParse(candidatePayload);
     if (!parsed.success) {
-      setSubmitError(
-        parsed.error.issues[0]?.message ?? 'Thông tin đặt lịch chưa hợp lệ. Vui lòng kiểm tra lại.',
-      );
+      const validationMsg =
+        parsed.error.issues[0]?.message ?? 'Thông tin đặt lịch chưa hợp lệ. Vui lòng kiểm tra lại.';
+      setSubmitError(validationMsg);
+      toast.error(validationMsg, 'Đặt lịch không thành công');
       return;
     }
 
     confirmMutation.mutate(parsed.data, {
       onSuccess: (response) => {
         resetBooking();
+        toast.success('Đặt lịch khám thành công! Hệ thống đã cấp số thứ tự giữ trước.');
         navigate(`/appointment/confirmation/${encodeURIComponent(response.appointmentId)}`, {
           replace: true,
         });
       },
       onError: (err) => {
-        setSubmitError(getErrorMessage(err));
+        const errMsg = getErrorMessage(err);
+        setSubmitError(errMsg);
+        toast.error(errMsg, 'Đặt lịch không thành công');
       },
     });
   };

@@ -51,7 +51,7 @@ export function BookingPatientSelector({
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary transition-colors hover:text-primary-dark"
         >
           <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
-          <span>+ Thêm hồ sơ người thân (SCR-PRO-05)</span>
+          <span>+ Thêm hồ sơ người thân</span>
         </Link>
       </div>
 

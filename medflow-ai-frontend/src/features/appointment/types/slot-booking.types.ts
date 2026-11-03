@@ -15,6 +15,7 @@ export interface BookingPatientProfile {
   birthDateLabel?: string;
   nationalId?: string;
   address?: string;
+  activeBookedDates?: string[];
 }
 
 export type DateScheduleStatus = 'FULL' | 'AVAILABLE' | 'FEW_SLOTS' | 'OFF';
@@ -111,4 +112,7 @@ export interface ServiceAvailableShiftsPayload {
   profiles: BookingPatientProfile[];
   dates: BookingDateOption[];
   shifts: ServiceShiftOption[];
+  morningSlots?: BookingTimeSlot[];
+  afternoonSlots?: BookingTimeSlot[];
+  activeDayShift?: DoctorDayShiftSchedule;
 }

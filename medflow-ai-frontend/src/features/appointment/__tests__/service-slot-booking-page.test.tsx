@@ -36,7 +36,7 @@ describe('ServiceSlotBookingPage — Đặt khám theo Dịch vụ (Chọn Ngày
     useBookingStore.getState().reset();
   });
 
-  it('renders service-only banner without doctor info and shows date + shift selection', () => {
+  it('renders service-only banner without doctor info and shows date + detailed time slot selection', () => {
     renderServiceBookingPage();
 
     expect(screen.getAllByText('Dịch vụ khám').length).toBeGreaterThan(0);
@@ -45,33 +45,45 @@ describe('ServiceSlotBookingPage — Đặt khám theo Dịch vụ (Chọn Ngày
     expect(screen.getAllByText('Khám Chuyên khoa Tiêu Hóa').length).toBeGreaterThan(0);
     expect(screen.getByText('DV-TH-01')).toBeInTheDocument();
     expect(screen.getByText('Đổi dịch vụ khám')).toBeInTheDocument();
+    expect(screen.getByText('+ Thêm hồ sơ người thân')).toBeInTheDocument();
+    expect(screen.queryByText(/SCR-PRO-05/i)).not.toBeInTheDocument();
 
     // Must NOT render a doctor profile card
     expect(screen.queryByText('BS.CKII Trần Quốc Tuấn')).not.toBeInTheDocument();
-
-    // Renders Date & Shift selection (not 30-min doctor slots)
+    // Renders Date & Detailed Time Slot selection like doctor booking
     expect(screen.getByText('2. Chọn Ngày Khám')).toBeInTheDocument();
-    expect(screen.getByText('3. Chọn Ca Khám Dịch Vụ')).toBeInTheDocument();
-    expect(screen.getByText('Ca Khám Buổi Sáng')).toBeInTheDocument();
-    expect(screen.getByText('Ca Khám Buổi Chiều')).toBeInTheDocument();
+    expect(screen.getByText('3. Chọn Khung Giờ Thăm Khám')).toBeInTheDocument();
+    expect(screen.getByText('CA KHÁM BUỔI SÁNG (07:30 - 11:30)')).toBeInTheDocument();
+    expect(screen.getByText('CA KHÁM BUỔI CHIỀU (13:30 - 16:30)')).toBeInTheDocument();
   });
 
-  it('allows selecting afternoon shift and updates service sticky summary footer', () => {
+  it('requires symptomNote before continuing and allows selecting a detailed afternoon slot', () => {
     renderServiceBookingPage();
 
-    const afternoonShiftRadio = screen.getByRole('radio', { name: /Ca Khám Buổi Chiều/i });
-    fireEvent.click(afternoonShiftRadio);
-    expect(afternoonShiftRadio).toHaveAttribute('aria-checked', 'true');
+    const afternoonSlotButton = screen.getByRole('button', { name: /16:00 - 16:30/i });
+    fireEvent.click(afternoonSlotButton);
 
     expect(
-      screen.getByText(/Ca Khám Buổi Chiều \(13:30 - 16:30\) • Thứ Ba, 13\/10\/2026/),
+      screen.getByText(/16:00 - 16:30 • Thứ Ba, 13\/10\/2026 \(Ca Chiều\)/),
     ).toBeInTheDocument();
 
     const continueBtn = screen.getByRole('button', {
       name: /Tiếp tục: Soát xét Đặt lịch/i,
     });
-    fireEvent.click(continueBtn);
 
+    // Clicking continue without symptomNote shows validation error and blocks navigation
+    fireEvent.click(continueBtn);
+    expect(
+      screen.getByText(/Vui lòng nhập lý do khám hoặc triệu chứng ban đầu/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Soát xét Đặt lịch Dịch vụ Mock')).not.toBeInTheDocument();
+
+    const textarea = screen.getByLabelText('Lý do khám / Triệu chứng ban đầu');
+    fireEvent.change(textarea, {
+      target: { value: 'Đau thượng vị và đầy hơi sau ăn' },
+    });
+
+    fireEvent.click(continueBtn);
     expect(screen.getByText('Soát xét Đặt lịch Dịch vụ Mock')).toBeInTheDocument();
   });
 });

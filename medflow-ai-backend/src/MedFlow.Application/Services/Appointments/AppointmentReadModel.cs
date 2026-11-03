@@ -241,7 +241,9 @@ internal static class AppointmentReadModel
         var room = s.Room;
 
         var status = ResolveEffectiveStatus(a, visit);
-
+        var isOverdueUnattended = status is "BOOKED" or "CONFIRMED" or "PENDING" &&
+                                  visit is null &&
+                                  end < nowLocal;
         var id = a.Id.ToString(vi);
         var appointmentCode = a.AppointmentCode ?? $"APT-{id}";
 
@@ -296,8 +298,9 @@ internal static class AppointmentReadModel
             ? "COUNTER"
             : "ONLINE";
 
-        var statusBannerLabel = ResolveStatusBannerLabel(status);
-
+        var statusBannerLabel = isOverdueUnattended
+            ? "QUÁ HẠN KHÁM - CHƯA TIẾP ĐÓN"
+            : ResolveStatusBannerLabel(status);
         var activePrice = svc?.ServicePrices?
             .Where(p => (!p.EffectiveFrom.HasValue || p.EffectiveFrom.Value <= start)
                      && (!p.EffectiveTo.HasValue || p.EffectiveTo.Value > start))
@@ -327,10 +330,12 @@ internal static class AppointmentReadModel
         else
         {
             paymentStatus = "UNPAID_AT_COUNTER";
-            paymentStatusLabel = "Chờ thanh toán tại quầy";
-            paymentSubNote = IsUpcomingStatus(status)
-                ? "Hoặc quét VietQR tự động khi check-in tại viện."
-                : null;
+            paymentStatusLabel = isOverdueUnattended ? "Chưa phát sinh thanh toán" : "Chờ thanh toán tại quầy";
+            paymentSubNote = isOverdueUnattended
+                ? "Lịch hẹn đã quá thời gian tiếp đón tại quầy."
+                : IsUpcomingStatus(status)
+                    ? "Hoặc quét VietQR tự động khi check-in tại viện."
+                    : null;
         }
 
         var bookedAt = a.BookedAt is { } b ? FormatVietnamTimestamp(b) : "";
@@ -375,8 +380,12 @@ internal static class AppointmentReadModel
             PaymentSubNote: paymentSubNote,
             ReasonForVisit: visit?.ReasonForVisit ?? a.ReasonForVisit,
             ClinicalSummary: null,
-            CancellationReason: status == "CANCELLED" ? a.CancellationReason : null,
-            SlotReleaseNote: null,
+            CancellationReason: status == "CANCELLED"
+                ? a.CancellationReason
+                : isOverdueUnattended
+                    ? "Lịch hẹn đã quá thời gian tiếp đón nhưng người bệnh chưa đến làm thủ tục check-in."
+                    : null,
+            SlotReleaseNote: isOverdueUnattended ? "Đã quá giờ tiếp đón" : null,
             RebookSpecialtyLabel: null,
             BookedAt: bookedAt);
     }

@@ -5,14 +5,21 @@ import { AlertCircle, ChevronRight, Home, PlusCircle, RotateCcw } from 'lucide-r
 import { AppHeader } from '@/shared/components/layout/app-header';
 import { PatientFooter } from '@/shared/components/layout/patient-footer';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { toast } from '@/shared/ui/toast';
 
+import { AppointmentCancelModal } from '../components/appointment-cancel-modal';
 import { AppointmentCard } from '../components/appointment-card';
 import { AppointmentEmptyState } from '../components/appointment-empty-state';
 import { AppointmentFilterBar } from '../components/appointment-filter-bar';
 import { AppointmentQuickViewModal } from '../components/appointment-quick-view-modal';
+import { AppointmentRescheduleModal } from '../components/appointment-reschedule-modal';
 import { AppointmentSkeletonList } from '../components/appointment-skeleton-list';
 import { AppointmentTipBanner } from '../components/appointment-tip-banner';
 import { MOCK_APPOINTMENT_MEMBERS } from '../data/appointment-list-mock';
+import {
+  useCancelAppointmentMutation,
+  useRescheduleAppointmentMutation,
+} from '../hooks/use-appointment-detail';
 import { useAppointmentListQuery } from '../hooks/use-appointment-list';
 import { useBookingStore } from '../store/booking.store';
 import type {
@@ -42,10 +49,15 @@ export function AppointmentListPage() {
 
   const [selectedTicketAppointment, setSelectedTicketAppointment] =
     useState<AppointmentListItem | null>(null);
+  const [selectedRescheduleAppointment, setSelectedRescheduleAppointment] =
+    useState<AppointmentListItem | null>(null);
+  const [selectedCancelAppointment, setSelectedCancelAppointment] =
+    useState<AppointmentListItem | null>(null);
   const [actionBannerMessage, setActionBannerMessage] = useState<string | null>(null);
 
   const { data, isLoading, isError, error, refetch } = useAppointmentListQuery(filters);
-
+  const rescheduleMutation = useRescheduleAppointmentMutation();
+  const cancelMutation = useCancelAppointmentMutation();
   const appointments = data?.items ?? [];
   const memberCounts =
     data?.memberCounts ??
@@ -122,17 +134,70 @@ export function AppointmentListPage() {
   const handleReschedule = (appointment: AppointmentListItem) => {
     selectDoctor(appointment.doctorId);
     selectService(appointment.serviceId, appointment.serviceName);
-    setActionBannerMessage(
-      `Yêu cầu đổi lịch cho mã #${appointment.appointmentCode} đã được ghi nhận. Bạn có thể chọn khung giờ mới hoặc liên hệ Tổng đài 1900 6868.`,
-    );
+    setActionBannerMessage(null);
+    setSelectedRescheduleAppointment(appointment);
   };
 
   const handleCancelRequest = (appointment: AppointmentListItem) => {
-    setActionBannerMessage(
-      `Để hủy lịch hẹn #${appointment.appointmentCode} trước giờ tiếp đón, vui lòng xác nhận qua Tổng đài 1900 6868 hoặc tính năng Hủy lịch trực tuyến (M2).`,
+    setActionBannerMessage(null);
+    setSelectedCancelAppointment(appointment);
+  };
+
+  const handleConfirmReschedule = (payload: { targetSlotId: string; rescheduleNote?: string }) => {
+    if (!selectedRescheduleAppointment) return;
+
+    rescheduleMutation.mutate(
+      {
+        appointmentId: selectedRescheduleAppointment.id,
+        targetSlotId: payload.targetSlotId,
+        rescheduleNote: payload.rescheduleNote,
+      },
+      {
+        onSuccess: (updated) => {
+          setSelectedRescheduleAppointment(null);
+          setActionBannerMessage(
+            `Đổi lịch khám thành công sang mã #${updated.appointmentCode} (${updated.scheduledTimeRange} • ${updated.scheduledDateFullLabel}).`,
+          );
+          toast.success('Đổi lịch khám thành công sang khung giờ mới.');
+          void refetch();
+        },
+        onError: (err) => {
+          setSelectedRescheduleAppointment(null);
+          const errMsg = getErrorMessage(err, 'Không thể đổi lịch khám lúc này.');
+          setActionBannerMessage(errMsg);
+          toast.error(errMsg);
+        },
+      },
     );
   };
 
+  const handleConfirmCancel = (cancellationReason: string) => {
+    if (!selectedCancelAppointment) return;
+    const targetCode = selectedCancelAppointment.appointmentCode;
+
+    cancelMutation.mutate(
+      {
+        appointmentId: selectedCancelAppointment.id,
+        cancellationReason,
+      },
+      {
+        onSuccess: () => {
+          setSelectedCancelAppointment(null);
+          setActionBannerMessage(
+            `Lịch hẹn #${targetCode} đã được hủy và giải phóng slot thành công.`,
+          );
+          toast.success('Đã hủy lịch hẹn và giải phóng khung giờ khám thành công.');
+          void refetch();
+        },
+        onError: (err) => {
+          setSelectedCancelAppointment(null);
+          const errMsg = getErrorMessage(err, 'Không thể hủy lịch hẹn lúc này.');
+          setActionBannerMessage(errMsg);
+          toast.error(errMsg);
+        },
+      },
+    );
+  };
   const handleRebookSpecialty = (appointment: AppointmentListItem) => {
     selectService(appointment.serviceId, appointment.serviceName);
     navigate(`/appointment/doctors?specialty=${encodeURIComponent(appointment.specialtyId)}`);
@@ -267,6 +332,20 @@ export function AppointmentListPage() {
       <AppointmentQuickViewModal
         appointment={selectedTicketAppointment}
         onClose={() => setSelectedTicketAppointment(null)}
+      />
+
+      <AppointmentRescheduleModal
+        appointment={selectedRescheduleAppointment}
+        isSubmitting={rescheduleMutation.isPending}
+        onClose={() => setSelectedRescheduleAppointment(null)}
+        onConfirmReschedule={handleConfirmReschedule}
+      />
+
+      <AppointmentCancelModal
+        appointment={selectedCancelAppointment}
+        isSubmitting={cancelMutation.isPending}
+        onClose={() => setSelectedCancelAppointment(null)}
+        onConfirmCancel={handleConfirmCancel}
       />
     </div>
   );

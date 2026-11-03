@@ -200,7 +200,30 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
 
         var effectiveDaySlots = bookableSlots
             .Where(s => DateOnly.FromDateTime(s.StartsAt) == effectiveDate)
+            .GroupBy(s => (s.StartsAt, s.EndsAt, s.Shift))
+            .OrderBy(g => g.Key.StartsAt)
+            .Select(g =>
+            {
+                var rep = g.FirstOrDefault(x => x.Remaining > 0) ?? g.First();
+                return new BookableSlotItem(
+                    rep.Id,
+                    g.Key.StartsAt,
+                    g.Key.EndsAt,
+                    g.Sum(x => x.Remaining),
+                    g.Key.Shift);
+            })
             .ToList();
+
+        var morningRaw = effectiveDaySlots.Where(s => s.Shift == "MORNING").ToList();
+        var afternoonRaw = effectiveDaySlots.Where(s => s.Shift == "AFTERNOON").ToList();
+        var morningSlots = morningRaw.Select(MapToTimeSlotDto).ToList();
+        var afternoonSlots = afternoonRaw.Select(MapToTimeSlotDto).ToList();
+        var activeDayShift = BuildDoctorDayShift(
+            effectiveDate,
+            morningRaw,
+            afternoonRaw,
+            morningSlots,
+            afternoonSlots);
 
         var shifts = BuildServiceShifts(effectiveDaySlots);
         var serviceInfo = BuildServiceInfo(serviceDto);
@@ -210,7 +233,10 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             MonthLabel: monthLabel,
             Profiles: profiles,
             Dates: dates,
-            Shifts: shifts);
+            Shifts: shifts,
+            MorningSlots: morningSlots,
+            AfternoonSlots: afternoonSlots,
+            ActiveDayShift: activeDayShift);
     }
 
     private static DateOnly? ParseRequestedDate(string? dateIso)
@@ -303,21 +329,120 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
         CancellationToken ct)
     {
         var (self, familyLinks) = await AppointmentBookingRules.LoadOwnedPatientsAsync(_db, userId, nowLocal, ct);
+        var patientIds = new List<long>(1 + familyLinks.Count) { self.Id };
+        patientIds.AddRange(familyLinks.Select(l => l.MemberPatientId));
+
+        var activeBookedDatesByPatient = await LoadActiveBookedDatesByPatientAsync(patientIds, today, ct);
 
         var profiles = new List<BookingPatientProfileDto>(1 + familyLinks.Count)
         {
-            MapSelfProfile(self, today)
+            MapSelfProfile(self, today, activeBookedDatesByPatient.GetValueOrDefault(self.Id, Array.Empty<string>()))
         };
 
         foreach (var link in familyLinks)
         {
-            profiles.Add(MapMemberProfile(link.MemberPatient!, link.Relationship, today));
+            profiles.Add(MapMemberProfile(
+                link.MemberPatient!,
+                link.Relationship,
+                today,
+                activeBookedDatesByPatient.GetValueOrDefault(link.MemberPatientId, Array.Empty<string>())));
         }
 
         return profiles;
     }
 
-    private static BookingPatientProfileDto MapSelfProfile(Patient self, DateOnly today)
+    private async Task<Dictionary<long, IReadOnlyList<string>>> LoadActiveBookedDatesByPatientAsync(
+        List<long> patientIds,
+        DateOnly today,
+        CancellationToken ct)
+    {
+        var stripStart = today.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        var stripEnd = stripStart.AddDays(StripDays);
+
+        var rawAppointments = await _db.Appointments
+            .AsNoTracking()
+            .Where(a =>
+                a.PatientId != null &&
+                patientIds.Contains(a.PatientId.Value) &&
+                a.Slot != null &&
+                a.Slot.StartsAt != null &&
+                a.Slot.StartsAt >= stripStart &&
+                a.Slot.StartsAt < stripEnd)
+            .Select(a => new
+            {
+                a.Id,
+                PatientId = a.PatientId!.Value,
+                a.Status,
+                StartsAt = a.Slot!.StartsAt!.Value
+            })
+            .ToListAsync(ct);
+
+        var apptIds = rawAppointments.Select(a => a.Id).ToList();
+        var visitsByApptId = new Dictionary<long, List<Visit>>();
+        if (apptIds.Count > 0)
+        {
+            var visits = await _db.Visits
+                .AsNoTracking()
+                .Where(v => v.AppointmentId != null && apptIds.Contains(v.AppointmentId.Value))
+                .ToListAsync(ct);
+
+            visitsByApptId = visits
+                .GroupBy(v => v.AppointmentId!.Value)
+                .ToDictionary(g => g.Key, g => g.ToList());
+        }
+
+        var result = new Dictionary<long, HashSet<string>>();
+        foreach (var appt in rawAppointments)
+        {
+            var statusKey = AppointmentBookingRules.NormalizeStatusKey(appt.Status);
+            if (string.IsNullOrEmpty(statusKey))
+                statusKey = AppointmentBookingRules.BookedStatus;
+
+            var linkedVisits = visitsByApptId.GetValueOrDefault(appt.Id);
+            var hasActiveVisit = linkedVisits is not null &&
+                                 linkedVisits.Any(v => AppointmentBookingRules.IsActiveVisitStatus(v.Status));
+            var hasCompletedVisit = linkedVisits is not null &&
+                                    linkedVisits.Any(v => AppointmentBookingRules.IsCompletedVisitStatus(v.Status));
+            var hasCancelledVisitOnly = linkedVisits is { Count: > 0 } &&
+                                        linkedVisits.All(v => AppointmentBookingRules.NormalizeStatusKey(v.Status) == AppointmentBookingRules.CancelledStatus);
+
+            bool blocksDate;
+            if (hasActiveVisit)
+            {
+                blocksDate = true;
+            }
+            else if (statusKey is AppointmentBookingRules.CancelledStatus or AppointmentBookingRules.NoShowStatus or AppointmentBookingRules.CompletedStatus)
+            {
+                blocksDate = false;
+            }
+            else if (statusKey == AppointmentBookingRules.CheckedInStatus)
+            {
+                blocksDate = !hasCompletedVisit && !hasCancelledVisitOnly;
+            }
+            else
+            {
+                blocksDate = !hasCompletedVisit;
+            }
+
+            if (!blocksDate)
+                continue;
+
+            if (!result.TryGetValue(appt.PatientId, out var dates))
+            {
+                dates = new HashSet<string>(StringComparer.Ordinal);
+                result[appt.PatientId] = dates;
+            }
+
+            dates.Add(DateOnly.FromDateTime(appt.StartsAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        }
+
+        return result.ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyList<string>)kvp.Value.OrderBy(d => d).ToList());
+    }
+
+    private static BookingPatientProfileDto MapSelfProfile(
+        Patient self,
+        DateOnly today,
+        IReadOnlyList<string> activeBookedDates)
     {
         var age = CalculateAge(self.DateOfBirth, today);
         var gender = FormatGender(self.Gender);
@@ -338,13 +463,15 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             Age: age,
             MetaPrimary: metaPrimary,
             MetaSecondary: metaSecondary,
-            PatientCode: self.PatientCode);
+            PatientCode: self.PatientCode,
+            ActiveBookedDates: activeBookedDates);
     }
 
     private static BookingPatientProfileDto MapMemberProfile(
         Patient member,
         string? relationship,
-        DateOnly today)
+        DateOnly today,
+        IReadOnlyList<string> activeBookedDates)
     {
         var age = CalculateAge(member.DateOfBirth, today);
         var gender = FormatGender(member.Gender);
@@ -372,7 +499,8 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             Age: age,
             MetaPrimary: metaPrimary,
             MetaSecondary: metaSecondary,
-            PatientCode: member.PatientCode);
+            PatientCode: member.PatientCode,
+            ActiveBookedDates: activeBookedDates);
     }
 
     internal static int CalculateAge(DateOnly? dateOfBirth, DateOnly today)
@@ -489,11 +617,19 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
     {
         var stripEndDate = today.AddDays(StripDays - 1);
         if (requestedDate.HasValue && requestedDate.Value >= today && requestedDate.Value <= stripEndDate)
-            return requestedDate.Value;
+        {
+            var requestedIso = requestedDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            var matched = dates.FirstOrDefault(d => d.DateIso == requestedIso);
+            if (matched is not null && matched.Status is "AVAILABLE" or "FEW_SLOTS")
+                return requestedDate.Value;
+        }
 
         var firstAvailable = dates.FirstOrDefault(d => d.Status is "AVAILABLE" or "FEW_SLOTS");
         if (firstAvailable is not null)
             return DateOnly.ParseExact(firstAvailable.DateIso, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        if (requestedDate.HasValue && requestedDate.Value >= today && requestedDate.Value <= stripEndDate)
+            return requestedDate.Value;
 
         return today;
     }
