@@ -51,7 +51,7 @@ export interface AdminPortalShellProps {
 
 const TABS: { name: AdminPortalTab; href?: string; icon: LucideIcon }[] = [
   { name: 'Khoa phòng', href: '/admin/departments', icon: Building2 },
-  { name: 'Buồng khám & Kỹ thuật', icon: DoorOpen },
+  { name: 'Buồng khám & Kỹ thuật', href: '/admin/rooms', icon: DoorOpen },
   { name: 'Bác sĩ & Nhân sự Y tế', href: '/admin/doctors', icon: UserCheck },
   { name: 'Danh mục Dịch vụ & Kỹ thuật', href: '/admin/services', icon: ClipboardList },
   { name: 'Bảng giá & Biểu phí', icon: CreditCard },
