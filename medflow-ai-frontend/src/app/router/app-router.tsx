@@ -6,6 +6,7 @@ import { DepartmentListPage } from '@/features/admin-departments/pages/departmen
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
+import { RoomEditPage } from '@/features/admin-rooms/pages/room-edit-page';
 import { OperationalReportsPage } from '@/features/admin-reports/pages/operational-reports-page';
 import { StaffAccountEditPage } from '@/features/admin-staff/pages/staff-account-edit-page';
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
@@ -322,6 +323,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <ExaminationSlotCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/rooms/:id/edit"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <RoomEditPage />
             </RequireAdmin>
           </RequireAuth>
         }
