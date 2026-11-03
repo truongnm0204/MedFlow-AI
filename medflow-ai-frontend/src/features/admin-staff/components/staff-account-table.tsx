@@ -10,6 +10,7 @@ interface StaffAccountTableProps {
   totalPages: number;
   pageSize: number;
   onPageChange: (page: number) => void;
+  onDeactivate?: (item: StaffAccountItem) => void;
 }
 
 const STATUS_STYLES: Record<StaffAccountStatus, string> = {
@@ -35,6 +36,7 @@ export function StaffAccountTable({
   totalPages,
   pageSize,
   onPageChange,
+  onDeactivate,
 }: StaffAccountTableProps) {
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
@@ -75,16 +77,30 @@ export function StaffAccountTable({
                       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_STYLES[item.status]}`}
                     >
                       {STAFF_STATUS_LABELS[item.status]}
+                      <span className="sr-only">{item.status}</span>
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      aria-label={`Xem chi tiết ${item.fullName}`}
-                      className="text-sm font-semibold text-primary hover:text-primary-dark"
-                    >
-                      Xem
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        aria-label={`Xem chi tiết ${item.fullName}`}
+                        className="text-sm font-semibold text-primary hover:text-primary-dark"
+                      >
+                        Xem
+                      </button>
+                      {onDeactivate && (
+                        <button
+                          type="button"
+                          disabled={item.status === 'DISABLED'}
+                          onClick={() => onDeactivate(item)}
+                          aria-label={`Ngừng hoạt động ${item.fullName}`}
+                          className="text-sm font-semibold text-red-600 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Ngừng hoạt động
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))
