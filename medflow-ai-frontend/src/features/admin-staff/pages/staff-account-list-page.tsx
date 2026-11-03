@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
 
+import { DeactivateStaffModal } from '../components/deactivate-staff-modal';
 import { StaffAccountFilterBar } from '../components/staff-account-filters';
 import { StaffAccountMetricsCards } from '../components/staff-account-metrics';
 import { StaffAccountTable } from '../components/staff-account-table';
@@ -10,7 +11,12 @@ import {
   STAFF_ACCOUNTS,
   STAFF_STATUS_LABELS,
 } from '../data/staff-account-mock-data';
-import type { StaffAccountFilters, StaffAccountItem } from '../types/staff-account.types';
+import type { DeactivateStaffPayload, StaffTargetSummary } from '../types/deactivate-staff.types';
+import type {
+  StaffAccountFilters,
+  StaffAccountItem,
+  StaffAccountMetrics,
+} from '../types/staff-account.types';
 
 const PAGE_SIZE = 8;
 
@@ -39,6 +45,8 @@ function downloadCsv(items: StaffAccountItem[]) {
 
 /** SCR-ADM-STAFF-01 — staff account list (synthetic data). */
 export function StaffAccountListPage() {
+  const [accounts, setAccounts] = useState<StaffAccountItem[]>(STAFF_ACCOUNTS);
+  const [metrics, setMetrics] = useState<StaffAccountMetrics>(STAFF_ACCOUNT_METRICS);
   const [filters, setFilters] = useState<StaffAccountFilters>({
     query: '',
     department: '',
@@ -46,10 +54,11 @@ export function StaffAccountListPage() {
     status: '',
   });
   const [page, setPage] = useState(1);
+  const [target, setTarget] = useState<StaffTargetSummary | null>(null);
 
   const filtered = useMemo(() => {
     const q = filters.query.trim().toLowerCase();
-    return STAFF_ACCOUNTS.filter(
+    return accounts.filter(
       (item) =>
         (!q ||
           item.code.toLowerCase().includes(q) ||
@@ -59,7 +68,7 @@ export function StaffAccountListPage() {
         (!filters.role || item.role === filters.role) &&
         (!filters.status || item.status === filters.status),
     );
-  }, [filters]);
+  }, [accounts, filters]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -68,6 +77,31 @@ export function StaffAccountListPage() {
   const updateFilters = (patch: Partial<StaffAccountFilters>) => {
     setFilters((prev) => ({ ...prev, ...patch }));
     setPage(1);
+  };
+
+  const handleDeactivate = (item: StaffAccountItem) => {
+    setTarget({
+      id: item.id,
+      staffCode: item.code,
+      fullName: item.fullName,
+      role: item.role,
+      department: item.department,
+      email: item.email,
+      pendingAssignments:
+        (item as StaffAccountItem & { pendingAssignments?: number }).pendingAssignments ?? 0,
+    });
+  };
+
+  const handleConfirmDeactivate = ({ staffId }: DeactivateStaffPayload) => {
+    setAccounts((prev) =>
+      prev.map((acc) => (acc.id === staffId ? { ...acc, status: 'DISABLED' } : acc)),
+    );
+    setMetrics((prev) => ({
+      ...prev,
+      active: Math.max(0, prev.active - 1),
+      disabled: prev.disabled + 1,
+    }));
+    setTarget(null);
   };
 
   return (
@@ -80,7 +114,7 @@ export function StaffAccountListPage() {
           <h1 className="text-2xl font-bold text-navy">Tài khoản nhân sự</h1>
           <p className="mt-1 text-sm text-sub">Quản lý tài khoản đăng nhập của nhân sự y tế.</p>
         </div>
-        <StaffAccountMetricsCards metrics={STAFF_ACCOUNT_METRICS} />
+        <StaffAccountMetricsCards metrics={metrics} />
         <StaffAccountFilterBar
           filters={filters}
           onChange={updateFilters}
@@ -94,8 +128,16 @@ export function StaffAccountListPage() {
           totalPages={totalPages}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
+          onDeactivate={handleDeactivate}
         />
       </div>
+      {target && (
+        <DeactivateStaffModal
+          staff={target}
+          onCancel={() => setTarget(null)}
+          onConfirm={handleConfirmDeactivate}
+        />
+      )}
     </AdminPortalShell>
   );
 }

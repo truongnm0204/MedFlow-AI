@@ -6,8 +6,11 @@ import { DepartmentListPage } from '@/features/admin-departments/pages/departmen
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
+import { RoomEditPage } from '@/features/admin-rooms/pages/room-edit-page';
+import { StaffAccountListPage } from '@/features/admin-staff/pages/staff-account-list-page';
 import { OperationalReportsPage } from '@/features/admin-reports/pages/operational-reports-page';
 import { RoomListPage } from '@/features/admin-rooms/pages/room-list-page';
+import { StaffAccountEditPage } from '@/features/admin-staff/pages/staff-account-edit-page';
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
@@ -15,7 +18,6 @@ import { StaffAccountCreatePage } from '@/features/admin-staff/pages/staff-accou
 import { ExaminationSlotCreatePage } from '@/features/admin-slots/pages/examination-slot-create-page';
 import { ExaminationSlotListPage } from '@/features/admin-slots/pages/examination-slot-list-page';
 import { SlotEditModal } from '@/features/admin-slots/pages/slot-edit-modal';
-import { StaffAccountListPage } from '@/features/admin-staff/pages/staff-account-list-page';
 import { AppointmentDetailPage } from '@/features/appointment/pages/appointment-detail-page';
 import { AppointmentConfirmationPage } from '@/features/appointment/pages/appointment-confirmation-page';
 import { AppointmentListPage } from '@/features/appointment/pages/appointment-list-page';
@@ -199,6 +201,16 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin/staff/:id/edit"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <StaffAccountEditPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/departments"
         element={
           <RequireAuth>
@@ -322,6 +334,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <ExaminationSlotCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/rooms/:id/edit"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <RoomEditPage />
             </RequireAdmin>
           </RequireAuth>
         }
