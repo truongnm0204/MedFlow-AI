@@ -40,6 +40,21 @@ public sealed class AdminDoctorsEndpointTests : AuthTestBase
         return request;
     }
 
+    private HttpRequestMessage AuthedPost(
+        object payload,
+        long userId = 11,
+        string email = "hospital_admin01@medflow.test",
+        string role = "HOSPITAL_ADMIN")
+    {
+        var token = GenerateToken(userId, email, role);
+        var request = new HttpRequestMessage(HttpMethod.Post, Endpoint)
+        {
+            Content = JsonContent.Create(payload)
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return request;
+    }
+
     private HttpRequestMessage AuthedPut(
         string idOrCode,
         UpdateDoctorAdminRequest body,
@@ -222,6 +237,16 @@ public sealed class AdminDoctorsEndpointTests : AuthTestBase
     }
 
     [Fact]
+    public async Task CreateDoctor_NoToken_Returns401()
+    {
+        var response = await Client.PostAsJsonAsync(Endpoint, new CreateDoctorRequest(
+            DoctorCode: "DOC-0245",
+            StaffId: 3));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
     public async Task UpdateDoctor_NoToken_Returns401()
     {
         var response = await Client.PutAsJsonAsync(
@@ -229,6 +254,26 @@ public sealed class AdminDoctorsEndpointTests : AuthTestBase
             new UpdateDoctorAdminRequest(ProfessionalTitle: "BS.CKII"));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("PATIENT")]
+    [InlineData("DOCTOR")]
+    [InlineData("RECEPTION")]
+    public async Task CreateDoctor_NonAdminRole_Returns403(string role)
+    {
+        var (userId, email) = role switch
+        {
+            "DOCTOR" => (3L, "doctor01@medflow.test"),
+            "RECEPTION" => (5L, "reception01@medflow.test"),
+            _ => (999L, "patient_test@medflow.test"),
+        };
+
+        var payload = new CreateDoctorRequest(DoctorCode: "DOC-0245", StaffId: 3);
+        using var request = AuthedPost(payload, userId: userId, email: email, role: role);
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
     [Theory]
@@ -263,6 +308,142 @@ public sealed class AdminDoctorsEndpointTests : AuthTestBase
         var response = await Client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("", 3L, (short)5)]
+    [InlineData("DOC-0245", null, (short)5)]
+    [InlineData("DOC-0245", 3L, (short)85)]
+    public async Task CreateDoctor_InvalidPayload_Returns400(string doctorCode, long? staffId, short yearsOfExperience)
+    {
+        var payload = new CreateDoctorRequest(
+            DoctorCode: doctorCode,
+            StaffId: staffId,
+            YearsOfExperience: yearsOfExperience);
+        using var request = AuthedPost(payload);
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal(400, problem.Status);
+    }
+
+    [Fact]
+    public async Task CreateDoctor_NonExistentStaffOrSpecialty_Returns404()
+    {
+        var missingStaff = new CreateDoctorRequest(DoctorCode: "DOC-4040", StaffId: 999999);
+        using var reqStaff = AuthedPost(missingStaff);
+        var resStaff = await Client.SendAsync(reqStaff);
+        Assert.Equal(HttpStatusCode.NotFound, resStaff.StatusCode);
+
+        var missingSpecialty = new CreateDoctorRequest(DoctorCode: "DOC-4040", StaffId: 6, SpecialtyId: 999999);
+        using var reqSpec = AuthedPost(missingSpecialty);
+        var resSpec = await Client.SendAsync(reqSpec);
+        Assert.Equal(HttpStatusCode.NotFound, resSpec.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateDoctor_DuplicateDoctorCode_Returns409()
+    {
+        var payload = new CreateDoctorRequest(DoctorCode: "DOC-001", StaffId: 6);
+        using var request = AuthedPost(payload);
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal(409, problem.Status);
+    }
+
+    [Fact]
+    public async Task CreateDoctor_StaffAlreadyHasDoctor_Returns409()
+    {
+        var payload = new CreateDoctorRequest(DoctorCode: "DOC-999", StaffId: 1);
+        using var request = AuthedPost(payload);
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal(409, problem.Status);
+    }
+
+    [Theory]
+    [InlineData("HOSPITAL_ADMIN", "doc-0245", 3L, "STF-003", "Lễ tân Lê Lan")]
+    [InlineData("SYSTEM_ADMIN", "doc-0246", 4L, "STF-004", "Lễ tân Phạm Linh")]
+    public async Task CreateDoctor_ValidRequest_Returns201AndPersistsDoctor(
+        string role,
+        string rawDoctorCode,
+        long staffId,
+        string expectedStaffCode,
+        string expectedFullName)
+    {
+        var (userId, email) = role == "SYSTEM_ADMIN"
+            ? (13L, "system_admin01@medflow.test")
+            : (11L, "hospital_admin01@medflow.test");
+
+        long? createdId = null;
+        try
+        {
+            var payload = new CreateDoctorRequest(
+                DoctorCode: rawDoctorCode,
+                StaffId: staffId,
+                SpecialtyId: 1,
+                ProfessionalTitle: "Bác sĩ Chuyên khoa I",
+                LicenseNumber: "018492/BYT-CCHN",
+                YearsOfExperience: 12,
+                IsActive: true);
+
+            using var request = AuthedPost(payload, userId: userId, email: email, role: role);
+            var response = await Client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+            var dto = await response.Content.ReadFromJsonAsync<DoctorAdminListItemDto>();
+            Assert.NotNull(dto);
+            createdId = dto.Id;
+
+            Assert.True(dto.Id > 0);
+            Assert.Equal(rawDoctorCode.ToUpperInvariant(), dto.DoctorCode);
+            Assert.Equal(staffId, dto.StaffId);
+            Assert.Equal(expectedStaffCode, dto.StaffCode);
+            Assert.Equal(expectedFullName, dto.FullName);
+            Assert.Equal(1L, dto.SpecialtyId);
+            Assert.Equal("Tiêu hóa", dto.SpecialtyName);
+            Assert.Equal("Bác sĩ Chuyên khoa I", dto.Degree);
+            Assert.Equal("018492/BYT-CCHN", dto.LicenseNumber);
+            Assert.Equal((short)12, dto.YearsOfExperience);
+            Assert.True(dto.IsActive);
+
+            using var dupCodeRequest = AuthedPost(
+                payload with { StaffId = 5 },
+                userId: userId,
+                email: email,
+                role: role);
+            var dupCodeResponse = await Client.SendAsync(dupCodeRequest);
+            Assert.Equal(HttpStatusCode.Conflict, dupCodeResponse.StatusCode);
+            Assert.Equal("application/problem+json", dupCodeResponse.Content.Headers.ContentType?.MediaType);
+
+            using var dupStaffRequest = AuthedPost(
+                payload with { DoctorCode = "DOC-9999" },
+                userId: userId,
+                email: email,
+                role: role);
+            var dupStaffResponse = await Client.SendAsync(dupStaffRequest);
+            Assert.Equal(HttpStatusCode.Conflict, dupStaffResponse.StatusCode);
+            Assert.Equal("application/problem+json", dupStaffResponse.Content.Headers.ContentType?.MediaType);
+        }
+        finally
+        {
+            var normalizedCode = rawDoctorCode.ToUpperInvariant();
+            await Db.Doctors
+                .Where(d => (createdId.HasValue && d.Id == createdId.Value) || d.DoctorCode == normalizedCode)
+                .ExecuteDeleteAsync();
+        }
     }
 
     [Theory]

@@ -8,6 +8,10 @@ public interface IDoctorAdminService
         GetDoctorListAdminRequest request,
         CancellationToken ct = default);
 
+    Task<DoctorAdminListItemDto> CreateDoctorAsync(
+        CreateDoctorRequest request,
+        CancellationToken ct = default);
+
     Task<DoctorAdminListItemDto> UpdateDoctorAsync(
         long actorUserId,
         string idOrCode,
