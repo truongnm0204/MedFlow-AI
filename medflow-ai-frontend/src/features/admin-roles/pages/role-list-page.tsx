@@ -6,6 +6,7 @@ import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell'
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert, Button, toast } from '@/shared/ui';
 
+import { RoleAccessCheckPanel } from '../components/role-access-check-panel';
 import { RoleDetailModal } from '../components/role-detail-modal';
 import { RoleFilterBar } from '../components/role-filters';
 import { RoleMetricsCards } from '../components/role-metrics';
@@ -215,6 +216,20 @@ export function RoleListPage({ initialView = 'list' }: RoleListPageProps = {}) {
                 <Grid3X3 className="h-3.5 w-3.5" aria-hidden="true" />
                 Ma trận phân quyền
               </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewMode === 'access-check'}
+                onClick={() => setViewMode('access-check')}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  viewMode === 'access-check'
+                    ? 'bg-primary text-white shadow-2xs'
+                    : 'text-sub hover:bg-canvas hover:text-navy'
+                }`}
+              >
+                <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                Kiểm tra truy cập
+              </button>
             </div>
 
             {canManageRoles && (
@@ -285,12 +300,14 @@ export function RoleListPage({ initialView = 'list' }: RoleListPageProps = {}) {
             onSelectRole={(role) => setSelectedRoleId(role.id)}
             onAssignPermissions={canManageRoles ? handleOpenAssignModal : undefined}
           />
-        ) : (
+        ) : viewMode === 'matrix' ? (
           <RolePermissionMatrixView
             roles={filtered}
             canAssignPermissions={canManageRoles}
             onSelectRoleForAssign={handleOpenAssignModal}
           />
+        ) : (
+          <RoleAccessCheckPanel roles={roles} />
         )}
       </div>
       <RoleDetailModal
