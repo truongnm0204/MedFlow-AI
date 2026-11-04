@@ -171,11 +171,17 @@ export function DoctorEditModal() {
             >
               <input className={doctorControlClass} {...register('specialty')} />
             </DoctorField>
-            <label className="flex items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[11px]">
+            <label
+              className={`flex items-center justify-between gap-2 rounded-lg border px-3 text-[11px] ${
+                isActive ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'
+              }`}
+            >
               <span>
-                <b>● Đang nhận lịch khám (Active)</b>
+                <b>{isActive ? '● Đang hoạt động (Active)' : '○ Ngừng hoạt động (Inactive)'}</b>
                 <small className="block text-sub">
-                  Cho phép phân bổ ca khám và đặt hẹn trực tuyến
+                  {isActive
+                    ? 'Cho phép phân bổ ca khám và đặt hẹn trực tuyến'
+                    : 'Không nhận lịch hoặc phân công mới'}
                 </small>
               </span>
               <input
@@ -202,8 +208,9 @@ export function DoctorEditModal() {
           </div>
         </div>
         <DoctorEditFooter
+          isActive={isActive}
           onClose={() => navigate('/admin/doctors')}
-          onSuspend={() => setValue('active', false, { shouldDirty: true })}
+          onSuspend={() => setValue('active', !isActive, { shouldDirty: true })}
         />
       </form>
     </div>
