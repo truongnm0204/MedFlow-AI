@@ -5,6 +5,7 @@ import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import type {
+  ExaminationQueueEntryDto,
   ExaminationQueuePriority,
   ExaminationQueueStatus,
   QueuePresenceStatus,
@@ -15,6 +16,10 @@ export interface ExaminationQueueServicePointCardProps {
   servicePoint: ServicePointQueueDto;
   canManageQueue: boolean;
   onSelectPatient: (patientCode: string) => void;
+  onUpdateStatus?: (
+    entry: ExaminationQueueEntryDto,
+    initialTargetStatus?: ExaminationQueueStatus,
+  ) => void;
 }
 
 const EXAMINATION_QUEUE_STATUS_META: Record<
@@ -53,6 +58,7 @@ export function ExaminationQueueServicePointCard({
   servicePoint,
   canManageQueue,
   onSelectPatient,
+  onUpdateStatus,
 }: ExaminationQueueServicePointCardProps) {
   return (
     <Card>
@@ -177,13 +183,26 @@ export function ExaminationQueueServicePointCard({
                     </td>
                     {canManageQueue && (
                       <td className="py-3 text-right">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => onSelectPatient(entry.patientCode)}
-                        >
-                          Xem hồ sơ
-                        </Button>
+                        <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
+                          {onUpdateStatus && (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              disabled={entry.status === 'COMPLETED'}
+                              aria-label={`Cập nhật trạng thái hàng đợi cho ${entry.patientName}`}
+                              onClick={() => onUpdateStatus(entry)}
+                            >
+                              Cập nhật TT
+                            </Button>
+                          )}
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onSelectPatient(entry.patientCode)}
+                          >
+                            Xem hồ sơ
+                          </Button>
+                        </div>
                       </td>
                     )}
                   </tr>
