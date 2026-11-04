@@ -266,7 +266,6 @@ export function RoleListPage({ initialView = 'list' }: RoleListPageProps = {}) {
             </Alert>
           </div>
         )}
-
         <RoleMetricsCards metrics={metrics} />
         <RoleFilterBar
           filters={filters}

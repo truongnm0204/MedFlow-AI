@@ -35,7 +35,7 @@ export function useRolesPermissionsCatalog(): UseQueryResult<RolesPermissionsCat
   return useQuery(
     {
       queryKey: ROLE_PERMISSIONS_QUERY_KEY,
-      queryFn: fetchRolesPermissionsCatalogApi,
+      queryFn: () => fetchRolesPermissionsCatalogApi({ page: 1, pageSize: 100 }),
       placeholderData: () => getMockRolesCatalog(),
       retry: false,
     },

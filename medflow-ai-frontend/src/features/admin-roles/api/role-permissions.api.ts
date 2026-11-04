@@ -2,6 +2,7 @@ import axios from 'axios';
 
 import { apiClient } from '@/shared/lib/axios';
 
+import { mapRoleItemDto, mapRoleMetricsDto } from './role.api';
 import {
   getMockRolesCatalog,
   SYSTEM_PERMISSION_LIST,
@@ -9,7 +10,9 @@ import {
 } from '../data/role-mock-data';
 import type {
   AssignRolePermissionsResponseDto,
+  GetRoleListParams,
   RoleItem,
+  RoleListResponseDto,
   RolesPermissionsCatalogDto,
   UpdateRolePermissionsRequest,
 } from '../types/role.types';
@@ -27,12 +30,21 @@ function shouldUseHttpApi(): boolean {
   );
 }
 
-export async function fetchRolesPermissionsCatalogApi(): Promise<RolesPermissionsCatalogDto> {
+export async function fetchRolesPermissionsCatalogApi(
+  params?: GetRoleListParams,
+): Promise<RolesPermissionsCatalogDto> {
   if (shouldUseHttpApi()) {
     try {
-      const { data } = await apiClient.get<RolesPermissionsCatalogDto | RoleItem[]>('/admin/roles');
+      const { data } = params
+        ? await apiClient.get<RolesPermissionsCatalogDto | RoleListResponseDto | RoleItem[]>(
+            '/admin/roles',
+            { params },
+          )
+        : await apiClient.get<RolesPermissionsCatalogDto | RoleListResponseDto | RoleItem[]>(
+            '/admin/roles',
+          );
+      const permissions = SYSTEM_PERMISSION_LIST.map((perm) => ({ ...perm }));
       if (Array.isArray(data)) {
-        const permissions = SYSTEM_PERMISSION_LIST.map((perm) => ({ ...perm }));
         return {
           roles: data,
           permissions,
@@ -42,6 +54,14 @@ export async function fetchRolesPermissionsCatalogApi(): Promise<RolesPermission
             totalAssignedAccounts: data.reduce((sum, role) => sum + role.assignedUsersCount, 0),
             totalPermissions: permissions.length,
           },
+        };
+      }
+      if ('data' in data) {
+        const rawItems = data.data ?? data.items ?? [];
+        return {
+          roles: rawItems.map(mapRoleItemDto),
+          permissions,
+          metrics: mapRoleMetricsDto(data.metrics),
         };
       }
       return data;
