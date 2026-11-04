@@ -7,5 +7,9 @@ public interface IDoctorAdminService
     Task<DoctorAdminListResponseDto> GetDoctorListAsync(
         GetDoctorListAdminRequest request,
         CancellationToken ct = default);
+
+    Task<DoctorAdminListItemDto> CreateDoctorAsync(
+        CreateDoctorRequest request,
+        CancellationToken ct = default);
 }
 

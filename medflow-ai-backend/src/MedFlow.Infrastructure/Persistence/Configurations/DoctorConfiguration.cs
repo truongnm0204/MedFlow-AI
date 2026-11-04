@@ -20,7 +20,7 @@ public class DoctorConfiguration : IEntityTypeConfiguration<Doctor>
         builder.Property(d => d.DoctorCode).HasColumnName("doctor_code").HasMaxLength(40).IsRequired();
         builder.Property(d => d.SpecialtyId).HasColumnName("specialty_id");
         builder.Property(d => d.ProfessionalTitle).HasColumnName("professional_title").HasMaxLength(120);
-        builder.Property(d => d.IsActive).HasColumnName("is_active").HasDefaultValue(true);
+        builder.Property(d => d.IsActive).HasColumnName("is_active");
         builder.Property(d => d.ProfileImageUrl).HasColumnName("profile_image_url");
         builder.Property(d => d.YearsOfExperience).HasColumnName("years_of_experience");
         builder.Property(d => d.LicenseNumber).HasColumnName("license_number").HasMaxLength(100);
