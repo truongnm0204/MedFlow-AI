@@ -221,6 +221,9 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
     });
     expect(screen.queryByText('Thao tác')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Xem hồ sơ' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Cập nhật trạng thái hàng đợi/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('calls GET /reception/examination-queue when token is present and handles HTTP 500 error + retry', async () => {
@@ -264,6 +267,32 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
     });
     expect(getSpy).toHaveBeenCalledWith('/reception/examination-queue', {
       params: { queueDate: '2026-11-04' },
+    });
+  });
+
+  it('opens UpdateQueueStatusModal via Cập nhật TT, updates entry status, and shows confirmation banner', async () => {
+    renderQueuePage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Trần Thị Bích')).toBeInTheDocument();
+    });
+
+    // Click "Cập nhật TT" for Trần Thị Bích (A013, currently CALLED)
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Cập nhật trạng thái hàng đợi cho Trần Thị Bích',
+      }),
+    );
+
+    expect(await screen.findByText('Cập nhật trạng thái hàng đợi khám (UC28)')).toBeInTheDocument();
+
+    // Default target for CALLED is IN_PROGRESS -> submit
+    fireEvent.click(screen.getByRole('button', { name: 'Xác nhận cập nhật trạng thái' }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Đã cập nhật trạng thái phiếu A013 sang Đang khám.'),
+      ).toBeInTheDocument();
     });
   });
 });
