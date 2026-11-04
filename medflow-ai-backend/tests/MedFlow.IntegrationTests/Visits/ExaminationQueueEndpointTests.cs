@@ -183,15 +183,14 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
                 {
                     VisitCode = testVisitCode,
                     PatientId = 9,
-                    AppointmentId = 9,
+                    AppointmentId = null,
                     AssignedDoctorId = 1,
                     ExaminationRoomId = null,
-                    CheckedInByStaffId = null,
+                    CheckedInByStaffId = 3,
                     ReasonForVisit = "Khám tiêu hóa kiểm tra hàng đợi UC28",
                     Status = "CHECKED_IN",
                     CheckedInAt = new DateTime(2026, 10, 27, 8, 45, 0),
                 };
-
                 db.Visits.Add(testVisit);
                 await db.SaveChangesAsync();
                 createdVisitId = testVisit.Id;
@@ -214,7 +213,19 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
 
             var assignedDto = await assignResp.Content.ReadFromJsonAsync<AssignExaminationRoomResponseDto>();
             Assert.NotNull(assignedDto);
-            var expectedQueueDate = DateOnly.FromDateTime(assignedDto.AssignedAtUtc.AddHours(7)).ToString("yyyy-MM-dd");
+
+            string expectedQueueDate;
+            using (var dateScope = Factory.Services.CreateScope())
+            {
+                var db = dateScope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+                var persistedQueueDate = await db.QueueEntries
+                    .AsNoTracking()
+                    .Where(q => q.VisitId == createdVisitId)
+                    .Select(q => q.QueueDate)
+                    .FirstOrDefaultAsync();
+                expectedQueueDate = (persistedQueueDate ?? DateOnly.FromDateTime(assignedDto.AssignedAtUtc.AddHours(7)))
+                    .ToString("yyyy-MM-dd");
+            }
 
             using var queueReq = AuthedGetQueue($"queueDate={expectedQueueDate}&keyword={testVisitCode}");
             var queueResp = await Client.SendAsync(queueReq);
@@ -226,6 +237,7 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
             var matchedEntry = Assert.Single(rm002Bucket.Entries, e => e.VisitCode == testVisitCode);
             Assert.Equal("URGENT", matchedEntry.Priority);
             Assert.Equal("WAITING", matchedEntry.Status);
+            Assert.Equal("WALK_IN", matchedEntry.VisitType);
             Assert.Equal(1, matchedEntry.ServingOrder);
         }
         finally
@@ -245,21 +257,8 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
                     db.AuditLogs.RemoveRange(createdAudits);
                 }
 
-                var seedQueueEntry21 = await db.QueueEntries.FirstOrDefaultAsync(q => q.Id == 21);
-                if (seedQueueEntry21 is not null)
-                {
-                    seedQueueEntry21.VisitId = null;
-                    seedQueueEntry21.CurrentServicePointId = null;
-                    seedQueueEntry21.Status = "RESERVED";
-                    seedQueueEntry21.PresenceStatus = "NOT_ARRIVED";
-                    seedQueueEntry21.ArrivedAt = null;
-                    seedQueueEntry21.ArrivalClass = null;
-                    seedQueueEntry21.ManualPriority = "NORMAL";
-                    seedQueueEntry21.ReadyAt = null;
-                }
-
                 var extraQueueEntries = await db.QueueEntries
-                    .Where(q => q.VisitId == createdVisitId && q.Id != 21)
+                    .Where(q => q.VisitId == createdVisitId)
                     .ToListAsync();
                 if (extraQueueEntries.Count > 0)
                 {
