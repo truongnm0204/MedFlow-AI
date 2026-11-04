@@ -40,7 +40,54 @@ export interface DoctorQuickAction {
   id: string;
   label: string;
   description: string;
+  ucCode?: string;
   shortcut: string;
+  route?: string;
   icon: string; // SVG path d-attribute
   accent: 'sky' | 'emerald' | 'amber' | 'rose';
+}
+
+export interface DoctorDashboardProfile {
+  userId: number;
+  doctorId: number;
+  doctorCode: string;
+  staffCode?: string | null;
+  email: string;
+  fullName: string;
+  professionalTitle?: string | null;
+  displayName: string;
+  specialtyName?: string | null;
+  departmentId?: number | null;
+  departmentName: string;
+  hospitalId: number;
+  hospitalCode: string;
+  hospitalName: string;
+  roomCode: string;
+  roomName?: string;
+  licenseNumber?: string | null;
+  roles: string[];
+  permissions: string[];
+}
+
+export interface DoctorDashboardQueryParams {
+  queueLimit?: number;
+  diagnosticLimit?: number;
+  status?: AssignedQueueStatus | 'ALL';
+  priority?: VisitPriority | 'ALL';
+  keyword?: string;
+}
+
+export interface DoctorDashboardSummary {
+  facilityName: string;
+  facilityCode: string;
+  roomCode: string;
+  roomName?: string;
+  departmentName: string;
+  shiftLabel: string;
+  stats: DoctorStats;
+  assignedQueue: AssignedPatientEntry[];
+  pendingDiagnostics: PendingDiagnosticItem[];
+  quickActions: DoctorQuickAction[];
+  doctorProfile?: DoctorDashboardProfile;
+  generatedAtUtc?: string;
 }

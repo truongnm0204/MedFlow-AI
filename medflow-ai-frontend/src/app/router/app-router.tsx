@@ -48,7 +48,7 @@ import { ReceptionDashboardPage } from '@/features/reception/pages/reception-das
 import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
-import { GuestOnly, RequireAdmin, RequireAuth } from './guards';
+import { GuestOnly, RequireAdmin, RequireAuth, RequireDoctor } from './guards';
 
 export function AppRouter() {
   return (
@@ -133,7 +133,9 @@ export function AppRouter() {
         path="/doctor"
         element={
           <RequireAuth>
-            <DoctorDashboardPage />
+            <RequireDoctor>
+              <DoctorDashboardPage />
+            </RequireDoctor>
           </RequireAuth>
         }
       />
