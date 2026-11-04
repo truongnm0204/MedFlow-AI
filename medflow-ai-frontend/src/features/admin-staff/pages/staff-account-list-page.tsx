@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
+import { useAuthStore } from '@/features/auth/store/auth.store';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
-
+import { Alert } from '@/shared/ui';
 import { DeactivateStaffModal } from '../components/deactivate-staff-modal';
 import { StaffAccountFilterBar } from '../components/staff-account-filters';
 import { StaffAccountMetricsCards } from '../components/staff-account-metrics';
@@ -45,6 +47,10 @@ function downloadCsv(items: StaffAccountItem[]) {
 
 /** SCR-ADM-STAFF-01 — staff account list (synthetic data). */
 export function StaffAccountListPage() {
+  const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const canManageStaff = !user || user.roles.includes('SYSTEM_ADMIN');
+  const isReadOnlyAdmin = Boolean(user) && !canManageStaff;
   const [accounts, setAccounts] = useState<StaffAccountItem[]>(STAFF_ACCOUNTS);
   const [metrics, setMetrics] = useState<StaffAccountMetrics>(STAFF_ACCOUNT_METRICS);
   const [filters, setFilters] = useState<StaffAccountFilters>({
@@ -114,12 +120,18 @@ export function StaffAccountListPage() {
           <h1 className="text-2xl font-bold text-navy">Tài khoản nhân sự</h1>
           <p className="mt-1 text-sm text-sub">Quản lý tài khoản đăng nhập của nhân sự y tế.</p>
         </div>
+        {isReadOnlyAdmin && (
+          <Alert tone="info">
+            Chế độ chỉ đọc: Chỉ Quản trị viên hệ thống (SYSTEM_ADMIN) mới có quyền tạo mới, cập nhật
+            hoặc vô hiệu hóa tài khoản nhân sự.
+          </Alert>
+        )}
         <StaffAccountMetricsCards metrics={metrics} />
         <StaffAccountFilterBar
           filters={filters}
           onChange={updateFilters}
           onExport={() => downloadCsv(filtered)}
-          onAdd={() => undefined}
+          onAdd={canManageStaff ? () => navigate('/admin/staff/new') : undefined}
         />
         <StaffAccountTable
           items={visible}
@@ -128,7 +140,7 @@ export function StaffAccountListPage() {
           totalPages={totalPages}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
-          onDeactivate={handleDeactivate}
+          onDeactivate={canManageStaff ? handleDeactivate : undefined}
         />
       </div>
       {target && (

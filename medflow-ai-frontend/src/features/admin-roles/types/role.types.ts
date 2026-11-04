@@ -43,7 +43,7 @@ export interface RoleMetrics {
   totalPermissions: number;
 }
 
-export type RoleViewMode = 'list' | 'matrix';
+export type RoleViewMode = 'list' | 'matrix' | 'access-check';
 
 export interface PermissionGroup {
   module: string;
@@ -121,6 +121,12 @@ export interface RoleListResponseDto {
   pageSize: number;
   totalPages: number;
   metrics: RoleMetricsDto;
+}
+
+export interface RolePermissionsCatalogResponseDto {
+  roles: (RoleItem | RoleListItemDto)[];
+  permissions: RolePermissionItemDto[];
+  metrics: RoleMetrics | RoleMetricsDto;
 }
 
 export interface RoleCatalogResult {
