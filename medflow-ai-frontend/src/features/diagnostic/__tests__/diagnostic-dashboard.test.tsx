@@ -220,4 +220,32 @@ describe('DiagnosticDashboardPage', () => {
       '/login?returnUrl=%2Fdiagnostic',
     );
   });
+
+  it('bao ve route /diagnostic bang RequireDiagnostic — chuyen huong PATIENT ve / va DOCTOR ve /doctor', () => {
+    useAuthStore.setState({
+      user: {
+        id: 1,
+        email: 'patient01@medflow.test',
+        fullName: 'Bệnh nhân A',
+        roles: ['PATIENT'],
+        patientCode: 'PAT-001',
+      },
+      accessToken: 'tok-pat',
+      refreshToken: 'rtok-pat',
+      isAuthenticated: true,
+    });
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/diagnostic']}>
+          <AppRouter />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByText('Danh sách & hàng đợi chỉ định CLS')).not.toBeInTheDocument();
+    expect(screen.getByTestId('location-probe')).toHaveTextContent('/');
+  });
 });

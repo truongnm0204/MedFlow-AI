@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using MedFlow.Application.DTOs.Doctors;
 using MedFlow.Application.Services.Doctors;
 using Microsoft.AspNetCore.Authorization;
@@ -75,5 +76,44 @@ public sealed class AdminDoctorsController : ControllerBase
             });
         }
     }
+
+    /// <summary>PUT /api/v1/admin/doctors/{id} — Cập nhật thông tin chuyên khoa, khoa phòng, học vị, hồ sơ hành nghề và trạng thái hoạt động của bác sĩ.</summary>
+    [HttpPut("{id}")]
+    [ProducesResponseType<DoctorAdminListItemDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<DoctorAdminListItemDto>> UpdateDoctor(
+        [FromRoute] string id,
+        [FromBody] UpdateDoctorAdminRequest request,
+        CancellationToken ct)
+    {
+        var result = await _doctorAdminService.UpdateDoctorAsync(
+            GetUserId(),
+            id,
+            request,
+            GetIp(),
+            ct);
+        return Ok(result);
+    }
+
+    private long GetUserId()
+    {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue("sub");
+
+        if (string.IsNullOrWhiteSpace(sub) || !long.TryParse(sub, out var userId))
+        {
+            throw new UnauthorizedAccessException("Token không hợp lệ");
+        }
+
+        return userId;
+    }
+
+    private string? GetIp() =>
+        HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
+        ?? HttpContext.Connection.RemoteIpAddress?.ToString();
 }
 
