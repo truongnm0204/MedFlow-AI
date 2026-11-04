@@ -12,6 +12,7 @@ import type {
   AssignRolePermissionsResponseDto,
   GetRoleListParams,
   RoleItem,
+  RoleListItemDto,
   RoleListResponseDto,
   RolesPermissionsCatalogDto,
   UpdateRolePermissionsRequest,
@@ -87,11 +88,14 @@ export async function assignRolePermissionsApi(
 
   if (shouldUseHttpApi()) {
     try {
-      const { data } = await apiClient.put<RoleItem | AssignRolePermissionsResponseDto>(
-        `/admin/roles/${encodeURIComponent(payload.roleId)}/permissions`,
-        body,
-      );
-      const updatedRole = 'role' in data ? data.role : data;
+      const { data } = await apiClient.put<
+        RoleItem | RoleListItemDto | AssignRolePermissionsResponseDto
+      >(`/admin/roles/${encodeURIComponent(payload.roleId)}/permissions`, body);
+      const rawRole = 'role' in data ? data.role : data;
+      const updatedRole =
+        'roleId' in rawRole && typeof rawRole.roleId === 'number'
+          ? mapRoleItemDto(rawRole as RoleListItemDto)
+          : (rawRole as RoleItem);
       try {
         updateMockRolePermissions(payload.roleId, payload.permissionCodes);
       } catch {
