@@ -9,6 +9,7 @@ interface QueuePreviewTableProps {
   onSelectPatient?: (patientCode: string) => void;
   onTransferRoom?: (entry: QueueEntry) => void;
   onPrintTicket?: (entry: QueueEntry) => void;
+  onAssignRoom?: (entry: QueueEntry) => void;
 }
 
 const STATUS_META: Record<
@@ -27,6 +28,7 @@ const PRIORITY_LABEL: Record<QueueEntry['priority'], string> = {
   URGENT: 'Ưu tiên',
   ELDERLY: 'Người cao tuổi',
   PREGNANT: 'Phụ nữ mang thai',
+  RETURN_RESULT: 'Trả kết quả',
 };
 
 export function QueuePreviewTable({
@@ -34,6 +36,7 @@ export function QueuePreviewTable({
   onSelectPatient,
   onTransferRoom,
   onPrintTicket,
+  onAssignRoom,
 }: QueuePreviewTableProps) {
   return (
     <div className="overflow-x-auto">
@@ -48,7 +51,7 @@ export function QueuePreviewTable({
             <th className="py-2 pr-3">Ưu tiên</th>
             <th className="py-2 pr-3">Trạng thái</th>
             <th className="py-2 pr-3 text-right">Phiếu khám</th>
-            {onTransferRoom && <th className="py-2 text-right">Điều phối</th>}
+            {(onTransferRoom || onAssignRoom) && <th className="py-2 text-right">Điều phối</th>}
           </tr>
         </thead>
         <tbody>
@@ -93,17 +96,32 @@ export function QueuePreviewTable({
                   <span>In phiếu</span>
                 </button>
               </td>
-              {onTransferRoom && (
+              {(onTransferRoom || onAssignRoom) && (
                 <td className="py-2.5 text-right">
-                  <button
-                    type="button"
-                    disabled={entry.status === 'IN_PROGRESS' || entry.status === 'DONE'}
-                    onClick={() => onTransferRoom(entry)}
-                    aria-label={`Chuyển phòng khám cho ${entry.patientName}`}
-                    className="rounded-lg border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Chuyển phòng
-                  </button>
+                  <div className="inline-flex items-center justify-end gap-1.5">
+                    {onAssignRoom && (
+                      <button
+                        type="button"
+                        disabled={entry.status === 'IN_PROGRESS' || entry.status === 'DONE'}
+                        onClick={() => onAssignRoom(entry)}
+                        aria-label={`Phân buồng khám cho ${entry.patientName}`}
+                        className="rounded-lg border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Phân phòng
+                      </button>
+                    )}
+                    {onTransferRoom && (
+                      <button
+                        type="button"
+                        disabled={entry.status === 'IN_PROGRESS' || entry.status === 'DONE'}
+                        onClick={() => onTransferRoom(entry)}
+                        aria-label={`Chuyển phòng khám cho ${entry.patientName}`}
+                        className="rounded-lg border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Chuyển phòng
+                      </button>
+                    )}
+                  </div>
                 </td>
               )}
             </tr>

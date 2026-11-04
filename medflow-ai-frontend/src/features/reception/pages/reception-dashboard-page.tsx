@@ -7,6 +7,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import { CreatePatientModal } from '../components/create-patient-modal';
+import { AssignExaminationRoomModal } from '../components/assign-examination-room-modal';
 import { PatientDetailModal } from '../components/patient-detail-modal';
 import { PrintExaminationTicketModal } from '../components/print-examination-ticket-modal';
 import { UpdatePatientModal } from '../components/update-patient-modal';
@@ -23,6 +24,7 @@ import {
   TODAY_APPOINTMENTS_MOCK,
 } from '../data/reception-mock-data';
 import type { CreatePatientFormData, CreatedPatientResult } from '../types/create-patient.types';
+import type { AssignRoomVisitTarget } from '../types/assign-examination-room.types';
 import { findPatientDetailByCode } from '../data/patient-detail-mock';
 import type { QueueEntry, TodayAppointment } from '../types/reception.types';
 import type { UpdatePatientFormData } from '../types/update-patient.types';
@@ -59,6 +61,9 @@ export function ReceptionDashboardPage() {
     null,
   );
   const [printingVisitCode, setPrintingVisitCode] = useState<string | null>(null);
+  const [assigningVisitTarget, setAssigningVisitTarget] = useState<AssignRoomVisitTarget | null>(
+    null,
+  );
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
@@ -158,6 +163,18 @@ export function ReceptionDashboardPage() {
                 <QueuePreviewTable
                   entries={queueEntries}
                   onSelectPatient={setSelectedPatientCode}
+                  onAssignRoom={(entry) => {
+                    setUpdateNotice(null);
+                    setAssigningVisitTarget({
+                      visitIdOrCode: entry.visitCode ?? 'VIS-202610-0001',
+                      patientCode: entry.patientCode,
+                      patientName: entry.patientName,
+                      currentRoomCode: entry.room,
+                      priority: entry.priority,
+                      assignedDoctorName: entry.doctorName,
+                      departmentName: entry.departmentName,
+                    });
+                  }}
                   onTransferRoom={(entry) => {
                     setUpdateNotice(null);
                     setTransferringTarget({
@@ -208,6 +225,23 @@ export function ReceptionDashboardPage() {
                       } else if (id === 'print-ticket') {
                         setUpdateNotice(null);
                         setPrintingVisitCode(QUEUE_ENTRIES_MOCK[0]?.visitCode ?? 'VIS-202610-0001');
+                      } else if (id === 'assign-room') {
+                        setUpdateNotice(null);
+                        const candidate =
+                          queueEntries.find(
+                            (q) => q.status === 'WAITING' || q.status === 'CALLED',
+                          ) ?? queueEntries[0];
+                        if (candidate) {
+                          setAssigningVisitTarget({
+                            visitIdOrCode: candidate.visitCode ?? 'VIS-202610-0001',
+                            patientCode: candidate.patientCode,
+                            patientName: candidate.patientName,
+                            currentRoomCode: candidate.room,
+                            priority: candidate.priority,
+                            assignedDoctorName: candidate.doctorName,
+                            departmentName: candidate.departmentName,
+                          });
+                        }
                       }
                     }}
                   />
@@ -306,6 +340,33 @@ export function ReceptionDashboardPage() {
           onPrinted={(ticket) => {
             setUpdateNotice(
               `Đã in phiếu khám ${ticket.ticketNo} (${ticket.visitCode}) cho bệnh nhân ${ticket.patientName}`,
+            );
+          }}
+        />
+      )}
+
+      {assigningVisitTarget && (
+        <AssignExaminationRoomModal
+          open
+          target={assigningVisitTarget}
+          onClose={() => setAssigningVisitTarget(null)}
+          onAssigned={(result) => {
+            setQueueEntries((prev) =>
+              prev.map((item) =>
+                item.visitCode === result.visitCode ||
+                item.patientCode === assigningVisitTarget.patientCode
+                  ? {
+                      ...item,
+                      room: result.roomCode,
+                      priority: result.priority,
+                      status: item.status === 'IN_PROGRESS' ? item.status : 'WAITING',
+                    }
+                  : item,
+              ),
+            );
+            setAssigningVisitTarget(null);
+            setUpdateNotice(
+              `Đã phân buồng khám ${result.roomCode} (${result.roomName}) cho lượt khám ${result.visitCode}`,
             );
           }}
         />

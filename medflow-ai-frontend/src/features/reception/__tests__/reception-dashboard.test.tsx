@@ -100,6 +100,29 @@ describe('ReceptionDashboardPage', () => {
     ).toBeInTheDocument();
   });
 
+  it('mo modal phan buong kham tu hang doi tiep don', async () => {
+    useAuthStore.setState({
+      user: {
+        id: 5,
+        email: 'reception01@medflow.test',
+        fullName: 'Lễ tân Lê Lan',
+        roles: ['RECEPTION'],
+        patientCode: null,
+      },
+      accessToken: 'tok-rec',
+      refreshToken: 'rtok-rec',
+      isAuthenticated: true,
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole('button', { name: 'Phân buồng khám cho Lê Minh Cường' }));
+
+    expect(await screen.findByText('Phân buồng khám lâm sàng (UC27)')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('VIS-202610-0009')).toBeInTheDocument();
+  });
+
   it('bao ve route /reception bang RequireAuth va RequireReception', () => {
     useAuthStore.setState({
       user: null,
