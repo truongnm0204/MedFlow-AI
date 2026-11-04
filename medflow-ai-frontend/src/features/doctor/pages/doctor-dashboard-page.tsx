@@ -1,7 +1,10 @@
+import { RefreshCw } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
@@ -16,8 +19,8 @@ import {
   DOCTOR_WORKBENCH_META,
   PENDING_DIAGNOSTICS_MOCK,
 } from '../data/doctor-mock-data';
+import { useDoctorDashboard } from '../hooks/use-doctor-dashboard';
 import type { AssignedQueueStatus, PendingDiagnosticItem } from '../types/doctor.types';
-
 type QueueFilter = 'ALL' | AssignedQueueStatus;
 
 const QUEUE_FILTER_OPTIONS: { id: QueueFilter; label: string }[] = [
@@ -38,16 +41,36 @@ const DIAGNOSTIC_STATUS_META: Record<
 export function DoctorDashboardPage() {
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
+  const { data, isPending, isError, error, refetch } = useDoctorDashboard(undefined, true);
+
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
   const [activeNav, setActiveNav] = useState('dashboard');
   const [queueFilter, setQueueFilter] = useState<QueueFilter>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const doctorDisplayName = user?.fullName ?? DOCTOR_WORKBENCH_META.defaultDoctorName;
+  const doctorDisplayName =
+    user?.fullName?.trim() ||
+    data?.doctorProfile?.displayName?.trim() ||
+    data?.doctorProfile?.fullName?.trim() ||
+    DOCTOR_WORKBENCH_META.defaultDoctorName;
+
+  const staffCode =
+    user?.staffCode?.trim() ||
+    data?.doctorProfile?.staffCode?.trim() ||
+    data?.doctorProfile?.doctorCode?.trim() ||
+    null;
+
+  const roomCode = data?.roomCode || DOCTOR_WORKBENCH_META.roomCode;
+  const departmentName = data?.departmentName || DOCTOR_WORKBENCH_META.departmentName;
+  const shiftLabel = data?.shiftLabel || DOCTOR_WORKBENCH_META.shiftLabel;
+  const stats = data?.stats ?? DOCTOR_STATS_MOCK;
+  const assignedQueue = data?.assignedQueue ?? ASSIGNED_QUEUE_MOCK;
+  const pendingDiagnostics = data?.pendingDiagnostics ?? PENDING_DIAGNOSTICS_MOCK;
+  const quickActions = data?.quickActions ?? DOCTOR_QUICK_ACTIONS_MOCK;
 
   const filteredQueue = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
-    return ASSIGNED_QUEUE_MOCK.filter((item) => {
+    return assignedQueue.filter((item) => {
       const matchesStatus = queueFilter === 'ALL' || item.status === queueFilter;
       const matchesKeyword =
         keyword.length === 0 ||
@@ -56,14 +79,14 @@ export function DoctorDashboardPage() {
         item.queueNo.toLowerCase().includes(keyword);
       return matchesStatus && matchesKeyword;
     });
-  }, [queueFilter, searchTerm]);
+  }, [assignedQueue, queueFilter, searchTerm]);
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
       <DoctorSidebar
         activeItem={activeNav}
         doctorName={doctorDisplayName}
-        roomLabel={`${DOCTOR_WORKBENCH_META.roomCode} • ${DOCTOR_WORKBENCH_META.departmentName}`}
+        roomLabel={`${roomCode} • ${departmentName}`}
         onItemSelect={setActiveNav}
       />
 
@@ -72,11 +95,28 @@ export function DoctorDashboardPage() {
           <div>
             <h1 className="text-sm font-bold text-slate-900">Tổng quan bàn khám bác sĩ</h1>
             <div className="text-[11px] text-slate-500">
-              {DOCTOR_WORKBENCH_META.roomCode} • {DOCTOR_WORKBENCH_META.departmentName} • Hôm nay,{' '}
-              {todayLabel}
+              {roomCode} • {departmentName} • {shiftLabel} • Hôm nay, {todayLabel}
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {staffCode && (
+              <span className="hidden sm:inline-flex rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-[11px] font-semibold text-slate-700">
+                Mã NV: {staffCode}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              disabled={isPending}
+              aria-label="Làm mới dữ liệu bàn khám"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60"
+            >
+              <RefreshCw
+                aria-hidden="true"
+                className={`h-3.5 w-3.5 ${isPending ? 'animate-spin' : ''}`}
+              />
+              <span className="hidden sm:inline">Làm mới</span>
+            </button>
             <div className="flex items-center gap-2.5 pl-3 border-l border-slate-200">
               <div className="w-9 h-9 rounded-full bg-sky-100 border border-sky-200 text-sky-700 flex items-center justify-center font-bold text-xs">
                 {doctorDisplayName.slice(0, 2).toUpperCase()}
@@ -96,7 +136,21 @@ export function DoctorDashboardPage() {
         </header>
 
         <main className="flex-1 p-6 space-y-6 overflow-y-auto">
-          <DoctorStatCards stats={DOCTOR_STATS_MOCK} />
+          {isError && (
+            <Alert tone="error">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{getErrorMessage(error, 'Không thể tải dữ liệu bàn khám bác sĩ')}</span>
+                <button
+                  type="button"
+                  onClick={() => void refetch()}
+                  className="rounded-lg bg-rose-600 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-rose-700"
+                >
+                  Thử lại
+                </button>
+              </div>
+            </Alert>
+          )}
+          <DoctorStatCards stats={stats} />
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <Card className="xl:col-span-2">
               <CardHeader className="space-y-3">
@@ -106,8 +160,7 @@ export function DoctorDashboardPage() {
                       Hàng đợi bệnh nhân được phân công
                     </div>
                     <div className="text-[11px] text-slate-500">
-                      {filteredQueue.length}/{ASSIGNED_QUEUE_MOCK.length} ca tại phòng{' '}
-                      {DOCTOR_WORKBENCH_META.roomCode}
+                      {filteredQueue.length}/{assignedQueue.length} ca tại phòng {roomCode}
                     </div>
                   </div>
                   <Badge tone="sky">Trực tiếp</Badge>
@@ -151,7 +204,7 @@ export function DoctorDashboardPage() {
                 </CardHeader>
                 <CardContent className="pt-0">
                   <DoctorQuickActions
-                    actions={DOCTOR_QUICK_ACTIONS_MOCK}
+                    actions={quickActions}
                     // TODO(M2/M3): nối thao tác nhanh tới luồng gọi số, khám lâm sàng, chỉ định CLS và kê đơn.
                     onAction={(_id) => undefined}
                   />
@@ -161,11 +214,11 @@ export function DoctorDashboardPage() {
               <Card>
                 <CardHeader className="flex items-center justify-between">
                   <div className="text-sm font-bold text-slate-900">Kết quả cận lâm sàng</div>
-                  <Badge tone="amber">{PENDING_DIAGNOSTICS_MOCK.length} phiếu</Badge>
+                  <Badge tone="amber">{pendingDiagnostics.length} phiếu</Badge>
                 </CardHeader>
                 <CardContent className="p-0">
                   <ul className="divide-y divide-slate-100">
-                    {PENDING_DIAGNOSTICS_MOCK.map((diag) => (
+                    {pendingDiagnostics.map((diag) => (
                       <li key={diag.id} className="px-6 py-3 flex items-center gap-3">
                         <div className="w-11 text-center font-mono text-xs font-bold text-slate-700">
                           {diag.orderedAt}

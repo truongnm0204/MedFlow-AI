@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
@@ -15,6 +17,7 @@ import {
   DIAGNOSTIC_STATS_MOCK,
   PENDING_RESULTS_MOCK,
 } from '../data/diagnostic-mock-data';
+import { useDiagnosticDashboard } from '../hooks/use-diagnostic-dashboard';
 import type { DiagnosticCategory, PendingResultEntry } from '../types/diagnostic.types';
 
 const RESULT_STATUS_LABEL: Record<
@@ -36,37 +39,57 @@ const QUICK_ACTION_TO_NAV: Record<string, string> = {
 export function DiagnosticDashboardPage() {
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
+  const { data, isError, error, refetch } = useDiagnosticDashboard(true);
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
   const [activeNav, setActiveNav] = useState('dashboard');
   const [selectedActionLabel, setSelectedActionLabel] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<'ALL' | DiagnosticCategory>('ALL');
 
+  const stats = data?.stats ?? DIAGNOSTIC_STATS_MOCK;
+  const queue = data?.queue ?? DIAGNOSTIC_QUEUE_MOCK;
+  const pendingResults = data?.pendingResults ?? PENDING_RESULTS_MOCK;
+  const quickActions = data?.quickActions ?? DIAGNOSTIC_QUICK_ACTIONS_MOCK;
+
+  const staffDisplayName =
+    user?.fullName?.trim() || data?.staffProfile?.fullName?.trim() || 'KTV. Cận lâm sàng';
+  const staffCode = user?.staffCode?.trim() || data?.staffProfile?.staffCode?.trim() || null;
+  const facilityName = data?.facilityName || data?.staffProfile?.hospitalName || null;
+  const departmentName =
+    data?.departmentName || data?.staffProfile?.departmentName || 'Xét nghiệm & CĐHA • Tầng 2';
+
   const handleQuickAction = (actionId: string) => {
     setActiveNav(QUICK_ACTION_TO_NAV[actionId] ?? 'dashboard');
-    const matched = DIAGNOSTIC_QUICK_ACTIONS_MOCK.find((item) => item.id === actionId);
+    const matched = quickActions.find((item) => item.id === actionId);
     setSelectedActionLabel(matched?.label ?? null);
   };
 
   const filteredQueue = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
-    return DIAGNOSTIC_QUEUE_MOCK.filter((entry) => {
+    return queue.filter((entry) => {
       const matchesCategory = selectedCategory === 'ALL' || entry.category === selectedCategory;
       const haystack =
         `${entry.orderCode} ${entry.ticketNo} ${entry.patientName} ${entry.patientCode} ${entry.serviceName}`.toLowerCase();
       return matchesCategory && (!keyword || haystack.includes(keyword));
     });
-  }, [searchQuery, selectedCategory]);
+  }, [queue, searchQuery, selectedCategory]);
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
-      <DiagnosticSidebar activeItem={activeNav} onItemSelect={setActiveNav} />
+      <DiagnosticSidebar
+        activeItem={activeNav}
+        onItemSelect={setActiveNav}
+        staffName={staffDisplayName}
+        departmentName={departmentName}
+      />
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between">
           <div>
             <div className="text-sm font-bold text-slate-900">Tổng quan cận lâm sàng</div>
-            <div className="text-[11px] text-slate-500">Ca sáng • Hôm nay, {todayLabel}</div>
+            <div className="text-[11px] text-slate-500">
+              {facilityName ? `${facilityName} • ` : ''}Ca sáng • Hôm nay, {todayLabel}
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -93,12 +116,13 @@ export function DiagnosticDashboardPage() {
             </button>
             <div className="flex items-center gap-2.5 pl-3 border-l border-slate-200">
               <div className="w-9 h-9 rounded-full bg-sky-100 border border-sky-200 text-sky-700 flex items-center justify-center font-bold text-xs">
-                {(user?.fullName ?? 'CL').slice(0, 2).toUpperCase()}
+                {staffDisplayName.slice(0, 2).toUpperCase()}
               </div>
               <div className="text-right">
-                <div className="text-xs font-bold text-slate-800">
-                  {user?.fullName ?? 'KTV. Cận lâm sàng'}
-                </div>
+                <div className="text-xs font-bold text-slate-800">{staffDisplayName}</div>
+                {staffCode && (
+                  <div className="text-[10px] font-mono text-slate-500">Mã NV: {staffCode}</div>
+                )}
                 <button
                   type="button"
                   onClick={() => logout.mutate()}
@@ -112,7 +136,27 @@ export function DiagnosticDashboardPage() {
         </header>
 
         <main className="flex-1 p-6 space-y-6 overflow-y-auto">
-          <DiagnosticStatCards stats={DIAGNOSTIC_STATS_MOCK} />
+          {isError && (
+            <Alert tone="error">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span>
+                  {getErrorMessage(
+                    error,
+                    'Không thể tải dữ liệu bảng điều khiển cận lâm sàng. Vui lòng thử lại.',
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void refetch()}
+                  className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-white px-3 py-1 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-50"
+                >
+                  Thử lại
+                </button>
+              </div>
+            </Alert>
+          )}
+
+          <DiagnosticStatCards stats={stats} />
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <Card className="xl:col-span-2">
@@ -160,10 +204,7 @@ export function DiagnosticDashboardPage() {
                   <div className="text-sm font-bold text-slate-900">Thao tác nghiệp vụ CLS</div>
                 </CardHeader>
                 <CardContent className="pt-0 space-y-2.5">
-                  <DiagnosticQuickActions
-                    actions={DIAGNOSTIC_QUICK_ACTIONS_MOCK}
-                    onAction={handleQuickAction}
-                  />
+                  <DiagnosticQuickActions actions={quickActions} onAction={handleQuickAction} />
                   {selectedActionLabel && (
                     <div className="rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 text-[11px] text-sky-700">
                       Đang chọn lối vào:{' '}
@@ -176,11 +217,11 @@ export function DiagnosticDashboardPage() {
               <Card>
                 <CardHeader className="flex items-center justify-between">
                   <div className="text-sm font-bold text-slate-900">Kết quả chờ duyệt & trả</div>
-                  <Badge tone="sky">{PENDING_RESULTS_MOCK.length} phiếu</Badge>
+                  <Badge tone="sky">{pendingResults.length} phiếu</Badge>
                 </CardHeader>
                 <CardContent className="p-0">
                   <ul className="divide-y divide-slate-100">
-                    {PENDING_RESULTS_MOCK.map((item) => (
+                    {pendingResults.map((item) => (
                       <li key={item.id} className="px-6 py-3 flex items-center gap-3">
                         <div className="w-12 text-center font-mono text-xs font-bold text-slate-700">
                           {item.updatedAt}

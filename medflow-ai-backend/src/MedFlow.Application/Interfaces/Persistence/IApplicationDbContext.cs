@@ -31,6 +31,13 @@ public interface IApplicationDbContext
     DbSet<Visit> Visits { get; }
     DbSet<QueueEntry> QueueEntries { get; }
     DbSet<Payment> Payments { get; }
+    DbSet<Medicine> Medicines => throw new NotSupportedException("Medicines DbSet is not configured in this test context.");
+    DbSet<MedicineBatch> MedicineBatches => throw new NotSupportedException("MedicineBatches DbSet is not configured in this test context.");
+    DbSet<Prescription> Prescriptions => throw new NotSupportedException("Prescriptions DbSet is not configured in this test context.");
+    DbSet<PrescriptionItem> PrescriptionItems => throw new NotSupportedException("PrescriptionItems DbSet is not configured in this test context.");
+    DbSet<MedicationDispense> MedicationDispenses => throw new NotSupportedException("MedicationDispenses DbSet is not configured in this test context.");
+    DbSet<DispenseItem> DispenseItems => throw new NotSupportedException("DispenseItems DbSet is not configured in this test context.");
+    DbSet<StockTransaction> StockTransactions => throw new NotSupportedException("StockTransactions DbSet is not configured in this test context.");
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);
