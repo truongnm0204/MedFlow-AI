@@ -48,7 +48,16 @@ import { ReceptionDashboardPage } from '@/features/reception/pages/reception-das
 import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
-import { GuestOnly, RequireAdmin, RequireAuth, RequireDoctor } from './guards';
+import {
+  GuestOnly,
+  RequireAdmin,
+  RequireAuth,
+  RequireDiagnostic,
+  RequireDoctor,
+  RequirePharmacy,
+  RequireReception,
+  RequireSystemAdmin,
+} from './guards';
 
 export function AppRouter() {
   return (
@@ -117,7 +126,9 @@ export function AppRouter() {
         path="/reception"
         element={
           <RequireAuth>
-            <ReceptionDashboardPage />
+            <RequireReception>
+              <ReceptionDashboardPage />
+            </RequireReception>
           </RequireAuth>
         }
       />
@@ -125,7 +136,9 @@ export function AppRouter() {
         path="/reception/patients"
         element={
           <RequireAuth>
-            <PatientSearchPage />
+            <RequireReception>
+              <PatientSearchPage />
+            </RequireReception>
           </RequireAuth>
         }
       />
@@ -143,7 +156,9 @@ export function AppRouter() {
         path="/diagnostic"
         element={
           <RequireAuth>
-            <DiagnosticDashboardPage />
+            <RequireDiagnostic>
+              <DiagnosticDashboardPage />
+            </RequireDiagnostic>
           </RequireAuth>
         }
       />
@@ -151,7 +166,9 @@ export function AppRouter() {
         path="/pharmacy"
         element={
           <RequireAuth>
-            <PharmacyDashboardPage />
+            <RequirePharmacy>
+              <PharmacyDashboardPage />
+            </RequirePharmacy>
           </RequireAuth>
         }
       />
@@ -196,6 +213,16 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin/roles/access-check"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <RoleListPage initialView="access-check" />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/doctors"
         element={
           <RequireAuth>
@@ -221,9 +248,9 @@ export function AppRouter() {
         path="/admin/staff/new"
         element={
           <RequireAuth>
-            <RequireAdmin>
+            <RequireSystemAdmin>
               <StaffAccountCreatePage />
-            </RequireAdmin>
+            </RequireSystemAdmin>
           </RequireAuth>
         }
       />
@@ -231,9 +258,9 @@ export function AppRouter() {
         path="/admin/staff/:id/edit"
         element={
           <RequireAuth>
-            <RequireAdmin>
+            <RequireSystemAdmin>
               <StaffAccountEditPage />
-            </RequireAdmin>
+            </RequireSystemAdmin>
           </RequireAuth>
         }
       />
@@ -429,9 +456,9 @@ export function AppRouter() {
         path="/system-admin"
         element={
           <RequireAuth>
-            <RequireAdmin>
+            <RequireSystemAdmin>
               <SystemAdminDashboardPage />
-            </RequireAdmin>
+            </RequireSystemAdmin>
           </RequireAuth>
         }
       />

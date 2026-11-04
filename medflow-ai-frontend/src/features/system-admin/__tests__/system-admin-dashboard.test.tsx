@@ -326,5 +326,31 @@ describe('SystemAdminDashboardPage (M1-021)', () => {
 
     expect(screen.queryByText('Tổng quan quản trị hệ thống')).not.toBeInTheDocument();
     expect(screen.getByTestId('location-probe')).toHaveTextContent('/');
+
+    // 3. Đã đăng nhập nhưng role HOSPITAL_ADMIN -> RequireSystemAdmin chuyển hướng về /hospital-admin
+    useAuthStore.setState({
+      user: {
+        id: 11,
+        email: 'hospital_admin01@medflow.test',
+        fullName: 'Quản trị Cơ sở',
+        roles: ['HOSPITAL_ADMIN'],
+        patientCode: null,
+      },
+      accessToken: 'tok-hadmin',
+      refreshToken: 'rtok-hadmin',
+      isAuthenticated: true,
+    });
+
+    const qc3 = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc3}>
+        <MemoryRouter initialEntries={['/system-admin']}>
+          <AppRouter />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getAllByTestId('location-probe')[1]).toHaveTextContent('/hospital-admin');
   });
 });

@@ -1,0 +1,30 @@
+namespace MedFlow.Application.DTOs.Doctors;
+
+public sealed record CreateDoctorRequest(
+    string? DoctorCode = null,
+    string? Code = null,
+    string? Id = null,
+    long? StaffId = null,
+    string? StaffCode = null,
+    long? HospitalId = null,
+    long? DepartmentId = null,
+    string? Department = null,
+    long? SpecialtyId = null,
+    string? Specialty = null,
+    string? ProfessionalTitle = null,
+    string? Degree = null,
+    string? LicenseNumber = null,
+    string? License = null,
+    short? YearsOfExperience = null,
+    int? Experience = null,
+    string? ProfessionalBio = null,
+    string? Biography = null,
+    string? QualificationsSummary = null,
+    string? Scope = null,
+    string? ProfileImageUrl = null,
+    string? Portrait = null,
+    string? Phone = null,
+    bool? IsActive = null,
+    bool? Active = null,
+    string? Status = null
+);

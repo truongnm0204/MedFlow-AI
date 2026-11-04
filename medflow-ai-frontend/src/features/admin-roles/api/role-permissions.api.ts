@@ -14,6 +14,8 @@ import type {
   RoleItem,
   RoleListItemDto,
   RoleListResponseDto,
+  RoleMetricsDto,
+  RolePermissionsCatalogResponseDto,
   RolesPermissionsCatalogDto,
   UpdateRolePermissionsRequest,
 } from '../types/role.types';
@@ -37,13 +39,18 @@ export async function fetchRolesPermissionsCatalogApi(
   if (shouldUseHttpApi()) {
     try {
       const { data } = params
-        ? await apiClient.get<RolesPermissionsCatalogDto | RoleListResponseDto | RoleItem[]>(
-            '/admin/roles',
-            { params },
-          )
-        : await apiClient.get<RolesPermissionsCatalogDto | RoleListResponseDto | RoleItem[]>(
-            '/admin/roles',
-          );
+        ? await apiClient.get<
+            | RolesPermissionsCatalogDto
+            | RolePermissionsCatalogResponseDto
+            | RoleListResponseDto
+            | RoleItem[]
+          >('/admin/roles', { params })
+        : await apiClient.get<
+            | RolesPermissionsCatalogDto
+            | RolePermissionsCatalogResponseDto
+            | RoleListResponseDto
+            | RoleItem[]
+          >('/admin/roles');
       const permissions = SYSTEM_PERMISSION_LIST.map((perm) => ({ ...perm }));
       if (Array.isArray(data)) {
         return {
@@ -65,7 +72,28 @@ export async function fetchRolesPermissionsCatalogApi(
           metrics: mapRoleMetricsDto(data.metrics),
         };
       }
-      return data;
+      if ('roles' in data && Array.isArray(data.roles)) {
+        const needsRoleMapping = data.roles.some(
+          (role: RoleItem | RoleListItemDto) =>
+            'roleId' in role && typeof role.roleId === 'number' && !('id' in role),
+        );
+        const needsMetricsMapping =
+          Boolean(data.metrics) &&
+          'inactiveRoles' in data.metrics &&
+          typeof data.metrics.inactiveRoles === 'number';
+        if (needsRoleMapping || needsMetricsMapping) {
+          return {
+            roles: data.roles.map((role: RoleItem | RoleListItemDto) =>
+              'id' in role ? (role as RoleItem) : mapRoleItemDto(role as RoleListItemDto),
+            ),
+            permissions: data.permissions?.length ? data.permissions : permissions,
+            metrics: needsMetricsMapping
+              ? mapRoleMetricsDto(data.metrics as RoleMetricsDto)
+              : data.metrics,
+          };
+        }
+      }
+      return data as RolesPermissionsCatalogDto;
     } catch (error) {
       if (!shouldFallbackToMock(error)) {
         throw error;

@@ -1,3 +1,5 @@
+import { canAccessRoute } from './rbac';
+
 const ROLE_LANDING_PRIORITY: readonly { role: string; route: string; label: string }[] = [
   { role: 'SYSTEM_ADMIN', route: '/system-admin', label: 'Quản trị hệ thống' },
   { role: 'HOSPITAL_ADMIN', route: '/hospital-admin', label: 'Quản trị bệnh viện' },
@@ -48,6 +50,9 @@ export function resolvePostLoginRedirect(
     !returnUrl.startsWith('/register') &&
     !returnUrl.startsWith('/verify-otp')
   ) {
+    if (roles && roles.length > 0 && !canAccessRoute(returnUrl, roles)) {
+      return getRoleLandingRoute(roles);
+    }
     return returnUrl;
   }
   return getRoleLandingRoute(roles);
