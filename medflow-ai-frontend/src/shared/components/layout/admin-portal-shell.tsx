@@ -25,6 +25,7 @@ import { useAuthStore } from '@/features/auth/store/auth.store';
 import { MedflowLogo } from './medflow-logo';
 
 export type AdminPortalTab =
+  | 'Tổng quan hệ thống'
   | 'Tổng quan cơ sở'
   | 'Khoa phòng'
   | 'Buồng khám & Kỹ thuật'
@@ -79,6 +80,11 @@ export function AdminPortalShell({
   const slotCount = useExaminationSlotStore((state) => state.slots.length);
   const displayName = user?.fullName ?? user?.email ?? 'DS. Nguyễn Văn Quản';
   const roleLabel = user?.roles.includes('SYSTEM_ADMIN') ? 'SYSTEM_ADMIN' : 'ADM-001';
+  const isSystemAdmin =
+    Boolean(user?.roles.includes('SYSTEM_ADMIN')) || activeTab === 'Tổng quan hệ thống';
+  const visibleTabs = isSystemAdmin
+    ? [{ name: 'Tổng quan hệ thống' as const, href: '/system-admin', icon: ShieldCheck }, ...TABS]
+    : TABS;
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
@@ -127,7 +133,7 @@ export function AdminPortalShell({
               </div>
               <div className="min-w-0 flex-1">
                 <div className="font-mono text-[9px] font-bold uppercase tracking-wider text-primary">
-                  HOSPITAL ADMIN
+                  {user?.roles.includes('SYSTEM_ADMIN') ? 'SYSTEM ADMIN' : 'HOSPITAL ADMIN'}
                 </div>
                 <div className="truncate text-xs font-bold text-ink">{displayName}</div>
                 <div className="truncate text-[10px] text-sub">Cơ sở Hà Nội • {roleLabel}</div>
@@ -144,7 +150,7 @@ export function AdminPortalShell({
               </div>
             )}
 
-            {TABS.map((tab) => {
+            {visibleTabs.map((tab) => {
               const isActive = tab.name === activeTab;
               const IconComponent = tab.icon;
               const badgeValue =

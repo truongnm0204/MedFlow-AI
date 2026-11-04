@@ -45,6 +45,7 @@ import { PatientProfilePage } from '@/features/patient/pages/patient-profile-pag
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
 import { PatientSearchPage } from '@/features/reception/pages/patient-search-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
+import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
 import { GuestOnly, RequireAdmin, RequireAuth } from './guards';
@@ -417,7 +418,7 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <RequireAdmin>
-              <OperationalReportsPage />
+              <SystemAdminDashboardPage />
             </RequireAdmin>
           </RequireAuth>
         }
