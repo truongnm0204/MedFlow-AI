@@ -60,6 +60,7 @@ export function ReceptionDashboardPage() {
         activeItem="dashboard"
         onItemSelect={(item) => {
           if (item === 'patients') navigate('/reception/patients');
+          if (item === 'queue') navigate('/reception/queue');
         }}
       />
 
@@ -136,7 +137,16 @@ export function ReceptionDashboardPage() {
                     {QUEUE_ENTRIES_MOCK.length} lượt • cập nhật theo thời gian thực
                   </div>
                 </div>
-                <Badge tone="sky">Trực tiếp</Badge>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/reception/queue')}
+                    className="text-xs font-semibold text-primary hover:underline"
+                  >
+                    Xem theo phòng khám
+                  </button>
+                  <Badge tone="sky">Trực tiếp</Badge>
+                </div>
               </CardHeader>
               <CardContent className="p-0 px-6 pb-4">
                 <QueuePreviewTable
