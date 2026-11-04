@@ -13,7 +13,7 @@ interface StaffAccountFiltersProps {
   filters: StaffAccountFilters;
   onChange: (patch: Partial<StaffAccountFilters>) => void;
   onExport: () => void;
-  onAdd: () => void;
+  onAdd?: () => void;
 }
 
 const SELECT_CLASS =
@@ -84,10 +84,12 @@ export function StaffAccountFilterBar({
         <Download className="h-4 w-4" aria-hidden="true" />
         Xuất Excel
       </Button>
-      <Button type="button" aria-label="Thêm tài khoản" onClick={onAdd}>
-        <Plus className="h-4 w-4" aria-hidden="true" />
-        Thêm tài khoản
-      </Button>
+      {onAdd && (
+        <Button type="button" aria-label="Thêm tài khoản" onClick={onAdd}>
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          Thêm tài khoản
+        </Button>
+      )}
     </div>
   );
 }

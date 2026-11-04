@@ -256,4 +256,32 @@ describe('PharmacyDashboardPage', () => {
     expect(screen.queryByText('Danh sách & hàng đợi đơn thuốc ngoại trú')).not.toBeInTheDocument();
     expect(screen.getByTestId('location-probe')).toHaveTextContent('/login?returnUrl=%2Fpharmacy');
   });
+
+  it('bao ve route /pharmacy bang RequirePharmacy — chuyen huong PATIENT ve / khi khong co role PHARMACY_STAFF', () => {
+    useAuthStore.setState({
+      user: {
+        id: 1,
+        email: 'patient01@medflow.test',
+        fullName: 'Bệnh nhân A',
+        roles: ['PATIENT'],
+        patientCode: 'PAT-001',
+      },
+      accessToken: 'tok-pat',
+      refreshToken: 'rtok-pat',
+      isAuthenticated: true,
+    });
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/pharmacy']}>
+          <AppRouter />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByText('Danh sách & hàng đợi đơn thuốc ngoại trú')).not.toBeInTheDocument();
+    expect(screen.getByTestId('location-probe')).toHaveTextContent('/');
+  });
 });
