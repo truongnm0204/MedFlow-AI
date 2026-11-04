@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate, useLocation, useSearchParams } from 'react-router-dom';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
-import { resolvePostLoginRedirect } from '@/features/auth/utils/role-landing';
+import { getRoleLandingRoute, resolvePostLoginRedirect } from '@/features/auth/utils/role-landing';
 
 /** Chặn route cần đăng nhập — chưa login → /login?returnUrl=<current>. */
 export function RequireAuth({ children }: { children: ReactNode }) {
@@ -32,6 +32,16 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
   const roles = useAuthStore((state) => state.user?.roles ?? []);
   if (!roles.some((role) => role === 'HOSPITAL_ADMIN' || role === 'SYSTEM_ADMIN')) {
     return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+/** Client-side navigation guard for Doctor workbench; API authorization remains server-side. */
+export function RequireDoctor({ children }: { children: ReactNode }) {
+  const user = useAuthStore((state) => state.user);
+  const roles = user?.roles ?? [];
+  if (user && !roles.includes('DOCTOR')) {
+    return <Navigate to={getRoleLandingRoute(roles)} replace />;
   }
   return children;
 }
