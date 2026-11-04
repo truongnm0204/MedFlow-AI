@@ -1,8 +1,10 @@
 import type {
+  PermissionGroup,
   RoleItem,
   RoleMetrics,
   RolePermissionItem,
   RoleScope,
+  RolesPermissionsCatalogDto,
   RoleStatus,
 } from '../types/role.types';
 
@@ -90,6 +92,23 @@ export const SYSTEM_PERMISSIONS: Record<string, RolePermissionItem> = {
     module: 'Viện phí',
   },
 };
+
+export const SYSTEM_PERMISSION_LIST: RolePermissionItem[] = Object.values(SYSTEM_PERMISSIONS);
+
+export const PERMISSION_GROUPS: PermissionGroup[] = SYSTEM_PERMISSION_LIST.reduce<
+  PermissionGroup[]
+>((groups, perm) => {
+  const existing = groups.find((group) => group.module === perm.module);
+  if (existing) {
+    existing.permissions.push(perm);
+  } else {
+    groups.push({
+      module: perm.module,
+      permissions: [perm],
+    });
+  }
+  return groups;
+}, []);
 
 const pickPermissions = (codes: string[]): RolePermissionItem[] =>
   codes.map((code) => SYSTEM_PERMISSIONS[code]).filter(Boolean);
@@ -264,3 +283,58 @@ export const ROLES_MOCK_DATA: RoleItem[] = [
     segregationNote: 'Vai trò chỉ đọc (Read-only), kích hoạt theo đợt kiểm toán định kỳ.',
   },
 ];
+
+function cloneRoleItem(role: RoleItem): RoleItem {
+  return {
+    ...role,
+    permissions: role.permissions.map((perm) => ({ ...perm })),
+  };
+}
+
+let currentMockRoles: RoleItem[] = ROLES_MOCK_DATA.map(cloneRoleItem);
+
+export function getDefaultRolePermissionCodes(roleCode: string): string[] {
+  const found = ROLES_MOCK_DATA.find((role) => role.code === roleCode || role.id === roleCode);
+  return found ? found.permissions.map((perm) => perm.code) : [];
+}
+
+export function getMockRolesCatalog(): RolesPermissionsCatalogDto {
+  const roles = currentMockRoles.map(cloneRoleItem);
+  const permissions = SYSTEM_PERMISSION_LIST.map((perm) => ({ ...perm }));
+  const metrics: RoleMetrics = {
+    totalRoles: roles.length,
+    activeRoles: roles.filter((role) => role.status === 'ACTIVE').length,
+    totalAssignedAccounts: roles.reduce((sum, role) => sum + role.assignedUsersCount, 0),
+    totalPermissions: permissions.length,
+  };
+  return {
+    roles,
+    permissions,
+    metrics,
+  };
+}
+
+export function updateMockRolePermissions(roleId: string, permissionCodes: string[]): RoleItem {
+  const index = currentMockRoles.findIndex((role) => role.id === roleId || role.code === roleId);
+  if (index === -1) {
+    throw new Error('Không tìm thấy vai trò cần phân quyền.');
+  }
+
+  const codeSet = new Set(permissionCodes);
+  const nextPermissions = SYSTEM_PERMISSION_LIST.filter((perm) => codeSet.has(perm.code)).map(
+    (perm) => ({ ...perm }),
+  );
+
+  const updatedRole: RoleItem = {
+    ...currentMockRoles[index],
+    permissions: nextPermissions,
+    updatedAt: 'Hôm nay',
+  };
+
+  currentMockRoles[index] = updatedRole;
+  return cloneRoleItem(updatedRole);
+}
+
+export function resetMockRolesCatalog(): void {
+  currentMockRoles = ROLES_MOCK_DATA.map(cloneRoleItem);
+}

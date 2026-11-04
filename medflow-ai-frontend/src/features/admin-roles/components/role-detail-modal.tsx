@@ -9,9 +9,10 @@ import type { RoleItem } from '../types/role.types';
 interface RoleDetailModalProps {
   role: RoleItem | null;
   onClose: () => void;
+  onAssignPermissions?: (role: RoleItem) => void;
 }
 
-export function RoleDetailModal({ role, onClose }: RoleDetailModalProps) {
+export function RoleDetailModal({ role, onClose, onAssignPermissions }: RoleDetailModalProps) {
   if (!role) return null;
 
   return (
@@ -85,10 +86,15 @@ export function RoleDetailModal({ role, onClose }: RoleDetailModalProps) {
           </div>
         </div>
 
-        <div className="mt-6 flex justify-end border-t border-border pt-4">
+        <div className="mt-6 flex items-center justify-end gap-2 border-t border-border pt-4">
           <Button type="button" variant="secondary" onClick={onClose}>
             Đóng
           </Button>
+          {onAssignPermissions && (
+            <Button type="button" onClick={() => onAssignPermissions(role)}>
+              Phân quyền vai trò
+            </Button>
+          )}
         </div>
       </div>
     </Modal>

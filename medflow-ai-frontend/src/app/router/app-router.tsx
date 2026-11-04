@@ -184,6 +184,16 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin/roles/permissions"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <RoleListPage initialView="matrix" />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/doctors"
         element={
           <RequireAuth>
