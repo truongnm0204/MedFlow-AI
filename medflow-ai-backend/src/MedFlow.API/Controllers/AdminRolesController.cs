@@ -38,6 +38,21 @@ public sealed class AdminRolesController : ControllerBase
     }
 
     /// <summary>
+    /// GET /api/v1/admin/roles/permissions — Lấy ma trận vai trò, danh mục quyền hạn hệ thống và thống kê RBAC.
+    /// </summary>
+    [HttpGet("permissions")]
+    [ProducesResponseType<RolePermissionsCatalogResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<RolePermissionsCatalogResponseDto>> GetRolePermissionsCatalog(
+        CancellationToken ct)
+    {
+        var result = await _roleCatalogService.GetRolePermissionsCatalogAsync(GetUserId(), ct);
+        return Ok(result);
+    }
+
+    /// <summary>
     /// GET /api/v1/admin/roles/{id} — Lấy thông tin chi tiết một vai trò theo mã định danh.
     /// </summary>
     [HttpGet("{id:long}")]
@@ -54,6 +69,29 @@ public sealed class AdminRolesController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// PUT /api/v1/admin/roles/{roleId}/permissions — Gán hoặc thu hồi danh sách quyền hạn cho một vai trò.
+    /// </summary>
+    [HttpPut("{roleId}/permissions")]
+    [ProducesResponseType<RoleListItemDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<RoleListItemDto>> AssignRolePermissions(
+        [FromRoute] string roleId,
+        [FromBody] AssignRolePermissionsRequest request,
+        CancellationToken ct)
+    {
+        var result = await _roleCatalogService.AssignRolePermissionsAsync(
+            GetUserId(),
+            roleId,
+            request,
+            GetIp(),
+            ct);
+        return Ok(result);
+    }
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
@@ -66,4 +104,8 @@ public sealed class AdminRolesController : ControllerBase
 
         return userId;
     }
+
+    private string? GetIp() =>
+        HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
+        ?? HttpContext.Connection.RemoteIpAddress?.ToString();
 }

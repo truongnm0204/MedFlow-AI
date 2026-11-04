@@ -13,4 +13,15 @@ public interface IRoleCatalogService
         long actorUserId,
         long roleId,
         CancellationToken ct = default);
+
+    Task<RolePermissionsCatalogResponseDto> GetRolePermissionsCatalogAsync(
+        long actorUserId,
+        CancellationToken ct = default);
+
+    Task<RoleListItemDto> AssignRolePermissionsAsync(
+        long actorUserId,
+        string roleIdentifier,
+        AssignRolePermissionsRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
 }

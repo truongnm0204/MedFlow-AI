@@ -433,6 +433,239 @@ public sealed class RoleCatalogServiceTests : IDisposable
             _service.GetRoleByIdAsync(13, roleId));
     }
 
+    [Fact]
+    public async Task GetRolePermissionsCatalogAsync_ValidSystemAdmin_ReturnsRolesCanonicalPermissionsAndMetrics()
+    {
+        var catalog = await _service.GetRolePermissionsCatalogAsync(13);
+
+        Assert.Equal(8, catalog.Roles.Count);
+        Assert.Equal(11, catalog.Permissions.Count);
+        Assert.Equal(8, catalog.Metrics.TotalRoles);
+        Assert.Equal(11, catalog.Metrics.TotalPermissions);
+        Assert.Equal("PATIENT_PROFILE_READ", catalog.Permissions[0].Code);
+        Assert.Equal("Xem hồ sơ bệnh nhân", catalog.Permissions[0].Name);
+    }
+
+    [Fact]
+    public async Task AssignRolePermissionsAsync_ByFormattedRoleId_UpdatesRolePermissionsAuditLogAndUpdatedAt()
+    {
+        var updatedRole = await _service.AssignRolePermissionsAsync(
+            13,
+            "ROL-03",
+            new AssignRolePermissionsRequest(
+                RoleCode: "DOCTOR",
+                PermissionCodes: ["PATIENT_PROFILE_READ", "MEDICAL_RECORD_WRITE", "DIAGNOSTIC_ORDER"],
+                Note: "Thu hồi tạm thời quyền kê đơn thuốc điện tử"),
+            "10.0.0.15");
+
+        Assert.Equal(3, updatedRole.RoleId);
+        Assert.Equal("ROL-03", updatedRole.Id);
+        Assert.Equal("DOCTOR", updatedRole.Code);
+        Assert.Equal(3, updatedRole.PermissionCount);
+        Assert.Equal(3, updatedRole.Permissions.Count);
+        Assert.DoesNotContain(updatedRole.Permissions, p => p.Code == "PRESCRIPTION_ISSUE");
+        Assert.Equal("20/04/2026", updatedRole.UpdatedAt);
+
+        var dbRolePermIds = await _dbContext.RolePermissions
+            .Where(rp => rp.RoleId == 3)
+            .Select(rp => rp.PermissionId)
+            .OrderBy(id => id)
+            .ToListAsync();
+        Assert.Equal(new long[] { 4, 5, 10 }, dbRolePermIds);
+
+        var auditLog = await _dbContext.AuditLogs
+            .SingleAsync(a => a.Action == "ROLE_PERMISSIONS_UPDATED");
+        Assert.Equal(13, auditLog.ActorUserId);
+        Assert.Equal(1, auditLog.HospitalId);
+        Assert.Equal("Role", auditLog.EntityType);
+        Assert.Equal("3", auditLog.EntityId);
+        Assert.Equal("Thu hồi tạm thời quyền kê đơn thuốc điện tử", auditLog.Reason);
+        Assert.Equal(FixedNowUtc, auditLog.OccurredAt);
+        Assert.NotNull(auditLog.ChangeData);
+        Assert.Contains("PRESCRIPTION_ISSUE", auditLog.ChangeData);
+    }
+
+    [Fact]
+    public async Task AssignRolePermissionsAsync_ByNumericIdAndRoleCode_DeduplicatesAndPersistsPermissions()
+    {
+        var afterAdd = await _service.AssignRolePermissionsAsync(
+            13,
+            "4",
+            new AssignRolePermissionsRequest(
+                PermissionCodes: ["patient_checkin", "PATIENT_PROFILE_READ", "PATIENT_CHECKIN", "APPOINTMENT_BOOK"]));
+
+        Assert.Equal(4, afterAdd.RoleId);
+        Assert.Equal("RECEPTION", afterAdd.Code);
+        Assert.Equal(3, afterAdd.PermissionCount);
+        Assert.Contains(afterAdd.Permissions, p => p.Code == "APPOINTMENT_BOOK");
+
+        var afterRevoke = await _service.AssignRolePermissionsAsync(
+            13,
+            "RECEPTION",
+            new AssignRolePermissionsRequest(
+                RoleCode: "RECEPTION",
+                PermissionCodes: ["PATIENT_CHECKIN"]));
+
+        Assert.Equal(1, afterRevoke.PermissionCount);
+        var singlePerm = Assert.Single(afterRevoke.Permissions);
+        Assert.Equal("PATIENT_CHECKIN", singlePerm.Code);
+    }
+
+    [Fact]
+    public async Task AssignRolePermissionsAsync_NullOrEmptyPermissionCodes_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.AssignRolePermissionsAsync(
+                13,
+                "ROL-03",
+                new AssignRolePermissionsRequest(RoleCode: "DOCTOR", PermissionCodes: null)));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.AssignRolePermissionsAsync(
+                13,
+                "ROL-03",
+                new AssignRolePermissionsRequest(RoleCode: "DOCTOR", PermissionCodes: [])));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("NON_EXISTENT_PERMISSION")]
+    public async Task AssignRolePermissionsAsync_UnknownOrWhitespacePermissionCode_ThrowsValidationException(
+        string invalidCode)
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.AssignRolePermissionsAsync(
+                13,
+                "ROL-03",
+                new AssignRolePermissionsRequest(
+                    RoleCode: "DOCTOR",
+                    PermissionCodes: ["PATIENT_PROFILE_READ", invalidCode])));
+    }
+
+    [Theory]
+    [InlineData("ROL-01", "SYSTEM_ADMIN")]
+    [InlineData("1", null)]
+    [InlineData("SYSTEM_ADMIN", null)]
+    public async Task AssignRolePermissionsAsync_SystemAdminMissingUserManage_ThrowsValidationException(
+        string roleIdentifier,
+        string? bodyRoleCode)
+    {
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.AssignRolePermissionsAsync(
+                13,
+                roleIdentifier,
+                new AssignRolePermissionsRequest(
+                    RoleCode: bodyRoleCode,
+                    PermissionCodes: ["HOSPITAL_CONFIG", "AUDIT_READ"])));
+
+        Assert.Contains("USER_MANAGE", ex.Message);
+    }
+
+    [Fact]
+    public async Task AssignRolePermissionsAsync_SegregationOfDutiesConflict_ThrowsValidationException()
+    {
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.AssignRolePermissionsAsync(
+                13,
+                "ROL-03",
+                new AssignRolePermissionsRequest(
+                    RoleCode: "DOCTOR",
+                    PermissionCodes: ["PATIENT_PROFILE_READ", "PRESCRIPTION_ISSUE", "MEDICINE_DISPENSE"])));
+
+        Assert.Contains("SoD", ex.Message);
+    }
+
+    [Fact]
+    public async Task AssignRolePermissionsAsync_NoteExceedsMaxLength_ThrowsValidationException()
+    {
+        var tooLongNote = new string('N', 251);
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.AssignRolePermissionsAsync(
+                13,
+                "ROL-03",
+                new AssignRolePermissionsRequest(
+                    RoleCode: "DOCTOR",
+                    PermissionCodes: ["PATIENT_PROFILE_READ"],
+                    Note: tooLongNote)));
+    }
+
+    [Theory]
+    [InlineData("ROL-03", "RECEPTION")]
+    [InlineData("DOCTOR", "RECEPTION")]
+    [InlineData("ROL-03", "   ")]
+    public async Task AssignRolePermissionsAsync_InvalidOrMismatchedRoleCode_ThrowsValidationException(
+        string roleIdentifier,
+        string bodyRoleCode)
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.AssignRolePermissionsAsync(
+                13,
+                roleIdentifier,
+                new AssignRolePermissionsRequest(
+                    RoleCode: bodyRoleCode,
+                    PermissionCodes: ["PATIENT_PROFILE_READ"])));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("ROL-0")]
+    [InlineData("ROL--3")]
+    [InlineData("ROL-abc")]
+    [InlineData("1INVALID")]
+    [InlineData("@@@")]
+    public async Task AssignRolePermissionsAsync_InvalidRoleIdentifier_ThrowsValidationException(
+        string invalidIdentifier)
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.AssignRolePermissionsAsync(
+                13,
+                invalidIdentifier,
+                new AssignRolePermissionsRequest(PermissionCodes: ["PATIENT_PROFILE_READ"])));
+    }
+
+    [Theory]
+    [InlineData("999")]
+    [InlineData("ROL-99")]
+    [InlineData("UNKNOWN_CUSTOM_ROLE")]
+    public async Task AssignRolePermissionsAsync_NonExistentRole_ThrowsNotFoundException(
+        string roleIdentifier)
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.AssignRolePermissionsAsync(
+                13,
+                roleIdentifier,
+                new AssignRolePermissionsRequest(PermissionCodes: ["PATIENT_PROFILE_READ"])));
+    }
+
+    [Fact]
+    public async Task AssignRolePermissionsAsync_ActorUserNotFound_ThrowsNotFoundException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.AssignRolePermissionsAsync(
+                999,
+                "ROL-03",
+                new AssignRolePermissionsRequest(PermissionCodes: ["PATIENT_PROFILE_READ"])));
+    }
+
+    [Theory]
+    [InlineData(11)]
+    [InlineData(14)]
+    [InlineData(15)]
+    [InlineData(16)]
+    public async Task AssignRolePermissionsAsync_ForbiddenOrInactiveActor_ThrowsForbiddenException(long actorUserId)
+    {
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.AssignRolePermissionsAsync(
+                actorUserId,
+                "ROL-03",
+                new AssignRolePermissionsRequest(PermissionCodes: ["PATIENT_PROFILE_READ"])));
+    }
+
     public void Dispose()
     {
         _dbContext.Dispose();

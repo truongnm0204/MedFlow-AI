@@ -146,6 +146,56 @@ describe('role-permissions.api (SCR-ADM-ROLE-02)', () => {
     expect(updatedRole.permissions[1]).toEqual(SYSTEM_PERMISSIONS.QUEUE_MANAGE);
   });
 
+  it('assignRolePermissionsApi normalizes RoleListItemDto on HTTP 200', async () => {
+    vi.spyOn(apiClient, 'put').mockResolvedValueOnce({
+      data: {
+        roleId: 3,
+        id: 'ROL-03',
+        code: 'DOCTOR',
+        name: 'Bác sĩ lâm sàng',
+        description: 'Thực hiện khám bệnh và kê đơn.',
+        scope: 'CLINICAL',
+        isSystemRole: true,
+        assignedUsersCount: 2,
+        activeUsersCount: 2,
+        permissionCount: 2,
+        permissions: [
+          {
+            permissionId: 10,
+            code: 'PATIENT_PROFILE_READ',
+            name: 'Xem hồ sơ bệnh nhân',
+            module: 'Hồ sơ & Tiếp đón',
+          },
+          {
+            permissionId: 4,
+            code: 'MEDICAL_RECORD_WRITE',
+            name: 'Ghi nhận bệnh án lâm sàng',
+            module: 'Khám lâm sàng',
+          },
+        ],
+        status: 'ACTIVE',
+        updatedAt: '20/04/2026',
+        segregationNote: 'Chỉ truy cập hồ sơ bệnh nhân thuộc lượt khám được phân công.',
+      },
+    });
+
+    const updatedRole = await assignRolePermissionsApi({
+      roleId: 'ROL-03',
+      roleCode: 'DOCTOR',
+      permissionCodes: ['PATIENT_PROFILE_READ', 'MEDICAL_RECORD_WRITE'],
+      note: 'Chuẩn hóa phản hồi từ backend',
+    });
+
+    expect(updatedRole.roleId).toBe(3);
+    expect(updatedRole.id).toBe('ROL-03');
+    expect(updatedRole.permissionCount).toBe(2);
+    expect(updatedRole.permissions.map((p) => p.code)).toEqual([
+      'PATIENT_PROFILE_READ',
+      'MEDICAL_RECORD_WRITE',
+    ]);
+    expect(updatedRole.updatedAt).toBe('20/04/2026');
+  });
+
   it('assignRolePermissionsApi rethrows HTTP 400 and HTTP 403 ProblemDetails without falling back to mock', async () => {
     vi.spyOn(apiClient, 'put').mockRejectedValueOnce(
       makeAxiosError(400, 'Danh sách mã quyền hạn không hợp lệ.'),
