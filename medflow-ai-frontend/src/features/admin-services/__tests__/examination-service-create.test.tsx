@@ -20,6 +20,7 @@ describe('ExaminationServiceCreatePage (SCR-ADM-ESV-02)', () => {
         <Routes>
           <Route path="/admin/services/new" element={<ExaminationServiceCreatePage />} />
           <Route path="/admin/services" element={<div>Danh mục Dịch vụ Page Mock</div>} />
+          <Route path="/admin/policies" element={<div>Màn hình Chính sách đặt lịch (UC54)</div>} />
         </Routes>
       </MemoryRouter>,
     );
@@ -61,6 +62,14 @@ describe('ExaminationServiceCreatePage (SCR-ADM-ESV-02)', () => {
     expect(screen.getByText('Chính sách đặt hẹn theo cơ sở')).toBeInTheDocument();
     expect(screen.getByText('Quản lý riêng - UC54')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Mở chính sách đặt lịch/i })).toBeInTheDocument();
+  });
+  it('navigates to /admin/policies when clicking Mở chính sách đặt lịch', () => {
+    renderComponent();
+
+    const policyBtn = screen.getByRole('button', { name: /Mở chính sách đặt lịch/i });
+    fireEvent.click(policyBtn);
+
+    expect(screen.getByText('Màn hình Chính sách đặt lịch (UC54)')).toBeInTheDocument();
   });
 
   it('allows switching category between Clinical and Diagnostic', () => {

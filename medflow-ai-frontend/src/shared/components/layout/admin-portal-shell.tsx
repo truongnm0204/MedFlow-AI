@@ -56,7 +56,7 @@ const TABS: { name: AdminPortalTab; href?: string; icon: LucideIcon }[] = [
   { name: 'Danh mục Dịch vụ & Kỹ thuật', href: '/admin/services', icon: ClipboardList },
   { name: 'Bảng giá & Biểu phí', icon: CreditCard },
   { name: 'Quản lý Slot khám', href: '/admin/slots', icon: CalendarClock },
-  { name: 'Chính sách hẹn', icon: SlidersHorizontal },
+  { name: 'Chính sách hẹn', href: '/admin/policies', icon: SlidersHorizontal },
   { name: 'Báo cáo vận hành', href: '/admin/reports', icon: BarChart3 },
 ];
 
