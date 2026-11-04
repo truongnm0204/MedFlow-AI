@@ -7,6 +7,7 @@ import type { QueueEntry, QueueStatus } from '../types/reception.types';
 interface QueuePreviewTableProps {
   entries: QueueEntry[];
   onSelectPatient?: (patientCode: string) => void;
+  onTransferRoom?: (entry: QueueEntry) => void;
   onPrintTicket?: (entry: QueueEntry) => void;
 }
 
@@ -31,6 +32,7 @@ const PRIORITY_LABEL: Record<QueueEntry['priority'], string> = {
 export function QueuePreviewTable({
   entries,
   onSelectPatient,
+  onTransferRoom,
   onPrintTicket,
 }: QueuePreviewTableProps) {
   return (
@@ -45,7 +47,8 @@ export function QueuePreviewTable({
             <th className="py-2 pr-3">Check-in</th>
             <th className="py-2 pr-3">Ưu tiên</th>
             <th className="py-2 pr-3">Trạng thái</th>
-            <th className="py-2 text-right">Phiếu khám</th>
+            <th className="py-2 pr-3 text-right">Phiếu khám</th>
+            {onTransferRoom && <th className="py-2 text-right">Điều phối</th>}
           </tr>
         </thead>
         <tbody>
@@ -90,6 +93,19 @@ export function QueuePreviewTable({
                   <span>In phiếu</span>
                 </button>
               </td>
+              {onTransferRoom && (
+                <td className="py-2.5 text-right">
+                  <button
+                    type="button"
+                    disabled={entry.status === 'IN_PROGRESS' || entry.status === 'DONE'}
+                    onClick={() => onTransferRoom(entry)}
+                    aria-label={`Chuyển phòng khám cho ${entry.patientName}`}
+                    className="rounded-lg border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Chuyển phòng
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

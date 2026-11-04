@@ -5,6 +5,7 @@ import type {
   TodayAppointment,
 } from '../types/reception.types';
 import type { UpdatePatientFormData } from '../types/update-patient.types';
+import type { CompatibleExaminationRoomItemDto } from '../types/visit-room-transfer.types';
 import type {
   ExaminationTicketDto,
   PrintExaminationTicketRequest,
@@ -185,6 +186,13 @@ export const QUICK_ACTIONS_MOCK: QuickAction[] = [
     accent: 'sky',
   },
   {
+    id: 'transfer-room',
+    label: 'Chuyển phòng khám tương thích',
+    description: 'Điều chuyển bệnh nhân sang phòng khám cùng khoa còn trống',
+    icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4',
+    accent: 'emerald',
+  },
+  {
     id: 'print-ticket',
     label: 'In phiếu khám bệnh',
     description: 'Xem trước và in phiếu khám ngoại trú (UC29)',
@@ -210,6 +218,85 @@ export const PATIENT_UPDATE_MOCK: UpdatePatientFormData = {
   emergencyContactPhone: '0987654321',
 };
 
+export const COMPATIBLE_TRANSFER_ROOMS_MOCK: CompatibleExaminationRoomItemDto[] = [
+  {
+    roomId: 1,
+    roomCode: 'RM-001',
+    roomName: 'Khám Tiêu hóa 101',
+    hospitalId: 1,
+    departmentId: 2,
+    departmentCode: 'GI',
+    departmentName: 'Khoa Tiêu hóa',
+    roomType: 'EXAMINATION',
+    location: 'Tầng 1, Khu A',
+    capacity: 2,
+    activeVisitCount: 2,
+    availableCapacity: 0,
+    status: 'ACTIVE',
+    isCurrentRoom: true,
+    isCompatible: true,
+    isAvailable: false,
+    unavailableReason: 'Đang là phòng khám hiện tại của bệnh nhân.',
+  },
+  {
+    roomId: 2,
+    roomCode: 'RM-002',
+    roomName: 'Khám Tiêu hóa 102',
+    hospitalId: 1,
+    departmentId: 2,
+    departmentCode: 'GI',
+    departmentName: 'Khoa Tiêu hóa',
+    roomType: 'EXAMINATION',
+    location: 'Tầng 1, Khu A',
+    capacity: 2,
+    activeVisitCount: 1,
+    availableCapacity: 1,
+    status: 'ACTIVE',
+    isCurrentRoom: false,
+    isCompatible: true,
+    isAvailable: true,
+    unavailableReason: null,
+  },
+  {
+    roomId: 6,
+    roomCode: 'RM-006',
+    roomName: 'Khám Tiêu hóa 103 (Bảo trì)',
+    hospitalId: 1,
+    departmentId: 2,
+    departmentCode: 'GI',
+    departmentName: 'Khoa Tiêu hóa',
+    roomType: 'EXAMINATION',
+    location: 'Tầng 1, Khu A',
+    capacity: 2,
+    activeVisitCount: 0,
+    availableCapacity: 0,
+    status: 'MAINTENANCE',
+    isCurrentRoom: false,
+    isCompatible: true,
+    isAvailable: false,
+    unavailableReason: 'Phòng khám hiện không hoạt động hoặc đang bảo trì.',
+  },
+  {
+    roomId: 3,
+    roomCode: 'RM-003',
+    roomName: 'Khám Tim mạch 201',
+    hospitalId: 1,
+    departmentId: 3,
+    departmentCode: 'CARD',
+    departmentName: 'Khoa Tim mạch',
+    roomType: 'EXAMINATION',
+    location: 'Tầng 2, Khu A',
+    capacity: 2,
+    activeVisitCount: 0,
+    availableCapacity: 2,
+    status: 'ACTIVE',
+    isCurrentRoom: false,
+    isCompatible: false,
+    isAvailable: false,
+    unavailableReason:
+      'Phòng khám đích không tương thích chuyên khoa/khoa phòng với lượt khám hiện tại.',
+  },
+];
 const FALLBACK_PRINT_COUNTS: Record<string, number> = {};
 
 export function buildFallbackExaminationTicket(
