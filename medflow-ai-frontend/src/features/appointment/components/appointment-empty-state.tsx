@@ -41,7 +41,7 @@ export function AppointmentEmptyState({
         )}
 
         <Link
-          to="/appointment/services"
+          to="/booking"
           className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-white shadow-xs transition-colors hover:bg-primary-dark"
         >
           <CalendarPlus className="h-3.5 w-3.5" aria-hidden="true" />

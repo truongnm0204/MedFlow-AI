@@ -1,9 +1,15 @@
+import { Printer } from 'lucide-react';
+
 import { Badge } from '@/shared/ui/badge';
 
 import type { QueueEntry, QueueStatus } from '../types/reception.types';
 
 interface QueuePreviewTableProps {
   entries: QueueEntry[];
+  onSelectPatient?: (patientCode: string) => void;
+  onTransferRoom?: (entry: QueueEntry) => void;
+  onPrintTicket?: (entry: QueueEntry) => void;
+  onAssignRoom?: (entry: QueueEntry) => void;
 }
 
 const STATUS_META: Record<
@@ -22,9 +28,16 @@ const PRIORITY_LABEL: Record<QueueEntry['priority'], string> = {
   URGENT: 'Ưu tiên',
   ELDERLY: 'Người cao tuổi',
   PREGNANT: 'Phụ nữ mang thai',
+  RETURN_RESULT: 'Trả kết quả',
 };
 
-export function QueuePreviewTable({ entries }: QueuePreviewTableProps) {
+export function QueuePreviewTable({
+  entries,
+  onSelectPatient,
+  onTransferRoom,
+  onPrintTicket,
+  onAssignRoom,
+}: QueuePreviewTableProps) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
@@ -36,7 +49,9 @@ export function QueuePreviewTable({ entries }: QueuePreviewTableProps) {
             <th className="py-2 pr-3">Phòng</th>
             <th className="py-2 pr-3">Check-in</th>
             <th className="py-2 pr-3">Ưu tiên</th>
-            <th className="py-2">Trạng thái</th>
+            <th className="py-2 pr-3">Trạng thái</th>
+            <th className="py-2 pr-3 text-right">Phiếu khám</th>
+            {(onTransferRoom || onAssignRoom) && <th className="py-2 text-right">Điều phối</th>}
           </tr>
         </thead>
         <tbody>
@@ -47,7 +62,14 @@ export function QueuePreviewTable({ entries }: QueuePreviewTableProps) {
             >
               <td className="py-2.5 pr-3 font-mono font-bold text-slate-800">{entry.ticketNo}</td>
               <td className="py-2.5 pr-3">
-                <div className="font-semibold text-slate-800">{entry.patientName}</div>
+                <button
+                  type="button"
+                  onClick={() => onSelectPatient?.(entry.patientCode)}
+                  aria-label={`Xem chi tiết bệnh nhân ${entry.patientName}`}
+                  className="font-semibold text-navy hover:text-primary hover:underline text-left"
+                >
+                  {entry.patientName}
+                </button>
                 <div className="text-[10px] text-slate-400 font-mono">{entry.patientCode}</div>
               </td>
               <td className="py-2.5 pr-3">
@@ -58,11 +80,50 @@ export function QueuePreviewTable({ entries }: QueuePreviewTableProps) {
               <td className="py-2.5 pr-3 font-mono text-slate-600">{entry.room}</td>
               <td className="py-2.5 pr-3 tabular-nums text-slate-600">{entry.checkedInAt}</td>
               <td className="py-2.5 pr-3 text-slate-500">{PRIORITY_LABEL[entry.priority]}</td>
-              <td className="py-2.5">
+              <td className="py-2.5 pr-3">
                 <Badge tone={STATUS_META[entry.status].tone}>
                   {STATUS_META[entry.status].label}
                 </Badge>
               </td>
+              <td className="py-2.5 text-right">
+                <button
+                  type="button"
+                  onClick={() => onPrintTicket?.(entry)}
+                  aria-label={`In phiếu khám cho ${entry.patientName}`}
+                  className="inline-flex items-center gap-1 rounded-lg border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-navy transition-colors hover:border-primary hover:bg-canvas hover:text-primary"
+                >
+                  <Printer className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>In phiếu</span>
+                </button>
+              </td>
+              {(onTransferRoom || onAssignRoom) && (
+                <td className="py-2.5 text-right">
+                  <div className="inline-flex items-center justify-end gap-1.5">
+                    {onAssignRoom && (
+                      <button
+                        type="button"
+                        disabled={entry.status === 'IN_PROGRESS' || entry.status === 'DONE'}
+                        onClick={() => onAssignRoom(entry)}
+                        aria-label={`Phân buồng khám cho ${entry.patientName}`}
+                        className="rounded-lg border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Phân phòng
+                      </button>
+                    )}
+                    {onTransferRoom && (
+                      <button
+                        type="button"
+                        disabled={entry.status === 'IN_PROGRESS' || entry.status === 'DONE'}
+                        onClick={() => onTransferRoom(entry)}
+                        aria-label={`Chuyển phòng khám cho ${entry.patientName}`}
+                        className="rounded-lg border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Chuyển phòng
+                      </button>
+                    )}
+                  </div>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

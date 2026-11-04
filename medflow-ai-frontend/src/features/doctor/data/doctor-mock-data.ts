@@ -1,5 +1,6 @@
 import type {
   AssignedPatientEntry,
+  DoctorDashboardSummary,
   DoctorQuickAction,
   DoctorStats,
   PendingDiagnosticItem,
@@ -7,7 +8,10 @@ import type {
 
 // Mock data cho M1 Doctor Role Landing — dữ liệu giả lập phục vụ hiển thị bàn khám.
 export const DOCTOR_WORKBENCH_META = {
+  facilityName: 'Bệnh viện MedFlow (giả lập)',
+  facilityCode: 'HOS-DEMO-01',
   defaultDoctorName: 'BS. CKII Nguyễn Văn Hùng',
+  defaultStaffCode: 'DOC-001',
   roomCode: 'P.102',
   departmentName: 'Khoa Nội Tổng Quát',
   shiftLabel: 'Ca sáng 07:30–11:30',
@@ -159,3 +163,37 @@ export const DOCTOR_QUICK_ACTIONS_MOCK: DoctorQuickAction[] = [
     icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
   },
 ];
+
+export const DOCTOR_DASHBOARD_MOCK: DoctorDashboardSummary = {
+  facilityName: DOCTOR_WORKBENCH_META.facilityName,
+  facilityCode: DOCTOR_WORKBENCH_META.facilityCode,
+  roomCode: DOCTOR_WORKBENCH_META.roomCode,
+  roomName: 'Phòng khám Nội tổng quát 102',
+  departmentName: DOCTOR_WORKBENCH_META.departmentName,
+  shiftLabel: DOCTOR_WORKBENCH_META.shiftLabel,
+  stats: DOCTOR_STATS_MOCK,
+  assignedQueue: ASSIGNED_QUEUE_MOCK,
+  pendingDiagnostics: PENDING_DIAGNOSTICS_MOCK,
+  quickActions: DOCTOR_QUICK_ACTIONS_MOCK,
+  doctorProfile: {
+    userId: 3,
+    doctorId: 1,
+    doctorCode: 'DOC-001',
+    staffCode: 'STF-001',
+    email: 'doctor01@medflow.test',
+    fullName: DOCTOR_WORKBENCH_META.defaultDoctorName,
+    professionalTitle: 'BS.CKII',
+    displayName: DOCTOR_WORKBENCH_META.defaultDoctorName,
+    specialtyName: 'Nội tổng quát',
+    departmentId: 2,
+    departmentName: DOCTOR_WORKBENCH_META.departmentName,
+    hospitalId: 1,
+    hospitalCode: DOCTOR_WORKBENCH_META.facilityCode,
+    hospitalName: DOCTOR_WORKBENCH_META.facilityName,
+    roomCode: DOCTOR_WORKBENCH_META.roomCode,
+    roomName: 'Phòng khám Nội tổng quát 102',
+    licenseNumber: 'DEMO-CCHN-001',
+    roles: ['DOCTOR'],
+    permissions: ['DIAGNOSTIC_ORDER', 'MEDICAL_RECORD_WRITE', 'PAYMENT_VIEW', 'PRESCRIPTION_ISSUE'],
+  },
+};

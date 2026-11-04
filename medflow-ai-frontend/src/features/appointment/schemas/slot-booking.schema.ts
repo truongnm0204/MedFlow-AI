@@ -8,9 +8,9 @@ export const slotBookingSelectionSchema = z.object({
   selectedSlotId: z.string().min(1, 'Vui lòng chọn khung giờ thăm khám'),
   symptomNote: z
     .string()
-    .max(500, 'Lý do khám / triệu chứng không vượt quá 500 ký tự')
-    .optional()
-    .default(''),
+    .trim()
+    .min(3, 'Vui lòng nhập lý do khám / triệu chứng (tối thiểu 3 ký tự)')
+    .max(500, 'Lý do khám / triệu chứng không vượt quá 500 ký tự'),
 });
 
 export const serviceShiftBookingSelectionSchema = z.object({
@@ -21,9 +21,9 @@ export const serviceShiftBookingSelectionSchema = z.object({
   selectedShiftId: z.string().min(1, 'Vui lòng chọn ca khám'),
   symptomNote: z
     .string()
-    .max(500, 'Lý do khám / triệu chứng không vượt quá 500 ký tự')
-    .optional()
-    .default(''),
+    .trim()
+    .min(3, 'Vui lòng nhập lý do khám / triệu chứng (tối thiểu 3 ký tự)')
+    .max(500, 'Lý do khám / triệu chứng không vượt quá 500 ký tự'),
 });
 
 export type SlotBookingSelectionInput = z.infer<typeof slotBookingSelectionSchema>;

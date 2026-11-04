@@ -24,6 +24,10 @@ export const MOCK_BOOKING_PROFILES: BookingPatientProfile[] = [
     metaPrimary: 'SĐT: 0912 345 678',
     metaSecondary: 'Định danh đã đối chiếu',
     patientCode: 'PAT-8821',
+    phone: '0912 345 678',
+    birthDateLabel: '15/08/1986',
+    nationalId: '001086001234',
+    address: 'Phường Hàng Trống, Quận Hoàn Kiếm, TP. Hà Nội',
   },
   {
     id: 'pat-child',
@@ -509,11 +513,15 @@ export function getMockServiceAvailableShiftsPayload(
   serviceId?: string | null,
   dateIso?: string,
 ): ServiceAvailableShiftsPayload {
+  const activeDayShift = resolveDoctorDayShiftSchedule(dateIso);
   return {
     serviceInfo: resolveBookingServiceOnlyInfo(serviceId),
     monthLabel: 'Tháng 10, 2026',
     profiles: MOCK_BOOKING_PROFILES,
     dates: MOCK_SERVICE_DATES,
     shifts: resolveServiceShiftsByDate(dateIso),
+    morningSlots: activeDayShift.morningSlots,
+    afternoonSlots: activeDayShift.afternoonSlots,
+    activeDayShift,
   };
 }

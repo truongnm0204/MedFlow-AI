@@ -1,8 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient } from '@/shared/lib/axios';
+import { ToastViewport, toast } from '@/shared/ui/toast';
+import { getMockAvailableSlotsPayload } from '../data/slot-booking-mock';
 import { AppointmentSlotBookingPage } from '../pages/appointment-slot-booking-page';
 import { useBookingStore } from '../store/booking.store';
 
@@ -26,6 +29,7 @@ function renderSlotBookingPage(initialEntry = '/appointment/doctors/doc-01/booki
           <Route path="/appointment/doctors" element={<div>Danh bạ Bác sĩ Mock</div>} />
           <Route path="/appointment/review" element={<div>Soát xét Đặt lịch Mock</div>} />
         </Routes>
+        <ToastViewport />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -33,7 +37,9 @@ function renderSlotBookingPage(initialEntry = '/appointment/doctors/doc-01/booki
 
 describe('AppointmentSlotBookingPage — Đặt khám theo Bác sĩ (SCR-APT-05)', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     useBookingStore.getState().reset();
+    toast.clear();
   });
 
   it('renders stepper, doctor summary banner, patient profiles, date strip, and doctor time slots', () => {
@@ -110,5 +116,52 @@ describe('AppointmentSlotBookingPage — Đặt khám theo Bác sĩ (SCR-APT-05)
     fireEvent.click(continueButton);
 
     expect(screen.getByText('Soát xét Đặt lịch Mock')).toBeInTheDocument();
+  });
+
+  it('does not leak stale selectedServiceId from store when querying available-slots for another doctor', async () => {
+    const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+      data: getMockAvailableSlotsPayload('2', null, '2026-10-13'),
+    });
+
+    useBookingStore.getState().selectService('srv-th-01', 'Khám Chuyên khoa Tiêu Hóa');
+    renderSlotBookingPage('/appointment/doctors/2/booking');
+
+    expect(getSpy).toHaveBeenCalledWith('/appointments/available-slots', {
+      params: {
+        doctorId: '2',
+        serviceId: null,
+        dateIso: '2026-10-13',
+      },
+    });
+  });
+
+  it('triggers error toast when selecting a date with an active booking or continuing without symptom notes', async () => {
+    const mockPayload = getMockAvailableSlotsPayload('doc-01', null, '2026-10-13');
+    mockPayload.profiles[0] = {
+      ...mockPayload.profiles[0],
+      activeBookedDates: ['2026-10-14'],
+    };
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: mockPayload });
+
+    renderSlotBookingPage('/appointment/doctors/doc-01/booking');
+
+    // Clicking continue without symptoms triggers validation toast
+    const continueButton = screen.getByRole('button', {
+      name: /Tiếp tục: Soát xét Đặt lịch/i,
+    });
+    fireEvent.click(continueButton);
+
+    expect(await screen.findByTestId('toast-error')).toHaveTextContent('Thiếu thông tin bắt buộc');
+    expect(screen.queryByText('Soát xét Đặt lịch Mock')).not.toBeInTheDocument();
+
+    toast.clear();
+
+    // Selecting a date that is in activeBookedDates triggers same-day conflict toast immediately
+    const wednesdayOption = await screen.findByRole('option', { name: /Thứ 4/i });
+    fireEvent.click(wednesdayOption);
+
+    expect(await screen.findByTestId('toast-error')).toHaveTextContent(
+      'Không thể đặt trùng ngày khám',
+    );
   });
 });

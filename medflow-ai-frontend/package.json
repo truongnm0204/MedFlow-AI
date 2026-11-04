@@ -8,8 +8,10 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run src",
+    "test:watch": "vitest src",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
     "format:check": "prettier --check .",
     "format": "prettier --write ."
   },
@@ -29,6 +31,7 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@playwright/test": "^1.52.0",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.7",
