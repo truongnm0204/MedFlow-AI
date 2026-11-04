@@ -100,11 +100,11 @@ describe('DoctorEditModal (SCR-ADM-DOC-03)', () => {
   it('stages suspend status in form and persists only on save', async () => {
     renderModal('DOC-0142');
 
-    fireEvent.click(screen.getByRole('button', { name: '⊖ Tạm ngừng nhận lịch' }));
+    fireEvent.click(screen.getByRole('button', { name: /⊖ Ngừng hoạt động/ }));
 
     expect(screen.getByText('● Tạm ngừng')).toBeInTheDocument();
     const activeCheckbox = screen.getByRole('checkbox', {
-      name: /Đang nhận lịch khám/,
+      name: /Ngừng hoạt động/,
     }) as HTMLInputElement;
     expect(activeCheckbox.checked).toBe(false);
 
