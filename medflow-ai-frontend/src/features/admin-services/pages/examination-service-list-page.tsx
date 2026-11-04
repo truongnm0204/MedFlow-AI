@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { CheckCircle2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 
 import { AdminServicesShell } from '../components/admin-services-shell';
 import { ServiceColumnModal } from '../components/service-column-modal';
+import { ServiceDeactivateModal } from '../components/service-deactivate-modal';
 import { ServiceFilters } from '../components/service-filters';
 import { ServiceMetrics } from '../components/service-metrics';
 import { ServicePagination } from '../components/service-pagination';
@@ -10,7 +12,6 @@ import { ServicePriceHistoryModal } from '../components/service-price-history-mo
 import { ServiceTable } from '../components/service-table';
 import { useExaminationServiceStore } from '../store/examination-service.store';
 import type { ExaminationService } from '../types/examination-service.types';
-
 function exportServicesToCsv(services: ExaminationService[]) {
   const quote = (val: string) => `"${val.replaceAll('"', '""').replace(/^[=+\-@]/, "'$&")}"`;
   const headers = [
@@ -61,7 +62,32 @@ export function ExaminationServiceListPage() {
   const setPriceHistoryService = useExaminationServiceStore(
     (state) => state.setPriceHistoryService,
   );
+  const updateService = useExaminationServiceStore((state) => state.updateService);
 
+  const [deactivatingService, setDeactivatingService] = useState<ExaminationService | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+
+  const handleConfirmDeactivate = (serviceId: string) => {
+    const service = services.find((item) => item.id === serviceId);
+    if (service) {
+      updateService(serviceId, { status: 'SUSPENDED' });
+      setFeedbackMessage(`Đã chuyển trạng thái dịch vụ ${service.name} sang Tạm ngừng hoạt động.`);
+      setTimeout(() => setFeedbackMessage(null), 4000);
+    }
+    setDeactivatingService(null);
+  };
+
+  const handleToggleStatus = (id: string) => {
+    const service = services.find((item) => item.id === id);
+    if (!service) return;
+    if (service.status === 'ACTIVE') {
+      setDeactivatingService(service);
+    } else {
+      updateService(id, { status: 'ACTIVE' });
+      setFeedbackMessage(`Đã kích hoạt lại hoạt động cho dịch vụ ${service.name}.`);
+      setTimeout(() => setFeedbackMessage(null), 4000);
+    }
+  };
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key.toLowerCase() === 'k') {
@@ -126,8 +152,9 @@ export function ExaminationServiceListPage() {
           <ServiceTable
             services={paginatedServices}
             onViewHistory={(service) => setPriceHistoryService(service)}
+            onToggleStatus={handleToggleStatus}
+            onRequestDeactivate={(service) => setDeactivatingService(service)}
           />
-
           <ServicePagination
             count={filteredServices.length}
             currentPage={currentPage}
@@ -141,6 +168,22 @@ export function ExaminationServiceListPage() {
 
       <ServicePriceHistoryModal />
       <ServiceColumnModal />
+      <ServiceDeactivateModal
+        service={deactivatingService}
+        open={Boolean(deactivatingService)}
+        onClose={() => setDeactivatingService(null)}
+        onConfirm={handleConfirmDeactivate}
+      />
+      {feedbackMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800 shadow-lg animate-in fade-in"
+        >
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+          <span>{feedbackMessage}</span>
+        </div>
+      )}
       <Outlet />
     </AdminServicesShell>
   );
