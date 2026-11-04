@@ -58,7 +58,7 @@ export function AppointmentPolicyPage() {
   }) as AppointmentPolicyFormValues;
   useEffect(() => {
     if (policyQuery.data) {
-      reset(extractFormValues(policyQuery.data));
+      reset(extractFormValues(policyQuery.data), { keepDirtyValues: true });
     }
   }, [policyQuery.data, reset]);
 

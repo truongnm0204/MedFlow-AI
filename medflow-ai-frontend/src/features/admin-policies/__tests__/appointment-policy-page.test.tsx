@@ -116,10 +116,11 @@ describe('AppointmentPolicyPage (SCR-ADM-POL-01)', () => {
     const blockDaysInput = await screen.findByLabelText(/Số ngày khóa đặt lịch/i);
     fireEvent.change(blockDaysInput, { target: { value: '0' } });
 
-    const summaryCard = screen.getByTestId('policy-summary-card');
-    expect(summaryCard).toHaveTextContent(
-      'Trễ quá 15 phút tính NO_SHOW; hiện đang tắt khóa đặt lịch tự động (0 ngày).',
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId('policy-summary-card')).toHaveTextContent(
+        'Trễ quá 15 phút tính NO_SHOW; hiện đang tắt khóa đặt lịch tự động (0 ngày).',
+      );
+    });
   });
 
   it('blocks submission and shows error when bookingLeadHours >= bookingWindowDays * 24', async () => {
