@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppRouter } from '@/app/router/app-router';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { apiClient } from '@/shared/lib/axios';
 
 import * as hospitalAdminApi from '../api/hospital-admin.api';
 import { HOSPITAL_ADMIN_DASHBOARD_MOCK } from '../data/hospital-admin-mock-data';
@@ -209,6 +210,51 @@ describe('HospitalAdminDashboardPage (SCR-ADM-DASH-01)', () => {
     await waitFor(() => {
       expect(screen.getByText('Khoa phòng hoạt động')).toBeInTheDocument();
     });
+  });
+
+  it('goi truc tiep GET /admin/hospital-dashboard/summary khi co token va dong bo adminProfile tu BE', async () => {
+    const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+      data: {
+        ...HOSPITAL_ADMIN_DASHBOARD_MOCK,
+        facilityName: 'Bệnh viện Trung ương MedFlow',
+        facilityCode: 'HOS-001',
+        adminProfile: {
+          userId: 11,
+          email: 'hospital_admin01@medflow.test',
+          fullName: 'TS. BS Vũ Quốc Tuấn',
+          staffCode: 'STF-009',
+          hospitalId: 1,
+          hospitalCode: 'HOS-001',
+          hospitalName: 'Bệnh viện Trung ương MedFlow',
+          roles: ['HOSPITAL_ADMIN'],
+          permissions: ['HOSPITAL_CONFIG', 'PAYMENT_VIEW', 'QUEUE_MANAGE', 'VISIT_ASSIGN'],
+        },
+        generatedAtUtc: '2026-04-20T09:00:00Z',
+      },
+    });
+
+    useAuthStore.getState().setAuth({
+      user: {
+        id: 11,
+        email: 'hospital_admin01@medflow.test',
+        fullName: null,
+        roles: ['HOSPITAL_ADMIN'],
+        patientCode: null,
+        staffCode: null,
+      },
+      accessToken: 'jwt-live-token',
+      refreshToken: 'jwt-refresh-token',
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(getSpy).toHaveBeenCalledWith('/admin/hospital-dashboard/summary', undefined);
+      expect(screen.getAllByText('TS. BS Vũ Quốc Tuấn').length).toBeGreaterThan(0);
+    });
+
+    expect(screen.getByText('Mã NV: STF-009')).toBeInTheDocument();
+    expect(screen.getAllByText('Bệnh viện Trung ương MedFlow').length).toBeGreaterThan(0);
   });
 
   it('bao ve route /hospital-admin bang RequireAuth va RequireAdmin', () => {

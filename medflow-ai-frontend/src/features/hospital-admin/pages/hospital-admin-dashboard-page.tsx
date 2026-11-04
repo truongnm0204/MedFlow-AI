@@ -67,9 +67,16 @@ export function HospitalAdminDashboardPage() {
     useState<HospitalConfigWorklistItem | null>(null);
   const [selectedAction, setSelectedAction] = useState<HospitalAdminQuickAction | null>(null);
 
-  const adminDisplayName = user?.fullName?.trim() || HOSPITAL_ADMIN_META.defaultAdminName;
-  const staffCode = user?.staffCode?.trim() || HOSPITAL_ADMIN_META.defaultStaffCode;
-  const facilityName = data?.facilityName || HOSPITAL_ADMIN_META.facilityName;
+  const adminDisplayName =
+    user?.fullName?.trim() ||
+    data?.adminProfile?.fullName?.trim() ||
+    HOSPITAL_ADMIN_META.defaultAdminName;
+  const staffCode =
+    user?.staffCode?.trim() ||
+    data?.adminProfile?.staffCode?.trim() ||
+    HOSPITAL_ADMIN_META.defaultStaffCode;
+  const facilityName =
+    data?.facilityName || data?.adminProfile?.hospitalName || HOSPITAL_ADMIN_META.facilityName;
 
   const worklist = data?.worklist ?? EMPTY_WORKLIST;
 

@@ -51,6 +51,25 @@ export interface HospitalPolicyAlertItem {
   route: string;
 }
 
+export interface HospitalAdminProfile {
+  userId: number;
+  email: string;
+  fullName: string;
+  staffCode?: string | null;
+  hospitalId: number;
+  hospitalCode: string;
+  hospitalName: string;
+  roles: string[];
+  permissions: string[];
+}
+
+export interface HospitalAdminDashboardQueryParams {
+  worklistLimit?: number;
+  category?: HospitalConfigCategory | 'ALL';
+  status?: HospitalConfigStatus | 'ALL';
+  keyword?: string;
+}
+
 export interface HospitalAdminDashboardSummary {
   facilityName: string;
   facilityCode: string;
@@ -59,4 +78,6 @@ export interface HospitalAdminDashboardSummary {
   worklist: HospitalConfigWorklistItem[];
   quickActions: HospitalAdminQuickAction[];
   policyAlerts: HospitalPolicyAlertItem[];
+  adminProfile?: HospitalAdminProfile;
+  generatedAtUtc?: string;
 }
