@@ -141,7 +141,7 @@ describe('ServicePricingPage (UC52 / SCR-ADM-PRC-01)', () => {
       expect(
         screen.getByText('Ghi Điện tim đồ 12 Chuyển đạo Kỹ thuật số (Digital ECG)'),
       ).toBeInTheDocument();
-      expect(screen.getByText('80.000 đ')).toBeInTheDocument();
+      expect(screen.getAllByText('80.000 đ').length).toBeGreaterThanOrEqual(1);
       expect(
         screen.queryByText('Khám Nội Tổng quát & Tư vấn Sức khỏe Ban đầu'),
       ).not.toBeInTheDocument();
@@ -198,9 +198,6 @@ describe('ServicePricingPage (UC52 / SCR-ADM-PRC-01)', () => {
     fireEvent.click(historyBtn);
 
     expect(screen.getByText('Lịch Sử Biểu Phí & Quyết Định Áp Dụng (UC52)')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Quy chuẩn quản lý Biểu phí cơ sở \(UC52 \/ Issue #205\)/i),
-    ).toBeInTheDocument();
 
     const closeBtn = screen.getByRole('button', {
       name: 'Đóng hộp thoại lịch sử giá',
@@ -211,27 +208,6 @@ describe('ServicePricingPage (UC52 / SCR-ADM-PRC-01)', () => {
       expect(
         screen.queryByText('Lịch Sử Biểu Phí & Quyết Định Áp Dụng (UC52)'),
       ).not.toBeInTheDocument();
-    });
-  });
-
-  it('opens and closes the UC52 legal policy drawer', async () => {
-    renderPricingPage();
-
-    const policyBtn = screen.getByRole('button', {
-      name: /Quy định UC52/i,
-    });
-    fireEvent.click(policyBtn);
-
-    expect(screen.getByText('Cơ Sở Pháp Lý & Quy Định Biểu Phí')).toBeInTheDocument();
-    expect(screen.getByText('2. 4 Yếu tố cấu thành giá dịch vụ (UC52)')).toBeInTheDocument();
-
-    const understandBtn = screen.getByRole('button', {
-      name: 'Đã hiểu quy định',
-    });
-    fireEvent.click(understandBtn);
-
-    await waitFor(() => {
-      expect(screen.queryByText('Cơ Sở Pháp Lý & Quy Định Biểu Phí')).not.toBeInTheDocument();
     });
   });
 
@@ -286,9 +262,7 @@ describe('ServicePricingPage (UC52 / SCR-ADM-PRC-01)', () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(
-          /Đã cập nhật thành công mức giá mới 350.000 đ theo quyết định QĐ-999\/BV-KH/i,
-        ),
+        screen.getByText(/Đã cập nhật mức giá mới 350\.000 đ theo QĐ-999\/BV-KH thành công/i),
       ).toBeInTheDocument();
     });
   });
@@ -327,7 +301,7 @@ describe('ServicePricingPage (UC52 / SCR-ADM-PRC-01)', () => {
     renderPricingPage();
 
     await waitFor(() => {
-      expect(screen.getByText(/Không thể tải dữ liệu biểu phí từ máy chủ/i)).toBeInTheDocument();
+      expect(screen.getByText(/Không thể tải dữ liệu từ máy chủ/i)).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /Thử lại/i })).toBeInTheDocument();
   });

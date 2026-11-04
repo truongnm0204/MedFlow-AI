@@ -1,13 +1,21 @@
-import { FileSpreadsheet, HelpCircle, Printer, RotateCcw, Search, X } from 'lucide-react';
+import { FileSpreadsheet, Printer, RotateCcw, Search, X } from 'lucide-react';
 import type { RefObject } from 'react';
 
-import {
-  PRICE_RANGE_OPTIONS,
-  PRICING_CATEGORIES,
-  PRICING_DEPARTMENTS,
-  PRICING_STATUS_OPTIONS,
-} from '../data/service-pricing-mock';
+import { PRICING_CATEGORIES, PRICING_DEPARTMENTS } from '../data/service-pricing-mock';
 import type { PriceRangeFilter, ServicePricingFilter } from '../types/service-pricing.types';
+
+const PRICE_RANGE_OPTIONS: { label: string; value: PriceRangeFilter }[] = [
+  { label: 'Tất cả mức giá', value: 'all' },
+  { label: 'Dưới 200.000 đ', value: 'under-200k' },
+  { label: '200.000 đ - 500.000 đ', value: '200k-500k' },
+  { label: 'Trên 500.000 đ', value: 'over-500k' },
+];
+
+const PRICING_STATUS_OPTIONS = [
+  { label: 'Tất cả trạng thái', value: 'all' },
+  { label: 'Đang áp dụng', value: 'ACTIVE' },
+  { label: 'Tạm dừng niêm yết', value: 'SUSPENDED' },
+];
 
 interface PricingFiltersProps {
   filters: ServicePricingFilter;
@@ -15,7 +23,6 @@ interface PricingFiltersProps {
   onReset: () => void;
   onExportCsv: () => void;
   onPrint: () => void;
-  onOpenPolicy: () => void;
   searchInputRef: RefObject<HTMLInputElement | null>;
   totalCount: number;
 }
@@ -26,7 +33,6 @@ export function PricingFilters({
   onReset,
   onExportCsv,
   onPrint,
-  onOpenPolicy,
   searchInputRef,
   totalCount,
 }: PricingFiltersProps) {
@@ -38,7 +44,7 @@ export function PricingFilters({
     filters.status !== 'all';
 
   return (
-    <div className="space-y-3.5 rounded-xl border border-border bg-white p-4 shadow-xs">
+    <div className="space-y-3 rounded-xl border border-border bg-white p-4 shadow-xs">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         {/* Search Input */}
         <div className="relative flex-1">
@@ -72,32 +78,19 @@ export function PricingFilters({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={onOpenPolicy}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-xs font-semibold text-slate-700 shadow-xs transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            title="Xem quy chuẩn định giá & cơ sở pháp lý UC52"
-          >
-            <HelpCircle className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
-            <span>Quy định UC52</span>
-          </button>
-
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onExportCsv}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-xs font-semibold text-slate-700 shadow-xs transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            title="Xuất danh mục biểu phí ra file CSV (Excel)"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 transition-colors"
           >
             <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
             <span>Xuất CSV</span>
           </button>
-
           <button
             type="button"
             onClick={onPrint}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-xs font-semibold text-slate-700 shadow-xs transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            title="In bảng niêm yết giá dịch vụ"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 transition-colors"
           >
             <Printer className="h-3.5 w-3.5 text-slate-600" aria-hidden="true" />
             <span>In biểu phí</span>
@@ -107,94 +100,69 @@ export function PricingFilters({
 
       {/* Dropdown Filters Grid */}
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Department Select */}
-        <div>
-          <label htmlFor="filter-department" className="sr-only">
-            Khoa phòng phụ trách
-          </label>
-          <select
-            id="filter-department"
-            value={filters.department}
-            onChange={(e) => onChange({ department: e.target.value })}
-            className="h-8 w-full rounded-md border border-border bg-white px-2.5 text-xs text-ink focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-          >
-            {PRICING_DEPARTMENTS.map((dept) => (
-              <option key={dept} value={dept}>
-                {dept}
-              </option>
-            ))}
-          </select>
-        </div>
+        <select
+          aria-label="Khoa phòng phụ trách"
+          value={filters.department}
+          onChange={(e) => onChange({ department: e.target.value })}
+          className="h-8 w-full rounded-md border border-border bg-white px-2.5 text-xs text-ink focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+        >
+          {PRICING_DEPARTMENTS.map((dept) => (
+            <option key={dept} value={dept}>
+              {dept}
+            </option>
+          ))}
+        </select>
 
-        {/* Category Select */}
-        <div>
-          <label htmlFor="filter-category" className="sr-only">
-            Phân loại dịch vụ
-          </label>
-          <select
-            id="filter-category"
-            value={filters.category}
-            onChange={(e) => onChange({ category: e.target.value })}
-            className="h-8 w-full rounded-md border border-border bg-white px-2.5 text-xs text-ink focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-          >
-            {PRICING_CATEGORIES.map((cat) => (
-              <option key={cat.value} value={cat.value}>
-                {cat.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <select
+          aria-label="Phân loại dịch vụ"
+          value={filters.category}
+          onChange={(e) => onChange({ category: e.target.value })}
+          className="h-8 w-full rounded-md border border-border bg-white px-2.5 text-xs text-ink focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+        >
+          {PRICING_CATEGORIES.map((cat) => (
+            <option key={cat.value} value={cat.value}>
+              {cat.label}
+            </option>
+          ))}
+        </select>
 
-        {/* Price Range Select */}
-        <div>
-          <label htmlFor="filter-price-range" className="sr-only">
-            Khoảng giá
-          </label>
-          <select
-            id="filter-price-range"
-            value={filters.priceRange}
-            onChange={(e) => onChange({ priceRange: e.target.value as PriceRangeFilter })}
-            className="h-8 w-full rounded-md border border-border bg-white px-2.5 text-xs text-ink focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-          >
-            {PRICE_RANGE_OPTIONS.map((rng) => (
-              <option key={rng.value} value={rng.value}>
-                {rng.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <select
+          aria-label="Khoảng giá"
+          value={filters.priceRange}
+          onChange={(e) => onChange({ priceRange: e.target.value as PriceRangeFilter })}
+          className="h-8 w-full rounded-md border border-border bg-white px-2.5 text-xs text-ink focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+        >
+          {PRICE_RANGE_OPTIONS.map((rng) => (
+            <option key={rng.value} value={rng.value}>
+              {rng.label}
+            </option>
+          ))}
+        </select>
 
-        {/* Status Select */}
-        <div>
-          <label htmlFor="filter-status" className="sr-only">
-            Trạng thái áp dụng
-          </label>
-          <select
-            id="filter-status"
-            value={filters.status}
-            onChange={(e) => onChange({ status: e.target.value })}
-            className="h-8 w-full rounded-md border border-border bg-white px-2.5 text-xs text-ink focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-          >
-            {PRICING_STATUS_OPTIONS.map((st) => (
-              <option key={st.value} value={st.value}>
-                {st.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <select
+          aria-label="Trạng thái áp dụng"
+          value={filters.status}
+          onChange={(e) => onChange({ status: e.target.value })}
+          className="h-8 w-full rounded-md border border-border bg-white px-2.5 text-xs text-ink focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+        >
+          {PRICING_STATUS_OPTIONS.map((st) => (
+            <option key={st.value} value={st.value}>
+              {st.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Filter Info / Reset */}
-      <div className="flex items-center justify-between border-t border-slate-100 pt-2.5 text-xs text-sub">
-        <div>
-          Tìm thấy <strong className="text-ink">{totalCount}</strong> dịch vụ trong danh mục biểu
-          phí
-        </div>
+      <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-xs text-sub">
+        <span>
+          Tìm thấy <strong className="text-ink">{totalCount}</strong> dịch vụ trong danh mục
+        </span>
         {isFiltered && (
           <button
             type="button"
             onClick={onReset}
-            className="inline-flex items-center gap-1 font-semibold text-primary transition-colors hover:text-primary-dark"
+            className="inline-flex items-center gap-1 font-semibold text-primary hover:text-primary-dark"
           >
             <RotateCcw className="h-3 w-3" aria-hidden="true" />
             <span>Đặt lại bộ lọc</span>

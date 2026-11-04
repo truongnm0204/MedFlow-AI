@@ -14,38 +14,10 @@ import type {
   UpdateServicePricePayload,
 } from '../types/service-pricing.types';
 
-function shouldFallbackToMock(error: unknown): boolean {
+function isNetworkOrGatewayError(error: unknown): boolean {
   if (!axios.isAxiosError(error)) return false;
   if (!error.response) return true;
-  return (
-    error.response.status === 404 ||
-    error.response.status === 502 ||
-    error.response.status === 503 ||
-    error.response.status === 504
-  );
-}
-
-export interface BackendServiceAdminItem {
-  id: number;
-  serviceCode: string;
-  name: string;
-  description?: string;
-  serviceType: string;
-  category: string;
-  departmentName?: string;
-  price: number;
-  priceFormatted: string;
-  allowsOnlineBooking: boolean;
-  isActive: boolean;
-  status: string;
-}
-
-export interface BackendServiceListResponse {
-  data: BackendServiceAdminItem[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
+  return [404, 502, 503, 504].includes(error.response.status);
 }
 
 export function filterPricingItems(
@@ -55,24 +27,25 @@ export function filterPricingItems(
   return items.filter((item) => {
     if (filters.search) {
       const q = filters.search.trim().toLowerCase();
-      const matchSearch =
+      const match =
         item.code.toLowerCase().includes(q) ||
         item.name.toLowerCase().includes(q) ||
         item.description.toLowerCase().includes(q) ||
         item.decisionNumber.toLowerCase().includes(q);
-      if (!matchSearch) return false;
+      if (!match) return false;
     }
 
     if (
       filters.department &&
       filters.department !== 'Tất cả khoa phòng' &&
-      filters.department !== 'all'
+      filters.department !== 'all' &&
+      item.department !== filters.department
     ) {
-      if (item.department !== filters.department) return false;
+      return false;
     }
 
-    if (filters.category && filters.category !== 'all') {
-      if (item.category !== filters.category) return false;
+    if (filters.category && filters.category !== 'all' && item.category !== filters.category) {
+      return false;
     }
 
     if (filters.priceRange && filters.priceRange !== 'all') {
@@ -86,12 +59,25 @@ export function filterPricingItems(
       if (filters.priceRange === 'over-500k' && item.currentPrice <= 500000) return false;
     }
 
-    if (filters.status && filters.status !== 'all') {
-      if (item.status !== filters.status) return false;
+    if (filters.status && filters.status !== 'all' && item.status !== filters.status) {
+      return false;
     }
 
     return true;
   });
+}
+
+interface BackendRawItem {
+  id: number;
+  serviceCode: string;
+  name: string;
+  description?: string;
+  category?: ServicePricingItem['category'];
+  departmentName?: string;
+  price: number;
+  priceFormatted?: string;
+  isActive?: boolean;
+  allowsOnlineBooking?: boolean;
 }
 
 export async function fetchServicePricing(
@@ -104,33 +90,30 @@ export async function fetchServicePricing(
 
   if (hasToken) {
     try {
-      const { data } = await apiClient.get<BackendServiceListResponse>(
-        '/admin/examination-services',
-        {
-          params: {
-            keyword: filters.search || undefined,
-            category: filters.category !== 'all' ? filters.category : undefined,
-            status: filters.status !== 'all' ? filters.status : undefined,
-            page,
-            pageSize,
-          },
+      const { data } = await apiClient.get('/admin/examination-services', {
+        params: {
+          keyword: filters.search || undefined,
+          category: filters.category !== 'all' ? filters.category : undefined,
+          status: filters.status !== 'all' ? filters.status : undefined,
+          page,
+          pageSize,
         },
-      );
+      });
 
       if (data && Array.isArray(data.data) && data.data.length > 0) {
-        const mappedItems: ServicePricingItem[] = data.data.map((raw) => ({
+        const mapped: ServicePricingItem[] = data.data.map((raw: BackendRawItem) => ({
           id: `PRC-${raw.id}`,
           code: raw.serviceCode,
           name: raw.name,
           description: raw.description ?? '',
-          category: (raw.category as ServicePricingItem['category']) || 'Khám Lâm sàng',
+          category: raw.category || 'Khám Lâm sàng',
           department: raw.departmentName || 'Khoa Khám bệnh',
           currentPrice: raw.price,
           formattedPrice: raw.priceFormatted || `${raw.price.toLocaleString('vi-VN')} đ`,
           effectiveDate: '2026-01-01',
           decisionNumber: 'QĐ-142/BV-KH',
           status: raw.isActive ? 'ACTIVE' : 'SUSPENDED',
-          onlineBooking: raw.allowsOnlineBooking,
+          onlineBooking: Boolean(raw.allowsOnlineBooking),
           priceHistory: [
             {
               date: '2026-01-01',
@@ -142,7 +125,7 @@ export async function fetchServicePricing(
           ],
         }));
 
-        const filtered = filterPricingItems(mappedItems, filters);
+        const filtered = filterPricingItems(mapped, filters);
         return {
           data: filtered,
           total: data.total || filtered.length,
@@ -153,22 +136,18 @@ export async function fetchServicePricing(
         };
       }
     } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
+      if (!isNetworkOrGatewayError(error)) throw error;
     }
   }
 
-  // Graceful fallback to verified comprehensive mock dataset
   const filtered = filterPricingItems(INITIAL_PRICING_DATA, filters);
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(Math.max(1, page), totalPages);
   const startIndex = (safePage - 1) * pageSize;
-  const paginatedData = filtered.slice(startIndex, startIndex + pageSize);
 
   return {
-    data: paginatedData,
+    data: filtered.slice(startIndex, startIndex + pageSize),
     total,
     page: safePage,
     pageSize,
@@ -188,52 +167,17 @@ export async function updateServicePrice(
     const numericId = id.replace(/\D/g, '');
     if (numericId) {
       try {
-        const { data } = await apiClient.put<BackendServiceAdminItem>(
-          `/admin/examination-services/${numericId}`,
-          {
-            price: payload.newPrice,
-            status: payload.status,
-          },
-        );
-        if (data) {
-          const updated = updateMockServicePrice(id, payload);
-          return (
-            updated ?? {
-              id: `PRC-${data.id}`,
-              code: data.serviceCode,
-              name: data.name,
-              description: data.description ?? '',
-              category: (data.category as ServicePricingItem['category']) || 'Khám Lâm sàng',
-              department: data.departmentName || 'Khoa Khám bệnh',
-              currentPrice: data.price,
-              formattedPrice: data.priceFormatted || `${data.price.toLocaleString('vi-VN')} đ`,
-              effectiveDate: payload.effectiveDate,
-              decisionNumber: payload.decisionNumber,
-              status: data.isActive ? 'ACTIVE' : 'SUSPENDED',
-              onlineBooking: data.allowsOnlineBooking,
-              priceHistory: [
-                {
-                  date: payload.effectiveDate,
-                  price: data.price,
-                  decisionNumber: payload.decisionNumber,
-                  note: payload.note,
-                  appliedBy: payload.appliedBy,
-                },
-              ],
-            }
-          );
-        }
+        await apiClient.put(`/admin/examination-services/${numericId}`, {
+          price: payload.newPrice,
+          status: payload.status,
+        });
       } catch (error) {
-        if (!shouldFallbackToMock(error)) {
-          throw error;
-        }
+        if (!isNetworkOrGatewayError(error)) throw error;
       }
     }
   }
 
   const updated = updateMockServicePrice(id, payload);
-  if (!updated) {
-    throw new Error(`Không tìm thấy dịch vụ với mã ${id}`);
-  }
+  if (!updated) throw new Error(`Không tìm thấy dịch vụ ${id}`);
   return updated;
 }
