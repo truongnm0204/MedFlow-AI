@@ -42,6 +42,7 @@ public static class DependencyInjection
         services.AddScoped<IAppointmentStatusTrackingService, AppointmentStatusTrackingService>();
         services.AddScoped<ISystemAdminDashboardService, SystemAdminDashboardService>();
         services.AddScoped<IHospitalAdminDashboardService, HospitalAdminDashboardService>();
+        services.AddScoped<IRoleCatalogService, RoleCatalogService>();
         return services;
     }
 }
