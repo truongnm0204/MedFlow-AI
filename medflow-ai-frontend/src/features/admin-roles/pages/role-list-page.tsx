@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
 
+import * as roleApi from '../api/role.api';
 import { RoleDetailModal } from '../components/role-detail-modal';
 import { RoleFilterBar } from '../components/role-filters';
 import { RoleMetricsCards } from '../components/role-metrics';
@@ -13,7 +14,7 @@ import {
   ROLE_STATUS_LABELS,
   ROLES_MOCK_DATA,
 } from '../data/role-mock-data';
-import type { RoleFilters, RoleItem } from '../types/role.types';
+import type { RoleFilters, RoleItem, RoleMetrics } from '../types/role.types';
 
 const PAGE_SIZE = 8;
 
@@ -58,6 +59,8 @@ export function RoleListPage() {
   const user = useAuthStore((state) => state.user);
   const canCreateRole = !user || user.roles.includes('SYSTEM_ADMIN');
 
+  const [roles, setRoles] = useState<RoleItem[]>(ROLES_MOCK_DATA);
+  const [metrics, setMetrics] = useState<RoleMetrics>(ROLE_METRICS_MOCK);
   const [filters, setFilters] = useState<RoleFilters>({
     query: '',
     scope: '',
@@ -66,9 +69,33 @@ export function RoleListPage() {
   const [page, setPage] = useState(1);
   const [selectedRole, setSelectedRole] = useState<RoleItem | null>(null);
 
+  useEffect(() => {
+    const isApiSpyActive = 'mock' in roleApi.fetchRoleListApi;
+    if (!roleApi.shouldUseRoleHttpApi() && !isApiSpyActive) {
+      return;
+    }
+
+    let isCancelled = false;
+    roleApi
+      .fetchRoleListApi({ page: 1, pageSize: 100 })
+      .then((catalog) => {
+        if (!isCancelled) {
+          setRoles(catalog.items);
+          setMetrics(catalog.metrics);
+        }
+      })
+      .catch(() => {
+        // Giữ nguyên dữ liệu fallback khi không thể kết nối máy chủ
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
   const filtered = useMemo(() => {
     const q = filters.query.trim().toLowerCase();
-    return ROLES_MOCK_DATA.filter((item) => {
+    return roles.filter((item) => {
       const matchesQuery =
         !q ||
         item.code.toLowerCase().includes(q) ||
@@ -83,7 +110,7 @@ export function RoleListPage() {
         (!filters.status || item.status === filters.status)
       );
     });
-  }, [filters]);
+  }, [roles, filters]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
@@ -109,7 +136,7 @@ export function RoleListPage() {
             Quản lý danh sách vai trò hệ thống (RBAC), phạm vi phân hệ và quyền hạn truy cập.
           </p>
         </div>
-        <RoleMetricsCards metrics={ROLE_METRICS_MOCK} />
+        <RoleMetricsCards metrics={metrics} />
         <RoleFilterBar
           filters={filters}
           onChange={updateFilters}
