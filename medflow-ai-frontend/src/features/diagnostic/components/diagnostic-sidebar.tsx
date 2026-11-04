@@ -5,6 +5,8 @@ import { MedflowLogo } from '@/shared/components/layout/medflow-logo';
 interface DiagnosticSidebarProps {
   activeItem?: string;
   onItemSelect?: (item: string) => void;
+  staffName?: string;
+  departmentName?: string;
 }
 
 const NAV_ITEMS = [
@@ -41,6 +43,8 @@ const NAV_ITEMS = [
 export function DiagnosticSidebar({
   activeItem = 'dashboard',
   onItemSelect,
+  staffName = 'KTV. Cận lâm sàng',
+  departmentName = 'Xét nghiệm & CĐHA • Tầng 2',
 }: DiagnosticSidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -104,8 +108,8 @@ export function DiagnosticSidebar({
             <div className="text-[9px] font-mono uppercase text-sky-700 font-bold tracking-wider">
               Diagnostic Workbench
             </div>
-            <div className="text-xs font-bold text-slate-800 truncate">KTV. Cận lâm sàng</div>
-            <div className="text-[10px] text-slate-500">Xét nghiệm & CĐHA • Tầng 2</div>
+            <div className="text-xs font-bold text-slate-800 truncate">{staffName}</div>
+            <div className="text-[10px] text-slate-500 truncate">{departmentName}</div>
           </div>
           <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-200" />
         </div>
