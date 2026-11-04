@@ -38,6 +38,7 @@ import { DoctorDashboardPage } from '@/features/doctor/pages/doctor-dashboard-pa
 import { FamilyProfileDetailPage } from '@/features/family/pages/family-profile-detail-page';
 import { FamilyProfileListPage } from '@/features/family/pages/family-profile-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
+import { HospitalAdminDashboardPage } from '@/features/hospital-admin/pages/hospital-admin-dashboard-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
 import { PatientSearchPage } from '@/features/reception/pages/patient-search-page';
@@ -374,7 +375,7 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <RequireAdmin>
-              <OperationalReportsPage />
+              <HospitalAdminDashboardPage />
             </RequireAdmin>
           </RequireAuth>
         }
