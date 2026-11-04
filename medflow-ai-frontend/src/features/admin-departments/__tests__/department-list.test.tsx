@@ -1,9 +1,10 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { DEPARTMENT_MOCK_DATA } from '../data/department-mock-data';
 import { DepartmentListPage } from '../pages/department-list-page';
+import { useDepartmentStore } from '../store/department.store';
 
 const renderPage = () =>
   render(
@@ -11,8 +12,11 @@ const renderPage = () =>
       <DepartmentListPage />
     </MemoryRouter>,
   );
-
 describe('DepartmentListPage (SCR-ADM-DEP-01)', () => {
+  beforeEach(() => {
+    useDepartmentStore.getState().resetToMock();
+  });
+
   it('has 14 mock departments with 12 active', () => {
     expect(DEPARTMENT_MOCK_DATA).toHaveLength(14);
     expect(DEPARTMENT_MOCK_DATA.filter((d) => d.status === 'ACTIVE')).toHaveLength(12);
@@ -72,5 +76,58 @@ describe('DepartmentListPage (SCR-ADM-DEP-01)', () => {
       target: { value: 'zzz' },
     });
     expect(screen.getByText('Không tìm thấy khoa phòng phù hợp')).toBeInTheDocument();
+  });
+
+  it('opens deactivate modal when clicking power icon on an active department', () => {
+    renderPage();
+    const deactivateBtn = screen.getByRole('button', {
+      name: 'Ngừng hoạt động Khoa Nội Tiêu hóa',
+    });
+    fireEvent.click(deactivateBtn);
+
+    expect(
+      screen.getByRole('heading', { name: 'Ngừng hoạt động khoa phòng?' }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('DEP-001').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('successfully deactivates an eligible department and updates metrics and status', async () => {
+    renderPage();
+    // DEP-003 Khoa Nội tiết is active with 0 dependencies
+    const deactivateBtn = screen.getByRole('button', {
+      name: 'Ngừng hoạt động Khoa Nội tiết',
+    });
+    fireEvent.click(deactivateBtn);
+
+    const modalConfirmBtn = screen.getByRole('button', { name: 'Ngừng hoạt động' });
+    expect(modalConfirmBtn).not.toBeDisabled();
+    fireEvent.click(modalConfirmBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Đã ngừng hoạt động khoa phòng Khoa Nội tiết/i)).toBeInTheDocument();
+    });
+    // Status changed: 11 active, 3 inactive
+    expect(screen.getByText('11 khoa đang hoạt động')).toBeInTheDocument();
+    expect(screen.getByText('03')).toBeInTheDocument();
+  });
+
+  it('reactivates an inactive department when clicking reactivate button', async () => {
+    renderPage();
+    // Go to page 2 where DEP-013 Khoa Da liễu is located
+    fireEvent.click(screen.getByRole('button', { name: 'Trang sau' }));
+
+    const reactivateBtn = screen.getByRole('button', {
+      name: 'Kích hoạt lại Khoa Da liễu',
+    });
+    fireEvent.click(reactivateBtn);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Đã kích hoạt lại hoạt động cho khoa phòng Khoa Da liễu/i),
+      ).toBeInTheDocument();
+    });
+    // Status changed: 13 active, 1 inactive
+    expect(screen.getByText('13 khoa đang hoạt động')).toBeInTheDocument();
+    expect(screen.getAllByText('01')).toHaveLength(2);
   });
 });
