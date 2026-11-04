@@ -5,6 +5,7 @@ import type {
   TodayAppointment,
 } from '../types/reception.types';
 import type { UpdatePatientFormData } from '../types/update-patient.types';
+import type { CompatibleExaminationRoomItemDto } from '../types/visit-room-transfer.types';
 
 // Mock data cho M1 role-landing — se duoc thay bang API M2.
 export const RECEPTION_STATS_MOCK: ReceptionStats = {
@@ -17,6 +18,7 @@ export const RECEPTION_STATS_MOCK: ReceptionStats = {
 export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
   {
     id: 'q-001',
+    visitCode: 'VIS-202610-0001',
     ticketNo: 'A012',
     patientName: 'Nguyễn Văn An',
     patientCode: 'BN-2024-0018',
@@ -28,6 +30,7 @@ export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
   },
   {
     id: 'q-002',
+    visitCode: 'VIS-202610-0002',
     ticketNo: 'A013',
     patientName: 'Trần Thị Bích',
     patientCode: 'BN-2024-0042',
@@ -39,6 +42,7 @@ export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
   },
   {
     id: 'q-003',
+    visitCode: 'VIS-202610-0003',
     ticketNo: 'A014',
     patientName: 'Lê Minh Cường',
     patientCode: 'BN-2024-0071',
@@ -50,6 +54,7 @@ export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
   },
   {
     id: 'q-004',
+    visitCode: 'VIS-202610-0004',
     ticketNo: 'A015',
     patientName: 'Phạm Thu Dung',
     patientCode: 'BN-2024-0089',
@@ -61,6 +66,7 @@ export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
   },
   {
     id: 'q-005',
+    visitCode: 'VIS-202610-0005',
     ticketNo: 'A016',
     patientName: 'Hoàng Đức Em',
     patientCode: 'BN-2024-0103',
@@ -72,6 +78,7 @@ export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
   },
   {
     id: 'q-006',
+    visitCode: 'VIS-202610-0006',
     ticketNo: 'A017',
     patientName: 'Vũ Thị Phương',
     patientCode: 'BN-2024-0117',
@@ -162,6 +169,13 @@ export const QUICK_ACTIONS_MOCK: QuickAction[] = [
     icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
     accent: 'sky',
   },
+  {
+    id: 'transfer-room',
+    label: 'Chuyển phòng khám tương thích',
+    description: 'Điều chuyển bệnh nhân sang phòng khám cùng khoa còn trống',
+    icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4',
+    accent: 'emerald',
+  },
 ];
 
 export const PATIENT_UPDATE_MOCK: UpdatePatientFormData = {
@@ -180,3 +194,83 @@ export const PATIENT_UPDATE_MOCK: UpdatePatientFormData = {
   emergencyContactRelationship: 'Vợ',
   emergencyContactPhone: '0987654321',
 };
+
+export const COMPATIBLE_TRANSFER_ROOMS_MOCK: CompatibleExaminationRoomItemDto[] = [
+  {
+    roomId: 1,
+    roomCode: 'RM-001',
+    roomName: 'Khám Tiêu hóa 101',
+    hospitalId: 1,
+    departmentId: 2,
+    departmentCode: 'GI',
+    departmentName: 'Khoa Tiêu hóa',
+    roomType: 'EXAMINATION',
+    location: 'Tầng 1, Khu A',
+    capacity: 2,
+    activeVisitCount: 2,
+    availableCapacity: 0,
+    status: 'ACTIVE',
+    isCurrentRoom: true,
+    isCompatible: true,
+    isAvailable: false,
+    unavailableReason: 'Đang là phòng khám hiện tại của bệnh nhân.',
+  },
+  {
+    roomId: 2,
+    roomCode: 'RM-002',
+    roomName: 'Khám Tiêu hóa 102',
+    hospitalId: 1,
+    departmentId: 2,
+    departmentCode: 'GI',
+    departmentName: 'Khoa Tiêu hóa',
+    roomType: 'EXAMINATION',
+    location: 'Tầng 1, Khu A',
+    capacity: 2,
+    activeVisitCount: 1,
+    availableCapacity: 1,
+    status: 'ACTIVE',
+    isCurrentRoom: false,
+    isCompatible: true,
+    isAvailable: true,
+    unavailableReason: null,
+  },
+  {
+    roomId: 6,
+    roomCode: 'RM-006',
+    roomName: 'Khám Tiêu hóa 103 (Bảo trì)',
+    hospitalId: 1,
+    departmentId: 2,
+    departmentCode: 'GI',
+    departmentName: 'Khoa Tiêu hóa',
+    roomType: 'EXAMINATION',
+    location: 'Tầng 1, Khu A',
+    capacity: 2,
+    activeVisitCount: 0,
+    availableCapacity: 0,
+    status: 'MAINTENANCE',
+    isCurrentRoom: false,
+    isCompatible: true,
+    isAvailable: false,
+    unavailableReason: 'Phòng khám hiện không hoạt động hoặc đang bảo trì.',
+  },
+  {
+    roomId: 3,
+    roomCode: 'RM-003',
+    roomName: 'Khám Tim mạch 201',
+    hospitalId: 1,
+    departmentId: 3,
+    departmentCode: 'CARD',
+    departmentName: 'Khoa Tim mạch',
+    roomType: 'EXAMINATION',
+    location: 'Tầng 2, Khu A',
+    capacity: 2,
+    activeVisitCount: 0,
+    availableCapacity: 2,
+    status: 'ACTIVE',
+    isCurrentRoom: false,
+    isCompatible: false,
+    isAvailable: false,
+    unavailableReason:
+      'Phòng khám đích không tương thích chuyên khoa/khoa phòng với lượt khám hiện tại.',
+  },
+];

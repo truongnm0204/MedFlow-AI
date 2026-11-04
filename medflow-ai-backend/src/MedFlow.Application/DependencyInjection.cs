@@ -13,6 +13,7 @@ using MedFlow.Application.Services.Pharmacy;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Services;
 using MedFlow.Application.Services.SystemAdmin;
+using MedFlow.Application.Services.Visits;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace MedFlow.Application;
@@ -48,6 +49,7 @@ public static class DependencyInjection
         services.AddScoped<IDiagnosticDashboardService, DiagnosticDashboardService>();
         services.AddScoped<IRoleCatalogService, RoleCatalogService>();
         services.AddScoped<IPharmacyDashboardService, PharmacyDashboardService>();
+        services.AddScoped<IVisitRoomTransferService, VisitRoomTransferService>();
         return services;
     }
 }

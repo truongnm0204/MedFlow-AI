@@ -5,6 +5,7 @@ import type { QueueEntry, QueueStatus } from '../types/reception.types';
 interface QueuePreviewTableProps {
   entries: QueueEntry[];
   onSelectPatient?: (patientCode: string) => void;
+  onTransferRoom?: (entry: QueueEntry) => void;
 }
 
 const STATUS_META: Record<
@@ -25,7 +26,11 @@ const PRIORITY_LABEL: Record<QueueEntry['priority'], string> = {
   PREGNANT: 'Phụ nữ mang thai',
 };
 
-export function QueuePreviewTable({ entries, onSelectPatient }: QueuePreviewTableProps) {
+export function QueuePreviewTable({
+  entries,
+  onSelectPatient,
+  onTransferRoom,
+}: QueuePreviewTableProps) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
@@ -37,7 +42,8 @@ export function QueuePreviewTable({ entries, onSelectPatient }: QueuePreviewTabl
             <th className="py-2 pr-3">Phòng</th>
             <th className="py-2 pr-3">Check-in</th>
             <th className="py-2 pr-3">Ưu tiên</th>
-            <th className="py-2">Trạng thái</th>
+            <th className="py-2 pr-3">Trạng thái</th>
+            {onTransferRoom && <th className="py-2 text-right">Điều phối</th>}
           </tr>
         </thead>
         <tbody>
@@ -71,6 +77,19 @@ export function QueuePreviewTable({ entries, onSelectPatient }: QueuePreviewTabl
                   {STATUS_META[entry.status].label}
                 </Badge>
               </td>
+              {onTransferRoom && (
+                <td className="py-2.5 text-right">
+                  <button
+                    type="button"
+                    disabled={entry.status === 'IN_PROGRESS' || entry.status === 'DONE'}
+                    onClick={() => onTransferRoom(entry)}
+                    aria-label={`Chuyển phòng khám cho ${entry.patientName}`}
+                    className="rounded-lg border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Chuyển phòng
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

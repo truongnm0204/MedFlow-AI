@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
@@ -63,6 +64,40 @@ describe('ReceptionDashboardPage', () => {
     expect(screen.getByText('Hàng đợi hiện tại')).toBeInTheDocument();
     expect(screen.getByText('A012')).toBeInTheDocument();
     expect(screen.getByText('Nguyễn Văn An')).toBeInTheDocument();
+  });
+
+  it('mo modal chuyen phong tuong thich tu bang hang doi va khoa ca dang kham', async () => {
+    useAuthStore.setState({
+      user: {
+        id: 5,
+        email: 'letan@medflow.test',
+        fullName: 'Lê Tân',
+        roles: ['RECEPTION'],
+        patientCode: null,
+      },
+      accessToken: 'tok',
+      refreshToken: 'rtok',
+      isAuthenticated: true,
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    const inProgressBtn = screen.getByRole('button', {
+      name: 'Chuyển phòng khám cho Nguyễn Văn An',
+    });
+    expect(inProgressBtn).toBeDisabled();
+
+    const calledBtn = screen.getByRole('button', {
+      name: 'Chuyển phòng khám cho Trần Thị Bích',
+    });
+    expect(calledBtn).not.toBeDisabled();
+
+    await user.click(calledBtn);
+
+    expect(
+      await screen.findByText('Chuyển bệnh nhân sang phòng khám tương thích (UC27)'),
+    ).toBeInTheDocument();
   });
 
   it('bao ve route /reception bang RequireAuth va RequireReception', () => {

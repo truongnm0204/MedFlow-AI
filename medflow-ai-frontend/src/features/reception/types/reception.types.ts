@@ -7,6 +7,7 @@ export type VisitType = 'SCHEDULED' | 'WALK_IN';
 
 export interface QueueEntry {
   id: string;
+  visitCode?: string;
   ticketNo: string; // so thu tu / so tiep don, vd "A012"
   patientName: string;
   patientCode: string;

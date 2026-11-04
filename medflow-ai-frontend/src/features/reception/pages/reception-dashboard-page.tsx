@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { CreatePatientModal } from '../components/create-patient-modal';
 import { PatientDetailModal } from '../components/patient-detail-modal';
 import { UpdatePatientModal } from '../components/update-patient-modal';
+import { TransferVisitRoomModal } from '../components/transfer-visit-room-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
 import { QueuePreviewTable } from '../components/queue-preview-table';
 import { ReceptionSidebar } from '../components/reception-sidebar';
@@ -22,8 +23,9 @@ import {
 } from '../data/reception-mock-data';
 import type { CreatePatientFormData, CreatedPatientResult } from '../types/create-patient.types';
 import { findPatientDetailByCode } from '../data/patient-detail-mock';
-import type { TodayAppointment } from '../types/reception.types';
+import type { QueueEntry, TodayAppointment } from '../types/reception.types';
 import type { UpdatePatientFormData } from '../types/update-patient.types';
+import type { TransferVisitRoomTarget } from '../types/visit-room-transfer.types';
 
 const APPOINTMENT_STATUS_LABEL: Record<
   TodayAppointment['status'],
@@ -51,6 +53,10 @@ export function ReceptionDashboardPage() {
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
   const [editingPatient, setEditingPatient] = useState<UpdatePatientFormData | null>(null);
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
+  const [queueEntries, setQueueEntries] = useState<QueueEntry[]>(QUEUE_ENTRIES_MOCK);
+  const [transferringTarget, setTransferringTarget] = useState<TransferVisitRoomTarget | null>(
+    null,
+  );
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
@@ -131,15 +137,25 @@ export function ReceptionDashboardPage() {
                 <div>
                   <div className="text-sm font-bold text-slate-900">Hàng đợi hiện tại</div>
                   <div className="text-[11px] text-slate-500">
-                    {QUEUE_ENTRIES_MOCK.length} lượt • cập nhật theo thời gian thực
+                    {queueEntries.length} lượt • cập nhật theo thời gian thực
                   </div>
                 </div>
                 <Badge tone="sky">Trực tiếp</Badge>
               </CardHeader>
               <CardContent className="p-0 px-6 pb-4">
                 <QueuePreviewTable
-                  entries={QUEUE_ENTRIES_MOCK}
+                  entries={queueEntries}
                   onSelectPatient={setSelectedPatientCode}
+                  onTransferRoom={(entry) => {
+                    setUpdateNotice(null);
+                    setTransferringTarget({
+                      visitIdOrCode: entry.visitCode ?? 'VIS-202610-0002',
+                      patientCode: entry.patientCode,
+                      patientName: entry.patientName,
+                      currentRoomCode: entry.room,
+                      ticketNo: entry.ticketNo,
+                    });
+                  }}
                 />
               </CardContent>
             </Card>
@@ -161,6 +177,21 @@ export function ReceptionDashboardPage() {
                       } else if (id === 'update-patient') {
                         setUpdateNotice(null);
                         setEditingPatient(PATIENT_UPDATE_MOCK);
+                      } else if (id === 'transfer-room') {
+                        setUpdateNotice(null);
+                        const candidate =
+                          queueEntries.find(
+                            (q) => q.status === 'WAITING' || q.status === 'CALLED',
+                          ) ?? queueEntries[0];
+                        if (candidate) {
+                          setTransferringTarget({
+                            visitIdOrCode: candidate.visitCode ?? 'VIS-202610-0002',
+                            patientCode: candidate.patientCode,
+                            patientName: candidate.patientName,
+                            currentRoomCode: candidate.room,
+                            ticketNo: candidate.ticketNo,
+                          });
+                        }
                       }
                     }}
                   />
@@ -220,6 +251,32 @@ export function ReceptionDashboardPage() {
             // TODO(M2): goi API cap nhat ho so khi backend san sang.
             setEditingPatient(null);
             setUpdateNotice(`Đã cập nhật hồ sơ ${code} — ${values.fullName}`);
+          }}
+        />
+      )}
+
+      {transferringTarget && (
+        <TransferVisitRoomModal
+          open
+          target={transferringTarget}
+          onClose={() => setTransferringTarget(null)}
+          onTransferred={(result) => {
+            setQueueEntries((prev) =>
+              prev.map((entry) =>
+                entry.patientCode === transferringTarget.patientCode ||
+                entry.visitCode === result.visitCode
+                  ? {
+                      ...entry,
+                      room: result.currentRoomCode,
+                      status: entry.status === 'CALLED' ? 'WAITING' : entry.status,
+                    }
+                  : entry,
+              ),
+            );
+            setTransferringTarget(null);
+            setUpdateNotice(
+              `Đã chuyển phòng khám cho ${transferringTarget.patientName} từ ${result.previousRoomCode} sang ${result.currentRoomCode} (${result.currentRoomName})`,
+            );
           }}
         />
       )}
