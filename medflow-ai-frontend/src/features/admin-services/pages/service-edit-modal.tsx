@@ -218,6 +218,39 @@ export function ServiceEditModal() {
               />
             </label>
 
+            {/* Service Status Switch Card */}
+            <label
+              className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[11px] sm:col-span-2 cursor-pointer ${
+                status === 'ACTIVE'
+                  ? 'border-emerald-200 bg-emerald-50'
+                  : 'border-slate-200 bg-slate-50'
+              }`}
+            >
+              <span>
+                <b>
+                  {status === 'ACTIVE'
+                    ? '● Đang hoạt động (Active)'
+                    : '○ Tạm ngừng dịch vụ (Suspended)'}
+                </b>
+                <small className="block text-sub">
+                  {status === 'ACTIVE'
+                    ? 'Cho phép đặt lịch khám trực tuyến và tiếp nhận tại quầy'
+                    : 'Tạm ngừng cung cấp, không nhận lịch hoặc phân bổ mới'}
+                </small>
+              </span>
+              <input
+                type="checkbox"
+                aria-label="Trạng thái dịch vụ"
+                className="accent-primary h-4 w-4 rounded cursor-pointer"
+                checked={status === 'ACTIVE'}
+                onChange={(event) =>
+                  setValue('status', event.target.checked ? 'ACTIVE' : 'SUSPENDED', {
+                    shouldDirty: true,
+                  })
+                }
+              />
+            </label>
+
             {/* Description */}
             <div className="sm:col-span-2">
               <FormField
