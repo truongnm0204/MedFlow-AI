@@ -11,6 +11,7 @@ interface RoleTableProps {
   pageSize: number;
   onPageChange: (page: number) => void;
   onSelectRole: (role: RoleItem) => void;
+  onAssignPermissions?: (role: RoleItem) => void;
 }
 
 const STATUS_STYLES: Record<RoleStatus, string> = {
@@ -36,6 +37,7 @@ export function RoleTable({
   pageSize,
   onPageChange,
   onSelectRole,
+  onAssignPermissions,
 }: RoleTableProps) {
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
@@ -112,14 +114,26 @@ export function RoleTable({
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => onSelectRole(item)}
-                      aria-label={`Xem chi tiết ${item.name}`}
-                      className="text-sm font-semibold text-primary hover:text-primary-dark"
-                    >
-                      Xem quyền
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onSelectRole(item)}
+                        aria-label={`Xem chi tiết ${item.name}`}
+                        className="text-sm font-semibold text-primary hover:text-primary-dark"
+                      >
+                        Xem quyền
+                      </button>
+                      {onAssignPermissions && (
+                        <button
+                          type="button"
+                          onClick={() => onAssignPermissions(item)}
+                          aria-label={`Phân quyền ${item.name}`}
+                          className="rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-primary transition-colors hover:bg-sky-100 hover:text-primary-dark"
+                        >
+                          Phân quyền
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))
