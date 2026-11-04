@@ -8,6 +8,7 @@ import {
   ClipboardList,
   CreditCard,
   DoorOpen,
+  LayoutDashboard,
   Phone,
   ShieldCheck,
   SlidersHorizontal,
@@ -24,6 +25,7 @@ import { useAuthStore } from '@/features/auth/store/auth.store';
 import { MedflowLogo } from './medflow-logo';
 
 export type AdminPortalTab =
+  | 'Tổng quan cơ sở'
   | 'Khoa phòng'
   | 'Buồng khám & Kỹ thuật'
   | 'Bác sĩ & Nhân sự Y tế'
@@ -51,6 +53,7 @@ export interface AdminPortalShellProps {
 }
 
 const TABS: { name: AdminPortalTab; href?: string; icon: LucideIcon }[] = [
+  { name: 'Tổng quan cơ sở', href: '/hospital-admin', icon: LayoutDashboard },
   { name: 'Khoa phòng', href: '/admin/departments', icon: Building2 },
   { name: 'Buồng khám & Kỹ thuật', href: '/admin/rooms', icon: DoorOpen },
   { name: 'Bác sĩ & Nhân sự Y tế', href: '/admin/doctors', icon: UserCheck },
