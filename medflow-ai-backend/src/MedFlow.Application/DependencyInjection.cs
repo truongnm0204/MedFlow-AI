@@ -9,6 +9,7 @@ using MedFlow.Application.Services.Hospitals;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Services;
+using MedFlow.Application.Services.SystemAdmin;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace MedFlow.Application;
@@ -38,6 +39,7 @@ public static class DependencyInjection
         services.AddScoped<IAppointmentCancelService, AppointmentCancelService>();
         services.AddScoped<IAppointmentRescheduleService, AppointmentRescheduleService>();
         services.AddScoped<IAppointmentStatusTrackingService, AppointmentStatusTrackingService>();
+        services.AddScoped<ISystemAdminDashboardService, SystemAdminDashboardService>();
         return services;
     }
 }
