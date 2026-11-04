@@ -52,6 +52,7 @@ public static class DependencyInjection
         services.AddScoped<IVisitRoomTransferService, VisitRoomTransferService>();
         services.AddScoped<IVisitTicketService, VisitTicketService>();
         services.AddScoped<IVisitRoomAssignmentService, VisitRoomAssignmentService>();
+        services.AddScoped<IExaminationQueueService, ExaminationQueueService>();
         return services;
     }
 }
