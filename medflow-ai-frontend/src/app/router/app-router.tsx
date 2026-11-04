@@ -9,7 +9,9 @@ import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page'
 import { RoomCreatePage } from '@/features/admin-rooms/pages/room-create-page';
 import { RoomEditPage } from '@/features/admin-rooms/pages/room-edit-page';
 import { StaffAccountListPage } from '@/features/admin-staff/pages/staff-account-list-page';
+import { RoleListPage } from '@/features/admin-roles/pages/role-list-page';
 import { OperationalReportsPage } from '@/features/admin-reports/pages/operational-reports-page';
+import { AppointmentPolicyPage } from '@/features/admin-policies/pages/appointment-policy-page';
 import { RoomListPage } from '@/features/admin-rooms/pages/room-list-page';
 import { StaffAccountEditPage } from '@/features/admin-staff/pages/staff-account-edit-page';
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
@@ -166,6 +168,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <StaffAccountListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/roles"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <RoleListPage />
             </RequireAdmin>
           </RequireAuth>
         }
@@ -366,6 +378,26 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <OperationalReportsPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/policies"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <AppointmentPolicyPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/appointment-policy"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <AppointmentPolicyPage />
             </RequireAdmin>
           </RequireAuth>
         }
