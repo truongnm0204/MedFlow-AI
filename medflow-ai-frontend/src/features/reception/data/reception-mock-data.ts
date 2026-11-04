@@ -6,6 +6,10 @@ import type {
 } from '../types/reception.types';
 import type { UpdatePatientFormData } from '../types/update-patient.types';
 import type { CompatibleExaminationRoomItemDto } from '../types/visit-room-transfer.types';
+import type {
+  ExaminationTicketDto,
+  PrintExaminationTicketRequest,
+} from '../types/visit-ticket.types';
 
 // Mock data cho M1 role-landing — se duoc thay bang API M2.
 export const RECEPTION_STATS_MOCK: ReceptionStats = {
@@ -24,6 +28,8 @@ export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
     patientCode: 'BN-2024-0018',
     visitType: 'SCHEDULED',
     room: 'P.102',
+    doctorName: 'BS.CKI Nguyễn Minh Đức',
+    departmentName: 'Khoa Tiêu hóa',
     status: 'IN_PROGRESS',
     checkedInAt: '08:02',
     priority: 'NORMAL',
@@ -36,18 +42,22 @@ export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
     patientCode: 'BN-2024-0042',
     visitType: 'SCHEDULED',
     room: 'P.102',
+    doctorName: 'ThS.BS Trần Thu Hà',
+    departmentName: 'Khoa Tim mạch',
     status: 'CALLED',
     checkedInAt: '08:15',
     priority: 'ELDERLY',
   },
   {
     id: 'q-003',
-    visitCode: 'VIS-202610-0003',
+    visitCode: 'VIS-202610-0009',
     ticketNo: 'A014',
     patientName: 'Lê Minh Cường',
     patientCode: 'BN-2024-0071',
     visitType: 'WALK_IN',
     room: 'P.103',
+    doctorName: 'BS.CKI Nguyễn Minh Đức',
+    departmentName: 'Khoa Tiêu hóa',
     status: 'WAITING',
     checkedInAt: '08:22',
     priority: 'NORMAL',
@@ -60,6 +70,8 @@ export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
     patientCode: 'BN-2024-0089',
     visitType: 'SCHEDULED',
     room: 'P.102',
+    doctorName: 'ThS.BS Trần Thu Hà',
+    departmentName: 'Khoa Tim mạch',
     status: 'WAITING',
     checkedInAt: '08:31',
     priority: 'PREGNANT',
@@ -72,6 +84,8 @@ export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
     patientCode: 'BN-2024-0103',
     visitType: 'WALK_IN',
     room: 'P.104',
+    doctorName: 'BS.CKI Nguyễn Minh Đức',
+    departmentName: 'Khoa Tiêu hóa',
     status: 'WAITING',
     checkedInAt: '08:40',
     priority: 'URGENT',
@@ -84,6 +98,8 @@ export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
     patientCode: 'BN-2024-0117',
     visitType: 'SCHEDULED',
     room: 'P.103',
+    doctorName: 'ThS.BS Trần Thu Hà',
+    departmentName: 'Khoa Tim mạch',
     status: 'WAITING',
     checkedInAt: '08:47',
     priority: 'NORMAL',
@@ -174,6 +190,13 @@ export const QUICK_ACTIONS_MOCK: QuickAction[] = [
     label: 'Chuyển phòng khám tương thích',
     description: 'Điều chuyển bệnh nhân sang phòng khám cùng khoa còn trống',
     icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4',
+    accent: 'emerald',
+  },
+  {
+    id: 'print-ticket',
+    label: 'In phiếu khám bệnh',
+    description: 'Xem trước và in phiếu khám ngoại trú (UC29)',
+    icon: 'M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z',
     accent: 'emerald',
   },
 ];
@@ -274,3 +297,107 @@ export const COMPATIBLE_TRANSFER_ROOMS_MOCK: CompatibleExaminationRoomItemDto[] 
       'Phòng khám đích không tương thích chuyên khoa/khoa phòng với lượt khám hiện tại.',
   },
 ];
+const FALLBACK_PRINT_COUNTS: Record<string, number> = {};
+
+export function buildFallbackExaminationTicket(
+  idOrCode: string,
+  request?: PrintExaminationTicketRequest,
+  incrementPrint = false,
+): ExaminationTicketDto {
+  const cleanKey = idOrCode.replace(/^#/, '').trim().toUpperCase();
+  const matchedEntry =
+    QUEUE_ENTRIES_MOCK.find(
+      (entry) =>
+        entry.visitCode?.toUpperCase() === cleanKey ||
+        entry.ticketNo.toUpperCase() === cleanKey ||
+        entry.patientCode.toUpperCase() === cleanKey ||
+        entry.id.toUpperCase() === cleanKey,
+    ) ?? QUEUE_ENTRIES_MOCK[0];
+
+  const visitCode = matchedEntry.visitCode ?? 'VIS-202610-0001';
+  const queueNumber = Number.parseInt(matchedEntry.ticketNo.replace(/\D/g, ''), 10) || 1;
+  const queueNumberFormatted = String(queueNumber).padStart(3, '0');
+  const currentCount = FALLBACK_PRINT_COUNTS[visitCode] ?? 0;
+  const nextCount = incrementPrint ? currentCount + 1 : currentCount;
+  if (incrementPrint) {
+    FALLBACK_PRINT_COUNTS[visitCode] = nextCount;
+  }
+
+  const copies = request?.copies ?? 1;
+  const isReprint = incrementPrint
+    ? currentCount > 0 || Boolean(request?.isReprint)
+    : currentCount > 0;
+  const isWalkIn = matchedEntry.visitType === 'WALK_IN';
+
+  return {
+    visitId: queueNumber,
+    visitCode,
+    ticketCode: `TKT-${visitCode}`,
+    ticketNo: matchedEntry.ticketNo,
+    queueNumber,
+    queueNumberFormatted,
+    queueEntryId: queueNumber,
+    queueDate: '2026-10-15',
+    queueStatus: matchedEntry.status === 'DONE' ? 'COMPLETED' : matchedEntry.status,
+    priority: matchedEntry.priority === 'URGENT' ? 'URGENT' : 'NORMAL',
+    priorityLabel:
+      matchedEntry.priority === 'URGENT'
+        ? 'Ưu tiên khẩn'
+        : matchedEntry.priority === 'ELDERLY'
+          ? 'Ưu tiên (Người cao tuổi)'
+          : 'Thông thường',
+    waitingAheadCount: matchedEntry.status === 'WAITING' ? 1 : 0,
+    estimatedWaitMinutes: matchedEntry.status === 'WAITING' ? 15 : 0,
+    visitType: matchedEntry.visitType,
+    visitTypeLabel: isWalkIn ? 'Khám vãng lai (Walk-in)' : 'Khám theo lịch hẹn',
+    visitStatus: 'CHECKED_IN',
+    visitStatusLabel: 'Đã tiếp nhận',
+    appointmentId: isWalkIn ? null : 1,
+    appointmentCode: isWalkIn ? null : 'APT-202610-0001',
+    scheduledTimeRange: isWalkIn ? null : '09:00 - 09:30',
+    patientId: 1,
+    patientCode: matchedEntry.patientCode,
+    patientName: matchedEntry.patientName,
+    patientDateOfBirth: '1980-02-02',
+    patientBirthYear: 1980,
+    patientAge: 46,
+    patientGender: 'MALE',
+    patientGenderLabel: 'Nam',
+    patientPhone: '0900000001',
+    hospitalId: 1,
+    hospitalCode: 'HOS-DEMO-01',
+    hospitalName: 'Bệnh viện Đa khoa Quốc tế MedFlow',
+    hospitalAddress: 'Số 1 Đường Demo, Hà Nội',
+    departmentId: 2,
+    departmentCode: 'GI',
+    departmentName: matchedEntry.departmentName ?? 'Khoa Tiêu hóa',
+    specialtyId: 1,
+    specialtyCode: 'GI',
+    specialtyName: 'Tiêu hóa',
+    roomId: 1,
+    roomCode: matchedEntry.room.replace('P.', 'RM-'),
+    roomName: `Phòng khám ${matchedEntry.room}`,
+    roomLocation: 'Tầng 1, Khu Khám bệnh Ngoại trú',
+    doctorId: 1,
+    doctorCode: 'DOC-001',
+    doctorTitle: 'BS.CKI',
+    doctorName: matchedEntry.doctorName ?? 'BS.CKI Nguyễn Minh Đức',
+    serviceId: 1,
+    serviceCode: 'EX-GI-01',
+    serviceName: 'Khám Tiêu hóa lần đầu',
+    reasonForVisit: 'Đau thượng vị, theo dõi tiêu hóa ngoại trú',
+    checkedInAt: `2026-10-15T${matchedEntry.checkedInAt}:00`,
+    checkedInAtLabel: `15/10/2026 ${matchedEntry.checkedInAt}`,
+    checkedInByStaffId: 3,
+    checkedInByStaffName: 'Lễ tân Lê Lan',
+    printedAtUtc: '2026-10-15T02:00:00Z',
+    printedAtLabel: `15/10/2026 ${matchedEntry.checkedInAt}`,
+    printedByUserId: 5,
+    printedByStaffCode: 'STF-003',
+    printedByStaffName: 'Lễ tân Lê Lan',
+    copies,
+    printCount: nextCount,
+    isReprint,
+    guidanceNote: `Vui lòng di chuyển đến Phòng khám ${matchedEntry.room} (Tầng 1, Khu Khám bệnh Ngoại trú) và theo dõi màn hình gọi số thứ tự ${matchedEntry.ticketNo}.`,
+  };
+}

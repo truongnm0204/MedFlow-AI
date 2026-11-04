@@ -44,6 +44,7 @@ import { HospitalAdminDashboardPage } from '@/features/hospital-admin/pages/hosp
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
 import { PatientSearchPage } from '@/features/reception/pages/patient-search-page';
+import { ExaminationQueuePage } from '@/features/reception/pages/examination-queue-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
 import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
@@ -138,6 +139,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireReception>
               <PatientSearchPage />
+            </RequireReception>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/reception/queue"
+        element={
+          <RequireAuth>
+            <RequireReception>
+              <ExaminationQueuePage />
             </RequireReception>
           </RequireAuth>
         }

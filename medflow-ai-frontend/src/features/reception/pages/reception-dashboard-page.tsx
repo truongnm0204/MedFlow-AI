@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import { CreatePatientModal } from '../components/create-patient-modal';
 import { PatientDetailModal } from '../components/patient-detail-modal';
+import { PrintExaminationTicketModal } from '../components/print-examination-ticket-modal';
 import { UpdatePatientModal } from '../components/update-patient-modal';
 import { TransferVisitRoomModal } from '../components/transfer-visit-room-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
@@ -57,6 +58,7 @@ export function ReceptionDashboardPage() {
   const [transferringTarget, setTransferringTarget] = useState<TransferVisitRoomTarget | null>(
     null,
   );
+  const [printingVisitCode, setPrintingVisitCode] = useState<string | null>(null);
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
@@ -64,6 +66,7 @@ export function ReceptionDashboardPage() {
         activeItem="dashboard"
         onItemSelect={(item) => {
           if (item === 'patients') navigate('/reception/patients');
+          if (item === 'queue') navigate('/reception/queue');
         }}
       />
 
@@ -140,7 +143,16 @@ export function ReceptionDashboardPage() {
                     {queueEntries.length} lượt • cập nhật theo thời gian thực
                   </div>
                 </div>
-                <Badge tone="sky">Trực tiếp</Badge>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/reception/queue')}
+                    className="text-xs font-semibold text-primary hover:underline"
+                  >
+                    Xem theo phòng khám
+                  </button>
+                  <Badge tone="sky">Trực tiếp</Badge>
+                </div>
               </CardHeader>
               <CardContent className="p-0 px-6 pb-4">
                 <QueuePreviewTable
@@ -156,6 +168,7 @@ export function ReceptionDashboardPage() {
                       ticketNo: entry.ticketNo,
                     });
                   }}
+                  onPrintTicket={(entry) => setPrintingVisitCode(entry.visitCode ?? entry.ticketNo)}
                 />
               </CardContent>
             </Card>
@@ -192,6 +205,9 @@ export function ReceptionDashboardPage() {
                             ticketNo: candidate.ticketNo,
                           });
                         }
+                      } else if (id === 'print-ticket') {
+                        setUpdateNotice(null);
+                        setPrintingVisitCode(QUEUE_ENTRIES_MOCK[0]?.visitCode ?? 'VIS-202610-0001');
                       }
                     }}
                   />
@@ -276,6 +292,20 @@ export function ReceptionDashboardPage() {
             setTransferringTarget(null);
             setUpdateNotice(
               `Đã chuyển phòng khám cho ${transferringTarget.patientName} từ ${result.previousRoomCode} sang ${result.currentRoomCode} (${result.currentRoomName})`,
+            );
+          }}
+        />
+      )}
+
+      {printingVisitCode && (
+        <PrintExaminationTicketModal
+          key={printingVisitCode}
+          open
+          initialVisitCode={printingVisitCode}
+          onClose={() => setPrintingVisitCode(null)}
+          onPrinted={(ticket) => {
+            setUpdateNotice(
+              `Đã in phiếu khám ${ticket.ticketNo} (${ticket.visitCode}) cho bệnh nhân ${ticket.patientName}`,
             );
           }}
         />

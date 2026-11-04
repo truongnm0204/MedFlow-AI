@@ -1,3 +1,5 @@
+import { Printer } from 'lucide-react';
+
 import { Badge } from '@/shared/ui/badge';
 
 import type { QueueEntry, QueueStatus } from '../types/reception.types';
@@ -6,6 +8,7 @@ interface QueuePreviewTableProps {
   entries: QueueEntry[];
   onSelectPatient?: (patientCode: string) => void;
   onTransferRoom?: (entry: QueueEntry) => void;
+  onPrintTicket?: (entry: QueueEntry) => void;
 }
 
 const STATUS_META: Record<
@@ -30,6 +33,7 @@ export function QueuePreviewTable({
   entries,
   onSelectPatient,
   onTransferRoom,
+  onPrintTicket,
 }: QueuePreviewTableProps) {
   return (
     <div className="overflow-x-auto">
@@ -43,6 +47,7 @@ export function QueuePreviewTable({
             <th className="py-2 pr-3">Check-in</th>
             <th className="py-2 pr-3">Ưu tiên</th>
             <th className="py-2 pr-3">Trạng thái</th>
+            <th className="py-2 pr-3 text-right">Phiếu khám</th>
             {onTransferRoom && <th className="py-2 text-right">Điều phối</th>}
           </tr>
         </thead>
@@ -72,10 +77,21 @@ export function QueuePreviewTable({
               <td className="py-2.5 pr-3 font-mono text-slate-600">{entry.room}</td>
               <td className="py-2.5 pr-3 tabular-nums text-slate-600">{entry.checkedInAt}</td>
               <td className="py-2.5 pr-3 text-slate-500">{PRIORITY_LABEL[entry.priority]}</td>
-              <td className="py-2.5">
+              <td className="py-2.5 pr-3">
                 <Badge tone={STATUS_META[entry.status].tone}>
                   {STATUS_META[entry.status].label}
                 </Badge>
+              </td>
+              <td className="py-2.5 text-right">
+                <button
+                  type="button"
+                  onClick={() => onPrintTicket?.(entry)}
+                  aria-label={`In phiếu khám cho ${entry.patientName}`}
+                  className="inline-flex items-center gap-1 rounded-lg border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-navy transition-colors hover:border-primary hover:bg-canvas hover:text-primary"
+                >
+                  <Printer className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>In phiếu</span>
+                </button>
               </td>
               {onTransferRoom && (
                 <td className="py-2.5 text-right">
