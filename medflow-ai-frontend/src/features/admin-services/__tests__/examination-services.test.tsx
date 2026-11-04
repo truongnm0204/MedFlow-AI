@@ -101,13 +101,24 @@ describe('ExaminationServiceListPage (SCR-ADM-ESV-01)', () => {
     expect(screen.queryByText('Khám Nội Tổng quát & Tư vấn Sức khỏe')).not.toBeInTheDocument();
   });
 
-  it('toggles service status from ACTIVE to SUSPENDED', () => {
+  it('opens ServiceDeactivateModal and toggles status to SUSPENDED upon confirmation', () => {
     renderPage();
     const toggleBtn = screen.getByLabelText('Đổi trạng thái Khám Nội Tổng quát & Tư vấn Sức khỏe');
     fireEvent.click(toggleBtn);
 
+    expect(
+      screen.getByRole('heading', { name: 'Ngừng hoạt động dịch vụ khám?' }),
+    ).toBeInTheDocument();
+    const confirmBtn = screen.getByRole('button', { name: 'Ngừng hoạt động' });
+    fireEvent.click(confirmBtn);
+
     const updated = useExaminationServiceStore.getState().services.find((s) => s.id === 'EX-1-01');
     expect(updated?.status).toBe('SUSPENDED');
+    expect(
+      screen.getByText(
+        /Đã chuyển trạng thái dịch vụ Khám Nội Tổng quát & Tư vấn Sức khỏe sang Tạm ngừng hoạt động\./i,
+      ),
+    ).toBeInTheDocument();
   });
 
   it('opens and closes the column customization modal', () => {

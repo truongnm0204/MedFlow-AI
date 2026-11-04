@@ -46,6 +46,8 @@ export const INITIAL_SERVICES: ExaminationService[] = [
     roomDefault: 'Phòng 101 - Khám Tổng quát',
     effectiveDate: '2026-01-01',
     decisionNumber: 'QĐ-142/BV-KH',
+    hasActiveBookings: false,
+    activeBookingsCount: 0,
     priceHistory: [
       {
         date: '2026-01-01',
@@ -76,6 +78,8 @@ export const INITIAL_SERVICES: ExaminationService[] = [
     roomDefault: 'Phòng 204 - Nội Tiêu hóa',
     effectiveDate: '2026-01-01',
     decisionNumber: 'QĐ-142/BV-KH',
+    hasActiveBookings: true,
+    activeBookingsCount: 5,
   },
   {
     id: 'EX-2-03',

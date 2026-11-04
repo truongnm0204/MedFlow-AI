@@ -61,6 +61,9 @@ public class QueueEntryConfiguration : IEntityTypeConfiguration<QueueEntry>
             .HasColumnName("manual_priority")
             .HasMaxLength(10);
 
+        builder.Property(q => q.StateVersion)
+            .HasColumnName("state_version");
+
         builder.Property(q => q.ReadyAt)
             .HasColumnName("ready_at")
             .HasColumnType("timestamp without time zone");
