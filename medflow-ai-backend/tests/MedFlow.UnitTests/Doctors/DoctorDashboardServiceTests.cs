@@ -597,7 +597,6 @@ public sealed class DoctorDashboardServiceTests : IDisposable
                 ArrivedAt = new DateTime(2026, 4, 20, 7, 45, 0),
                 CompletedAt = new DateTime(2026, 4, 20, 8, 5, 0),
             },
-            // Diagnostic queue entries for Doctor 1's visits
             new QueueEntry
             {
                 Id = 901,
