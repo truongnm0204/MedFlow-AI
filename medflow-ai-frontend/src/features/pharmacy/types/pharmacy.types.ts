@@ -61,3 +61,37 @@ export interface PharmacyQuickAction {
   icon: PharmacyQuickActionIcon;
   accent: 'sky' | 'emerald' | 'amber' | 'rose';
 }
+
+export interface PharmacistProfile {
+  userId: number;
+  email: string;
+  fullName: string;
+  staffCode?: string | null;
+  hospitalId: number;
+  hospitalCode: string;
+  hospitalName: string;
+  departmentId?: number | null;
+  departmentName?: string | null;
+  roles: string[];
+  permissions: string[];
+}
+
+export interface PharmacyDashboardQueryParams {
+  queueLimit?: number;
+  status?: PrescriptionQueueStatus | 'ALL';
+  keyword?: string;
+}
+
+export interface PharmacyDashboardSummary {
+  facilityName: string;
+  facilityCode: string;
+  counterLabel: string;
+  counterCode: string;
+  shiftLabel: string;
+  stats: PharmacyStats;
+  prescriptionQueue: PrescriptionQueueEntry[];
+  quickActions: PharmacyQuickAction[];
+  fefoBatchAlerts: FefoBatchAlertItem[];
+  pharmacistProfile?: PharmacistProfile;
+  generatedAtUtc?: string;
+}

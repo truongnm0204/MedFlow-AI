@@ -1,11 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppRouter } from '@/app/router/app-router';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { apiClient } from '@/shared/lib/axios';
 
+import * as pharmacyApi from '../api/pharmacy.api';
+import { PHARMACY_DASHBOARD_MOCK } from '../data/pharmacy-mock-data';
 import { PharmacyDashboardPage } from '../pages/pharmacy-dashboard-page';
 
 function LocationProbe() {
@@ -14,10 +17,12 @@ function LocationProbe() {
 }
 
 function renderPage() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/pharmacy']}>
         <PharmacyDashboardPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -25,7 +30,18 @@ function renderPage() {
 }
 
 describe('PharmacyDashboardPage', () => {
-  it('render dashboard header, sidebar dung vai tro Duoc si va 4 KPI stat cards', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+    useAuthStore.setState({
+      user: null,
+      accessToken: null,
+      refreshToken: null,
+      isAuthenticated: false,
+    });
+  });
+
+  it('render dashboard header, sidebar dung vai tro Duoc si va 4 KPI stat cards', async () => {
     useAuthStore.setState({
       user: {
         id: 12,
@@ -44,6 +60,10 @@ describe('PharmacyDashboardPage', () => {
     expect(screen.getByText('Tổng quan nhà thuốc ngoại trú')).toBeInTheDocument();
     expect(screen.getAllByText('DS. Trần Thị Mai').length).toBeGreaterThan(0);
 
+    await waitFor(() => {
+      expect(screen.getByText('Đơn chờ tiếp nhận')).toBeInTheDocument();
+    });
+
     // 4 KPI stat cards
     expect(screen.getByText('Đơn chờ tiếp nhận')).toBeInTheDocument();
     expect(screen.getByText('Đang soạn thuốc (FEFO)')).toBeInTheDocument();
@@ -61,7 +81,7 @@ describe('PharmacyDashboardPage', () => {
     expect(screen.queryByText('Quản lý bác sĩ')).not.toBeInTheDocument();
   });
 
-  it('render bang hang doi don thuoc, canh bao lo FEFO, quick actions, chon don thuoc va fallback khi user null', () => {
+  it('render bang hang doi don thuoc, canh bao lo FEFO, quick actions, chon don thuoc va fallback khi user null', async () => {
     useAuthStore.setState({
       user: null,
       accessToken: 'tok',
@@ -70,6 +90,10 @@ describe('PharmacyDashboardPage', () => {
     });
 
     renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('RX-2610-014')).toBeInTheDocument();
+    });
 
     expect(screen.getByText('Danh sách & hàng đợi đơn thuốc ngoại trú')).toBeInTheDocument();
     expect(screen.getByText('RX-2610-014')).toBeInTheDocument();
@@ -95,7 +119,7 @@ describe('PharmacyDashboardPage', () => {
     expect(screen.getByLabelText('Mở rộng thanh bên')).toBeInTheDocument();
   });
 
-  it('loc danh sach don thuoc theo trang thai, tu khoa tim kiem va hien thi empty state khi khong khop', () => {
+  it('loc danh sach don thuoc theo trang thai, tu khoa tim kiem va hien thi empty state khi khong khop', async () => {
     useAuthStore.setState({
       user: null,
       accessToken: 'tok',
@@ -104,6 +128,10 @@ describe('PharmacyDashboardPage', () => {
     });
 
     renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('RX-2610-014')).toBeInTheDocument();
+    });
 
     // Lọc theo trạng thái "Chờ phát" (READY)
     const readyFilterBtn = screen.getByRole('button', { name: 'Chờ phát' });
@@ -124,6 +152,87 @@ describe('PharmacyDashboardPage', () => {
     expect(
       screen.getByText('Không tìm thấy đơn thuốc phù hợp với bộ lọc hiện tại.'),
     ).toBeInTheDocument();
+  });
+
+  it('xu ly trang thai loi API va cho phep thu lai (retry)', async () => {
+    vi.spyOn(pharmacyApi, 'fetchPharmacyDashboardSummary')
+      .mockRejectedValueOnce(new Error('Lỗi kết nối máy chủ nhà thuốc'))
+      .mockResolvedValueOnce(PHARMACY_DASHBOARD_MOCK);
+
+    useAuthStore.setState({
+      user: {
+        id: 9,
+        email: 'pharmacy_staff01@medflow.test',
+        fullName: 'DS. Trần Thị Mai',
+        roles: ['PHARMACY_STAFF'],
+        patientCode: null,
+      },
+      accessToken: 'tok-pharmacy',
+      refreshToken: 'rtok-pharmacy',
+      isAuthenticated: true,
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Lỗi kết nối máy chủ nhà thuốc')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Thử lại/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Đơn chờ tiếp nhận')).toBeInTheDocument();
+    });
+  });
+
+  it('goi truc tiep GET /pharmacy/dashboard/summary khi co token va dong bo pharmacistProfile tu BE', async () => {
+    const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+      data: {
+        ...PHARMACY_DASHBOARD_MOCK,
+        facilityName: 'Bệnh viện MedFlow (giả lập)',
+        facilityCode: 'HOS-DEMO-01',
+        counterLabel: 'Quầy Dược 02 • Khu Ngoại trú',
+        pharmacistProfile: {
+          userId: 9,
+          email: 'pharmacy_staff01@medflow.test',
+          fullName: 'DS. Nguyễn Thu Hà',
+          staffCode: 'STF-007',
+          hospitalId: 1,
+          hospitalCode: 'HOS-DEMO-01',
+          hospitalName: 'Bệnh viện MedFlow (giả lập)',
+          departmentId: 3,
+          departmentName: 'Khoa Dược ngoại trú',
+          roles: ['PHARMACY_STAFF'],
+          permissions: ['MEDICINE_DISPENSE', 'PAYMENT_VIEW'],
+        },
+      },
+    });
+
+    localStorage.setItem('medflow.access_token', 'live-jwt-token');
+    useAuthStore.setState({
+      user: {
+        id: 9,
+        email: 'pharmacy_staff01@medflow.test',
+        fullName: null,
+        roles: ['PHARMACY_STAFF'],
+        patientCode: null,
+      },
+      accessToken: 'live-jwt-token',
+      refreshToken: 'live-refresh-token',
+      isAuthenticated: true,
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(getSpy).toHaveBeenCalledWith('/pharmacy/dashboard/summary', undefined);
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText('DS. Nguyễn Thu Hà').length).toBeGreaterThan(0);
+    });
+
+    expect(screen.getByText('Quầy Dược 02 • Khu Ngoại trú')).toBeInTheDocument();
   });
 
   it('bao ve route /pharmacy bang RequireAuth — chuyen huong ve /login?returnUrl=%2Fpharmacy khi chua login', () => {
