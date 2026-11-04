@@ -3,7 +3,10 @@ import axios from 'axios';
 import { apiClient } from '@/shared/lib/axios';
 
 import { HOSPITAL_ADMIN_DASHBOARD_MOCK } from '../data/hospital-admin-mock-data';
-import type { HospitalAdminDashboardSummary } from '../types/hospital-admin.types';
+import type {
+  HospitalAdminDashboardQueryParams,
+  HospitalAdminDashboardSummary,
+} from '../types/hospital-admin.types';
 
 /** Chỉ fallback về mock khi backend chưa mở endpoint (404) hoặc offline/network error. */
 function shouldFallbackToMock(error: unknown): boolean {
@@ -17,7 +20,9 @@ function shouldFallbackToMock(error: unknown): boolean {
  * Khi backend M1-020 chưa triển khai (404/network), fallback về dữ liệu chuẩn M1;
  * các lỗi phân quyền/nghiệp vụ (401/403/500...) được rethrow để UI hiển thị trạng thái lỗi.
  */
-export async function fetchHospitalAdminDashboardSummary(): Promise<HospitalAdminDashboardSummary> {
+export async function fetchHospitalAdminDashboardSummary(
+  params?: HospitalAdminDashboardQueryParams,
+): Promise<HospitalAdminDashboardSummary> {
   const hasToken =
     typeof window !== 'undefined' && Boolean(window.localStorage?.getItem('medflow.access_token'));
 
@@ -25,6 +30,7 @@ export async function fetchHospitalAdminDashboardSummary(): Promise<HospitalAdmi
     try {
       const { data } = await apiClient.get<HospitalAdminDashboardSummary>(
         '/admin/hospital-dashboard/summary',
+        params ? { params } : undefined,
       );
       return data;
     } catch (error) {
