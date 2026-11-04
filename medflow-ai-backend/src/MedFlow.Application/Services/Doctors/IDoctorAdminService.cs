@@ -7,5 +7,19 @@ public interface IDoctorAdminService
     Task<DoctorAdminListResponseDto> GetDoctorListAsync(
         GetDoctorListAdminRequest request,
         CancellationToken ct = default);
+
+    Task<DoctorAdminListItemDto> UpdateDoctorAsync(
+        long actorUserId,
+        string idOrCode,
+        UpdateDoctorAdminRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
+
+    Task<DoctorAdminListItemDto> UpdateDoctorAsync(
+        long actorUserId,
+        long id,
+        UpdateDoctorAdminRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
 }
 
