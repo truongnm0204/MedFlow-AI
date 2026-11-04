@@ -7,11 +7,14 @@ export type VisitType = 'SCHEDULED' | 'WALK_IN';
 
 export interface QueueEntry {
   id: string;
+  visitCode?: string; // ma luot kham, vd "VIS-202610-0001"
   ticketNo: string; // so thu tu / so tiep don, vd "A012"
   patientName: string;
   patientCode: string;
   visitType: VisitType;
   room: string; // phong kham duoc xep, vd "P.102"
+  doctorName?: string; // bac si duoc phan cong (UC26)
+  departmentName?: string; // chuyen khoa / khoa kham
   status: QueueStatus;
   checkedInAt: string; // ISO time, vd "08:15"
   priority: 'NORMAL' | 'URGENT' | 'ELDERLY' | 'PREGNANT';

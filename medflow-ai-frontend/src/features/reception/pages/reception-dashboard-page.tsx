@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import { CreatePatientModal } from '../components/create-patient-modal';
 import { PatientDetailModal } from '../components/patient-detail-modal';
+import { PrintExaminationTicketModal } from '../components/print-examination-ticket-modal';
 import { UpdatePatientModal } from '../components/update-patient-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
 import { QueuePreviewTable } from '../components/queue-preview-table';
@@ -51,6 +52,7 @@ export function ReceptionDashboardPage() {
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
   const [editingPatient, setEditingPatient] = useState<UpdatePatientFormData | null>(null);
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
+  const [printingVisitCode, setPrintingVisitCode] = useState<string | null>(null);
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
@@ -150,6 +152,7 @@ export function ReceptionDashboardPage() {
                 <QueuePreviewTable
                   entries={QUEUE_ENTRIES_MOCK}
                   onSelectPatient={setSelectedPatientCode}
+                  onPrintTicket={(entry) => setPrintingVisitCode(entry.visitCode ?? entry.ticketNo)}
                 />
               </CardContent>
             </Card>
@@ -171,6 +174,9 @@ export function ReceptionDashboardPage() {
                       } else if (id === 'update-patient') {
                         setUpdateNotice(null);
                         setEditingPatient(PATIENT_UPDATE_MOCK);
+                      } else if (id === 'print-ticket') {
+                        setUpdateNotice(null);
+                        setPrintingVisitCode(QUEUE_ENTRIES_MOCK[0]?.visitCode ?? 'VIS-202610-0001');
                       }
                     }}
                   />
@@ -230,6 +236,20 @@ export function ReceptionDashboardPage() {
             // TODO(M2): goi API cap nhat ho so khi backend san sang.
             setEditingPatient(null);
             setUpdateNotice(`Đã cập nhật hồ sơ ${code} — ${values.fullName}`);
+          }}
+        />
+      )}
+
+      {printingVisitCode && (
+        <PrintExaminationTicketModal
+          key={printingVisitCode}
+          open
+          initialVisitCode={printingVisitCode}
+          onClose={() => setPrintingVisitCode(null)}
+          onPrinted={(ticket) => {
+            setUpdateNotice(
+              `Đã in phiếu khám ${ticket.ticketNo} (${ticket.visitCode}) cho bệnh nhân ${ticket.patientName}`,
+            );
           }}
         />
       )}
