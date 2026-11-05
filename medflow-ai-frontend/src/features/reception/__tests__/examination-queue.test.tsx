@@ -8,6 +8,7 @@ import { AppRouter } from '@/app/router/app-router';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { apiClient } from '@/shared/lib/axios';
 
+import { updateExaminationQueueStatus } from '../api/examination-queue.api';
 import {
   buildMockExaminationQueueResponse,
   buildMockUpdateExaminationQueueStatusResponse,
@@ -32,7 +33,7 @@ function renderQueuePage() {
   );
 }
 
-describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
+describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
@@ -311,7 +312,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
     expect(within(radioGroup).queryByText('Hoàn tất')).not.toBeInTheDocument();
 
     // Submit default first valid transition (IN_PROGRESS - Đang khám)
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Xác nhận cập nhật' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Xác nhận cập nhật/i }));
 
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -333,10 +334,10 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
       target: { value: 'PRESENT' },
     });
     fireEvent.change(
-      within(skippedDialog).getByLabelText('Lý do hoặc ghi chú cập nhật trạng thái'),
+      within(skippedDialog).getByLabelText(/Lý do hoặc ghi chú cập nhật trạng thái/i),
       { target: { value: '' } },
     );
-    fireEvent.click(within(skippedDialog).getByRole('button', { name: 'Xác nhận cập nhật' }));
+    fireEvent.click(within(skippedDialog).getByRole('button', { name: /Xác nhận cập nhật/i }));
 
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(
@@ -369,7 +370,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
     fireEvent.change(within(dialog).getByLabelText('Trạng thái hiện diện'), {
       target: { value: 'NOT_ARRIVED' },
     });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Xác nhận cập nhật' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Xác nhận cập nhật/i }));
 
     expect(
       within(dialog).getByText(
@@ -379,11 +380,9 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
 
     // 2. Select SKIPPED ("Qua lượt") with empty reason -> validation error
     fireEvent.click(within(radioGroup).getByRole('radio', { name: /Qua lượt/i }));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Xác nhận cập nhật' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Xác nhận cập nhật/i }));
 
-    expect(
-      within(dialog).getByText('Vui lòng nhập lý do chuyển sang trạng thái Qua lượt.'),
-    ).toBeInTheDocument();
+    expect(within(dialog).getByText(/Vui lòng nhập lý do qua lượt/i)).toBeInTheDocument();
 
     // 3. Click quick-fill reason chip and submit -> succeeds
     fireEvent.click(
@@ -391,7 +390,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
         name: 'Gọi 3 lần chưa có mặt tại cửa phòng khám',
       }),
     );
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Xác nhận cập nhật' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Xác nhận cập nhật/i }));
 
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -401,7 +400,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
     );
   });
 
-  it('calls PATCH /reception/examination-queue/:id/status when token is present and surfaces HTTP 409 Conflict in modal alert', async () => {
+  it('calls PATCH status endpoint when token is present and surfaces HTTP 409 Conflict in modal alert', async () => {
     window.localStorage.setItem('medflow.access_token', 'jwt-reception-token');
 
     const mockQueue = buildMockExaminationQueueResponse();
@@ -434,6 +433,19 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
     const patchSpy = vi
       .spyOn(apiClient, 'patch')
       .mockRejectedValueOnce(conflictError)
+      .mockResolvedValueOnce({
+        data: {
+          queueEntryId: 2,
+          visitCode: 'VIS-2026-0102',
+          ticketNo: 'A013',
+          patientName: 'Trần Thị Bích',
+          previousStatus: 'CALLED',
+          currentStatus: 'IN_PROGRESS',
+          presenceStatus: 'PRESENT',
+          blockedReason: null,
+          reason: null,
+        },
+      })
       .mockResolvedValueOnce({ data: mockPatchSuccess });
 
     renderQueuePage();
@@ -449,7 +461,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
     );
 
     const dialog = screen.getByRole('dialog');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Xác nhận cập nhật' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Xác nhận cập nhật/i }));
 
     // First attempt -> HTTP 409 Conflict surfaced in modal alert
     await waitFor(() => {
@@ -457,14 +469,16 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
         'Bệnh nhân đã được bác sĩ khác gọi khám (HTTP 409)',
       );
     });
-    expect(patchSpy).toHaveBeenCalledWith('/reception/examination-queue/q-002/status', {
-      targetStatus: 'IN_PROGRESS',
-      presenceStatus: 'PRESENT',
-      reason: null,
-    });
+    expect(patchSpy).toHaveBeenCalledWith(
+      '/reception/examination-queue/entries/q-002/status',
+      expect.objectContaining({
+        targetStatus: 'IN_PROGRESS',
+        presenceStatus: 'PRESENT',
+      }),
+    );
 
     // Second attempt -> resolves and closes modal
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Xác nhận cập nhật' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Xác nhận cập nhật/i }));
 
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -472,6 +486,18 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
     expect(screen.getByRole('status')).toHaveTextContent(
       'Đã cập nhật trạng thái phiếu A013 (Trần Thị Bích) từ Đã gọi số sang Đang khám.',
     );
+
+    // Direct API helper contract check
+    await updateExaminationQueueStatus('q-002', {
+      targetStatus: 'IN_PROGRESS',
+      presenceStatus: 'PRESENT',
+      reason: null,
+    });
+    expect(patchSpy).toHaveBeenCalledWith('/reception/examination-queue/q-002/status', {
+      targetStatus: 'IN_PROGRESS',
+      presenceStatus: 'PRESENT',
+      reason: null,
+    });
   });
 
   it('disables Update Status action for COMPLETED entries and recalculates KPI & room counters when completing an IN_PROGRESS entry', async () => {
@@ -502,7 +528,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87)', () => {
     expect(radios).toHaveLength(1);
     expect(within(radioGroup).getByText('Hoàn tất')).toBeInTheDocument();
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Xác nhận cập nhật' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Xác nhận cập nhật/i }));
 
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

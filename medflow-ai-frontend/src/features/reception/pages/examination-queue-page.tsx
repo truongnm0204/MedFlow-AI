@@ -14,10 +14,7 @@ import { Spinner } from '@/shared/ui/spinner';
 
 import { ExaminationQueueEmptyState } from '../components/examination-queue-empty-state';
 import { ExaminationQueueFilterBar } from '../components/examination-queue-filter-bar';
-import {
-  EXAMINATION_QUEUE_STATUS_META,
-  ExaminationQueueServicePointCard,
-} from '../components/examination-queue-service-point-card';
+import { ExaminationQueueServicePointCard } from '../components/examination-queue-service-point-card';
 import { ExaminationQueueStatCards } from '../components/examination-queue-stat-cards';
 import { PatientDetailModal } from '../components/patient-detail-modal';
 import { ReceptionSidebar } from '../components/reception-sidebar';
@@ -31,9 +28,21 @@ import {
 } from '../schemas/examination-queue-filter.schema';
 import type {
   ExaminationQueueEntryDto,
+  ExaminationQueueStatsDto,
+  ExaminationQueueStatus,
   ExaminationQueueStatusFilter,
   ServicePointQueueDto,
 } from '../types/examination-queue.types';
+import type { UpdateQueueStatusTarget } from '../types/queue-status-update.types';
+
+const STATUS_LABEL: Record<ExaminationQueueStatus, string> = {
+  WAITING: 'Đang chờ',
+  READY: 'Sẵn sàng',
+  CALLED: 'Đã gọi số',
+  IN_PROGRESS: 'Đang khám',
+  COMPLETED: 'Hoàn tất',
+  SKIPPED: 'Qua lượt',
+};
 
 const INITIAL_FILTERS: ExaminationQueueFilterFormValues = {
   queueDate: DEFAULT_QUEUE_DATE,
@@ -56,8 +65,14 @@ export function ExaminationQueuePage() {
     useState<ExaminationQueueFilterFormValues>(INITIAL_FILTERS);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [selectedPatientCode, setSelectedPatientCode] = useState<string | null>(null);
-  const [editingEntry, setEditingEntry] = useState<ExaminationQueueEntryDto | null>(null);
-  const [statusNotice, setStatusNotice] = useState<string | null>(null);
+
+  const [updatingQueueTarget, setUpdatingQueueTarget] = useState<UpdateQueueStatusTarget | null>(
+    null,
+  );
+  const [statusOverrides, setStatusOverrides] = useState<
+    Record<string, Partial<ExaminationQueueEntryDto>>
+  >({});
+  const [updateNotice, setUpdateNotice] = useState<string | null>(null);
   const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
 
   const { data, isPending, isError, error, refetch } = useExaminationQueue({
@@ -84,7 +99,96 @@ export function ExaminationQueuePage() {
     setValidationError(null);
   };
 
-  const servicePoints = useMemo(() => data?.servicePoints ?? [], [data]);
+  const servicePoints = useMemo<ServicePointQueueDto[]>(() => {
+    const rawPoints = data?.servicePoints ?? [];
+    return rawPoints.map((sp) => {
+      const entries = sp.entries.map((entry) => {
+        const override = statusOverrides[entry.id];
+        return override ? { ...entry, ...override } : entry;
+      });
+
+      const waitingCount = entries.filter(
+        (e) => e.status === 'WAITING' || e.status === 'READY',
+      ).length;
+      const inProgressCount = entries.filter(
+        (e) => e.status === 'IN_PROGRESS' || e.status === 'CALLED',
+      ).length;
+      const completedCount = entries.filter((e) => e.status === 'COMPLETED').length;
+      const skippedCount = entries.filter((e) => e.status === 'SKIPPED').length;
+      const currentServingEntry =
+        entries.find((e) => e.status === 'IN_PROGRESS') ??
+        entries.find((e) => e.status === 'CALLED');
+      const nextWaitingEntry = entries.find((e) => e.status === 'READY' || e.status === 'WAITING');
+
+      return {
+        ...sp,
+        entries,
+        waitingCount,
+        inProgressCount,
+        completedCount,
+        skippedCount,
+        currentServingTicketNo: currentServingEntry?.ticketNo ?? sp.currentServingTicketNo,
+        nextTicketNo: nextWaitingEntry?.ticketNo ?? null,
+      };
+    });
+  }, [data, statusOverrides]);
+
+  const effectiveStats = useMemo<ExaminationQueueStatsDto | null>(() => {
+    if (!data) return null;
+    let totalEntries = 0;
+    let waitingCount = 0;
+    let calledOrServingCount = 0;
+    let completedCount = 0;
+    let skippedCount = 0;
+
+    for (const sp of servicePoints) {
+      for (const entry of sp.entries) {
+        totalEntries += 1;
+        if (entry.status === 'WAITING' || entry.status === 'READY') {
+          waitingCount += 1;
+        } else if (entry.status === 'CALLED' || entry.status === 'IN_PROGRESS') {
+          calledOrServingCount += 1;
+        } else if (entry.status === 'COMPLETED') {
+          completedCount += 1;
+        } else if (entry.status === 'SKIPPED') {
+          skippedCount += 1;
+        }
+      }
+    }
+
+    return {
+      ...data.stats,
+      totalEntries,
+      waitingCount,
+      calledOrServingCount,
+      completedCount,
+      skippedCount,
+    };
+  }, [data, servicePoints]);
+
+  const handleOpenUpdateStatus = (
+    entry: ExaminationQueueEntryDto,
+    initialTargetStatus?: ExaminationQueueStatus,
+  ) => {
+    setUpdateNotice(null);
+    setUpdatingQueueTarget({
+      entryId: entry.id,
+      queueNumber: entry.queueNumber,
+      ticketNo: entry.ticketNo,
+      visitCode: entry.visitCode,
+      patientName: entry.patientName,
+      patientCode: entry.patientCode,
+      roomCode: entry.roomCode,
+      roomName: entry.roomName,
+      departmentName: entry.departmentName,
+      doctorName: entry.doctorName,
+      currentStatus: entry.status,
+      presenceStatus: entry.presenceStatus,
+      priority: entry.priority,
+      blockedReason: entry.blockedReason,
+      initialTargetStatus,
+    });
+  };
 
   const servicePointOptions = useMemo(() => {
     const totalCount = servicePoints.reduce((acc, sp) => acc + sp.entries.length, 0);
@@ -267,12 +371,6 @@ export function ExaminationQueuePage() {
             </div>
           )}
 
-          {statusNotice && (
-            <div role="status">
-              <Alert tone="success">{statusNotice}</Alert>
-            </div>
-          )}
-
           {isPending ? (
             <div
               role="status"
@@ -284,7 +382,23 @@ export function ExaminationQueuePage() {
           ) : (
             data && (
               <>
-                <ExaminationQueueStatCards stats={data.stats} />
+                {updateNotice && (
+                  <div
+                    role="status"
+                    className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800 flex items-center justify-between gap-2"
+                  >
+                    <span>{updateNotice}</span>
+                    <button
+                      type="button"
+                      onClick={() => setUpdateNotice(null)}
+                      className="text-[11px] font-bold text-emerald-700 hover:underline"
+                    >
+                      Đóng
+                    </button>
+                  </div>
+                )}
+
+                {effectiveStats && <ExaminationQueueStatCards stats={effectiveStats} />}
 
                 <ExaminationQueueFilterBar
                   filters={filters}
@@ -305,10 +419,7 @@ export function ExaminationQueuePage() {
                           servicePoint={servicePoint}
                           canManageQueue={canManageQueue}
                           onSelectPatient={setSelectedPatientCode}
-                          onUpdateStatus={(entry) => {
-                            setStatusNotice(null);
-                            setEditingEntry(entry);
-                          }}
+                          onUpdateStatus={canManageQueue ? handleOpenUpdateStatus : undefined}
                         />
                       ))
                     ) : (
@@ -406,21 +517,35 @@ export function ExaminationQueuePage() {
           onClose={() => setSelectedPatientCode(null)}
         />
 
-        <UpdateQueueStatusModal
-          key={editingEntry?.id ?? 'closed'}
-          open={Boolean(editingEntry)}
-          entry={editingEntry}
-          currentQueueData={data}
-          onClose={() => setEditingEntry(null)}
-          onUpdated={(result) => {
-            setEditingEntry(null);
-            const prevLabel = EXAMINATION_QUEUE_STATUS_META[result.previousStatus].label;
-            const nextLabel = EXAMINATION_QUEUE_STATUS_META[result.entry.status].label;
-            setStatusNotice(
-              `Đã cập nhật trạng thái phiếu ${result.entry.ticketNo} (${result.entry.patientName}) từ ${prevLabel} sang ${nextLabel}.`,
-            );
-          }}
-        />
+        {updatingQueueTarget && (
+          <UpdateQueueStatusModal
+            key={updatingQueueTarget.entryId}
+            open={Boolean(updatingQueueTarget)}
+            target={updatingQueueTarget}
+            onClose={() => setUpdatingQueueTarget(null)}
+            onUpdated={(result) => {
+              const nowTime = new Date().toLocaleTimeString('vi-VN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+              });
+              setStatusOverrides((prev) => ({
+                ...prev,
+                [result.entryId]: {
+                  status: result.currentStatus,
+                  presenceStatus: result.presenceStatus,
+                  blockedReason: result.blockedReason,
+                  ...(result.currentStatus === 'CALLED' ? { calledAt: nowTime } : {}),
+                  ...(result.currentStatus === 'IN_PROGRESS' ? { startedAt: nowTime } : {}),
+                },
+              }));
+              setUpdateNotice(
+                `Đã cập nhật trạng thái phiếu ${result.ticketNo} (${result.patientName}) từ ${STATUS_LABEL[result.previousStatus]} sang ${STATUS_LABEL[result.currentStatus]}.`,
+              );
+              setUpdatingQueueTarget(null);
+            }}
+          />
+        )}
       </div>
     </div>
   );

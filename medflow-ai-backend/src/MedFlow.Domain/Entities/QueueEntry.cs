@@ -16,6 +16,7 @@ public class QueueEntry
     public DateTime? ArrivedAt { get; set; }
     public string? ArrivalClass { get; set; }
     public string? ManualPriority { get; set; }
+    public int? StateVersion { get; set; }
     public DateTime? ReadyAt { get; set; }
     public DateTime? CalledAt { get; set; }
     public DateTime? StartedAt { get; set; }

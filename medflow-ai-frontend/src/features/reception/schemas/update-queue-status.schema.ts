@@ -6,45 +6,66 @@ import {
   QUEUE_PRESENCE_STATUS_VALUES,
 } from '../types/examination-queue.types';
 
+const SAFE_TEXT_REGEX = /^[^<>]*$/;
+
 export const updateQueueStatusSchema = z
   .object({
-    queueEntryId: z.string().trim().min(1, 'Thiếu mã lượt hàng đợi.'),
-    currentStatus: z.enum(EXAMINATION_QUEUE_STATUS_VALUES),
+    queueEntryIdOrVisitCode: z
+      .string()
+      .trim()
+      .min(1, 'Mã định danh lượt xếp hàng không hợp lệ.')
+      .max(40, 'Mã định danh lượt xếp hàng không được vượt quá 40 ký tự.'),
+    currentStatus: z.enum(EXAMINATION_QUEUE_STATUS_VALUES).optional(),
     targetStatus: z.enum(EXAMINATION_QUEUE_STATUS_VALUES, {
-      message: 'Vui lòng chọn trạng thái chuyển tiếp hợp lệ.',
+      error: 'Vui lòng chọn trạng thái hàng đợi đích hợp lệ.',
     }),
     presenceStatus: z.enum(QUEUE_PRESENCE_STATUS_VALUES, {
-      message: 'Vui lòng chọn trạng thái hiện diện.',
+      error: 'Vui lòng chọn trạng thái hiện diện.',
     }),
     reason: z
       .string()
       .trim()
-      .max(500, 'Lý do / ghi chú không được vượt quá 500 ký tự.')
-      .refine((val) => !/[<>]/.test(val), 'Lý do / ghi chú chứa ký tự không hợp lệ.'),
+      .max(500, 'Lý do cập nhật không được vượt quá 500 ký tự.')
+      .refine((v) => SAFE_TEXT_REGEX.test(v), 'Lý do không được chứa ký tự đặc biệt < hoặc >.'),
+    notes: z
+      .string()
+      .trim()
+      .max(500, 'Ghi chú không được vượt quá 500 ký tự.')
+      .refine((v) => SAFE_TEXT_REGEX.test(v), 'Ghi chú không được chứa ký tự đặc biệt < hoặc >.')
+      .optional()
+      .default(''),
   })
-  .superRefine((data, ctx) => {
-    if (!isAllowedQueueStatusTransition(data.currentStatus, data.targetStatus)) {
+  .superRefine((values, ctx) => {
+    if (
+      values.currentStatus &&
+      !isAllowedQueueStatusTransition(values.currentStatus, values.targetStatus)
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['targetStatus'],
         message: 'Chuyển tiếp trạng thái không hợp lệ đối với lượt hàng đợi hiện tại.',
       });
     }
+
+    if (values.targetStatus === 'SKIPPED' && values.reason.trim().length < 3) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['reason'],
+        message: 'Vui lòng nhập lý do qua lượt (tối thiểu 3 ký tự).',
+      });
+    }
+
     if (
-      (data.targetStatus === 'CALLED' || data.targetStatus === 'IN_PROGRESS') &&
-      data.presenceStatus !== 'PRESENT'
+      (values.targetStatus === 'CALLED' || values.targetStatus === 'IN_PROGRESS') &&
+      values.presenceStatus !== 'PRESENT'
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['presenceStatus'],
-        message: 'Chỉ có thể gọi số hoặc bắt đầu khám khi bệnh nhân đang có mặt (Có mặt).',
-      });
-    }
-    if (data.targetStatus === 'SKIPPED' && data.reason.trim().length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['reason'],
-        message: 'Vui lòng nhập lý do chuyển sang trạng thái Qua lượt.',
+        message:
+          values.targetStatus === 'IN_PROGRESS' && values.presenceStatus === 'LEFT'
+            ? 'Không thể bắt đầu khám khi bệnh nhân chưa đến hoặc vắng mặt.'
+            : 'Chỉ có thể gọi số hoặc bắt đầu khám khi bệnh nhân đang có mặt (Có mặt).',
       });
     }
   });

@@ -16,7 +16,10 @@ export interface ExaminationQueueServicePointCardProps {
   servicePoint: ServicePointQueueDto;
   canManageQueue: boolean;
   onSelectPatient: (patientCode: string) => void;
-  onUpdateStatus?: (entry: ExaminationQueueEntryDto) => void;
+  onUpdateStatus?: (
+    entry: ExaminationQueueEntryDto,
+    initialTargetStatus?: ExaminationQueueStatus,
+  ) => void;
 }
 
 // oxlint-disable-next-line react/only-export-components
@@ -183,14 +186,14 @@ export function ExaminationQueueServicePointCard({
                     </td>
                     {canManageQueue && (
                       <td className="py-3 text-right">
-                        <div className="inline-flex items-center justify-end gap-1.5">
+                        <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
                           {onUpdateStatus && (
                             <Button
                               variant="primary"
                               size="sm"
                               disabled={entry.status === 'COMPLETED'}
-                              onClick={() => onUpdateStatus(entry)}
                               aria-label={`Cập nhật trạng thái hàng đợi cho ${entry.patientName}`}
+                              onClick={() => onUpdateStatus(entry)}
                             >
                               Cập nhật TT
                             </Button>
