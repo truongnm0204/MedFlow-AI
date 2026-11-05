@@ -34,11 +34,24 @@ interface UserMenuProps {
   onLogout?: () => void;
 }
 
-const ITEMS = [
-  { icon: CalendarCheck, label: 'Lịch hẹn của tôi', to: '/appointments', badge: true },
+const ITEMS: readonly {
+  icon: typeof CalendarCheck;
+  label: string;
+  to: string;
+  badge?: boolean;
+  divider?: boolean;
+  patientOnly?: boolean;
+}[] = [
+  {
+    icon: CalendarCheck,
+    label: 'Lịch hẹn của tôi',
+    to: '/appointments',
+    badge: true,
+    patientOnly: true,
+  },
   { icon: Search, label: 'Tìm bác sĩ & dịch vụ', to: '/#doctors' },
-  { icon: FileText, label: 'Hồ sơ bệnh án EMR', to: '/emr' },
-  { icon: FolderHeart, label: 'Hồ sơ gia đình', to: '/family' },
+  { icon: FileText, label: 'Hồ sơ bệnh án EMR', to: '/emr', patientOnly: true },
+  { icon: FolderHeart, label: 'Hồ sơ gia đình', to: '/family', patientOnly: true },
   { icon: UserRound, label: 'Thông tin cá nhân', to: '/profile' },
   { icon: Settings, label: 'Cài đặt tài khoản', to: '/settings', divider: true },
 ];
@@ -49,6 +62,8 @@ export function UserMenu({ user, upcomingAppointments = 0, onLogout }: UserMenuP
   const roleLabel = getRoleDisplayLabel(user?.roles);
   const showStaffWorkbench = isStaffRole(user?.roles);
   const workbenchRoute = getRoleLandingRoute(user?.roles);
+  const isStaffOnlyAccount = showStaffWorkbench && !user?.roles?.includes('PATIENT');
+  const visibleItems = isStaffOnlyAccount ? ITEMS.filter((item) => !item.patientOnly) : ITEMS;
 
   return (
     <Popover
@@ -90,7 +105,7 @@ export function UserMenu({ user, upcomingAppointments = 0, onLogout }: UserMenuP
             </Link>
           </li>
         )}
-        {ITEMS.map(({ icon: Icon, label, to, badge, divider }) => (
+        {visibleItems.map(({ icon: Icon, label, to, badge, divider }) => (
           <li key={label} className={divider ? 'border-t border-border' : undefined}>
             <Link
               to={to}

@@ -10,4 +10,5 @@ public sealed record BookingPatientProfileDto(
     int Age,
     string MetaPrimary,
     string MetaSecondary,
-    string PatientCode);
+    string PatientCode,
+    IReadOnlyList<string>? ActiveBookedDates = null);
