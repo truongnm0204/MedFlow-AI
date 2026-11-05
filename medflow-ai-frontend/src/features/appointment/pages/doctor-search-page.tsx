@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Calendar, ChevronRight, Home } from 'lucide-react';
 
 import { AppHeader } from '@/shared/components/layout/app-header';
@@ -16,14 +16,16 @@ import type { DoctorFilterParams, DoctorSearchResult } from '../types/doctor-sea
 
 export function DoctorSearchPage() {
   const { doctorId } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
   const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(null);
   const activeDoctorId = selectedDoctorId ?? doctorId ?? null;
+  const querySpecialty = searchParams.get('specialty')?.trim() || 'ALL';
 
   const [filters, setFilters] = useState<DoctorFilterParams>({
     keyword: '',
-    specialty: 'ALL',
+    specialty: querySpecialty,
     degree: 'ALL',
     hasScheduleToday: false,
     hasScheduleThisWeek: false,
@@ -51,19 +53,27 @@ export function DoctorSearchPage() {
   };
 
   const handleToggleScheduleToday = () => {
-    setFilters((prev) => ({
-      ...prev,
-      hasScheduleToday: !prev.hasScheduleToday,
-      page: 1,
-    }));
+    setFilters((prev) => {
+      const nextToday = !prev.hasScheduleToday;
+      return {
+        ...prev,
+        hasScheduleToday: nextToday,
+        hasScheduleThisWeek: nextToday ? false : prev.hasScheduleThisWeek,
+        page: 1,
+      };
+    });
   };
 
   const handleToggleScheduleThisWeek = () => {
-    setFilters((prev) => ({
-      ...prev,
-      hasScheduleThisWeek: !prev.hasScheduleThisWeek,
-      page: 1,
-    }));
+    setFilters((prev) => {
+      const nextWeek = !prev.hasScheduleThisWeek;
+      return {
+        ...prev,
+        hasScheduleThisWeek: nextWeek,
+        hasScheduleToday: nextWeek ? false : prev.hasScheduleToday,
+        page: 1,
+      };
+    });
   };
 
   const handleResetFilters = () => {

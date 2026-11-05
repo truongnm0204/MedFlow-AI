@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.Application.Services.Appointments;
 
-internal static class AppointmentBookingRules
+public static class AppointmentBookingRules
 {
     private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
 
@@ -16,12 +16,45 @@ internal static class AppointmentBookingRules
 
     public const string CancelledStatus = "CANCELLED";
     public const string BookedStatus = "BOOKED";
+    public const string CheckedInStatus = "CHECKED_IN";
+    public const string CompletedStatus = "COMPLETED";
     public const string OnlineChannel = "ONLINE";
     public const string NoShowStatus = "NO_SHOW";
 
-    public static readonly string[] InactiveStatuses = { "CANCELLED", "COMPLETED", "NO_SHOW", "CHECKED_IN" };
+    public const string BookingActiveAppointmentExistsMessage =
+        "Bệnh nhân đã có lịch khám đang hoạt động trong ngày này. Vui lòng hoàn thành hoặc hủy lịch khám hiện tại trước khi đặt lịch mới.";
+
+    public const string BookingVisitNotCompletedMessage =
+        "Bệnh nhân đang trong quá trình khám bệnh. Vui lòng hoàn tất lượt khám hiện tại trước khi đặt lịch khám mới trong cùng ngày.";
+
+    public const string BookingSlotStartedMessage =
+        "Khung giờ khám đã bắt đầu hoặc đã qua. Vui lòng chọn khung giờ khác.";
+
+    public static readonly string[] InactiveStatuses = { "CANCELLED", "COMPLETED", "NO_SHOW" };
     public static readonly TimeSpan AfternoonShiftStart = new(12, 0, 0);
 
+    public static string NormalizeStatusKey(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+            return string.Empty;
+
+        return status.Trim()
+            .ToUpperInvariant()
+            .Replace('-', '_')
+            .Replace(' ', '_');
+    }
+
+    public static bool IsActiveVisitStatus(string? visitStatus)
+    {
+        var key = NormalizeStatusKey(visitStatus);
+        if (string.IsNullOrEmpty(key))
+            return false;
+
+        return key is not ("COMPLETED" or "CANCELLED");
+    }
+
+    public static bool IsCompletedVisitStatus(string? visitStatus)
+        => NormalizeStatusKey(visitStatus) == CompletedStatus;
     public sealed record OwnedPatients(Patient Self, IReadOnlyList<PatientFamilyLink> FamilyLinks);
 
     public static DateTime GetVietnamNow(TimeProvider timeProvider)
@@ -62,10 +95,11 @@ internal static class AppointmentBookingRules
         {
             throw new ConflictException("Khung giờ khám không còn mở để đặt lịch.");
         }
+        if (slot.StartsAt.Value <= nowLocal)
+            throw new ValidationException(BookingSlotStartedMessage);
 
         if (slot.StartsAt.Value < nowLocal.AddHours(policy.BookingLeadHours))
             throw new ValidationException($"Chỉ được đặt lịch trước giờ khám tối thiểu {policy.BookingLeadHours} giờ.");
-
         if (DateOnly.FromDateTime(slot.StartsAt.Value) > today.AddDays(policy.BookingWindowDays))
             throw new ValidationException($"Chỉ được đặt lịch trong vòng {policy.BookingWindowDays} ngày tới.");
     }
@@ -97,36 +131,121 @@ internal static class AppointmentBookingRules
         var excludeId = excludeAppointmentId ?? 0L;
 
         var slotStartsAt = slot.StartsAt!.Value;
-        var slotEndsAt = slot.EndsAt!.Value;
+        var examDate = DateOnly.FromDateTime(slotStartsAt);
+        var dayStart = examDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        var dayEnd = dayStart.AddDays(1);
 
-        var hasOverlap = await db.Appointments
+        var sameDayAppointments = await db.Appointments
             .AsNoTracking()
-            .AnyAsync(a =>
+            .Where(a =>
                 a.Id != excludeId &&
                 a.PatientId == patientId &&
-                (a.Status == null || !InactiveStatuses.Contains(a.Status.ToUpper())) &&
                 a.Slot != null &&
                 a.Slot.StartsAt != null &&
-                a.Slot.EndsAt != null &&
-                a.Slot.StartsAt < slotEndsAt &&
-                a.Slot.EndsAt > slotStartsAt, ct);
+                a.Slot.StartsAt >= dayStart &&
+                a.Slot.StartsAt < dayEnd)
+            .Select(a => new
+            {
+                a.Id,
+                a.Status
+            })
+            .ToListAsync(ct);
 
-        if (hasOverlap)
-            throw new ConflictException("Hồ sơ này đã có lịch khám trùng thời gian.");
+        var sameDayApptIds = sameDayAppointments.Select(a => a.Id).ToList();
 
-        var activeCount = await db.Appointments
+        var sameDayVisits = new List<Visit>();
+        if (sameDayApptIds.Count > 0)
+        {
+            var byAppt = await db.Visits
+                .AsNoTracking()
+                .Where(v => v.AppointmentId != null && sameDayApptIds.Contains(v.AppointmentId.Value))
+                .ToListAsync(ct);
+            sameDayVisits.AddRange(byAppt);
+        }
+
+        var byPatientDate = await db.Visits
             .AsNoTracking()
-            .CountAsync(a =>
+            .Where(v =>
+                v.PatientId == patientId &&
+                (v.AppointmentId == null || v.AppointmentId != excludeId) &&
+                v.CheckedInAt != null &&
+                v.CheckedInAt >= dayStart &&
+                v.CheckedInAt < dayEnd)
+            .ToListAsync(ct);
+
+        foreach (var v in byPatientDate)
+        {
+            if (sameDayVisits.All(existing => existing.Id != v.Id))
+                sameDayVisits.Add(v);
+        }
+        if (sameDayVisits.Any(v => IsActiveVisitStatus(v.Status)))
+            throw new ConflictException(BookingVisitNotCompletedMessage);
+
+        foreach (var existingAppt in sameDayAppointments)
+        {
+            var apptStatusKey = NormalizeStatusKey(existingAppt.Status);
+            if (string.IsNullOrEmpty(apptStatusKey))
+                apptStatusKey = BookedStatus;
+
+            if (apptStatusKey is CancelledStatus or NoShowStatus or CompletedStatus)
+                continue;
+
+            var linkedVisits = sameDayVisits
+                .Where(v => v.AppointmentId == existingAppt.Id)
+                .ToList();
+
+            var hasCompletedVisit = linkedVisits.Any(v => IsCompletedVisitStatus(v.Status));
+            var hasCancelledVisitOnly = linkedVisits.Count > 0 &&
+                                        linkedVisits.All(v => NormalizeStatusKey(v.Status) == CancelledStatus);
+
+            if (apptStatusKey == CheckedInStatus)
+            {
+                if (!hasCompletedVisit && !hasCancelledVisitOnly)
+                    throw new ConflictException(BookingVisitNotCompletedMessage);
+
+                continue;
+            }
+
+            if (!hasCompletedVisit)
+                throw new ConflictException(BookingActiveAppointmentExistsMessage);
+        }
+
+        var candidateActiveAppointments = await db.Appointments
+            .AsNoTracking()
+            .Where(a =>
                 a.Id != excludeId &&
                 a.PatientId == patientId &&
-                (a.Status == null || !InactiveStatuses.Contains(a.Status.ToUpper())) &&
                 a.Slot != null &&
                 a.Slot.EndsAt != null &&
-                a.Slot.EndsAt > nowLocal, ct);
+                a.Slot.EndsAt > nowLocal)
+            .Select(a => new { a.Id, a.Status })
+            .ToListAsync(ct);
+
+        var candidateIds = candidateActiveAppointments.Select(a => a.Id).ToList();
+        var terminalVisitApptIds = candidateIds.Count == 0
+            ? new HashSet<long>()
+            : (await db.Visits
+                .AsNoTracking()
+                .Where(v =>
+                    v.AppointmentId != null &&
+                    candidateIds.Contains(v.AppointmentId.Value) &&
+                    v.Status != null &&
+                    (v.Status.ToUpper() == CompletedStatus || v.Status.ToUpper() == CancelledStatus))
+                .Select(v => v.AppointmentId!.Value)
+                .ToListAsync(ct))
+                .ToHashSet();
+
+        var activeCount = candidateActiveAppointments.Count(a =>
+        {
+            var key = NormalizeStatusKey(a.Status);
+            if (key is CancelledStatus or NoShowStatus or CompletedStatus)
+                return false;
+
+            return !terminalVisitApptIds.Contains(a.Id);
+        });
 
         if (activeCount >= policy.MaxActiveBookings)
             throw new ConflictException($"Hồ sơ này đã đạt tối đa {policy.MaxActiveBookings} lịch khám đang hoạt động.");
-
         if (policy.NoShowBlockDays > 0)
         {
             var lookbackStart = nowLocal.AddDays(-policy.NoShowLookbackDays);

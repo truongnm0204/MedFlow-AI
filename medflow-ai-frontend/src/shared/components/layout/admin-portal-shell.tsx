@@ -8,6 +8,7 @@ import {
   ClipboardList,
   CreditCard,
   DoorOpen,
+  LayoutDashboard,
   Phone,
   ShieldCheck,
   SlidersHorizontal,
@@ -24,6 +25,8 @@ import { useAuthStore } from '@/features/auth/store/auth.store';
 import { MedflowLogo } from './medflow-logo';
 
 export type AdminPortalTab =
+  | 'Tổng quan hệ thống'
+  | 'Tổng quan cơ sở'
   | 'Khoa phòng'
   | 'Buồng khám & Kỹ thuật'
   | 'Bác sĩ & Nhân sự Y tế'
@@ -31,6 +34,7 @@ export type AdminPortalTab =
   | 'Bảng giá & Biểu phí'
   | 'Quản lý Slot khám'
   | 'Chính sách hẹn'
+  | 'Vai trò & Phân quyền'
   | 'Báo cáo vận hành';
 
 export interface AdminPortalBreadcrumb {
@@ -50,13 +54,15 @@ export interface AdminPortalShellProps {
 }
 
 const TABS: { name: AdminPortalTab; href?: string; icon: LucideIcon }[] = [
+  { name: 'Tổng quan cơ sở', href: '/hospital-admin', icon: LayoutDashboard },
   { name: 'Khoa phòng', href: '/admin/departments', icon: Building2 },
-  { name: 'Buồng khám & Kỹ thuật', icon: DoorOpen },
+  { name: 'Buồng khám & Kỹ thuật', href: '/admin/rooms', icon: DoorOpen },
   { name: 'Bác sĩ & Nhân sự Y tế', href: '/admin/doctors', icon: UserCheck },
   { name: 'Danh mục Dịch vụ & Kỹ thuật', href: '/admin/services', icon: ClipboardList },
   { name: 'Bảng giá & Biểu phí', icon: CreditCard },
   { name: 'Quản lý Slot khám', href: '/admin/slots', icon: CalendarClock },
-  { name: 'Chính sách hẹn', icon: SlidersHorizontal },
+  { name: 'Chính sách hẹn', href: '/admin/policies', icon: SlidersHorizontal },
+  { name: 'Vai trò & Phân quyền', href: '/admin/roles', icon: ShieldCheck },
   { name: 'Báo cáo vận hành', href: '/admin/reports', icon: BarChart3 },
 ];
 
@@ -74,6 +80,11 @@ export function AdminPortalShell({
   const slotCount = useExaminationSlotStore((state) => state.slots.length);
   const displayName = user?.fullName ?? user?.email ?? 'DS. Nguyễn Văn Quản';
   const roleLabel = user?.roles.includes('SYSTEM_ADMIN') ? 'SYSTEM_ADMIN' : 'ADM-001';
+  const isSystemAdmin =
+    Boolean(user?.roles.includes('SYSTEM_ADMIN')) || activeTab === 'Tổng quan hệ thống';
+  const visibleTabs = isSystemAdmin
+    ? [{ name: 'Tổng quan hệ thống' as const, href: '/system-admin', icon: ShieldCheck }, ...TABS]
+    : TABS;
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
@@ -122,7 +133,7 @@ export function AdminPortalShell({
               </div>
               <div className="min-w-0 flex-1">
                 <div className="font-mono text-[9px] font-bold uppercase tracking-wider text-primary">
-                  HOSPITAL ADMIN
+                  {user?.roles.includes('SYSTEM_ADMIN') ? 'SYSTEM ADMIN' : 'HOSPITAL ADMIN'}
                 </div>
                 <div className="truncate text-xs font-bold text-ink">{displayName}</div>
                 <div className="truncate text-[10px] text-sub">Cơ sở Hà Nội • {roleLabel}</div>
@@ -139,7 +150,7 @@ export function AdminPortalShell({
               </div>
             )}
 
-            {TABS.map((tab) => {
+            {visibleTabs.map((tab) => {
               const isActive = tab.name === activeTab;
               const IconComponent = tab.icon;
               const badgeValue =

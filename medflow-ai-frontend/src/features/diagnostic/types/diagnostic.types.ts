@@ -1,5 +1,5 @@
-// Types cho man Diagnostic Dashboard (M1-015 — mock data, chua co backend API).
-// Khi M3 co endpoint diagnostic_orders / diagnostic_results that, cac shape nay se map sang DTO response.
+// Types cho màn Diagnostic Dashboard (M1-015 UI & M1-016 BE Integration).
+// Đồng bộ với DTO response của endpoint GET /api/v1/diagnostic/dashboard/summary.
 
 export type DiagnosticOrderStatus =
   'ORDERED' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
@@ -46,4 +46,41 @@ export interface DiagnosticQuickAction {
   description: string;
   icon: string; // SVG path d-attribute
   accent: 'sky' | 'emerald' | 'amber' | 'rose';
+  ucCode?: string;
+}
+
+export interface DiagnosticStaffProfile {
+  userId: number;
+  email: string;
+  fullName: string;
+  staffCode?: string | null;
+  hospitalId: number;
+  hospitalCode: string;
+  hospitalName: string;
+  departmentId?: number | null;
+  departmentName: string;
+  roles: string[];
+  permissions: string[];
+}
+
+export interface DiagnosticDashboardQueryParams {
+  queueLimit?: number;
+  pendingResultLimit?: number;
+  category?: DiagnosticCategory | 'ALL';
+  status?: DiagnosticOrderStatus | 'ALL';
+  priority?: DiagnosticPriority | 'ALL';
+  keyword?: string;
+}
+
+export interface DiagnosticDashboardSummary {
+  facilityName: string;
+  facilityCode: string;
+  departmentName: string;
+  shiftLabel: string;
+  stats: DiagnosticStats;
+  queue: DiagnosticQueueEntry[];
+  pendingResults: PendingResultEntry[];
+  quickActions: DiagnosticQuickAction[];
+  staffProfile?: DiagnosticStaffProfile;
+  generatedAtUtc?: string;
 }

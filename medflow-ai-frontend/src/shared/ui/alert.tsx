@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { CheckCircle2, Info, TriangleAlert } from 'lucide-react';
 
-type Tone = 'info' | 'success' | 'error';
+type Tone = 'info' | 'success' | 'warning' | 'error';
 
 const TONES: Record<Tone, { box: string; icon: ReactNode }> = {
   info: {
@@ -11,6 +11,10 @@ const TONES: Record<Tone, { box: string; icon: ReactNode }> = {
   success: {
     box: 'border-emerald-200 bg-emerald-50 text-emerald-800',
     icon: <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />,
+  },
+  warning: {
+    box: 'border-amber-200 bg-amber-50 text-amber-800',
+    icon: <TriangleAlert aria-hidden="true" className="h-4 w-4 shrink-0 text-amber-600" />,
   },
   error: {
     box: 'border-rose-200 bg-rose-50 text-rose-700',
