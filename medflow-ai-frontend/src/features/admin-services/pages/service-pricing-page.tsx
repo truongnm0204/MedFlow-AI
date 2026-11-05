@@ -25,7 +25,16 @@ import type { ExaminationService } from '../types/examination-service.types';
 
 function exportPricingToCsv(services: ExaminationService[]) {
   const quote = (val: string) => `"${val.replaceAll('"', '""').replace(/^[=+\-@]/, "'$&")}"`;
-  const headers = ['Mã DV', 'Tên Dịch Vụ', 'Khoa Phụ Trách', 'Phân Loại', 'Đơn Giá (VNĐ)', 'Số Quyết Định', 'Ngày Hiệu Lực', 'Trạng Thái'];
+  const headers = [
+    'Mã DV',
+    'Tên Dịch Vụ',
+    'Khoa Phụ Trách',
+    'Phân Loại',
+    'Đơn Giá (VNĐ)',
+    'Số Quyết Định',
+    'Ngày Hiệu Lực',
+    'Trạng Thái',
+  ];
   const rows = services.map((s) => [
     s.code,
     s.name,
@@ -50,14 +59,18 @@ export function ServicePricingPage() {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const services = useExaminationServiceStore((state) => state.services);
-  const setPriceHistoryService = useExaminationServiceStore((state) => state.setPriceHistoryService);
+  const setPriceHistoryService = useExaminationServiceStore(
+    (state) => state.setPriceHistoryService,
+  );
 
   const [search, setSearch] = useState('');
   const [department, setDepartment] = useState('all');
   const [status, setStatus] = useState('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [selectedUpdateService, setSelectedUpdateService] = useState<ExaminationService | null>(null);
+  const [selectedUpdateService, setSelectedUpdateService] = useState<ExaminationService | null>(
+    null,
+  );
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -89,13 +102,17 @@ export function ServicePricingPage() {
 
   const totalPages = Math.max(1, Math.ceil(filteredServices.length / pageSize));
   const currentPage = Math.min(page, totalPages);
-  const paginatedServices = filteredServices.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const paginatedServices = filteredServices.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
 
   // Metrics calculation
   const total = services.length;
   const activeCount = services.filter((s) => s.status === 'ACTIVE').length;
   const suspendedCount = services.filter((s) => s.status === 'SUSPENDED').length;
-  const avgPrice = total > 0 ? Math.round(services.reduce((acc, s) => acc + s.price, 0) / total) : 0;
+  const avgPrice =
+    total > 0 ? Math.round(services.reduce((acc, s) => acc + s.price, 0) / total) : 0;
 
   const handleResetFilters = () => {
     setSearch('');
@@ -124,11 +141,16 @@ export function ServicePricingPage() {
       <div className="mx-auto max-w-[1720px] space-y-5 p-6">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold tracking-tight text-ink">Bảng Giá & Biểu Phí Dịch Vụ Y Tế</h1>
-            <span className="rounded bg-sky-100 px-2 py-0.5 font-mono text-[10px] font-bold text-primary">UC52</span>
+            <h1 className="text-xl font-bold tracking-tight text-ink">
+              Bảng Giá & Biểu Phí Dịch Vụ Y Tế
+            </h1>
+            <span className="rounded bg-sky-100 px-2 py-0.5 font-mono text-[10px] font-bold text-primary">
+              UC52
+            </span>
           </div>
           <p className="mt-1 text-xs text-sub">
-            Niêm yết công khai và quản trị biểu phí áp dụng cho dịch vụ khám ngoại trú, hội chẩn và cận lâm sàng.
+            Niêm yết công khai và quản trị biểu phí áp dụng cho dịch vụ khám ngoại trú, hội chẩn và
+            cận lâm sàng.
           </p>
         </div>
 
@@ -136,8 +158,12 @@ export function ServicePricingPage() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex items-center justify-between rounded-xl border border-border bg-white p-4 shadow-xs">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-sub">DỊCH VỤ NIÊM YẾT</p>
-              <div className="mt-1 text-2xl font-bold tracking-tight text-ink">{String(total).padStart(2, '0')}</div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-sub">
+                DỊCH VỤ NIÊM YẾT
+              </p>
+              <div className="mt-1 text-2xl font-bold tracking-tight text-ink">
+                {String(total).padStart(2, '0')}
+              </div>
               <p className="mt-1 text-[11px] text-sub">Danh mục dịch vụ y tế & kỹ thuật</p>
             </div>
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-primary">
@@ -147,9 +173,15 @@ export function ServicePricingPage() {
 
           <div className="flex items-center justify-between rounded-xl border border-border bg-white p-4 shadow-xs">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-sub">ĐANG ÁP DỤNG HIỆU LỰC</p>
-              <div className="mt-1 text-2xl font-bold tracking-tight text-ink">{String(activeCount).padStart(2, '0')}</div>
-              <p className="mt-1 text-[11px] text-emerald-700 font-medium">● Biểu phí hiện hành đã phê duyệt</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-sub">
+                ĐANG ÁP DỤNG HIỆU LỰC
+              </p>
+              <div className="mt-1 text-2xl font-bold tracking-tight text-ink">
+                {String(activeCount).padStart(2, '0')}
+              </div>
+              <p className="mt-1 text-[11px] text-emerald-700 font-medium">
+                ● Biểu phí hiện hành đã phê duyệt
+              </p>
             </div>
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
               <CheckCircle className="h-5 w-5" aria-hidden="true" />
@@ -158,9 +190,15 @@ export function ServicePricingPage() {
 
           <div className="flex items-center justify-between rounded-xl border border-border bg-white p-4 shadow-xs">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-sub">TẠM DỪNG NIÊM YẾT</p>
-              <div className="mt-1 text-2xl font-bold tracking-tight text-ink">{String(suspendedCount).padStart(2, '0')}</div>
-              <p className="mt-1 text-[11px] text-amber-700 font-medium">● Cần thẩm định hoặc điều chỉnh</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-sub">
+                TẠM DỪNG NIÊM YẾT
+              </p>
+              <div className="mt-1 text-2xl font-bold tracking-tight text-ink">
+                {String(suspendedCount).padStart(2, '0')}
+              </div>
+              <p className="mt-1 text-[11px] text-amber-700 font-medium">
+                ● Cần thẩm định hoặc điều chỉnh
+              </p>
             </div>
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
               <PauseCircle className="h-5 w-5" aria-hidden="true" />
@@ -169,8 +207,12 @@ export function ServicePricingPage() {
 
           <div className="flex items-center justify-between rounded-xl border border-border bg-white p-4 shadow-xs">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-sub">MỨC GIÁ TRUNG BÌNH</p>
-              <div className="mt-1 text-2xl font-bold tracking-tight text-ink">{avgPrice.toLocaleString('vi-VN')} đ</div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-sub">
+                MỨC GIÁ TRUNG BÌNH
+              </p>
+              <div className="mt-1 text-2xl font-bold tracking-tight text-ink">
+                {avgPrice.toLocaleString('vi-VN')} đ
+              </div>
               <p className="mt-1 text-[11px] text-sub">Giá thu bình quân dịch vụ</p>
             </div>
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
@@ -183,7 +225,10 @@ export function ServicePricingPage() {
         <div className="space-y-3 rounded-xl border border-border bg-white p-4 shadow-xs">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+              <Search
+                className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                aria-hidden="true"
+              />
               <input
                 ref={searchInputRef}
                 type="text"
@@ -267,7 +312,8 @@ export function ServicePricingPage() {
 
           <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-xs text-sub">
             <span>
-              Tìm thấy <strong className="text-ink">{filteredServices.length}</strong> dịch vụ trong danh mục
+              Tìm thấy <strong className="text-ink">{filteredServices.length}</strong> dịch vụ trong
+              danh mục
             </span>
             {isFiltered && (
               <button
@@ -289,7 +335,11 @@ export function ServicePricingPage() {
               <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" aria-hidden="true" />
               <span className="font-semibold">{successMessage}</span>
             </div>
-            <button type="button" onClick={() => setSuccessMessage(null)} className="text-emerald-700 font-bold text-xs">
+            <button
+              type="button"
+              onClick={() => setSuccessMessage(null)}
+              className="text-emerald-700 font-bold text-xs"
+            >
               Đóng
             </button>
           </div>
@@ -323,7 +373,9 @@ export function ServicePricingPage() {
                       <div className="font-bold text-ink text-xs">{service.name}</div>
                       <div className="line-clamp-1 text-[11px] text-sub">{service.description}</div>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-slate-700">{service.department}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-700">
+                      {service.department}
+                    </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 border border-slate-200">
                         {service.category}
@@ -333,7 +385,9 @@ export function ServicePricingPage() {
                       {service.price.toLocaleString('vi-VN')} đ
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-slate-600">
-                      <div className="font-mono text-[11px] font-semibold">{service.decisionNumber || 'QĐ-142/BV-KH'}</div>
+                      <div className="font-mono text-[11px] font-semibold">
+                        {service.decisionNumber || 'QĐ-142/BV-KH'}
+                      </div>
                       <div className="flex items-center gap-1 text-[10px] text-sub">
                         <Clock className="h-3 w-3 text-slate-400" />
                         <span>Từ: {service.effectiveDate || '2026-01-01'}</span>

@@ -28,7 +28,9 @@ describe('ServicePricingPage (UC52 / SCR-ADM-PRC-01)', () => {
   it('renders page title, UC52 badge, breadcrumbs, and active navigation tab', () => {
     renderPricingPage();
 
-    expect(screen.getByRole('heading', { name: /Bảng Giá & Biểu Phí Dịch Vụ Y Tế/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: /Bảng Giá & Biểu Phí Dịch Vụ Y Tế/i }),
+    ).toBeInTheDocument();
     expect(screen.getByText('UC52')).toBeInTheDocument();
     expect(screen.getByText('Bảng giá & Biểu phí Dịch vụ (SCR-ADM-PRC-01)')).toBeInTheDocument();
     expect(screen.getByText('Bảng giá & Biểu phí')).toBeInTheDocument();
@@ -111,7 +113,9 @@ describe('ServicePricingPage (UC52 / SCR-ADM-PRC-01)', () => {
     fireEvent.click(confirmBtn);
 
     await waitFor(() => {
-      expect(screen.getByText(/Đã cập nhật mức giá mới 380\.000 đ theo QĐ-888\/BV-KH thành công/i)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Đã cập nhật mức giá mới 380\.000 đ theo QĐ-888\/BV-KH thành công/i),
+      ).toBeInTheDocument();
     });
   });
 

@@ -1,11 +1,4 @@
-import {
-  AlertCircle,
-  CheckCircle2,
-  DollarSign,
-  TrendingDown,
-  TrendingUp,
-  X,
-} from 'lucide-react';
+import { AlertCircle, CheckCircle2, DollarSign, TrendingDown, TrendingUp, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { useExaminationServiceStore } from '../store/examination-service.store';
@@ -63,8 +56,7 @@ function ServicePriceUpdateModalContent({
 
   const currentPrice = service.price;
   const priceDiff = newPrice - currentPrice;
-  const percentDiff =
-    currentPrice > 0 ? Math.round((priceDiff / currentPrice) * 100) : 0;
+  const percentDiff = currentPrice > 0 ? Math.round((priceDiff / currentPrice) * 100) : 0;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,8 +122,13 @@ function ServicePriceUpdateModalContent({
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
             <div className="font-bold text-ink">{service.name}</div>
             <div className="mt-1 flex gap-4 text-sub text-[11px]">
-              <span>Khoa: <b>{service.department}</b></span>
-              <span>Giá hiện tại: <b className="text-emerald-700">{service.price.toLocaleString('vi-VN')} đ</b></span>
+              <span>
+                Khoa: <b>{service.department}</b>
+              </span>
+              <span>
+                Giá hiện tại:{' '}
+                <b className="text-emerald-700">{service.price.toLocaleString('vi-VN')} đ</b>
+              </span>
             </div>
           </div>
 
@@ -167,11 +164,13 @@ function ServicePriceUpdateModalContent({
               {priceDiff !== 0 ? (
                 percentDiff > 0 ? (
                   <span className="flex items-center gap-0.5 font-bold text-rose-600">
-                    <TrendingUp className="h-3 w-3" /> Tăng +{percentDiff}% (+{priceDiff.toLocaleString('vi-VN')} đ)
+                    <TrendingUp className="h-3 w-3" /> Tăng +{percentDiff}% (+
+                    {priceDiff.toLocaleString('vi-VN')} đ)
                   </span>
                 ) : (
                   <span className="flex items-center gap-0.5 font-bold text-emerald-600">
-                    <TrendingDown className="h-3 w-3" /> Giảm {percentDiff}% ({priceDiff.toLocaleString('vi-VN')} đ)
+                    <TrendingDown className="h-3 w-3" /> Giảm {percentDiff}% (
+                    {priceDiff.toLocaleString('vi-VN')} đ)
                   </span>
                 )
               ) : (
@@ -182,7 +181,9 @@ function ServicePriceUpdateModalContent({
                   <button
                     key={pct}
                     type="button"
-                    onClick={() => setNewPrice(Math.round((currentPrice * (1 + pct / 100)) / 1000) * 1000)}
+                    onClick={() =>
+                      setNewPrice(Math.round((currentPrice * (1 + pct / 100)) / 1000) * 1000)
+                    }
                     className="rounded border border-border bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-100"
                   >
                     +{pct}%
