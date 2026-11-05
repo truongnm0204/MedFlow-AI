@@ -37,3 +37,4 @@ Quyet dinh gi — cu the.
 
 - JWT refresh token rotation + reuse detection → xem `docs/backend-auth-architecture.md` (nen chuyen thanh ADR-0001 khi co thoi gian)
 - SQL migrations thay EF migrations → `database/migrations/`
+- `0013-view-examination-queue-contract.md` — View Examination Queue API contract, two-layer authz, service point grouping & UC28 serving order (`#88` / `M2-036`)

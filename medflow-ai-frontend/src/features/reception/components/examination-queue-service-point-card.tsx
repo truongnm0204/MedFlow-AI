@@ -21,9 +21,14 @@ export interface ExaminationQueueServicePointCardProps {
     entry: ExaminationQueueEntryDto,
     servicePoint: ServicePointQueueDto,
   ) => void;
+  onUpdateStatus?: (
+    entry: ExaminationQueueEntryDto,
+    initialTargetStatus?: ExaminationQueueStatus,
+  ) => void;
 }
 
-const EXAMINATION_QUEUE_STATUS_META: Record<
+// oxlint-disable-next-line react/only-export-components
+export const EXAMINATION_QUEUE_STATUS_META: Record<
   ExaminationQueueStatus,
   { label: string; tone: 'amber' | 'sky' | 'emerald' | 'slate' | 'rose' }
 > = {
@@ -35,7 +40,8 @@ const EXAMINATION_QUEUE_STATUS_META: Record<
   SKIPPED: { label: 'Qua lượt', tone: 'rose' },
 };
 
-const EXAMINATION_QUEUE_PRIORITY_META: Record<
+// oxlint-disable-next-line react/only-export-components
+export const EXAMINATION_QUEUE_PRIORITY_META: Record<
   ExaminationQueuePriority,
   { label: string; tone: 'slate' | 'rose' | 'amber' | 'sky' | 'emerald' }
 > = {
@@ -46,7 +52,8 @@ const EXAMINATION_QUEUE_PRIORITY_META: Record<
   RETURN_RESULT: { label: 'Trả KQ CLS', tone: 'emerald' },
 };
 
-const PRESENCE_STATUS_META: Record<
+// oxlint-disable-next-line react/only-export-components
+export const PRESENCE_STATUS_META: Record<
   QueuePresenceStatus,
   { label: string; tone: 'emerald' | 'amber' | 'rose' }
 > = {
@@ -70,6 +77,7 @@ export function ExaminationQueueServicePointCard({
   canManageQueue,
   onSelectPatient,
   onOpenEarlyArrivalBackfill,
+  onUpdateStatus,
 }: ExaminationQueueServicePointCardProps) {
   return (
     <Card>
@@ -202,7 +210,7 @@ export function ExaminationQueueServicePointCard({
                     </td>
                     {canManageQueue && (
                       <td className="py-3 text-right">
-                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
                           {onOpenEarlyArrivalBackfill &&
                             (entry.status === 'WAITING' || entry.status === 'READY') && (
                               <Button
@@ -214,6 +222,17 @@ export function ExaminationQueueServicePointCard({
                                 Xử lý đến sớm / Backfill
                               </Button>
                             )}
+                          {onUpdateStatus && (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              disabled={entry.status === 'COMPLETED'}
+                              aria-label={`Cập nhật trạng thái hàng đợi cho ${entry.patientName}`}
+                              onClick={() => onUpdateStatus(entry)}
+                            >
+                              Cập nhật TT
+                            </Button>
+                          )}
                           <Button
                             variant="secondary"
                             size="sm"
