@@ -1,8 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { fetchExaminationQueue, updateExaminationQueueStatus } from '../api/examination-queue.api';
+import {
+  applyEarlyArrivalBackfill,
+  fetchExaminationQueue,
+  updateExaminationQueueStatus,
+} from '../api/examination-queue.api';
 import { applyQueueStatusUpdateToResponse } from '../data/examination-queue-mock';
 import type {
+  EarlyArrivalBackfillRequestPayload,
   ExaminationQueueQueryParams,
   ExaminationQueueResponseDto,
   UpdateExaminationQueueStatusPayload,
@@ -14,6 +19,25 @@ export function useExaminationQueue(params?: ExaminationQueueQueryParams, enable
     queryFn: () => fetchExaminationQueue(params),
     enabled,
     staleTime: 30_000,
+  });
+}
+
+export interface ApplyEarlyArrivalBackfillVariables {
+  queueEntryId: string;
+  payload: EarlyArrivalBackfillRequestPayload;
+}
+
+export function useApplyEarlyArrivalBackfill() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ queueEntryId, payload }: ApplyEarlyArrivalBackfillVariables) =>
+      applyEarlyArrivalBackfill(queueEntryId, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ['reception', 'examination-queue'],
+      });
+    },
   });
 }
 

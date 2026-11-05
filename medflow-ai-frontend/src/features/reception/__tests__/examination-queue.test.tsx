@@ -226,6 +226,9 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
     expect(screen.queryByText('Thao tác')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Xem hồ sơ' })).not.toBeInTheDocument();
     expect(
+      screen.queryByRole('button', { name: /Xử lý đến sớm \/ Backfill/i }),
+    ).not.toBeInTheDocument();
+    expect(
       screen.queryByRole('button', { name: /Cập nhật trạng thái hàng đợi cho/i }),
     ).not.toBeInTheDocument();
   });
@@ -272,6 +275,57 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
     expect(getSpy).toHaveBeenCalledWith('/reception/examination-queue', {
       params: { queueDate: '2026-11-04' },
     });
+  });
+
+  it('renders arrival-class and Safe Backfill badges, filters by arrivalClass, and applies Early Arrival / Safe Backfill workflow', async () => {
+    renderQueuePage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Phạm Thu Dung')).toBeInTheDocument();
+    });
+
+    // Arrival class & Safe Backfill badges on the queue table
+    expect(screen.getAllByText('Đúng giờ').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Đến sớm').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Đến muộn').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Vãng lai').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Safe Backfill').length).toBeGreaterThan(0);
+
+    // Filter by arrivalClass = EARLY
+    fireEvent.change(screen.getByLabelText('Lọc theo phân loại đến'), {
+      target: { value: 'EARLY' },
+    });
+    expect(screen.getByText('Phạm Thu Dung')).toBeInTheDocument();
+    expect(screen.queryByText('Nguyễn Văn An')).not.toBeInTheDocument();
+    expect(screen.queryByText('Vũ Thị Phương')).not.toBeInTheDocument();
+
+    // Open EarlyArrivalBackfillModal for Phạm Thu Dung (A015)
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Xử lý đến sớm hoặc Safe Backfill cho Phạm Thu Dung',
+      }),
+    );
+
+    expect(screen.getByText('Xử lý bệnh nhân đến sớm & Safe Backfill (UC28)')).toBeInTheDocument();
+
+    // Select preset reason and submit Safe Backfill
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Tận dụng khoảng trống giữa các ca hẹn để Safe Backfill',
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Xác nhận điều phối' }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          /Đã áp dụng Safe Backfill cho phiếu A015 \(Phạm Thu Dung\) tại P\.102 — Thứ tự phục vụ: #3, giữ nguyên số phiếu #15\./i,
+        ),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText('Tận dụng khoảng trống giữa các ca hẹn để Safe Backfill'),
+    ).toBeInTheDocument();
   });
 
   it('opens UpdateQueueStatusModal with valid transitions, transitions CALLED -> IN_PROGRESS and SKIPPED -> WAITING, and disables COMPLETED entries', async () => {

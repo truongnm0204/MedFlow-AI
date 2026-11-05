@@ -9,6 +9,7 @@ import type {
   ExaminationQueuePriorityFilter,
   ExaminationQueueStatusFilter,
   ExaminationVisitTypeFilter,
+  QueueArrivalClassFilter,
 } from '../types/examination-queue.types';
 
 export interface ExaminationQueueFilterBarProps {
@@ -43,6 +44,7 @@ export function ExaminationQueueFilterBar({
     filters.status !== 'ALL' ||
     filters.priority !== 'ALL' ||
     filters.visitType !== 'ALL' ||
+    filters.arrivalClass !== 'ALL' ||
     filters.keyword.trim() !== '' ||
     filters.queueDate !== DEFAULT_QUEUE_DATE;
 
@@ -102,6 +104,21 @@ export function ExaminationQueueFilterBar({
             <option value="ALL">Mọi hình thức khám</option>
             <option value="SCHEDULED">Hẹn trước</option>
             <option value="WALK_IN">Walk-in</option>
+          </select>
+
+          <select
+            aria-label="Lọc theo phân loại đến"
+            value={filters.arrivalClass}
+            onChange={(e) =>
+              onFilterChange({ arrivalClass: e.target.value as QueueArrivalClassFilter })
+            }
+            className="rounded-xl border border-border bg-white px-3 py-2 text-xs font-medium text-ink focus:border-primary focus:outline-none"
+          >
+            <option value="ALL">Mọi phân loại đến</option>
+            <option value="EARLY">Đến sớm (Early)</option>
+            <option value="ON_TIME_OR_GRACE">Đúng giờ</option>
+            <option value="LATE">Đến muộn</option>
+            <option value="WALK_IN">Vãng lai (Walk-in)</option>
           </select>
 
           <input
