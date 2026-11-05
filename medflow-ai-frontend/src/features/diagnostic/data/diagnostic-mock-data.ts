@@ -1,4 +1,5 @@
 import type {
+  DiagnosticDashboardSummary,
   DiagnosticQuickAction,
   DiagnosticQueueEntry,
   DiagnosticStats,
@@ -155,6 +156,7 @@ export const DIAGNOSTIC_QUICK_ACTIONS_MOCK: DiagnosticQuickAction[] = [
     description: 'Kiểm tra và xác nhận phiếu chỉ định mới từ bác sĩ',
     icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
     accent: 'sky',
+    ucCode: 'UC39',
   },
   {
     id: 'receive-patient',
@@ -162,6 +164,7 @@ export const DIAGNOSTIC_QUICK_ACTIONS_MOCK: DiagnosticQuickAction[] = [
     description: 'Quét mã lượt khám và xếp vào hàng đợi phòng kỹ thuật',
     icon: 'M13 5l7 7-7 7M5 5l7 7-7 7',
     accent: 'emerald',
+    ucCode: 'UC40',
   },
   {
     id: 'update-execution',
@@ -169,6 +172,7 @@ export const DIAGNOSTIC_QUICK_ACTIONS_MOCK: DiagnosticQuickAction[] = [
     description: 'Ghi nhận trạng thái lấy mẫu, chụp chiếu hoặc thăm dò',
     icon: 'M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z',
     accent: 'amber',
+    ucCode: 'UC42',
   },
   {
     id: 'enter-result',
@@ -176,5 +180,17 @@ export const DIAGNOSTIC_QUICK_ACTIONS_MOCK: DiagnosticQuickAction[] = [
     description: 'Nhập chỉ số, kết luận và chuyển kết quả về phòng khám',
     icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
     accent: 'rose',
+    ucCode: 'UC43',
   },
 ];
+
+export const DIAGNOSTIC_DASHBOARD_MOCK: DiagnosticDashboardSummary = {
+  facilityName: 'Bệnh viện MedFlow',
+  facilityCode: 'HOS-DEMO-01',
+  departmentName: 'Khoa Cận lâm sàng',
+  shiftLabel: 'Ca sáng • Đồng bộ trực tiếp với phòng khám',
+  stats: DIAGNOSTIC_STATS_MOCK,
+  queue: DIAGNOSTIC_QUEUE_MOCK,
+  pendingResults: PENDING_RESULTS_MOCK,
+  quickActions: DIAGNOSTIC_QUICK_ACTIONS_MOCK,
+};

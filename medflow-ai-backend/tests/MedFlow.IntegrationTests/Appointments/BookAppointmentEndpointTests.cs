@@ -317,7 +317,9 @@ public sealed class BookAppointmentEndpointTests : AuthTestBase
 
             var problem = await secondResp.Content.ReadFromJsonAsync<ProblemDetails>();
             Assert.NotNull(problem);
-            Assert.Equal("Hồ sơ này đã có lịch khám trùng thời gian.", problem.Detail);
+            Assert.Equal(
+                "Bệnh nhân đã có lịch khám đang hoạt động trong ngày này. Vui lòng hoàn thành hoặc hủy lịch khám hiện tại trước khi đặt lịch mới.",
+                problem.Detail);
         }
         finally
         {
@@ -583,5 +585,97 @@ public sealed class BookAppointmentEndpointTests : AuthTestBase
         var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
         Assert.NotNull(problem);
         Assert.Equal("Lý do khám tối đa 500 ký tự.", problem.Detail);
+    }
+
+    [Fact]
+    public async Task Create_ConcurrentSamePatientSameDayDifferentSlots_AtMostOneSucceeds()
+    {
+        var vnNow = DateTime.SpecifyKind(DateTime.UtcNow.AddHours(7), DateTimeKind.Unspecified);
+        var targetDate = DateOnly.FromDateTime(vnNow).AddDays(2);
+        var targetDateIso = targetDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        var slotA = new ExaminationSlot
+        {
+            ServiceId = 1,
+            DoctorId = 1,
+            RoomId = 1,
+            StartsAt = targetDate.ToDateTime(new TimeOnly(8, 0), DateTimeKind.Unspecified),
+            EndsAt = targetDate.ToDateTime(new TimeOnly(8, 30), DateTimeKind.Unspecified),
+            Capacity = 3,
+            Status = "OPEN",
+        };
+        var slotB = new ExaminationSlot
+        {
+            ServiceId = 1,
+            DoctorId = 1,
+            RoomId = 1,
+            StartsAt = targetDate.ToDateTime(new TimeOnly(10, 0), DateTimeKind.Unspecified),
+            EndsAt = targetDate.ToDateTime(new TimeOnly(10, 30), DateTimeKind.Unspecified),
+            Capacity = 3,
+            Status = "OPEN",
+        };
+
+        Db.ExaminationSlots.AddRange(slotA, slotB);
+        await Db.SaveChangesAsync();
+
+        try
+        {
+            var tokens = await LoginAsync("patient01@medflow.test", "Demo@12345");
+
+            HttpRequestMessage BuildRequest(long slotId)
+            {
+                var req = new HttpRequestMessage(HttpMethod.Post, BookEndpoint)
+                {
+                    Content = JsonContent.Create(new CreateAppointmentRequest
+                    {
+                        Mode = "doctor",
+                        PatientId = "3",
+                        DoctorId = "DOC-001",
+                        ServiceId = "EX-GI-01",
+                        DateIso = targetDateIso,
+                        SlotOrShiftId = slotId.ToString(CultureInfo.InvariantCulture),
+                        SymptomNote = "Kiểm tra đặt đồng thời 2 khung giờ trong cùng ngày",
+                    }),
+                };
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+                return req;
+            }
+
+            using var reqA = BuildRequest(slotA.Id);
+            using var reqB = BuildRequest(slotB.Id);
+
+            var responses = await Task.WhenAll(
+                Client.SendAsync(reqA),
+                Client.SendAsync(reqB));
+
+            var statuses = responses.Select(r => r.StatusCode).OrderBy(s => (int)s).ToArray();
+            Assert.Equal(new[] { HttpStatusCode.Created, HttpStatusCode.Conflict }, statuses);
+
+            var persistedCount = await Db.Appointments
+                .AsNoTracking()
+                .CountAsync(a => a.SlotId == slotA.Id || a.SlotId == slotB.Id);
+            Assert.Equal(1, persistedCount);
+        }
+        finally
+        {
+            var apptIds = await Db.Appointments
+                .Where(a => a.SlotId == slotA.Id || a.SlotId == slotB.Id)
+                .Select(a => a.Id.ToString())
+                .ToListAsync();
+
+            if (apptIds.Count > 0)
+            {
+                await Db.AuditLogs
+                    .Where(l => l.EntityType == "APPOINTMENT" && l.EntityId != null && apptIds.Contains(l.EntityId))
+                    .ExecuteDeleteAsync();
+            }
+
+            await Db.Appointments
+                .Where(a => a.SlotId == slotA.Id || a.SlotId == slotB.Id)
+                .ExecuteDeleteAsync();
+            await Db.ExaminationSlots
+                .Where(s => s.Id == slotA.Id || s.Id == slotB.Id)
+                .ExecuteDeleteAsync();
+        }
     }
 }

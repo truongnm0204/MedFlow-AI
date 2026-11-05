@@ -46,7 +46,7 @@ public sealed class AppointmentSlotServiceTests : IDisposable
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
-        public DbSet<Visit> Visits => throw NotUsed();
+        public DbSet<Visit> Visits => Set<Visit>();
         public DbSet<QueueEntry> QueueEntries => throw NotUsed();
         public DbSet<Payment> Payments => throw NotUsed();
 
@@ -64,9 +64,9 @@ public sealed class AppointmentSlotServiceTests : IDisposable
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuditLog>();
             modelBuilder.Ignore<HospitalPolicy>();
-            modelBuilder.Ignore<Visit>();
             modelBuilder.Ignore<QueueEntry>();
             modelBuilder.Ignore<Payment>();
+            modelBuilder.Entity<Visit>().HasKey(v => v.Id);
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Patient>(b =>

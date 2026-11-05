@@ -5,4 +5,7 @@ public sealed record ServiceShiftsResponse(
     string MonthLabel,
     IReadOnlyList<BookingPatientProfileDto> Profiles,
     IReadOnlyList<BookingDateOptionDto> Dates,
-    IReadOnlyList<ServiceShiftOptionDto> Shifts);
+    IReadOnlyList<ServiceShiftOptionDto> Shifts,
+    IReadOnlyList<BookingTimeSlotDto>? MorningSlots = null,
+    IReadOnlyList<BookingTimeSlotDto>? AfternoonSlots = null,
+    DoctorDayShiftDto? ActiveDayShift = null);

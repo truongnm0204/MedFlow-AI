@@ -48,7 +48,7 @@ public sealed class AppointmentBookingServiceTests : IDisposable
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
-        public DbSet<Visit> Visits => throw NotUsed();
+        public DbSet<Visit> Visits => Set<Visit>();
         public DbSet<QueueEntry> QueueEntries => throw NotUsed();
         public DbSet<Payment> Payments => throw NotUsed();
 
@@ -65,9 +65,9 @@ public sealed class AppointmentBookingServiceTests : IDisposable
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<HospitalPolicy>();
-            modelBuilder.Ignore<Visit>();
             modelBuilder.Ignore<QueueEntry>();
             modelBuilder.Ignore<Payment>();
+            modelBuilder.Entity<Visit>().HasKey(v => v.Id);
 
             modelBuilder.Entity<AuditLog>().HasKey(a => a.Id);
             modelBuilder.Entity<User>().HasKey(u => u.Id);
@@ -626,7 +626,7 @@ public sealed class AppointmentBookingServiceTests : IDisposable
                 },
                 ipAddress: null));
 
-        Assert.Equal("Hồ sơ này đã có lịch khám trùng thời gian.", overlapEx.Message);
+        Assert.Equal(AppointmentBookingRules.BookingActiveAppointmentExistsMessage, overlapEx.Message);
 
         existing.Status = "CANCELLED";
         await _db.SaveChangesAsync();
@@ -1287,5 +1287,378 @@ public sealed class AppointmentBookingServiceTests : IDisposable
                 }));
 
         Assert.Equal("Khung giờ khám vừa hết chỗ. Vui lòng chọn khung giờ khác.", ex.Message);
+    }
+
+    [Fact]
+    public async Task GbrApt09_NonOverlappingBookedSameDay_Blocks_UntilCancelledOrNoShow()
+    {
+        _db.ExaminationSlots.AddRange(
+            new ExaminationSlot
+            {
+                Id = 701,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 3, 8, 0, 0),
+                EndsAt = new DateTime(2026, 11, 3, 8, 30, 0),
+                Capacity = 3,
+                Status = "OPEN",
+            },
+            new ExaminationSlot
+            {
+                Id = 702,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 3, 10, 0, 0),
+                EndsAt = new DateTime(2026, 11, 3, 10, 30, 0),
+                Capacity = 3,
+                Status = "OPEN",
+            });
+
+        var morningAppt = new Appointment
+        {
+            Id = 700,
+            PatientId = 1,
+            SlotId = 701,
+            Status = "BOOKED",
+        };
+        _db.Appointments.Add(morningAppt);
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut();
+
+        var blockEx = await Assert.ThrowsAsync<ConflictException>(() =>
+            sut.CreateAsync(
+                userId: 1,
+                new CreateAppointmentRequest
+                {
+                    Mode = "doctor",
+                    PatientId = "1",
+                    DoctorId = "DOC-001",
+                    ServiceId = "EX-GI-01",
+                    DateIso = "2026-11-03",
+                    SlotOrShiftId = "702",
+                    SymptomNote = "Khám buổi sáng xong muốn đặt thêm buổi trưa",
+                },
+                ipAddress: null));
+
+        Assert.Equal(AppointmentBookingRules.BookingActiveAppointmentExistsMessage, blockEx.Message);
+
+        // When previous appointment is NO_SHOW with no active Visit -> ALLOW
+        morningAppt.Status = "NO_SHOW";
+        await _db.SaveChangesAsync();
+
+        var allowed = await sut.CreateAsync(
+            userId: 1,
+            new CreateAppointmentRequest
+            {
+                Mode = "doctor",
+                PatientId = "1",
+                DoctorId = "DOC-001",
+                ServiceId = "EX-GI-01",
+                DateIso = "2026-11-03",
+                SlotOrShiftId = "702",
+                SymptomNote = "Đặt lại sau khi vắng mặt",
+            },
+            ipAddress: null);
+
+        Assert.Equal("BOOKED", allowed.Status);
+    }
+
+    [Theory]
+    [InlineData("CHECKED_IN")]
+    [InlineData("Checked-in")]
+    [InlineData("WAITING")]
+    [InlineData("Waiting")]
+    [InlineData("IN_CONSULTATION")]
+    [InlineData("In Consultation")]
+    [InlineData("AWAITING_DIAGNOSTIC")]
+    [InlineData("Awaiting Diagnostic")]
+    [InlineData("RETURN_CONSULTATION")]
+    [InlineData("Return Consultation")]
+    public async Task GbrApt09_OngoingVisitStatuses_BlockNewSameDayBooking(string visitStatus)
+    {
+        _db.ExaminationSlots.AddRange(
+            new ExaminationSlot
+            {
+                Id = 711,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 3, 8, 0, 0),
+                EndsAt = new DateTime(2026, 11, 3, 8, 30, 0),
+                Capacity = 3,
+                Status = "OPEN",
+            },
+            new ExaminationSlot
+            {
+                Id = 712,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 3, 11, 0, 0),
+                EndsAt = new DateTime(2026, 11, 3, 11, 30, 0),
+                Capacity = 3,
+                Status = "OPEN",
+            });
+
+        _db.Appointments.Add(new Appointment
+        {
+            Id = 710,
+            PatientId = 1,
+            SlotId = 711,
+            Status = "CHECKED_IN",
+        });
+        _db.Visits.Add(new Visit
+        {
+            Id = 810,
+            PatientId = 1,
+            AppointmentId = 710,
+            Status = visitStatus,
+            CheckedInAt = new DateTime(2026, 11, 3, 7, 50, 0),
+        });
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut();
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            sut.CreateAsync(
+                userId: 1,
+                new CreateAppointmentRequest
+                {
+                    Mode = "doctor",
+                    PatientId = "1",
+                    DoctorId = "DOC-001",
+                    ServiceId = "EX-GI-01",
+                    DateIso = "2026-11-03",
+                    SlotOrShiftId = "712",
+                    SymptomNote = "Đang khám dở muốn đặt thêm ca khác",
+                },
+                ipAddress: null));
+
+        Assert.Equal(AppointmentBookingRules.BookingVisitNotCompletedMessage, ex.Message);
+    }
+
+    [Fact]
+    public async Task GbrApt09_CompletedOrCancelledPreviousVisit_AllowsNewSameDayBooking_AndPreservesPreviousRecords()
+    {
+        _db.ExaminationSlots.AddRange(
+            new ExaminationSlot
+            {
+                Id = 721,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 3, 8, 0, 0),
+                EndsAt = new DateTime(2026, 11, 3, 8, 30, 0),
+                Capacity = 3,
+                Status = "OPEN",
+            },
+            new ExaminationSlot
+            {
+                Id = 722,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 3, 11, 0, 0),
+                EndsAt = new DateTime(2026, 11, 3, 11, 30, 0),
+                Capacity = 3,
+                Status = "OPEN",
+            },
+            new ExaminationSlot
+            {
+                Id = 723,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 2, 7, 30, 0), // already started/past (now = 02/11 08:00)
+                EndsAt = new DateTime(2026, 11, 2, 8, 0, 0),
+                Capacity = 3,
+                Status = "OPEN",
+            });
+
+        _db.Appointments.Add(new Appointment
+        {
+            Id = 720,
+            AppointmentCode = "APT-202611-0720",
+            PatientId = 1,
+            SlotId = 721,
+            Status = "CHECKED_IN",
+            ReasonForVisit = "Khám ca đầu",
+        });
+        var visit = new Visit
+        {
+            Id = 820,
+            PatientId = 1,
+            AppointmentId = 720,
+            Status = "COMPLETED",
+            CheckedInAt = new DateTime(2026, 11, 3, 7, 55, 0),
+            CompletedAt = new DateTime(2026, 11, 3, 9, 0, 0),
+        };
+        _db.Visits.Add(visit);
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut();
+
+        // Started/past slot must be rejected with BOOKING_SLOT_STARTED
+        var startedEx = await Assert.ThrowsAsync<ValidationException>(() =>
+            sut.CreateAsync(
+                userId: 1,
+                new CreateAppointmentRequest
+                {
+                    Mode = "doctor",
+                    PatientId = "1",
+                    DoctorId = "DOC-001",
+                    ServiceId = "EX-GI-01",
+                    DateIso = "2026-11-02",
+                    SlotOrShiftId = "723",
+                    SymptomNote = "Đặt vào slot đã qua giờ",
+                },
+                ipAddress: null));
+        Assert.Equal(AppointmentBookingRules.BookingSlotStartedMessage, startedEx.Message);
+
+        // Valid future slot on the same day after Visit COMPLETED -> ALLOW
+        var secondBooking = await sut.CreateAsync(
+            userId: 1,
+            new CreateAppointmentRequest
+            {
+                Mode = "doctor",
+                PatientId = "1",
+                DoctorId = "DOC-001",
+                ServiceId = "EX-GI-01",
+                DateIso = "2026-11-03",
+                SlotOrShiftId = "722",
+                SymptomNote = "Khám thêm chuyên khoa sau khi hoàn tất lượt đầu",
+            },
+            ipAddress: null);
+
+        Assert.Equal("BOOKED", secondBooking.Status);
+        Assert.NotEqual("720", secondBooking.AppointmentId);
+
+        // Previous appointment and visit remain untouched
+        var prevAppt = await _db.Appointments.AsNoTracking().SingleAsync(a => a.Id == 720);
+        var prevVisit = await _db.Visits.AsNoTracking().SingleAsync(v => v.Id == 820);
+        Assert.Equal("CHECKED_IN", prevAppt.Status);
+        Assert.Equal("COMPLETED", prevVisit.Status);
+    }
+
+    [Fact]
+    public async Task GbrApt09_FamilyMemberIndependence_AndTwoUsersSamePatientRestriction_AndNextDayAllowed()
+    {
+        // Add a second user (User 2) who also has a VERIFIED family link to Patient 3 (Child)
+        _db.Users.Add(new User
+        {
+            Id = 2,
+            Email = "spouse@medflow.test",
+            AccountStatus = AccountStatus.ACTIVE,
+        });
+        _db.Patients.Add(new Patient
+        {
+            Id = 2,
+            UserId = 2,
+            PatientCode = "PAT-0002",
+            FullName = "Nguyễn Thị Lan",
+            Status = "ACTIVE",
+        });
+        _db.PatientFamilyLinks.Add(new PatientFamilyLink
+        {
+            OwnerPatientId = 2,
+            MemberPatientId = 3,
+            Relationship = "CHILD",
+            VerificationStatus = "VERIFIED",
+            RevokedAt = null,
+        });
+
+        _db.ExaminationSlots.AddRange(
+            new ExaminationSlot
+            {
+                Id = 731,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 3, 8, 0, 0),
+                EndsAt = new DateTime(2026, 11, 3, 8, 30, 0),
+                Capacity = 3,
+                Status = "OPEN",
+            },
+            new ExaminationSlot
+            {
+                Id = 732,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 3, 9, 0, 0),
+                EndsAt = new DateTime(2026, 11, 3, 9, 30, 0),
+                Capacity = 3,
+                Status = "OPEN",
+            },
+            new ExaminationSlot
+            {
+                Id = 733,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 11, 4, 9, 0, 0),
+                EndsAt = new DateTime(2026, 11, 4, 9, 30, 0),
+                Capacity = 3,
+                Status = "OPEN",
+            });
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut();
+
+        // 1. User 1 books for Self (Patient 1) at 08:00 on 2026-11-03 -> ALLOW
+        var selfToday = await sut.CreateAsync(1, new CreateAppointmentRequest
+        {
+            Mode = "doctor",
+            PatientId = "1",
+            DoctorId = "DOC-001",
+            ServiceId = "EX-GI-01",
+            DateIso = "2026-11-03",
+            SlotOrShiftId = "731",
+            SymptomNote = "Đau dạ dày",
+        }, null);
+        Assert.Equal("BOOKED", selfToday.Status);
+
+        // 2. User 1 books for linked Child (Patient 3) on the SAME day at 09:00 -> ALLOW (independent per patient_id)
+        var childToday = await sut.CreateAsync(1, new CreateAppointmentRequest
+        {
+            Mode = "doctor",
+            PatientId = "3",
+            DoctorId = "DOC-001",
+            ServiceId = "EX-GI-01",
+            DateIso = "2026-11-03",
+            SlotOrShiftId = "732",
+            SymptomNote = "Khám tiêu hóa cho bé",
+        }, null);
+        Assert.Equal("BOOKED", childToday.Status);
+
+        // 3. User 2 (different user account!) attempts to book for the SAME Child (Patient 3) on 2026-11-03 -> BLOCK
+        var crossUserEx = await Assert.ThrowsAsync<ConflictException>(() =>
+            sut.CreateAsync(2, new CreateAppointmentRequest
+            {
+                Mode = "doctor",
+                PatientId = "3",
+                DoctorId = "DOC-001",
+                ServiceId = "EX-GI-01",
+                DateIso = "2026-11-03",
+                SlotOrShiftId = "731",
+                SymptomNote = "Mẹ đặt thêm lịch trùng ngày cho bé",
+            }, null));
+        Assert.Equal(AppointmentBookingRules.BookingActiveAppointmentExistsMessage, crossUserEx.Message);
+
+        // 4. User 1 books for Self (Patient 1) on TOMORROW (2026-11-04) while having active booking on 2026-11-03 -> ALLOW
+        var selfTomorrow = await sut.CreateAsync(1, new CreateAppointmentRequest
+        {
+            Mode = "doctor",
+            PatientId = "1",
+            DoctorId = "DOC-001",
+            ServiceId = "EX-GI-01",
+            DateIso = "2026-11-04",
+            SlotOrShiftId = "733",
+            SymptomNote = "Khám ngày hôm sau",
+        }, null);
+        Assert.Equal("BOOKED", selfTomorrow.Status);
     }
 }

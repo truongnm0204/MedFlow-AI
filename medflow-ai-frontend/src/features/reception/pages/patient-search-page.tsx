@@ -64,6 +64,7 @@ export function PatientSearchPage() {
         onItemSelect={(item) => {
           if (item === 'dashboard') navigate('/reception');
           if (item === 'patients') navigate('/reception/patients');
+          if (item === 'queue') navigate('/reception/queue');
         }}
       />
 
