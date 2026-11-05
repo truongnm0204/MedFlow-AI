@@ -25,6 +25,98 @@ public sealed class FamilyProfileService : IFamilyProfileService
         bool includeSelf = true,
         CancellationToken ct = default)
     {
+        var self = await LoadActiveSelfAsync(userId, ct);
+
+        var links = await _db.PatientFamilyLinks
+            .AsNoTracking()
+            .Include(l => l.MemberPatient)
+            .Where(l => l.OwnerPatientId == self.Id && l.RevokedAt == null)
+            .OrderBy(l => l.MemberPatientId)
+            .ToListAsync(ct);
+
+        var result = new List<FamilyMemberResponse>();
+
+        if (includeSelf)
+        {
+            result.Add(BuildSelfResponse(self));
+        }
+
+        foreach (var link in links)
+        {
+            var member = link.MemberPatient;
+            if (member is null || !string.Equals(member.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            result.Add(BuildMemberResponse(self, member, link, 0, false, null));
+        }
+
+        return result;
+    }
+
+    public async Task<FamilyMemberResponse> GetFamilyMemberDetailAsync(
+        long userId,
+        string identifier,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ValidationException("Mã hồ sơ người thân không hợp lệ.");
+
+        var self = await LoadActiveSelfAsync(userId, ct);
+        var (parsedId, parsedCode, isSelf) = ParseMemberIdentifier(identifier);
+
+        if (isSelf ||
+            (parsedId.HasValue && parsedId.Value == self.Id) ||
+            (!string.IsNullOrEmpty(parsedCode) && (string.Equals(parsedCode, self.PatientCode, StringComparison.OrdinalIgnoreCase) || string.Equals(identifier.Trim(), self.PatientCode, StringComparison.OrdinalIgnoreCase))))
+        {
+            return BuildSelfResponse(self);
+        }
+
+        var linksQuery = _db.PatientFamilyLinks
+            .AsNoTracking()
+            .Include(l => l.MemberPatient)
+            .Where(l => l.OwnerPatientId == self.Id && l.RevokedAt == null);
+
+        PatientFamilyLink? link;
+        if (parsedId.HasValue)
+        {
+            link = await linksQuery.FirstOrDefaultAsync(l => l.MemberPatientId == parsedId.Value, ct);
+        }
+        else
+        {
+            var trimmed = identifier.Trim();
+            link = await linksQuery.FirstOrDefaultAsync(l =>
+                l.MemberPatient != null &&
+                (l.MemberPatient.PatientCode == parsedCode || l.MemberPatient.PatientCode == trimmed), ct);
+        }
+
+        if (link is null || link.MemberPatient is null)
+            throw new NotFoundException("FamilyMember", identifier);
+
+        var member = link.MemberPatient;
+        if (!string.Equals(member.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+            throw new NotFoundException("FamilyMember", identifier);
+
+        var visitsCount = await _db.Visits
+            .AsNoTracking()
+            .CountAsync(v => v.PatientId == member.Id, ct);
+
+        var activeAppointment = await _db.Appointments
+            .AsNoTracking()
+            .Include(a => a.Slot)
+            .ThenInclude(s => s!.Service)
+            .Where(a => a.PatientId == member.Id &&
+                        a.Status != "CANCELLED" && a.Status != "COMPLETED" && a.Status != "NO_SHOW")
+            .OrderByDescending(a => a.Id)
+            .FirstOrDefaultAsync(ct);
+
+        var hasActiveAppointment = activeAppointment != null;
+        var activeAppointmentDetails = activeAppointment?.Slot?.Service?.Name;
+
+        return BuildMemberResponse(self, member, link, visitsCount, hasActiveAppointment, activeAppointmentDetails);
+    }
+
+    private async Task<Patient> LoadActiveSelfAsync(long userId, CancellationToken ct)
+    {
         if (userId <= 0)
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
 
@@ -42,124 +134,157 @@ public sealed class FamilyProfileService : IFamilyProfileService
         if (!string.Equals(self.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
             throw new UnauthorizedAccessException("Hồ sơ bệnh nhân đang ngừng hoạt động.");
 
-        var links = await _db.PatientFamilyLinks
-            .AsNoTracking()
-            .Include(l => l.MemberPatient)
-            .Where(l => l.OwnerPatientId == self.Id && l.RevokedAt == null)
-            .OrderBy(l => l.MemberPatientId)
-            .ToListAsync(ct);
+        return self;
+    }
 
-        var result = new List<FamilyMemberResponse>();
+    internal static (long? Id, string? Code, bool IsSelf) ParseMemberIdentifier(string identifier)
+    {
+        var trimmed = identifier.Trim();
 
-        if (includeSelf)
+        if (trimmed.Equals("me", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("self", StringComparison.OrdinalIgnoreCase))
         {
-            var isSelfVerified = !string.IsNullOrWhiteSpace(self.IdentificationHash);
-            var selfMember = new FamilyMemberResponse(
-                Id: $"FAM-{self.Id:D3}",
-                MemberPatientId: self.Id,
-                FullName: self.FullName,
-                Relationship: "Bản thân",
-                RelationshipBadgeColor: "slate",
-                PatientCode: self.PatientCode,
-                SubStatus: "Ủy quyền toàn phần",
-                IsPrimaryAccount: true,
-                AvatarUrl: null,
-                BirthDate: FormatDate(self.DateOfBirth),
-                Age: CalculateAge(self.DateOfBirth),
-                Gender: MapGender(self.Gender),
-                Nationality: "Việt Nam",
-                IdentificationNo: isSelfVerified ? MaskedVerifiedText : UnverifiedIdentityText,
-                IdentityIssueDate: null,
-                IdentityIssuePlace: null,
-                IsIdentityVerified: isSelfVerified,
-                Phone: self.Phone,
-                Email: self.Email ?? self.User?.Email,
-                Address: self.Address,
-                Guardian: null,
-                EmergencyContactName: null,
-                EmergencyContactRelation: null,
-                EmergencyPhone: null,
-                LatestVisit: null,
-                FollowUpSchedule: null,
-                ServicePackage: null,
-                ClinicalNotes: null,
-                HasActiveAppointment: false,
-                ActiveAppointmentDetails: null,
-                OutpatientVisitsCount: 0,
-                ActivePrescriptionsCount: 0,
-                Vitals: new FamilyMemberVitalsDto(self.BloodType, null, null),
-                Permissions: new FamilyMemberPermissionsDto(
-                    CanManage: true,
-                    CanBookAppointments: true,
-                    CanViewMedicalRecords: true,
-                    RelationshipStatus: "ACTIVE",
-                    ConsentVerifiedAt: null
-                )
-            );
-
-            result.Add(selfMember);
+            return (null, null, true);
         }
 
-        foreach (var link in links)
+        if (long.TryParse(trimmed, out var numericId) && numericId > 0)
         {
-            var member = link.MemberPatient;
-            if (member is null || !string.Equals(member.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            var relationship = MapRelationship(link.Relationship, member.Gender);
-            var badgeColor = GetBadgeColor(relationship);
-            var isVerified = !string.IsNullOrWhiteSpace(member.IdentificationHash);
-            var status = !string.IsNullOrWhiteSpace(link.VerificationStatus)
-                ? link.VerificationStatus.ToUpperInvariant()
-                : "ACTIVE";
-
-            var memberResponse = new FamilyMemberResponse(
-                Id: $"FAM-{member.Id:D3}",
-                MemberPatientId: member.Id,
-                FullName: member.FullName,
-                Relationship: relationship,
-                RelationshipBadgeColor: badgeColor,
-                PatientCode: member.PatientCode,
-                SubStatus: GetSubStatus(relationship),
-                IsPrimaryAccount: false,
-                AvatarUrl: null,
-                BirthDate: FormatDate(member.DateOfBirth),
-                Age: CalculateAge(member.DateOfBirth),
-                Gender: MapGender(member.Gender),
-                Nationality: "Việt Nam",
-                IdentificationNo: isVerified ? MaskedVerifiedText : UnverifiedIdentityText,
-                IdentityIssueDate: null,
-                IdentityIssuePlace: null,
-                IsIdentityVerified: isVerified,
-                Phone: member.Phone,
-                Email: member.Email,
-                Address: member.Address ?? self.Address,
-                Guardian: relationship.StartsWith("Con", StringComparison.OrdinalIgnoreCase) ? self.FullName : null,
-                EmergencyContactName: self.FullName,
-                EmergencyContactRelation: "Chủ hộ / Người giám hộ",
-                EmergencyPhone: self.Phone,
-                LatestVisit: null,
-                FollowUpSchedule: null,
-                ServicePackage: null,
-                ClinicalNotes: null,
-                HasActiveAppointment: false,
-                ActiveAppointmentDetails: null,
-                OutpatientVisitsCount: 0,
-                ActivePrescriptionsCount: 0,
-                Vitals: new FamilyMemberVitalsDto(member.BloodType, null, null),
-                Permissions: new FamilyMemberPermissionsDto(
-                    CanManage: true,
-                    CanBookAppointments: true,
-                    CanViewMedicalRecords: true,
-                    RelationshipStatus: status,
-                    ConsentVerifiedAt: link.VerifiedAt?.ToString("dd/MM/yyyy")
-                )
-            );
-
-            result.Add(memberResponse);
+            return (numericId, null, false);
         }
 
-        return result;
+        if (trimmed.StartsWith("FAM-", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("FAM", StringComparison.OrdinalIgnoreCase))
+        {
+            var numPart = trimmed.StartsWith("FAM-", StringComparison.OrdinalIgnoreCase)
+                ? trimmed[4..]
+                : trimmed[3..];
+
+            if (long.TryParse(numPart, out var famId) && famId > 0)
+            {
+                return (famId, null, false);
+            }
+        }
+
+        var code = trimmed.TrimStart('#');
+        return (null, code, false);
+    }
+
+    private static FamilyMemberResponse BuildSelfResponse(Patient self)
+    {
+        var isSelfVerified = !string.IsNullOrWhiteSpace(self.IdentificationHash);
+        return new FamilyMemberResponse(
+            Id: $"FAM-{self.Id:D3}",
+            MemberPatientId: self.Id,
+            FullName: self.FullName,
+            Relationship: "Bản thân",
+            RelationshipBadgeColor: "slate",
+            PatientCode: self.PatientCode,
+            SubStatus: "Ủy quyền toàn phần",
+            IsPrimaryAccount: true,
+            AvatarUrl: null,
+            BirthDate: FormatDate(self.DateOfBirth),
+            Age: CalculateAge(self.DateOfBirth),
+            Gender: MapGender(self.Gender),
+            Nationality: "Việt Nam",
+            IdentificationNo: isSelfVerified ? MaskedVerifiedText : UnverifiedIdentityText,
+            IdentityIssueDate: null,
+            IdentityIssuePlace: null,
+            IsIdentityVerified: isSelfVerified,
+            Phone: self.Phone,
+            Email: self.Email ?? self.User?.Email,
+            Address: self.Address,
+            Guardian: null,
+            EmergencyContactName: null,
+            EmergencyContactRelation: null,
+            EmergencyPhone: null,
+            LatestVisit: null,
+            FollowUpSchedule: null,
+            ServicePackage: null,
+            ClinicalNotes: null,
+            HasActiveAppointment: false,
+            ActiveAppointmentDetails: null,
+            OutpatientVisitsCount: 0,
+            ActivePrescriptionsCount: 0,
+            Vitals: new FamilyMemberVitalsDto(self.BloodType, null, null),
+            Permissions: new FamilyMemberPermissionsDto(
+                CanManage: true,
+                CanBookAppointments: true,
+                CanViewMedicalRecords: true,
+                RelationshipStatus: "ACTIVE",
+                ConsentVerifiedAt: null
+            )
+        );
+    }
+
+    private static FamilyMemberResponse BuildMemberResponse(
+        Patient self,
+        Patient member,
+        PatientFamilyLink link,
+        int visitsCount,
+        bool hasActiveAppointment,
+        string? activeAppointmentDetails)
+    {
+        var relationship = MapRelationship(link.Relationship, member.Gender);
+        var badgeColor = GetBadgeColor(relationship);
+        var isVerified = !string.IsNullOrWhiteSpace(member.IdentificationHash);
+        var status = !string.IsNullOrWhiteSpace(link.VerificationStatus)
+            ? link.VerificationStatus.ToUpperInvariant()
+            : "ACTIVE";
+
+        var canManage = status is "VERIFIED" or "ACTIVE";
+        var subStatus = canManage ? GetSubStatus(relationship) : "Chỉ đọc";
+
+        var isChild = relationship.StartsWith("Con", StringComparison.OrdinalIgnoreCase);
+        var isParent = relationship.Contains("Bố") || relationship.Contains("Mẹ");
+
+        var clinicalNotes = isChild
+            ? "Khám Nhi tự nguyện: Cần có phụ huynh đi cùng khi thăm khám"
+            : isParent
+                ? "Ủy quyền nhận kết quả xét nghiệm và quản lý lịch khám định kỳ"
+                : null;
+
+        return new FamilyMemberResponse(
+            Id: $"FAM-{member.Id:D3}",
+            MemberPatientId: member.Id,
+            FullName: member.FullName,
+            Relationship: relationship,
+            RelationshipBadgeColor: badgeColor,
+            PatientCode: member.PatientCode,
+            SubStatus: subStatus,
+            IsPrimaryAccount: false,
+            AvatarUrl: null,
+            BirthDate: FormatDate(member.DateOfBirth),
+            Age: CalculateAge(member.DateOfBirth),
+            Gender: MapGender(member.Gender),
+            Nationality: "Việt Nam",
+            IdentificationNo: isVerified ? MaskedVerifiedText : UnverifiedIdentityText,
+            IdentityIssueDate: null,
+            IdentityIssuePlace: null,
+            IsIdentityVerified: isVerified,
+            Phone: member.Phone,
+            Email: member.Email,
+            Address: member.Address ?? self.Address,
+            Guardian: isChild ? self.FullName : null,
+            EmergencyContactName: self.FullName,
+            EmergencyContactRelation: isChild ? "Bố ruột (Giám hộ)" : "Chủ hộ / Người giám hộ",
+            EmergencyPhone: self.Phone,
+            LatestVisit: null,
+            FollowUpSchedule: null,
+            ServicePackage: null,
+            ClinicalNotes: clinicalNotes,
+            HasActiveAppointment: hasActiveAppointment,
+            ActiveAppointmentDetails: activeAppointmentDetails,
+            OutpatientVisitsCount: visitsCount,
+            ActivePrescriptionsCount: 0,
+            Vitals: new FamilyMemberVitalsDto(member.BloodType, null, null),
+            Permissions: new FamilyMemberPermissionsDto(
+                CanManage: canManage,
+                CanBookAppointments: true,
+                CanViewMedicalRecords: true,
+                RelationshipStatus: status,
+                ConsentVerifiedAt: link.VerifiedAt?.ToString("dd/MM/yyyy")
+            )
+        );
     }
 
     private static string? FormatDate(DateOnly? date)
