@@ -35,8 +35,9 @@ export function AppointmentCard({
   onRebookSpecialty,
 }: AppointmentCardProps) {
   const isCompleted = COMPLETED_STATUSES.includes(appointment.status);
-  const isCancelled = CANCELLED_STATUSES.includes(appointment.status);
-
+  const isOverdue = appointment.statusBannerLabel.includes('QUÁ HẠN');
+  const isCancelled = CANCELLED_STATUSES.includes(appointment.status) || isOverdue;
+  const canModify = ['BOOKED', 'CONFIRMED', 'PENDING'].includes(appointment.status) && !isOverdue;
   if (isCompleted) {
     return (
       <article
@@ -326,24 +327,27 @@ export function AppointmentCard({
 
       {/* Upcoming Footer Actions */}
       <div className="mt-5 flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 pt-4">
-        <button
-          type="button"
-          onClick={() => onCancelRequest?.(appointment)}
-          className="inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold text-danger transition-colors hover:bg-rose-50"
-        >
-          <X className="h-3.5 w-3.5" aria-hidden="true" />
-          <span>Hủy lịch hẹn</span>
-        </button>
+        {canModify && onCancelRequest && (
+          <button
+            type="button"
+            onClick={() => onCancelRequest(appointment)}
+            className="inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold text-danger transition-colors hover:bg-rose-50"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Hủy lịch hẹn</span>
+          </button>
+        )}
 
-        <button
-          type="button"
-          onClick={() => onReschedule?.(appointment)}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3.5 py-2 text-xs font-bold text-ink transition-colors hover:bg-canvas"
-        >
-          <Calendar className="h-3.5 w-3.5 text-sub" aria-hidden="true" />
-          <span>Đổi lịch khám</span>
-        </button>
-
+        {canModify && onReschedule && (
+          <button
+            type="button"
+            onClick={() => onReschedule(appointment)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3.5 py-2 text-xs font-bold text-ink transition-colors hover:bg-canvas"
+          >
+            <Calendar className="h-3.5 w-3.5 text-sub" aria-hidden="true" />
+            <span>Đổi lịch khám</span>
+          </button>
+        )}
         {onViewDetail && (
           <button
             type="button"

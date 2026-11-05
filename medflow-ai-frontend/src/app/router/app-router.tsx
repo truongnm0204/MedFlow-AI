@@ -1,17 +1,26 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import { DepartmentCreatePage } from '@/features/admin-departments/pages/department-create-page';
+import { DepartmentEditPage } from '@/features/admin-departments/pages/department-edit-page';
 import { DepartmentListPage } from '@/features/admin-departments/pages/department-list-page';
 import { DoctorCreatePage } from '@/features/admin-doctors/pages/doctor-create-page';
 import { DoctorEditModal } from '@/features/admin-doctors/pages/doctor-edit-modal';
 import { DoctorListPage } from '@/features/admin-doctors/pages/doctor-list-page';
+import { RoomCreatePage } from '@/features/admin-rooms/pages/room-create-page';
+import { RoomEditPage } from '@/features/admin-rooms/pages/room-edit-page';
+import { StaffAccountListPage } from '@/features/admin-staff/pages/staff-account-list-page';
+import { RoleListPage } from '@/features/admin-roles/pages/role-list-page';
 import { OperationalReportsPage } from '@/features/admin-reports/pages/operational-reports-page';
+import { AppointmentPolicyPage } from '@/features/admin-policies/pages/appointment-policy-page';
+import { RoomListPage } from '@/features/admin-rooms/pages/room-list-page';
+import { StaffAccountEditPage } from '@/features/admin-staff/pages/staff-account-edit-page';
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
+import { StaffAccountCreatePage } from '@/features/admin-staff/pages/staff-account-create-page';
 import { ExaminationSlotCreatePage } from '@/features/admin-slots/pages/examination-slot-create-page';
 import { ExaminationSlotListPage } from '@/features/admin-slots/pages/examination-slot-list-page';
 import { SlotEditModal } from '@/features/admin-slots/pages/slot-edit-modal';
-import { StaffAccountListPage } from '@/features/admin-staff/pages/staff-account-list-page';
 import { AppointmentDetailPage } from '@/features/appointment/pages/appointment-detail-page';
 import { AppointmentConfirmationPage } from '@/features/appointment/pages/appointment-confirmation-page';
 import { AppointmentListPage } from '@/features/appointment/pages/appointment-list-page';
@@ -31,14 +40,26 @@ import { DoctorDashboardPage } from '@/features/doctor/pages/doctor-dashboard-pa
 import { FamilyProfileDetailPage } from '@/features/family/pages/family-profile-detail-page';
 import { FamilyProfileListPage } from '@/features/family/pages/family-profile-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
+import { HospitalAdminDashboardPage } from '@/features/hospital-admin/pages/hospital-admin-dashboard-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
 import { PatientSearchPage } from '@/features/reception/pages/patient-search-page';
 import { VisitRoutingPage } from '@/features/reception/pages/visit-routing-page';
+import { ExaminationQueuePage } from '@/features/reception/pages/examination-queue-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
+import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
-import { GuestOnly, RequireAdmin, RequireAuth } from './guards';
+import {
+  GuestOnly,
+  RequireAdmin,
+  RequireAuth,
+  RequireDiagnostic,
+  RequireDoctor,
+  RequirePharmacy,
+  RequireReception,
+  RequireSystemAdmin,
+} from './guards';
 
 export function AppRouter() {
   return (
@@ -107,7 +128,9 @@ export function AppRouter() {
         path="/reception"
         element={
           <RequireAuth>
-            <ReceptionDashboardPage />
+            <RequireReception>
+              <ReceptionDashboardPage />
+            </RequireReception>
           </RequireAuth>
         }
       />
@@ -115,7 +138,9 @@ export function AppRouter() {
         path="/reception/routing"
         element={
           <RequireAuth>
-            <VisitRoutingPage />
+            <RequireReception>
+              <VisitRoutingPage />
+            </RequireReception>
           </RequireAuth>
         }
       />
@@ -123,7 +148,19 @@ export function AppRouter() {
         path="/reception/patients"
         element={
           <RequireAuth>
-            <PatientSearchPage />
+            <RequireReception>
+              <PatientSearchPage />
+            </RequireReception>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/reception/queue"
+        element={
+          <RequireAuth>
+            <RequireReception>
+              <ExaminationQueuePage />
+            </RequireReception>
           </RequireAuth>
         }
       />
@@ -131,7 +168,9 @@ export function AppRouter() {
         path="/doctor"
         element={
           <RequireAuth>
-            <DoctorDashboardPage />
+            <RequireDoctor>
+              <DoctorDashboardPage />
+            </RequireDoctor>
           </RequireAuth>
         }
       />
@@ -139,7 +178,9 @@ export function AppRouter() {
         path="/diagnostic"
         element={
           <RequireAuth>
-            <DiagnosticDashboardPage />
+            <RequireDiagnostic>
+              <DiagnosticDashboardPage />
+            </RequireDiagnostic>
           </RequireAuth>
         }
       />
@@ -147,7 +188,9 @@ export function AppRouter() {
         path="/pharmacy"
         element={
           <RequireAuth>
-            <PharmacyDashboardPage />
+            <RequirePharmacy>
+              <PharmacyDashboardPage />
+            </RequirePharmacy>
           </RequireAuth>
         }
       />
@@ -167,6 +210,36 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <StaffAccountListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/roles"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <RoleListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/roles/permissions"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <RoleListPage initialView="matrix" />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/roles/access-check"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <RoleListPage initialView="access-check" />
             </RequireAdmin>
           </RequireAuth>
         }
@@ -194,6 +267,26 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin/staff/new"
+        element={
+          <RequireAuth>
+            <RequireSystemAdmin>
+              <StaffAccountCreatePage />
+            </RequireSystemAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/staff/:id/edit"
+        element={
+          <RequireAuth>
+            <RequireSystemAdmin>
+              <StaffAccountEditPage />
+            </RequireSystemAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/departments"
         element={
           <RequireAuth>
@@ -215,6 +308,26 @@ export function AppRouter() {
       >
         <Route path=":serviceId/edit" element={<ServiceEditModal />} />
       </Route>
+      <Route
+        path="/admin/departments/new"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <DepartmentCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/departments/:id/edit"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <DepartmentEditPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
       <Route
         path="/admin/services/new"
         element={
@@ -243,6 +356,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <ExaminationServiceCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/rooms"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <RoomListPage />
             </RequireAdmin>
           </RequireAuth>
         }
@@ -292,6 +415,26 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin/rooms/new"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <RoomCreatePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/rooms/:id/edit"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <RoomEditPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/reports"
         element={
           <RequireAuth>
@@ -302,11 +445,31 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin/policies"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <AppointmentPolicyPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/appointment-policy"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <AppointmentPolicyPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/hospital-admin"
         element={
           <RequireAuth>
             <RequireAdmin>
-              <OperationalReportsPage />
+              <HospitalAdminDashboardPage />
             </RequireAdmin>
           </RequireAuth>
         }
@@ -315,9 +478,9 @@ export function AppRouter() {
         path="/system-admin"
         element={
           <RequireAuth>
-            <RequireAdmin>
-              <OperationalReportsPage />
-            </RequireAdmin>
+            <RequireSystemAdmin>
+              <SystemAdminDashboardPage />
+            </RequireSystemAdmin>
           </RequireAuth>
         }
       />

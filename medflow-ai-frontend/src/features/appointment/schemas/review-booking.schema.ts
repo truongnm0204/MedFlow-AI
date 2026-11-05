@@ -27,9 +27,8 @@ export const confirmBookingSchema = z.object({
   symptomNote: z
     .string()
     .trim()
-    .max(500, 'Lý do khám / triệu chứng khai báo không được vượt quá 500 ký tự.')
-    .optional()
-    .default(''),
+    .min(3, 'Vui lòng mô tả lý do khám tối thiểu 3 ký tự.')
+    .max(500, 'Lý do khám / triệu chứng khai báo không được vượt quá 500 ký tự.'),
 });
 
 export const reviewSymptomNoteSchema = z.object({

@@ -1,9 +1,11 @@
 import { ExternalLink } from 'lucide-react';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { Button } from '@/shared/ui/button';
 
 export function ServiceCreateSidebar() {
+  const navigate = useNavigate();
   const [notice, setNotice] = useState<string | null>(null);
 
   const handleOpenPriceTable = () => {
@@ -12,10 +14,7 @@ export function ServiceCreateSidebar() {
   };
 
   const handleOpenBookingPolicy = () => {
-    setNotice(
-      'Chuyển hướng liên kết đến Cấu hình Chính sách đặt hẹn (UC54) trong giai đoạn tiếp theo.',
-    );
-    setTimeout(() => setNotice(null), 4000);
+    navigate('/admin/policies');
   };
 
   return (
