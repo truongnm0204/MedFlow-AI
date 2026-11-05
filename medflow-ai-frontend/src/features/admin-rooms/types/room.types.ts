@@ -9,6 +9,10 @@ export interface RoomItem {
   facility: string;
   status: RoomStatus;
   capacityPerSlot: number;
+  hasActiveDependencies?: boolean;
+  assignedDoctorsCount?: number;
+  activeVisitsCount?: number;
+  activeSlotsCount?: number;
 }
 
 export interface RoomFilters {

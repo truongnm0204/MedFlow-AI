@@ -26,6 +26,8 @@ export interface ExaminationService {
   effectiveDate?: string;
   decisionNumber?: string;
   priceHistory?: PriceHistoryEntry[];
+  hasActiveBookings?: boolean;
+  activeBookingsCount?: number;
 }
 
 export type ColumnKey =
