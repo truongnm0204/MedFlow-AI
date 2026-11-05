@@ -37,6 +37,14 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<Visit> Visits => Set<Visit>();
     public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<Medicine> Medicines => Set<Medicine>();
+    public DbSet<MedicineBatch> MedicineBatches => Set<MedicineBatch>();
+    public DbSet<Prescription> Prescriptions => Set<Prescription>();
+    public DbSet<PrescriptionItem> PrescriptionItems => Set<PrescriptionItem>();
+    public DbSet<MedicationDispense> MedicationDispenses => Set<MedicationDispense>();
+    public DbSet<DispenseItem> DispenseItems => Set<DispenseItem>();
+    public DbSet<StockTransaction> StockTransactions => Set<StockTransaction>();
+    public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
 
     public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => Database.BeginTransactionAsync(ct);

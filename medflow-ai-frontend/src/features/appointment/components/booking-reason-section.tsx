@@ -3,11 +3,13 @@ import { ClipboardList } from 'lucide-react';
 interface BookingReasonSectionProps {
   symptomNote: string;
   onChangeSymptomNote: (value: string) => void;
+  error?: string | null;
 }
 
 export function BookingReasonSection({
   symptomNote,
   onChangeSymptomNote,
+  error,
 }: BookingReasonSectionProps) {
   return (
     <section
@@ -27,21 +29,39 @@ export function BookingReasonSection({
       </div>
 
       <div className="space-y-2">
-        <label htmlFor="booking-symptom-note" className="block text-xs font-bold text-ink">
-          Lý do khám / Triệu chứng ban đầu
-        </label>
+        <div className="flex items-center gap-1">
+          <label htmlFor="booking-symptom-note" className="block text-xs font-bold text-ink">
+            Lý do khám / Triệu chứng ban đầu
+          </label>
+          <span className="text-xs font-bold text-danger" aria-hidden="true">
+            *
+          </span>
+        </div>
         <textarea
           id="booking-symptom-note"
           rows={3}
+          required
+          aria-required="true"
+          aria-invalid={Boolean(error)}
           maxLength={500}
           value={symptomNote}
           onChange={(e) => onChangeSymptomNote(e.target.value)}
-          placeholder="Nhập lý do khám hoặc triệu chứng bạn đang gặp..."
-          className="w-full rounded-xl border border-border bg-canvas/60 px-4 py-3 text-xs text-ink placeholder:text-sub/70 focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 sm:text-sm"
+          placeholder="Nhập lý do khám hoặc triệu chứng bạn đang gặp (bắt buộc)..."
+          className={`w-full rounded-xl border bg-canvas/60 px-4 py-3 text-xs text-ink placeholder:text-sub/70 focus:bg-white focus:outline-none focus:ring-2 sm:text-sm ${
+            error
+              ? 'border-danger focus:border-danger focus:ring-danger/20'
+              : 'border-border focus:border-primary focus:ring-primary/20'
+          }`}
         />
-        <p className="text-[11px] text-sub">
-          Bạn có thể bổ sung thời gian xuất hiện và mức độ triệu chứng.
-        </p>
+        {error ? (
+          <p role="alert" className="text-xs font-semibold text-danger">
+            {error}
+          </p>
+        ) : (
+          <p className="text-[11px] text-sub">
+            Vui lòng nhập triệu chứng hoặc lý do khám (tối thiểu 3 ký tự) trước khi tiếp tục.
+          </p>
+        )}
       </div>
     </section>
   );
