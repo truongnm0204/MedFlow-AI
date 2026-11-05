@@ -1,7 +1,14 @@
 import type {
+  ExaminationQueueEntryDto,
+  ExaminationQueuePriority,
   ExaminationQueueQueryParams,
   ExaminationQueueResponseDto,
+  ExaminationQueueStatsDto,
+  ExaminationQueueStatus,
+  QueueArrivalClass,
   ServicePointQueueDto,
+  UpdateExaminationQueueStatusPayload,
+  UpdateExaminationQueueStatusResponseDto,
 } from '../types/examination-queue.types';
 
 export const DEFAULT_QUEUE_DATE = '2026-11-04';
@@ -282,5 +289,207 @@ export function buildMockExaminationQueueResponse(
       ...sp,
       entries: sp.entries.map((entry) => ({ ...entry })),
     })),
+  };
+}
+
+export const ALLOWED_QUEUE_STATUS_TRANSITIONS: Readonly<
+  Record<ExaminationQueueStatus, readonly ExaminationQueueStatus[]>
+> = {
+  WAITING: ['READY', 'CALLED', 'SKIPPED'],
+  READY: ['CALLED', 'WAITING', 'SKIPPED'],
+  CALLED: ['IN_PROGRESS', 'READY', 'WAITING', 'SKIPPED'],
+  IN_PROGRESS: ['COMPLETED'],
+  SKIPPED: ['WAITING', 'READY'],
+  COMPLETED: [],
+};
+
+export function getAllowedNextQueueStatuses(
+  currentStatus: ExaminationQueueStatus,
+): readonly ExaminationQueueStatus[] {
+  return ALLOWED_QUEUE_STATUS_TRANSITIONS[currentStatus] ?? [];
+}
+
+export function isAllowedQueueStatusTransition(
+  currentStatus: ExaminationQueueStatus,
+  targetStatus: ExaminationQueueStatus,
+): boolean {
+  return getAllowedNextQueueStatuses(currentStatus).includes(targetStatus);
+}
+
+const STATUS_SORT_RANK: Readonly<Record<ExaminationQueueStatus, number>> = {
+  IN_PROGRESS: 0,
+  CALLED: 1,
+  READY: 2,
+  WAITING: 3,
+  SKIPPED: 4,
+  COMPLETED: 5,
+};
+
+const PRIORITY_SORT_RANK: Readonly<Record<ExaminationQueuePriority, number>> = {
+  URGENT: 0,
+  RETURN_RESULT: 1,
+  ELDERLY: 2,
+  PREGNANT: 3,
+  NORMAL: 4,
+};
+
+const ARRIVAL_CLASS_SORT_RANK: Readonly<Record<QueueArrivalClass, number>> = {
+  ON_TIME_OR_GRACE: 0,
+  EARLY: 1,
+  WALK_IN: 2,
+  LATE: 3,
+};
+
+function sortAndReindexServicePointEntries(
+  entries: ExaminationQueueEntryDto[],
+): ExaminationQueueEntryDto[] {
+  return [...entries]
+    .sort((a, b) => {
+      const statusDiff = STATUS_SORT_RANK[a.status] - STATUS_SORT_RANK[b.status];
+      if (statusDiff !== 0) return statusDiff;
+
+      const priorityDiff = PRIORITY_SORT_RANK[a.priority] - PRIORITY_SORT_RANK[b.priority];
+      if (priorityDiff !== 0) return priorityDiff;
+
+      const arrivalDiff =
+        ARRIVAL_CLASS_SORT_RANK[a.arrivalClass] - ARRIVAL_CLASS_SORT_RANK[b.arrivalClass];
+      if (arrivalDiff !== 0) return arrivalDiff;
+
+      return a.checkedInAt.localeCompare(b.checkedInAt);
+    })
+    .map((entry, index) => ({
+      ...entry,
+      servingOrder: index + 1,
+    }));
+}
+
+function recalculateServicePointQueue(
+  servicePoint: ServicePointQueueDto,
+  entries: ExaminationQueueEntryDto[],
+): ServicePointQueueDto {
+  const sortedEntries = sortAndReindexServicePointEntries(entries);
+  const currentServing = sortedEntries.find(
+    (e) => e.status === 'IN_PROGRESS' || e.status === 'CALLED',
+  );
+  const nextTicket = sortedEntries.find((e) => e.status === 'READY' || e.status === 'WAITING');
+
+  return {
+    ...servicePoint,
+    currentServingTicketNo: currentServing?.ticketNo ?? null,
+    nextTicketNo: nextTicket?.ticketNo ?? null,
+    waitingCount: sortedEntries.filter((e) => e.status === 'WAITING' || e.status === 'READY')
+      .length,
+    inProgressCount: sortedEntries.filter((e) => e.status === 'IN_PROGRESS').length,
+    completedCount: sortedEntries.filter((e) => e.status === 'COMPLETED').length,
+    skippedCount: sortedEntries.filter((e) => e.status === 'SKIPPED').length,
+    entries: sortedEntries,
+  };
+}
+
+function recalculateQueueStats(servicePoints: ServicePointQueueDto[]): ExaminationQueueStatsDto {
+  const allEntries = servicePoints.flatMap((sp) => sp.entries);
+  return {
+    totalEntries: allEntries.length,
+    waitingCount: allEntries.filter((e) => e.status === 'WAITING' || e.status === 'READY').length,
+    calledOrServingCount: allEntries.filter(
+      (e) => e.status === 'CALLED' || e.status === 'IN_PROGRESS',
+    ).length,
+    completedCount: allEntries.filter((e) => e.status === 'COMPLETED').length,
+    skippedCount: allEntries.filter((e) => e.status === 'SKIPPED').length,
+    activeServicePoints: servicePoints.filter((sp) => sp.isActive).length,
+  };
+}
+
+export function applyQueueStatusUpdateToResponse(
+  response: ExaminationQueueResponseDto,
+  updatedEntry: ExaminationQueueEntryDto,
+): ExaminationQueueResponseDto {
+  const servicePoints = response.servicePoints.map((sp) => {
+    const hasEntry = sp.entries.some((entry) => entry.id === updatedEntry.id);
+    if (!hasEntry) {
+      return {
+        ...sp,
+        entries: sp.entries.map((entry) => ({ ...entry })),
+      };
+    }
+
+    const updatedEntries = sp.entries.map((entry) =>
+      entry.id === updatedEntry.id ? { ...updatedEntry } : { ...entry },
+    );
+    return recalculateServicePointQueue(sp, updatedEntries);
+  });
+
+  return {
+    ...response,
+    stats: recalculateQueueStats(servicePoints),
+    servicePoints,
+  };
+}
+
+export function buildMockUpdateExaminationQueueStatusResponse(
+  queueEntryId: string,
+  payload: UpdateExaminationQueueStatusPayload,
+  currentData?: ExaminationQueueResponseDto,
+): UpdateExaminationQueueStatusResponseDto {
+  const sourceServicePoints = currentData?.servicePoints ?? EXAMINATION_QUEUE_SERVICE_POINTS_MOCK;
+  const existingEntry = sourceServicePoints
+    .flatMap((sp) => sp.entries)
+    .find((entry) => entry.id === queueEntryId);
+
+  if (!existingEntry) {
+    throw new Error('Không tìm thấy lượt hàng đợi cần cập nhật.');
+  }
+
+  if (!isAllowedQueueStatusTransition(existingEntry.status, payload.targetStatus)) {
+    throw new Error('Chuyển tiếp trạng thái hàng đợi không hợp lệ.');
+  }
+
+  const trimmedReason = payload.reason?.trim() || null;
+
+  let calledAt = existingEntry.calledAt;
+  if (payload.targetStatus === 'CALLED' || payload.targetStatus === 'IN_PROGRESS') {
+    calledAt = existingEntry.calledAt ?? '08:50';
+  } else if (payload.targetStatus === 'WAITING' || payload.targetStatus === 'READY') {
+    calledAt = null;
+  }
+
+  let startedAt = existingEntry.startedAt;
+  if (payload.targetStatus === 'IN_PROGRESS') {
+    startedAt = existingEntry.startedAt ?? '08:52';
+  } else if (
+    payload.targetStatus === 'WAITING' ||
+    payload.targetStatus === 'READY' ||
+    payload.targetStatus === 'CALLED'
+  ) {
+    startedAt = null;
+  }
+
+  let blockedReason = existingEntry.blockedReason;
+  if (payload.targetStatus === 'SKIPPED' || trimmedReason) {
+    blockedReason = trimmedReason;
+  } else if (existingEntry.status === 'SKIPPED' && !trimmedReason) {
+    blockedReason = null;
+  }
+
+  const rawUpdatedEntry: ExaminationQueueEntryDto = {
+    ...existingEntry,
+    status: payload.targetStatus,
+    presenceStatus: payload.presenceStatus,
+    calledAt,
+    startedAt,
+    blockedReason,
+  };
+
+  const baseResponse = currentData ?? buildMockExaminationQueueResponse();
+  const updatedResponse = applyQueueStatusUpdateToResponse(baseResponse, rawUpdatedEntry);
+  const reindexedEntry =
+    updatedResponse.servicePoints
+      .flatMap((sp) => sp.entries)
+      .find((entry) => entry.id === queueEntryId) ?? rawUpdatedEntry;
+
+  return {
+    entry: reindexedEntry,
+    previousStatus: existingEntry.status,
+    updatedAtUtc: '2026-11-04T01:55:00Z',
   };
 }

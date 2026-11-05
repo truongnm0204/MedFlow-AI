@@ -14,10 +14,14 @@ import { Spinner } from '@/shared/ui/spinner';
 
 import { ExaminationQueueEmptyState } from '../components/examination-queue-empty-state';
 import { ExaminationQueueFilterBar } from '../components/examination-queue-filter-bar';
-import { ExaminationQueueServicePointCard } from '../components/examination-queue-service-point-card';
+import {
+  EXAMINATION_QUEUE_STATUS_META,
+  ExaminationQueueServicePointCard,
+} from '../components/examination-queue-service-point-card';
 import { ExaminationQueueStatCards } from '../components/examination-queue-stat-cards';
 import { PatientDetailModal } from '../components/patient-detail-modal';
 import { ReceptionSidebar } from '../components/reception-sidebar';
+import { UpdateQueueStatusModal } from '../components/update-queue-status-modal';
 import { DEFAULT_QUEUE_DATE } from '../data/examination-queue-mock';
 import { findPatientDetailByCode } from '../data/patient-detail-mock';
 import { useExaminationQueue } from '../hooks/use-examination-queue';
@@ -26,6 +30,7 @@ import {
   type ExaminationQueueFilterFormValues,
 } from '../schemas/examination-queue-filter.schema';
 import type {
+  ExaminationQueueEntryDto,
   ExaminationQueueStatusFilter,
   ServicePointQueueDto,
 } from '../types/examination-queue.types';
@@ -51,7 +56,8 @@ export function ExaminationQueuePage() {
     useState<ExaminationQueueFilterFormValues>(INITIAL_FILTERS);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [selectedPatientCode, setSelectedPatientCode] = useState<string | null>(null);
-
+  const [editingEntry, setEditingEntry] = useState<ExaminationQueueEntryDto | null>(null);
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
 
   const { data, isPending, isError, error, refetch } = useExaminationQueue({
@@ -261,6 +267,12 @@ export function ExaminationQueuePage() {
             </div>
           )}
 
+          {statusNotice && (
+            <div role="status">
+              <Alert tone="success">{statusNotice}</Alert>
+            </div>
+          )}
+
           {isPending ? (
             <div
               role="status"
@@ -293,6 +305,10 @@ export function ExaminationQueuePage() {
                           servicePoint={servicePoint}
                           canManageQueue={canManageQueue}
                           onSelectPatient={setSelectedPatientCode}
+                          onUpdateStatus={(entry) => {
+                            setStatusNotice(null);
+                            setEditingEntry(entry);
+                          }}
                         />
                       ))
                     ) : (
@@ -388,6 +404,22 @@ export function ExaminationQueuePage() {
         <PatientDetailModal
           patient={selectedPatient}
           onClose={() => setSelectedPatientCode(null)}
+        />
+
+        <UpdateQueueStatusModal
+          key={editingEntry?.id ?? 'closed'}
+          open={Boolean(editingEntry)}
+          entry={editingEntry}
+          currentQueueData={data}
+          onClose={() => setEditingEntry(null)}
+          onUpdated={(result) => {
+            setEditingEntry(null);
+            const prevLabel = EXAMINATION_QUEUE_STATUS_META[result.previousStatus].label;
+            const nextLabel = EXAMINATION_QUEUE_STATUS_META[result.entry.status].label;
+            setStatusNotice(
+              `Đã cập nhật trạng thái phiếu ${result.entry.ticketNo} (${result.entry.patientName}) từ ${prevLabel} sang ${nextLabel}.`,
+            );
+          }}
         />
       </div>
     </div>
