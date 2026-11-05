@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Eye } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Eye, Power, PowerOff } from 'lucide-react';
 
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -9,8 +9,9 @@ import type { RoomItem, RoomStatus } from '../types/room.types';
 interface RoomTableProps {
   rooms: RoomItem[];
   onViewRoom?: (room: RoomItem) => void;
+  onRequestDeactivate?: (room: RoomItem) => void;
+  onToggleStatus?: (id: string) => void;
 }
-
 const STATUS_CONFIG: Record<RoomStatus, { label: string; tone: 'emerald' | 'amber' | 'slate' }> = {
   ACTIVE: { label: 'Đang hoạt động', tone: 'emerald' },
   MAINTENANCE: { label: 'Bảo trì', tone: 'amber' },
@@ -19,7 +20,12 @@ const STATUS_CONFIG: Record<RoomStatus, { label: string; tone: 'emerald' | 'ambe
 
 const ITEMS_PER_PAGE = 8;
 
-export function RoomTable({ rooms, onViewRoom }: RoomTableProps) {
+export function RoomTable({
+  rooms,
+  onViewRoom,
+  onRequestDeactivate,
+  onToggleStatus,
+}: RoomTableProps) {
   const [currentPage, setCurrentPage] = useState(1);
 
   const totalPages = Math.ceil(rooms.length / ITEMS_PER_PAGE) || 1;
@@ -85,15 +91,42 @@ export function RoomTable({ rooms, onViewRoom }: RoomTableProps) {
 
                     {/* Thao tác */}
                     <td className="px-5 py-4 text-right">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => onViewRoom?.(room)}
-                        className="gap-1.5"
-                      >
-                        <Eye className="w-3.5 h-3.5" aria-hidden="true" />
-                        <span>Xem</span>
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => onViewRoom?.(room)}
+                          className="gap-1.5"
+                          aria-label={`Xem buồng khám ${room.roomName}`}
+                        >
+                          <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+                          <span>Xem</span>
+                        </Button>
+
+                        {room.status === 'INACTIVE' ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onToggleStatus?.(room.id)}
+                            className="gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+                            aria-label={`Kích hoạt lại buồng khám ${room.roomName}`}
+                          >
+                            <Power className="w-3.5 h-3.5" aria-hidden="true" />
+                            <span>Kích hoạt lại</span>
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => onRequestDeactivate?.(room)}
+                            className="gap-1.5 border-amber-200 text-amber-800 hover:bg-amber-50 hover:text-amber-900"
+                            aria-label={`Ngừng hoạt động buồng khám ${room.roomName}`}
+                          >
+                            <PowerOff className="w-3.5 h-3.5" aria-hidden="true" />
+                            <span>Ngừng hoạt động</span>
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

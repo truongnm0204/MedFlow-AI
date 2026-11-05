@@ -7,8 +7,11 @@ import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import { CreatePatientModal } from '../components/create-patient-modal';
+import { AssignExaminationRoomModal } from '../components/assign-examination-room-modal';
 import { PatientDetailModal } from '../components/patient-detail-modal';
+import { PrintExaminationTicketModal } from '../components/print-examination-ticket-modal';
 import { UpdatePatientModal } from '../components/update-patient-modal';
+import { TransferVisitRoomModal } from '../components/transfer-visit-room-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
 import { QueuePreviewTable } from '../components/queue-preview-table';
 import { ReceptionSidebar } from '../components/reception-sidebar';
@@ -21,9 +24,11 @@ import {
   TODAY_APPOINTMENTS_MOCK,
 } from '../data/reception-mock-data';
 import type { CreatePatientFormData, CreatedPatientResult } from '../types/create-patient.types';
+import type { AssignRoomVisitTarget } from '../types/assign-examination-room.types';
 import { findPatientDetailByCode } from '../data/patient-detail-mock';
-import type { TodayAppointment } from '../types/reception.types';
+import type { QueueEntry, TodayAppointment } from '../types/reception.types';
 import type { UpdatePatientFormData } from '../types/update-patient.types';
+import type { TransferVisitRoomTarget } from '../types/visit-room-transfer.types';
 
 const APPOINTMENT_STATUS_LABEL: Record<
   TodayAppointment['status'],
@@ -51,6 +56,14 @@ export function ReceptionDashboardPage() {
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
   const [editingPatient, setEditingPatient] = useState<UpdatePatientFormData | null>(null);
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
+  const [queueEntries, setQueueEntries] = useState<QueueEntry[]>(QUEUE_ENTRIES_MOCK);
+  const [transferringTarget, setTransferringTarget] = useState<TransferVisitRoomTarget | null>(
+    null,
+  );
+  const [printingVisitCode, setPrintingVisitCode] = useState<string | null>(null);
+  const [assigningVisitTarget, setAssigningVisitTarget] = useState<AssignRoomVisitTarget | null>(
+    null,
+  );
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
@@ -58,6 +71,7 @@ export function ReceptionDashboardPage() {
         activeItem="dashboard"
         onItemSelect={(item) => {
           if (item === 'patients') navigate('/reception/patients');
+          if (item === 'queue') navigate('/reception/queue');
         }}
       />
 
@@ -131,15 +145,47 @@ export function ReceptionDashboardPage() {
                 <div>
                   <div className="text-sm font-bold text-slate-900">Hàng đợi hiện tại</div>
                   <div className="text-[11px] text-slate-500">
-                    {QUEUE_ENTRIES_MOCK.length} lượt • cập nhật theo thời gian thực
+                    {queueEntries.length} lượt • cập nhật theo thời gian thực
                   </div>
                 </div>
-                <Badge tone="sky">Trực tiếp</Badge>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/reception/queue')}
+                    className="text-xs font-semibold text-primary hover:underline"
+                  >
+                    Xem theo phòng khám
+                  </button>
+                  <Badge tone="sky">Trực tiếp</Badge>
+                </div>
               </CardHeader>
               <CardContent className="p-0 px-6 pb-4">
                 <QueuePreviewTable
-                  entries={QUEUE_ENTRIES_MOCK}
+                  entries={queueEntries}
                   onSelectPatient={setSelectedPatientCode}
+                  onAssignRoom={(entry) => {
+                    setUpdateNotice(null);
+                    setAssigningVisitTarget({
+                      visitIdOrCode: entry.visitCode ?? 'VIS-202610-0001',
+                      patientCode: entry.patientCode,
+                      patientName: entry.patientName,
+                      currentRoomCode: entry.room,
+                      priority: entry.priority,
+                      assignedDoctorName: entry.doctorName,
+                      departmentName: entry.departmentName,
+                    });
+                  }}
+                  onTransferRoom={(entry) => {
+                    setUpdateNotice(null);
+                    setTransferringTarget({
+                      visitIdOrCode: entry.visitCode ?? 'VIS-202610-0002',
+                      patientCode: entry.patientCode,
+                      patientName: entry.patientName,
+                      currentRoomCode: entry.room,
+                      ticketNo: entry.ticketNo,
+                    });
+                  }}
+                  onPrintTicket={(entry) => setPrintingVisitCode(entry.visitCode ?? entry.ticketNo)}
                 />
               </CardContent>
             </Card>
@@ -161,6 +207,41 @@ export function ReceptionDashboardPage() {
                       } else if (id === 'update-patient') {
                         setUpdateNotice(null);
                         setEditingPatient(PATIENT_UPDATE_MOCK);
+                      } else if (id === 'transfer-room') {
+                        setUpdateNotice(null);
+                        const candidate =
+                          queueEntries.find(
+                            (q) => q.status === 'WAITING' || q.status === 'CALLED',
+                          ) ?? queueEntries[0];
+                        if (candidate) {
+                          setTransferringTarget({
+                            visitIdOrCode: candidate.visitCode ?? 'VIS-202610-0002',
+                            patientCode: candidate.patientCode,
+                            patientName: candidate.patientName,
+                            currentRoomCode: candidate.room,
+                            ticketNo: candidate.ticketNo,
+                          });
+                        }
+                      } else if (id === 'print-ticket') {
+                        setUpdateNotice(null);
+                        setPrintingVisitCode(QUEUE_ENTRIES_MOCK[0]?.visitCode ?? 'VIS-202610-0001');
+                      } else if (id === 'assign-room') {
+                        setUpdateNotice(null);
+                        const candidate =
+                          queueEntries.find(
+                            (q) => q.status === 'WAITING' || q.status === 'CALLED',
+                          ) ?? queueEntries[0];
+                        if (candidate) {
+                          setAssigningVisitTarget({
+                            visitIdOrCode: candidate.visitCode ?? 'VIS-202610-0001',
+                            patientCode: candidate.patientCode,
+                            patientName: candidate.patientName,
+                            currentRoomCode: candidate.room,
+                            priority: candidate.priority,
+                            assignedDoctorName: candidate.doctorName,
+                            departmentName: candidate.departmentName,
+                          });
+                        }
                       }
                     }}
                   />
@@ -220,6 +301,73 @@ export function ReceptionDashboardPage() {
             // TODO(M2): goi API cap nhat ho so khi backend san sang.
             setEditingPatient(null);
             setUpdateNotice(`Đã cập nhật hồ sơ ${code} — ${values.fullName}`);
+          }}
+        />
+      )}
+
+      {transferringTarget && (
+        <TransferVisitRoomModal
+          open
+          target={transferringTarget}
+          onClose={() => setTransferringTarget(null)}
+          onTransferred={(result) => {
+            setQueueEntries((prev) =>
+              prev.map((entry) =>
+                entry.patientCode === transferringTarget.patientCode ||
+                entry.visitCode === result.visitCode
+                  ? {
+                      ...entry,
+                      room: result.currentRoomCode,
+                      status: entry.status === 'CALLED' ? 'WAITING' : entry.status,
+                    }
+                  : entry,
+              ),
+            );
+            setTransferringTarget(null);
+            setUpdateNotice(
+              `Đã chuyển phòng khám cho ${transferringTarget.patientName} từ ${result.previousRoomCode} sang ${result.currentRoomCode} (${result.currentRoomName})`,
+            );
+          }}
+        />
+      )}
+
+      {printingVisitCode && (
+        <PrintExaminationTicketModal
+          key={printingVisitCode}
+          open
+          initialVisitCode={printingVisitCode}
+          onClose={() => setPrintingVisitCode(null)}
+          onPrinted={(ticket) => {
+            setUpdateNotice(
+              `Đã in phiếu khám ${ticket.ticketNo} (${ticket.visitCode}) cho bệnh nhân ${ticket.patientName}`,
+            );
+          }}
+        />
+      )}
+
+      {assigningVisitTarget && (
+        <AssignExaminationRoomModal
+          open
+          target={assigningVisitTarget}
+          onClose={() => setAssigningVisitTarget(null)}
+          onAssigned={(result) => {
+            setQueueEntries((prev) =>
+              prev.map((item) =>
+                item.visitCode === result.visitCode ||
+                item.patientCode === assigningVisitTarget.patientCode
+                  ? {
+                      ...item,
+                      room: result.roomCode,
+                      priority: result.priority,
+                      status: item.status === 'IN_PROGRESS' ? item.status : 'WAITING',
+                    }
+                  : item,
+              ),
+            );
+            setAssigningVisitTarget(null);
+            setUpdateNotice(
+              `Đã phân buồng khám ${result.roomCode} (${result.roomName}) cho lượt khám ${result.visitCode}`,
+            );
           }}
         />
       )}

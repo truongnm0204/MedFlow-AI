@@ -4,6 +4,7 @@ import type {
   BookingDateOption,
   BookingPatientProfile,
   BookingServiceOnlyInfo,
+  BookingTimeSlot,
   ServiceShiftOption,
 } from '../types/slot-booking.types';
 
@@ -11,6 +12,7 @@ interface BookingServiceStickyFooterProps {
   serviceInfo: BookingServiceOnlyInfo;
   selectedProfile?: BookingPatientProfile;
   selectedDate?: BookingDateOption;
+  selectedSlot?: BookingTimeSlot;
   selectedShift?: ServiceShiftOption;
   onContinue: () => void;
 }
@@ -19,12 +21,12 @@ export function BookingServiceStickyFooter({
   serviceInfo,
   selectedProfile,
   selectedDate,
+  selectedSlot,
   selectedShift,
   onContinue,
 }: BookingServiceStickyFooterProps) {
   const formattedPrice = new Intl.NumberFormat('vi-VN').format(serviceInfo.price);
-  const canContinue = Boolean(selectedProfile && selectedDate && selectedShift);
-
+  const canContinue = Boolean(selectedProfile && selectedDate && (selectedSlot || selectedShift));
   return (
     <section
       aria-label="Tóm tắt lịch khám dịch vụ đã chọn"
@@ -39,12 +41,17 @@ export function BookingServiceStickyFooter({
           <div className="space-y-0.5 text-xs">
             <p className="font-bold text-ink sm:text-sm">
               <span className="text-primary">ĐÃ CHỌN:</span>{' '}
-              {selectedShift && selectedDate ? (
+              {selectedSlot && selectedDate ? (
+                <>
+                  {selectedSlot.timeRange} • {selectedDate.fullDateDisplay} (
+                  {selectedSlot.shiftLabel})
+                </>
+              ) : selectedShift && selectedDate ? (
                 <>
                   {selectedShift.title} ({selectedShift.timeRange}) • {selectedDate.fullDateDisplay}
                 </>
               ) : (
-                'Vui lòng chọn ngày và ca khám'
+                'Vui lòng chọn ngày và khung giờ khám'
               )}
             </p>
             <p className="text-sub">

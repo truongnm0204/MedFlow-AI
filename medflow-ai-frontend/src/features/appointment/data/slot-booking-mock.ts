@@ -513,11 +513,15 @@ export function getMockServiceAvailableShiftsPayload(
   serviceId?: string | null,
   dateIso?: string,
 ): ServiceAvailableShiftsPayload {
+  const activeDayShift = resolveDoctorDayShiftSchedule(dateIso);
   return {
     serviceInfo: resolveBookingServiceOnlyInfo(serviceId),
     monthLabel: 'Tháng 10, 2026',
     profiles: MOCK_BOOKING_PROFILES,
     dates: MOCK_SERVICE_DATES,
     shifts: resolveServiceShiftsByDate(dateIso),
+    morningSlots: activeDayShift.morningSlots,
+    afternoonSlots: activeDayShift.afternoonSlots,
+    activeDayShift,
   };
 }

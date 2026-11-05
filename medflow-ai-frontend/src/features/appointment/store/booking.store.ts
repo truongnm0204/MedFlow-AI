@@ -36,8 +36,10 @@ export const useBookingStore = create<BookingState>((set) => ({
   selectedHospitalId: null,
   bookingMode: null,
   symptomNote: '',
-  selectDoctor: (id) => set({ selectedDoctorId: id }),
-  selectService: (id, name) => set({ selectedServiceId: id, selectedServiceName: name ?? null }),
+  selectDoctor: (id) =>
+    set({ selectedDoctorId: id, selectedServiceId: null, selectedServiceName: null }),
+  selectService: (id, name) =>
+    set({ selectedServiceId: id, selectedServiceName: name ?? null, selectedDoctorId: null }),
   selectPatient: (id) => set({ selectedPatientId: id }),
   selectDate: (dateIso) => set({ selectedDateIso: dateIso }),
   selectSlot: (slotId) => set({ selectedSlotId: slotId }),

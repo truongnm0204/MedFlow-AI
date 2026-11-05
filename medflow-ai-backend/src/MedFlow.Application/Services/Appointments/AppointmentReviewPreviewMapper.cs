@@ -26,7 +26,8 @@ internal static class AppointmentReviewPreviewMapper
         ExaminationSlot slot,
         HospitalRoom? room,
         AppointmentPolicyDto policy,
-        DateOnly today)
+        DateOnly today,
+        bool hasExplicitSlotId = false)
     {
         var start = slot.StartsAt!.Value;
         var end = slot.EndsAt!.Value;
@@ -49,6 +50,7 @@ internal static class AppointmentReviewPreviewMapper
         var scheduleLocation = BuildScheduleLocation(
             isDoctorMode,
             isMorningShift,
+            hasExplicitSlotId,
             service,
             doctor,
             slot,
@@ -57,7 +59,6 @@ internal static class AppointmentReviewPreviewMapper
             checkInDeadlineTime,
             allocatedRoomTitle,
             shortRoomNumber);
-
         var feeSummary = BuildFeeSummary(service, doctor);
 
         var receptionPolicy = new ReviewReceptionPolicyDto(
@@ -126,6 +127,7 @@ internal static class AppointmentReviewPreviewMapper
     private static ReviewScheduleLocationDto BuildScheduleLocation(
         bool isDoctorMode,
         bool isMorningShift,
+        bool hasExplicitSlotId,
         ExaminationServiceDto service,
         DoctorDetailDto? doctor,
         ExaminationSlot slot,
@@ -171,10 +173,9 @@ internal static class AppointmentReviewPreviewMapper
         }
 
         var dateIso = DateOnly.FromDateTime(start).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        var slotOrShiftId = isDoctorMode
+        var slotOrShiftId = (isDoctorMode || hasExplicitSlotId)
             ? slot.Id.ToString(CultureInfo.InvariantCulture)
             : (isMorningShift ? "shift-morning" : "shift-afternoon");
-
         var shiftLabel = start.TimeOfDay < AppointmentBookingRules.AfternoonShiftStart
             ? "Ca Sáng"
             : "Ca Chiều";

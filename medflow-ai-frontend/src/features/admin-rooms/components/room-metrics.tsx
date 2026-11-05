@@ -11,7 +11,7 @@ export function RoomMetrics({ metrics }: RoomMetricsProps) {
     {
       title: 'TỔNG SỐ BUỒNG KHÁM',
       value: `${metrics.totalRooms} Phòng`,
-      desc: '20 phòng đang hoạt động',
+      desc: `${metrics.activeRooms} phòng đang hoạt động`,
       icon: DoorOpen,
       tone: 'text-primary',
     },

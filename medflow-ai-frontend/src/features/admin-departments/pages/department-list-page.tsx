@@ -1,11 +1,16 @@
+import { CheckCircle2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { toast } from '@/shared/ui/toast';
 
+import { deactivateDepartmentApi, reactivateDepartmentApi } from '../api/department.api';
+import { DepartmentDeactivateModal } from '../components/department-deactivate-modal';
 import { DepartmentFilters } from '../components/department-filters';
 import { DepartmentMetricsCards } from '../components/department-metrics';
 import { DepartmentTable } from '../components/department-table';
-import { DEPARTMENT_MOCK_DATA } from '../data/department-mock-data';
+import { useDepartmentStore } from '../store/department.store';
+import type { DeactivateDepartmentPayload } from '../types/department-deactivate.types';
 import type {
   DepartmentFilters as Filters,
   DepartmentItem,
@@ -34,10 +39,59 @@ function exportDepartmentsToCsv(departments: DepartmentItem[]) {
 }
 
 export function DepartmentListPage() {
-  const departments = DEPARTMENT_MOCK_DATA;
+  const departments = useDepartmentStore((state) => state.departments);
   const [filters, setFilters] = useState<Filters>({ search: '', facility: '', status: '' });
   const [page, setPage] = useState(1);
+  const [deactivatingDepartment, setDeactivatingDepartment] = useState<DepartmentItem | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [feedbackType, setFeedbackType] = useState<'success' | 'error'>('success');
 
+  const showFeedback = (message: string, type: 'success' | 'error' = 'success') => {
+    setFeedbackMessage(message);
+    setFeedbackType(type);
+    if (type === 'success') {
+      toast.success(message);
+    } else {
+      toast.error(message);
+    }
+    setTimeout(() => setFeedbackMessage(null), 4000);
+  };
+
+  const handleConfirmDeactivate = async (
+    departmentId: string,
+    payload: DeactivateDepartmentPayload,
+  ) => {
+    const target = departments.find((d) => d.id === departmentId || d.code === departmentId);
+    try {
+      const res = await deactivateDepartmentApi(departmentId, payload);
+      showFeedback(res.message);
+      setDeactivatingDepartment(null);
+    } catch (error: unknown) {
+      const errMessage =
+        error instanceof Error
+          ? error.message
+          : `Không thể ngừng hoạt động khoa ${target?.name ?? departmentId}.`;
+      showFeedback(errMessage, 'error');
+    }
+  };
+
+  const handleToggleStatus = async (departmentId: string) => {
+    const target = departments.find((d) => d.id === departmentId || d.code === departmentId);
+    if (!target) return;
+
+    if (target.status === 'ACTIVE') {
+      setDeactivatingDepartment(target);
+    } else {
+      try {
+        const res = await reactivateDepartmentApi(departmentId);
+        showFeedback(res.message);
+      } catch (error: unknown) {
+        const errMessage =
+          error instanceof Error ? error.message : `Không thể kích hoạt lại khoa ${target.name}.`;
+        showFeedback(errMessage, 'error');
+      }
+    }
+  };
   const metrics = useMemo<DepartmentMetrics>(() => {
     const active = departments.filter((d) => d.status === 'ACTIVE').length;
     return {
@@ -87,8 +141,35 @@ export function DepartmentListPage() {
           page={currentPage}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
+          onRequestDeactivate={(dept) => setDeactivatingDepartment(dept)}
+          onToggleStatus={handleToggleStatus}
         />
       </main>
+      <DepartmentDeactivateModal
+        department={deactivatingDepartment}
+        open={Boolean(deactivatingDepartment)}
+        onClose={() => setDeactivatingDepartment(null)}
+        onConfirm={handleConfirmDeactivate}
+      />
+      {feedbackMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl border px-4 py-3 text-xs font-semibold shadow-lg transition-all ${
+            feedbackType === 'error'
+              ? 'border-rose-200 bg-rose-50 text-rose-800'
+              : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          }`}
+        >
+          <CheckCircle2
+            className={`h-4 w-4 shrink-0 ${
+              feedbackType === 'error' ? 'text-rose-600' : 'text-emerald-600'
+            }`}
+            aria-hidden="true"
+          />
+          <span>{feedbackMessage}</span>
+        </div>
+      )}
     </AdminPortalShell>
   );
 }

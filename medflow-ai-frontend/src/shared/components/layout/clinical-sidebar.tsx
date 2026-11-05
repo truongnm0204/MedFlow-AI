@@ -24,6 +24,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useDoctorDemoStore } from '@/features/admin-doctors/store/doctor-demo.store';
 import { useExaminationServiceStore } from '@/features/admin-services/store/examination-service.store';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { hasAnyRole } from '@/features/auth/utils/rbac';
 
 import { MedflowLogo } from './medflow-logo';
 
@@ -54,6 +55,8 @@ export function ClinicalSidebar({
   const navigate = useNavigate();
 
   const user = useAuthStore((state) => state.user);
+  const userRoles = user?.roles ?? [];
+  const canAccessAdminPortal = hasAnyRole(userRoles, ['HOSPITAL_ADMIN', 'SYSTEM_ADMIN']);
   const doctorCount = useDoctorDemoStore((state) => state.doctors.length);
   const serviceCount = useExaminationServiceStore((state) => state.services.length);
 
@@ -179,12 +182,16 @@ export function ClinicalSidebar({
       label: 'Tra cứu tương tác thuốc',
       icon: AlertCircle,
     },
-    {
-      id: 'admin-portal',
-      label: 'Cổng Quản trị Cơ sở',
-      icon: ShieldCheck,
-      href: '/admin/services',
-    },
+    ...(canAccessAdminPortal
+      ? [
+          {
+            id: 'admin-portal',
+            label: 'Cổng Quản trị Cơ sở',
+            icon: ShieldCheck,
+            href: '/admin/services',
+          },
+        ]
+      : []),
   ];
 
   const primaryItems = isAdmin ? adminItems : clinicalItems;
