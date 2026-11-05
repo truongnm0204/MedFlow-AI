@@ -1,11 +1,5 @@
 import { useState } from 'react';
-import {
-  CheckCircle2,
-  Printer,
-  Sparkles,
-  UserCheck,
-  X,
-} from 'lucide-react';
+import { CheckCircle2, Sparkles, UserCheck, X } from 'lucide-react';
 
 import { Button } from '@/shared/ui/button';
 
@@ -16,6 +10,7 @@ import type {
   ScheduledCheckInAppointment,
 } from '../types/checkin.types';
 import { CheckInAppointmentSummary } from './checkin-appointment-summary';
+import { CheckInResultContent } from './checkin-result-modal';
 import { CheckInVitalsSection } from './checkin-vitals-section';
 
 interface CheckInModalProps {
@@ -25,12 +20,7 @@ interface CheckInModalProps {
   onSuccess?: (result: CheckInSuccessResult) => void;
 }
 
-export function CheckInModal({
-  isOpen,
-  onClose,
-  appointment,
-  onSuccess,
-}: CheckInModalProps) {
+export function CheckInModal({ isOpen, onClose, appointment, onSuccess }: CheckInModalProps) {
   const [formData, setFormData] = useState<CheckInFormData>({
     reasonForVisit: '',
     isIdentityVerified: false,
@@ -78,12 +68,23 @@ export function CheckInModal({
         visitId: `VIS-${Date.now().toString().slice(-6)}`,
         ticketNo: 'A018',
         patientName: appointment.patientName,
+        patientCode: appointment.patientCode,
         roomName: appointment.roomName,
+        departmentName: appointment.department,
         doctorName: appointment.doctorName,
+        priority: formData.priority,
+        queueNumber: 4,
+        waitingCountBefore: 3,
+        estimatedWaitMinutes: 15,
         checkedInAt: new Date().toLocaleTimeString('vi-VN', {
           hour: '2-digit',
           minute: '2-digit',
         }),
+        nextStepInstructions: [
+          `Di chuyển đến trước ${appointment.roomName} (${appointment.department} - Tầng 1).`,
+          'Theo dõi màn hình điện tử và lắng nghe loa gọi số thứ tự tiếp nhận.',
+          'Chuẩn bị sẵn thẻ CCCD/BHYT bản gốc trước khi vào phòng khám.',
+        ],
       };
 
       setIsSubmitting(false);
@@ -130,10 +131,7 @@ export function CheckInModal({
               <div className="text-xs font-bold text-emerald-700 tracking-wide uppercase">
                 Tiếp Nhận Ngoại Trú • Quầy Lễ Tân
               </div>
-              <h2
-                id="checkin-modal-title"
-                className="text-lg font-bold text-ink mt-0.5"
-              >
+              <h2 id="checkin-modal-title" className="text-lg font-bold text-ink mt-0.5">
                 Xác Nhận Check-in Lịch Hẹn Khám
               </h2>
             </div>
@@ -151,57 +149,8 @@ export function CheckInModal({
         {/* Content Body */}
         <div className="p-6 overflow-y-auto space-y-6">
           {successResult ? (
-            /* Success Screen */
-            <div
-              data-testid="checkin-success-view"
-              className="py-8 text-center space-y-5 animate-in fade-in zoom-in-95 duration-150"
-            >
-              <div className="w-16 h-16 rounded-3xl bg-emerald-100 text-emerald-600 border border-emerald-200 flex items-center justify-center mx-auto shadow-xs">
-                <CheckCircle2 className="w-9 h-9" aria-hidden="true" />
-              </div>
-
-              <div className="space-y-1">
-                <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider">
-                  Check-in Thành Công
-                </span>
-                <h3 className="text-2xl font-black text-slate-900">
-                  Số Thứ Tự: <span className="font-mono text-primary">{successResult.ticketNo}</span>
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Đã kích hoạt Lượt khám: <span className="font-mono font-bold text-slate-700">{successResult.visitId}</span>
-                </p>
-              </div>
-
-              {/* Ticket Card */}
-              <div className="max-w-md mx-auto p-5 rounded-2xl bg-canvas border border-border text-left text-xs space-y-2">
-                <div className="flex justify-between py-1 border-b border-slate-200/60">
-                  <span className="text-slate-500">Bệnh nhân:</span>
-                  <span className="font-bold text-slate-900">{successResult.patientName}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-slate-200/60">
-                  <span className="text-slate-500">Phòng khám:</span>
-                  <span className="font-bold text-emerald-700">{successResult.roomName}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-slate-200/60">
-                  <span className="text-slate-500">Bác sĩ khám:</span>
-                  <span className="font-bold text-slate-800">{successResult.doctorName}</span>
-                </div>
-                <div className="flex justify-between py-1">
-                  <span className="text-slate-500">Thời gian check-in:</span>
-                  <span className="font-mono text-slate-700">{successResult.checkedInAt}</span>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-center gap-3 pt-2">
-                <Button variant="secondary" size="sm" onClick={() => window.print()} className="gap-2">
-                  <Printer className="w-4 h-4" aria-hidden="true" />
-                  In phiếu tiếp nhận (STT)
-                </Button>
-                <Button variant="primary" size="sm" onClick={handleClose}>
-                  Hoàn tất & Đóng
-                </Button>
-              </div>
-            </div>
+            /* Success Screen (#73) */
+            <CheckInResultContent result={successResult} onClose={handleClose} />
           ) : (
             /* Form screen */
             <>

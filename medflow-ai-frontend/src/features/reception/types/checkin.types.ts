@@ -32,7 +32,14 @@ export interface CheckInSuccessResult {
   visitId: string;
   ticketNo: string;
   patientName: string;
+  patientCode?: string;
   roomName: string;
+  departmentName?: string;
   doctorName: string;
   checkedInAt: string;
+  priority?: CheckInPriority;
+  queueNumber?: number;
+  waitingCountBefore?: number;
+  estimatedWaitMinutes?: number;
+  nextStepInstructions?: string[];
 }
