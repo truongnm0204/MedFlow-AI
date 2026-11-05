@@ -29,7 +29,9 @@ export function CheckInVitalsSection({
           className="font-bold text-slate-800 flex items-center gap-1.5"
         >
           <FileText className="w-3.5 h-3.5 text-primary" aria-hidden="true" />
-          <span>Lý do đến khám hôm nay <span className="text-rose-500">*</span></span>
+          <span>
+            Lý do đến khám hôm nay <span className="text-rose-500">*</span>
+          </span>
         </label>
         <textarea
           id="reasonForVisit"
@@ -90,9 +92,7 @@ export function CheckInVitalsSection({
                 errors.heartRate ? 'border-rose-400' : 'border-slate-200'
               }`}
             />
-            {errors.heartRate && (
-              <p className="text-[10px] text-rose-600">{errors.heartRate}</p>
-            )}
+            {errors.heartRate && <p className="text-[10px] text-rose-600">{errors.heartRate}</p>}
           </div>
 
           {/* Temperature */}
@@ -152,7 +152,8 @@ export function CheckInVitalsSection({
           />
           <div className="text-xs">
             <span className="font-bold text-slate-900">
-              Đã đối chiếu thông tin CCCD / VNeID trùng khớp <span className="text-rose-500">*</span>
+              Đã đối chiếu thông tin CCCD / VNeID trùng khớp{' '}
+              <span className="text-rose-500">*</span>
             </span>
             <p className="text-[11px] text-slate-500">
               Xác nhận bệnh nhân có mặt trực tiếp tại quầy và khớp thông tin với vé hẹn.

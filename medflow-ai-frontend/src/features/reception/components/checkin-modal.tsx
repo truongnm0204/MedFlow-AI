@@ -1,11 +1,5 @@
 import { useState } from 'react';
-import {
-  CheckCircle2,
-  Printer,
-  Sparkles,
-  UserCheck,
-  X,
-} from 'lucide-react';
+import { CheckCircle2, Printer, Sparkles, UserCheck, X } from 'lucide-react';
 
 import { Button } from '@/shared/ui/button';
 
@@ -25,12 +19,7 @@ interface CheckInModalProps {
   onSuccess?: (result: CheckInSuccessResult) => void;
 }
 
-export function CheckInModal({
-  isOpen,
-  onClose,
-  appointment,
-  onSuccess,
-}: CheckInModalProps) {
+export function CheckInModal({ isOpen, onClose, appointment, onSuccess }: CheckInModalProps) {
   const [formData, setFormData] = useState<CheckInFormData>({
     reasonForVisit: '',
     isIdentityVerified: false,
@@ -130,10 +119,7 @@ export function CheckInModal({
               <div className="text-xs font-bold text-emerald-700 tracking-wide uppercase">
                 Tiếp Nhận Ngoại Trú • Quầy Lễ Tân
               </div>
-              <h2
-                id="checkin-modal-title"
-                className="text-lg font-bold text-ink mt-0.5"
-              >
+              <h2 id="checkin-modal-title" className="text-lg font-bold text-ink mt-0.5">
                 Xác Nhận Check-in Lịch Hẹn Khám
               </h2>
             </div>
@@ -165,10 +151,14 @@ export function CheckInModal({
                   Check-in Thành Công
                 </span>
                 <h3 className="text-2xl font-black text-slate-900">
-                  Số Thứ Tự: <span className="font-mono text-primary">{successResult.ticketNo}</span>
+                  Số Thứ Tự:{' '}
+                  <span className="font-mono text-primary">{successResult.ticketNo}</span>
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Đã kích hoạt Lượt khám: <span className="font-mono font-bold text-slate-700">{successResult.visitId}</span>
+                  Đã kích hoạt Lượt khám:{' '}
+                  <span className="font-mono font-bold text-slate-700">
+                    {successResult.visitId}
+                  </span>
                 </p>
               </div>
 
@@ -193,7 +183,12 @@ export function CheckInModal({
               </div>
 
               <div className="flex items-center justify-center gap-3 pt-2">
-                <Button variant="secondary" size="sm" onClick={() => window.print()} className="gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => window.print()}
+                  className="gap-2"
+                >
                   <Printer className="w-4 h-4" aria-hidden="true" />
                   In phiếu tiếp nhận (STT)
                 </Button>

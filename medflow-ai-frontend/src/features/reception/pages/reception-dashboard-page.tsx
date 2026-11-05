@@ -283,7 +283,7 @@ export function ReceptionDashboardPage() {
                             type="button"
                             onClick={() => {
                               const found = SCHEDULED_CHECKIN_APPOINTMENTS_MOCK.find(
-                                (item) => item.id === ap.id
+                                (item) => item.id === ap.id,
                               ) || {
                                 id: ap.id,
                                 appointmentCode: `APT-2024-${ap.id}`,
@@ -331,8 +331,8 @@ export function ReceptionDashboardPage() {
           if (selectedCheckIn) {
             setAppointments((prev) =>
               prev.map((item) =>
-                item.id === selectedCheckIn.id ? { ...item, status: 'CHECKED_IN' } : item
-              )
+                item.id === selectedCheckIn.id ? { ...item, status: 'CHECKED_IN' } : item,
+              ),
             );
           }
         }}
