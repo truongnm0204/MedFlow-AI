@@ -2,8 +2,13 @@ import axios from 'axios';
 
 import { apiClient } from '@/shared/lib/axios';
 
-import { buildMockExaminationQueueResponse } from '../data/examination-queue-mock';
+import {
+  buildMockEarlyArrivalBackfillResponse,
+  buildMockExaminationQueueResponse,
+} from '../data/examination-queue-mock';
 import type {
+  EarlyArrivalBackfillRequestPayload,
+  EarlyArrivalBackfillResponseDto,
   ExaminationQueueQueryParams,
   ExaminationQueueResponseDto,
 } from '../types/examination-queue.types';
@@ -35,4 +40,29 @@ export async function fetchExaminationQueue(
   }
 
   return buildMockExaminationQueueResponse(params);
+}
+
+export async function applyEarlyArrivalBackfill(
+  queueEntryId: string,
+  payload: EarlyArrivalBackfillRequestPayload,
+): Promise<EarlyArrivalBackfillResponseDto> {
+  const normalizedId = queueEntryId.trim();
+  const hasToken =
+    typeof window !== 'undefined' && Boolean(window.localStorage?.getItem('medflow.access_token'));
+
+  if (hasToken) {
+    try {
+      const { data } = await apiClient.post<EarlyArrivalBackfillResponseDto>(
+        `/reception/examination-queue/entries/${encodeURIComponent(normalizedId)}/early-arrival-backfill`,
+        payload,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return buildMockEarlyArrivalBackfillResponse(normalizedId, payload);
 }

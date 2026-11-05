@@ -1,8 +1,15 @@
 import type {
+  EarlyArrivalBackfillRequestPayload,
+  EarlyArrivalBackfillResponseDto,
+  ExaminationQueueEntryDto,
   ExaminationQueueQueryParams,
   ExaminationQueueResponseDto,
   ServicePointQueueDto,
 } from '../types/examination-queue.types';
+import {
+  evaluateSafeBackfillEligibility,
+  recalculateServicePointServingOrder,
+} from '../utils/early-arrival-backfill.utils';
 
 export const DEFAULT_QUEUE_DATE = '2026-11-04';
 
@@ -93,6 +100,8 @@ export const EXAMINATION_QUEUE_SERVICE_POINTS_MOCK: ServicePointQueueDto[] = [
         calledAt: null,
         startedAt: null,
         blockedReason: null,
+        isBackfilled: true,
+        backfillReason: 'Đến sớm 14 phút, phòng P.102 trống lượt hẹn đúng giờ',
       },
       {
         id: 'q-007',
@@ -282,5 +291,77 @@ export function buildMockExaminationQueueResponse(
       ...sp,
       entries: sp.entries.map((entry) => ({ ...entry })),
     })),
+  };
+}
+
+export function buildMockEarlyArrivalBackfillResponse(
+  queueEntryId: string,
+  payload: EarlyArrivalBackfillRequestPayload,
+): EarlyArrivalBackfillResponseDto {
+  const normalizedId = queueEntryId.trim();
+  let targetServicePoint: ServicePointQueueDto | undefined;
+  let targetEntry: ExaminationQueueEntryDto | undefined;
+
+  for (const sp of EXAMINATION_QUEUE_SERVICE_POINTS_MOCK) {
+    const found = sp.entries.find((item) => item.id === normalizedId);
+    if (found) {
+      targetServicePoint = sp;
+      targetEntry = found;
+      break;
+    }
+  }
+
+  if (!targetServicePoint || !targetEntry) {
+    throw new Error('Không tìm thấy lượt khám trong hàng đợi.');
+  }
+
+  const evaluation = evaluateSafeBackfillEligibility(targetEntry, targetServicePoint);
+  if (payload.actionMode === 'SAFE_BACKFILL' && evaluation.appointmentProtectionBlocked) {
+    throw new Error(evaluation.statusReason);
+  }
+
+  const nextStatus = payload.actionMode === 'SAFE_BACKFILL' ? 'READY' : 'WAITING';
+  const nextIsBackfilled = payload.actionMode === 'SAFE_BACKFILL';
+  const nextBlockedReason =
+    payload.actionMode === 'HOLD_FOR_SLOT'
+      ? `Giữ chờ tới khung giờ hẹn ${targetEntry.scheduledAt ?? ''} (Bảo vệ lịch hẹn đúng giờ)`.trim()
+      : null;
+
+  const draftEntry: ExaminationQueueEntryDto = {
+    ...targetEntry,
+    status: nextStatus,
+    arrivalClass: payload.arrivalClass,
+    isBackfilled: nextIsBackfilled,
+    backfillReason: payload.reason,
+    backfillUpdatedAt: '08:36',
+    blockedReason: nextBlockedReason,
+  };
+
+  const recalculated = recalculateServicePointServingOrder(
+    targetServicePoint.entries.map((item) => (item.id === targetEntry.id ? draftEntry : item)),
+  );
+  const recalculatedEntry = recalculated.find((item) => item.id === targetEntry.id) ?? draftEntry;
+
+  return {
+    queueEntryId: targetEntry.id,
+    ticketNo: targetEntry.ticketNo,
+    queueNumber: targetEntry.queueNumber,
+    visitCode: targetEntry.visitCode,
+    patientCode: targetEntry.patientCode,
+    patientName: targetEntry.patientName,
+    servicePointId: targetServicePoint.servicePointId,
+    roomCode: targetServicePoint.roomCode,
+    roomName: targetServicePoint.roomName,
+    previousStatus: targetEntry.status,
+    currentStatus: recalculatedEntry.status,
+    arrivalClass: recalculatedEntry.arrivalClass,
+    servingOrder: recalculatedEntry.servingOrder,
+    isBackfilled: nextIsBackfilled,
+    appointmentProtected: true,
+    blockedReason: recalculatedEntry.blockedReason,
+    reason: payload.reason,
+    notes: payload.notes ?? null,
+    updatedAtUtc: '2026-11-04T01:55:00Z',
+    updatedEntry: recalculatedEntry,
   };
 }

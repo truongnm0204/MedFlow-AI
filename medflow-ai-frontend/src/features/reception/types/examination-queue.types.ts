@@ -13,6 +13,8 @@ export type ExaminationVisitType = 'SCHEDULED' | 'WALK_IN';
 export type ExaminationQueueStatusFilter = 'ALL' | ExaminationQueueStatus;
 export type ExaminationQueuePriorityFilter = 'ALL' | ExaminationQueuePriority;
 export type ExaminationVisitTypeFilter = 'ALL' | ExaminationVisitType;
+export type QueueArrivalClassFilter = 'ALL' | QueueArrivalClass;
+export type EarlyArrivalBackfillActionMode = 'SAFE_BACKFILL' | 'HOLD_FOR_SLOT';
 
 export interface ExaminationQueueEntryDto {
   id: string;
@@ -37,6 +39,9 @@ export interface ExaminationQueueEntryDto {
   calledAt: string | null;
   startedAt: string | null;
   blockedReason: string | null;
+  isBackfilled?: boolean;
+  backfillReason?: string | null;
+  backfillUpdatedAt?: string | null;
 }
 
 export interface ServicePointQueueDto {
@@ -81,4 +86,63 @@ export interface ExaminationQueueQueryParams {
   priority?: ExaminationQueuePriorityFilter;
   visitType?: ExaminationVisitTypeFilter;
   keyword?: string;
+  arrivalClass?: QueueArrivalClassFilter;
+}
+
+export interface ProtectedAppointmentSummaryDto {
+  id: string;
+  ticketNo: string;
+  visitCode: string;
+  patientName: string;
+  patientCode: string;
+  scheduledAt: string | null;
+  status: ExaminationQueueStatus;
+}
+
+export interface SafeBackfillEvaluation {
+  isEligibleCandidate: boolean;
+  canSafeBackfill: boolean;
+  appointmentProtectionBlocked: boolean;
+  hasIdleRoomGap: boolean;
+  earlyLeadMinutes: number | null;
+  protectedAppointments: ProtectedAppointmentSummaryDto[];
+  statusReason: string;
+  recommendedAction: EarlyArrivalBackfillActionMode;
+}
+
+export interface EarlyArrivalBackfillRequestPayload {
+  servicePointId: string;
+  actionMode: EarlyArrivalBackfillActionMode;
+  arrivalClass: QueueArrivalClass;
+  reason: string;
+  notes?: string | null;
+  acknowledgeAppointmentProtection: boolean;
+}
+
+export interface EarlyArrivalBackfillResponseDto {
+  queueEntryId: string;
+  ticketNo: string;
+  queueNumber: number;
+  visitCode: string;
+  patientCode: string;
+  patientName: string;
+  servicePointId: string;
+  roomCode: string;
+  roomName: string;
+  previousStatus: ExaminationQueueStatus;
+  currentStatus: ExaminationQueueStatus;
+  arrivalClass: QueueArrivalClass;
+  servingOrder: number;
+  isBackfilled: boolean;
+  appointmentProtected: boolean;
+  blockedReason: string | null;
+  reason: string;
+  notes: string | null;
+  updatedAtUtc: string;
+  updatedEntry: ExaminationQueueEntryDto;
+}
+
+export interface EarlyArrivalBackfillTarget {
+  entry: ExaminationQueueEntryDto;
+  servicePoint: ServicePointQueueDto;
 }
