@@ -170,6 +170,7 @@ export function ExaminationQueuePage() {
     entry: ExaminationQueueEntryDto,
     initialTargetStatus?: ExaminationQueueStatus,
   ) => {
+    setUpdateNotice(null);
     setUpdatingQueueTarget({
       entryId: entry.id,
       queueNumber: entry.queueNumber,
@@ -518,6 +519,7 @@ export function ExaminationQueuePage() {
 
         {updatingQueueTarget && (
           <UpdateQueueStatusModal
+            key={updatingQueueTarget.entryId}
             open={Boolean(updatingQueueTarget)}
             target={updatingQueueTarget}
             onClose={() => setUpdatingQueueTarget(null)}
@@ -538,7 +540,7 @@ export function ExaminationQueuePage() {
                 },
               }));
               setUpdateNotice(
-                `Đã cập nhật trạng thái phiếu ${result.ticketNo} sang ${STATUS_LABEL[result.currentStatus]}.`,
+                `Đã cập nhật trạng thái phiếu ${result.ticketNo} (${result.patientName}) từ ${STATUS_LABEL[result.previousStatus]} sang ${STATUS_LABEL[result.currentStatus]}.`,
               );
               setUpdatingQueueTarget(null);
             }}

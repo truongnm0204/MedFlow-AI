@@ -82,3 +82,26 @@ export interface ExaminationQueueQueryParams {
   visitType?: ExaminationVisitTypeFilter;
   keyword?: string;
 }
+
+export const EXAMINATION_QUEUE_STATUS_VALUES = [
+  'WAITING',
+  'READY',
+  'CALLED',
+  'IN_PROGRESS',
+  'COMPLETED',
+  'SKIPPED',
+] as const;
+
+export const QUEUE_PRESENCE_STATUS_VALUES = ['PRESENT', 'NOT_ARRIVED', 'LEFT'] as const;
+
+export interface UpdateExaminationQueueStatusPayload {
+  targetStatus: ExaminationQueueStatus;
+  presenceStatus: QueuePresenceStatus;
+  reason: string | null;
+}
+
+export interface UpdateExaminationQueueStatusResponseDto {
+  entry: ExaminationQueueEntryDto;
+  previousStatus: ExaminationQueueStatus;
+  updatedAtUtc: string;
+}

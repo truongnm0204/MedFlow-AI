@@ -22,7 +22,8 @@ export interface ExaminationQueueServicePointCardProps {
   ) => void;
 }
 
-const EXAMINATION_QUEUE_STATUS_META: Record<
+// oxlint-disable-next-line react/only-export-components
+export const EXAMINATION_QUEUE_STATUS_META: Record<
   ExaminationQueueStatus,
   { label: string; tone: 'amber' | 'sky' | 'emerald' | 'slate' | 'rose' }
 > = {
@@ -34,7 +35,8 @@ const EXAMINATION_QUEUE_STATUS_META: Record<
   SKIPPED: { label: 'Qua lượt', tone: 'rose' },
 };
 
-const EXAMINATION_QUEUE_PRIORITY_META: Record<
+// oxlint-disable-next-line react/only-export-components
+export const EXAMINATION_QUEUE_PRIORITY_META: Record<
   ExaminationQueuePriority,
   { label: string; tone: 'slate' | 'rose' | 'amber' | 'sky' | 'emerald' }
 > = {
@@ -45,7 +47,8 @@ const EXAMINATION_QUEUE_PRIORITY_META: Record<
   RETURN_RESULT: { label: 'Trả KQ CLS', tone: 'emerald' },
 };
 
-const PRESENCE_STATUS_META: Record<
+// oxlint-disable-next-line react/only-export-components
+export const PRESENCE_STATUS_META: Record<
   QueuePresenceStatus,
   { label: string; tone: 'emerald' | 'amber' | 'rose' }
 > = {
