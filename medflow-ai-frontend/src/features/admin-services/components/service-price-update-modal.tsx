@@ -1,71 +1,72 @@
-import { AlertCircle, CheckCircle2, DollarSign, TrendingDown, TrendingUp, X } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  DollarSign,
+  TrendingDown,
+  TrendingUp,
+  X,
+} from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import { Spinner } from '@/shared/ui';
+import { useExaminationServiceStore } from '../store/examination-service.store';
+import type { ExaminationService, ServiceStatus } from '../types/examination-service.types';
 
-import type {
-  ServicePricingItem,
-  ServicePricingStatus,
-  UpdateServicePricePayload,
-} from '../types/service-pricing.types';
-
-interface PricingUpdateModalProps {
-  item: ServicePricingItem | null;
+interface ServicePriceUpdateModalProps {
+  service: ExaminationService | null;
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (id: string, payload: UpdateServicePricePayload) => Promise<void>;
-  isSubmitting?: boolean;
+  onSuccess?: (updated: ExaminationService) => void;
 }
 
-export function PricingUpdateModal({
-  item,
+export function ServicePriceUpdateModal({
+  service,
   isOpen,
   onClose,
-  onSubmit,
-  isSubmitting = false,
-}: PricingUpdateModalProps) {
-  if (!isOpen || !item) return null;
+  onSuccess,
+}: ServicePriceUpdateModalProps) {
+  if (!isOpen || !service) return null;
 
   return (
-    <PricingUpdateModalContent
-      key={item.id}
-      item={item}
+    <ServicePriceUpdateModalContent
+      key={service.id}
+      service={service}
       onClose={onClose}
-      onSubmit={onSubmit}
-      isSubmitting={isSubmitting}
+      onSuccess={onSuccess}
     />
   );
 }
 
-function PricingUpdateModalContent({
-  item,
+function ServicePriceUpdateModalContent({
+  service,
   onClose,
-  onSubmit,
-  isSubmitting = false,
-}: Omit<PricingUpdateModalProps, 'isOpen'> & { item: ServicePricingItem }) {
-  const [newPrice, setNewPrice] = useState<number>(item.currentPrice);
+  onSuccess,
+}: Omit<ServicePriceUpdateModalProps, 'isOpen'> & { service: ExaminationService }) {
+  const updateService = useExaminationServiceStore((state) => state.updateService);
+
+  const [newPrice, setNewPrice] = useState<number>(service.price);
   const [effectiveDate, setEffectiveDate] = useState<string>(() =>
     new Date().toISOString().slice(0, 10),
   );
   const [decisionNumber, setDecisionNumber] = useState<string>('QĐ-145/BV-KH');
   const [appliedBy, setAppliedBy] = useState<string>('Hội đồng Giá Bệnh viện');
-  const [status, setStatus] = useState<ServicePricingStatus>(item.status);
+  const [status, setStatus] = useState<ServiceStatus>(service.status);
   const [note, setNote] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !isSubmitting) onClose();
+      if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSubmitting, onClose]);
+  }, [onClose]);
 
-  const currentPrice = item.currentPrice;
+  const currentPrice = service.price;
   const priceDiff = newPrice - currentPrice;
-  const percentDiff = currentPrice > 0 ? Math.round((priceDiff / currentPrice) * 100) : 0;
+  const percentDiff =
+    currentPrice > 0 ? Math.round((priceDiff / currentPrice) * 100) : 0;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (newPrice <= 0) {
       setErrorMessage('Mức giá mới phải lớn hơn 0 VNĐ.');
@@ -76,36 +77,42 @@ function PricingUpdateModalContent({
       return;
     }
 
-    try {
-      await onSubmit(item.id, {
-        newPrice,
-        effectiveDate,
-        decisionNumber: decisionNumber.trim(),
-        appliedBy,
-        status,
-        note: note.trim() || `Cập nhật biểu phí sang ${newPrice.toLocaleString('vi-VN')} đ`,
-      });
-      onClose();
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : 'Lỗi cập nhật biểu phí.');
-    }
+    const newHistoryEntry = {
+      date: effectiveDate,
+      price: newPrice,
+      decisionNumber: decisionNumber.trim(),
+      note: note.trim() || `Cập nhật biểu phí sang ${newPrice.toLocaleString('vi-VN')} đ`,
+      appliedBy,
+    };
+
+    const updatedData: Partial<ExaminationService> = {
+      price: newPrice,
+      effectiveDate,
+      decisionNumber: decisionNumber.trim(),
+      status,
+      priceHistory: [newHistoryEntry, ...(service.priceHistory || [])],
+    };
+
+    updateService(service.id, updatedData);
+    onSuccess?.({ ...service, ...updatedData });
+    onClose();
   };
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-labelledby="pricing-update-title"
+      aria-labelledby="price-update-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-xs"
     >
-      <div className="w-full max-w-lg rounded-xl border border-border bg-white shadow-xl">
+      <div className="w-full max-w-lg rounded-xl border border-border bg-white shadow-xl animate-in fade-in zoom-in-95 duration-150">
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <div className="flex items-center gap-2">
             <DollarSign className="h-5 w-5 text-emerald-600" aria-hidden="true" />
             <div>
-              <span className="font-mono text-[10px] font-bold text-primary">{item.code}</span>
-              <h2 id="pricing-update-title" className="text-sm font-bold text-ink">
-                Cập Nhật Mức Giá & Quyết Định Áp Dụng
+              <span className="font-mono text-[10px] font-bold text-primary">{service.code}</span>
+              <h2 id="price-update-title" className="text-sm font-bold text-ink">
+                Cập Nhật Mức Giá & Quyết Định Áp Dụng (UC52)
               </h2>
             </div>
           </div>
@@ -121,14 +128,10 @@ function PricingUpdateModalContent({
 
         <form onSubmit={handleSubmit} className="p-5 space-y-3.5 text-xs">
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <div className="font-bold text-ink">{item.name}</div>
+            <div className="font-bold text-ink">{service.name}</div>
             <div className="mt-1 flex gap-4 text-sub text-[11px]">
-              <span>
-                Khoa: <b>{item.department}</b>
-              </span>
-              <span>
-                Giá hiện tại: <b className="text-emerald-700">{item.formattedPrice}</b>
-              </span>
+              <span>Khoa: <b>{service.department}</b></span>
+              <span>Giá hiện tại: <b className="text-emerald-700">{service.price.toLocaleString('vi-VN')} đ</b></span>
             </div>
           </div>
 
@@ -164,13 +167,11 @@ function PricingUpdateModalContent({
               {priceDiff !== 0 ? (
                 percentDiff > 0 ? (
                   <span className="flex items-center gap-0.5 font-bold text-rose-600">
-                    <TrendingUp className="h-3 w-3" /> Tăng +{percentDiff}% (+
-                    {priceDiff.toLocaleString('vi-VN')} đ)
+                    <TrendingUp className="h-3 w-3" /> Tăng +{percentDiff}% (+{priceDiff.toLocaleString('vi-VN')} đ)
                   </span>
                 ) : (
                   <span className="flex items-center gap-0.5 font-bold text-emerald-600">
-                    <TrendingDown className="h-3 w-3" /> Giảm {percentDiff}% (
-                    {priceDiff.toLocaleString('vi-VN')} đ)
+                    <TrendingDown className="h-3 w-3" /> Giảm {percentDiff}% ({priceDiff.toLocaleString('vi-VN')} đ)
                   </span>
                 )
               ) : (
@@ -181,10 +182,8 @@ function PricingUpdateModalContent({
                   <button
                     key={pct}
                     type="button"
-                    onClick={() =>
-                      setNewPrice(Math.round((currentPrice * (1 + pct / 100)) / 1000) * 1000)
-                    }
-                    className="rounded border border-border bg-slate-50 px-1 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-100"
+                    onClick={() => setNewPrice(Math.round((currentPrice * (1 + pct / 100)) / 1000) * 1000)}
+                    className="rounded border border-border bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-100"
                   >
                     +{pct}%
                   </button>
@@ -246,7 +245,7 @@ function PricingUpdateModalContent({
               <select
                 id="status-select"
                 value={status}
-                onChange={(e) => setStatus(e.target.value as ServicePricingStatus)}
+                onChange={(e) => setStatus(e.target.value as ServiceStatus)}
                 className="h-8 w-full rounded-md border border-border bg-white px-2 text-xs text-ink focus:border-primary focus:outline-none"
               >
                 <option value="ACTIVE">Đang áp dụng</option>
@@ -272,7 +271,6 @@ function PricingUpdateModalContent({
           <div className="flex justify-end gap-2 border-t border-border pt-3">
             <button
               type="button"
-              disabled={isSubmitting}
               onClick={onClose}
               className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
             >
@@ -280,20 +278,11 @@ function PricingUpdateModalContent({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || newPrice <= 0}
+              disabled={newPrice <= 0}
               className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
             >
-              {isSubmitting ? (
-                <>
-                  <Spinner className="h-3 w-3 text-white" />
-                  <span>Đang lưu...</span>
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Xác nhận cập nhật giá</span>
-                </>
-              )}
+              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Xác nhận cập nhật giá</span>
             </button>
           </div>
         </form>
