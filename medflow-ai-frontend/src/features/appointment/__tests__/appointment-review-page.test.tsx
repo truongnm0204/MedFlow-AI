@@ -172,10 +172,10 @@ describe('AppointmentReviewPage & AppointmentConfirmationPage (SCR-APT-06 / SCR-
   });
 
   it('displays an accessible error alert when slot is already full/conflicted', async () => {
+    useBookingStore.getState().setSymptomNote('Đau thượng vị kéo dài 3 ngày');
     renderAppointmentReviewPage(
       '/appointment/review?mode=doctor&doctorId=doc-01&serviceCode=DV-TH-01&patientId=pat-self&date=2026-10-13&slotId=slot-0730',
     );
-
     const confirmBtn = await screen.findByRole('button', {
       name: /Xác nhận Đặt khám & Cấp Số Thứ Tự/i,
     });

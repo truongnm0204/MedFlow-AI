@@ -22,7 +22,7 @@ describe('review-booking.schema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('validates a complete service-mode confirmBookingSchema payload with empty symptomNote', () => {
+  it('rejects service-mode confirmBookingSchema payload when symptomNote is missing or empty', () => {
     const result = confirmBookingSchema.safeParse({
       mode: 'service',
       patientId: 'pat-child',
@@ -31,12 +31,10 @@ describe('review-booking.schema', () => {
       serviceCode: 'DV-TH-01',
       dateIso: '2026-10-14',
       slotOrShiftId: 'shift-morning',
+      symptomNote: '   ',
     });
 
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.symptomNote).toBe('');
-    }
+    expect(result.success).toBe(false);
   });
 
   it('rejects missing required fields and invalid date format', () => {

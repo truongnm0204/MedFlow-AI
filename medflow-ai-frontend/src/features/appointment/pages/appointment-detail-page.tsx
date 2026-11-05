@@ -23,6 +23,7 @@ import {
 import { AppHeader } from '@/shared/components/layout/app-header';
 import { PatientFooter } from '@/shared/components/layout/patient-footer';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { toast } from '@/shared/ui/toast';
 
 import { AppointmentCancelModal } from '../components/appointment-cancel-modal';
 import { AppointmentQuickViewModal } from '../components/appointment-quick-view-modal';
@@ -123,9 +124,13 @@ export function AppointmentDetailPage() {
           setFeedbackBanner(
             `Đổi lịch khám thành công sang khung giờ ${updated.scheduledTimeRange} (${updated.scheduledDateFullLabel}) • STT giữ trước mới: ${updated.queueNumber ?? '005'}.`,
           );
+          toast.success('Đổi lịch khám thành công sang khung giờ mới.');
           if (updated.id && updated.id !== appointment.id) {
             navigate(`/appointments/${updated.id}`, { replace: true });
           }
+        },
+        onError: (err) => {
+          toast.error(getErrorMessage(err, 'Không thể đổi lịch khám lúc này.'));
         },
       },
     );
@@ -145,6 +150,10 @@ export function AppointmentDetailPage() {
           setFeedbackBanner(
             `Lịch hẹn #${appointment.appointmentCode} đã được hủy và giải phóng slot thành công.`,
           );
+          toast.success('Đã hủy lịch hẹn và giải phóng khung giờ khám thành công.');
+        },
+        onError: (err) => {
+          toast.error(getErrorMessage(err, 'Không thể hủy lịch hẹn lúc này.'));
         },
       },
     );

@@ -1,5 +1,6 @@
 import type {
   FefoBatchAlertItem,
+  PharmacyDashboardSummary,
   PharmacyQuickAction,
   PharmacyStats,
   PrescriptionQueueEntry,
@@ -7,6 +8,9 @@ import type {
 
 export const PHARMACY_WORKBENCH_META = {
   defaultPharmacistName: 'DS. Trần Thị Mai',
+  defaultStaffCode: 'STF-007',
+  facilityName: 'Bệnh viện MedFlow (giả lập)',
+  facilityCode: 'HOS-DEMO-01',
   counterLabel: 'Quầy Dược 01 • Tầng 1',
   shiftLabel: 'Ca sáng 07:30–11:30',
   counterCode: '#PHA-01',
@@ -230,3 +234,28 @@ export const FEFO_BATCH_ALERTS_MOCK: FefoBatchAlertItem[] = [
     status: 'EXPIRED_LOCKED',
   },
 ];
+
+export const PHARMACY_DASHBOARD_MOCK: PharmacyDashboardSummary = {
+  facilityName: PHARMACY_WORKBENCH_META.facilityName,
+  facilityCode: PHARMACY_WORKBENCH_META.facilityCode,
+  counterLabel: PHARMACY_WORKBENCH_META.counterLabel,
+  counterCode: PHARMACY_WORKBENCH_META.counterCode,
+  shiftLabel: PHARMACY_WORKBENCH_META.shiftLabel,
+  stats: PHARMACY_STATS_MOCK,
+  prescriptionQueue: PRESCRIPTION_QUEUE_MOCK,
+  quickActions: PHARMACY_QUICK_ACTIONS_MOCK,
+  fefoBatchAlerts: FEFO_BATCH_ALERTS_MOCK,
+  pharmacistProfile: {
+    userId: 9,
+    email: 'pharmacy_staff01@medflow.test',
+    fullName: PHARMACY_WORKBENCH_META.defaultPharmacistName,
+    staffCode: PHARMACY_WORKBENCH_META.defaultStaffCode,
+    hospitalId: 1,
+    hospitalCode: PHARMACY_WORKBENCH_META.facilityCode,
+    hospitalName: PHARMACY_WORKBENCH_META.facilityName,
+    departmentId: 1,
+    departmentName: 'Khoa Dược ngoại trú',
+    roles: ['PHARMACY_STAFF'],
+    permissions: ['MEDICINE_DISPENSE', 'PAYMENT_VIEW'],
+  },
+};

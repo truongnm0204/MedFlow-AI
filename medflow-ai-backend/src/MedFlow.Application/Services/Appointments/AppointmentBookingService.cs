@@ -111,10 +111,24 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var slotOrShiftId = string.Equals(request.Mode?.Trim(), "service", StringComparison.OrdinalIgnoreCase)
-            ? request.ShiftId
-            : request.SlotId;
-
+        var isServicePreview = string.Equals(request.Mode?.Trim(), "service", StringComparison.OrdinalIgnoreCase);
+        string? slotOrShiftId;
+        if (isServicePreview)
+        {
+            var hasNumericSlotId = !string.IsNullOrWhiteSpace(request.SlotId) &&
+                                   long.TryParse(request.SlotId.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedSlotId) &&
+                                   parsedSlotId > 0;
+            var hasLegacyShiftId = !string.IsNullOrWhiteSpace(request.ShiftId) &&
+                                   (string.Equals(request.ShiftId.Trim(), "shift-morning", StringComparison.OrdinalIgnoreCase) ||
+                                    string.Equals(request.ShiftId.Trim(), "shift-afternoon", StringComparison.OrdinalIgnoreCase));
+            slotOrShiftId = hasNumericSlotId && !hasLegacyShiftId
+                ? request.SlotId
+                : (!string.IsNullOrWhiteSpace(request.ShiftId) ? request.ShiftId : request.SlotId);
+        }
+        else
+        {
+            slotOrShiftId = request.SlotId;
+        }
         var selection = await ResolveSelectionAsync(
             userId,
             new CreateAppointmentRequest
@@ -169,7 +183,8 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
             selection.Slot,
             room,
             selection.Policy,
-            selection.Today);
+            selection.Today,
+            selection.HasExplicitSlotId);
     }
 
     private async Task<BookingSelection> ResolveSelectionAsync(
@@ -208,6 +223,9 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
             ? null
             : request.SymptomNote.Trim();
 
+        if (request.SymptomNote is not null && (symptomNote is null || symptomNote.Length < 3))
+            throw new ValidationException("Vui lòng nhập lý do khám hoặc triệu chứng ban đầu (tối thiểu 3 ký tự).");
+
         if (symptomNote is not null && symptomNote.Length > MaxSymptomNoteLength)
             throw new ValidationException("Lý do khám tối đa 500 ký tự.");
 
@@ -228,12 +246,19 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
         }
         else
         {
-            var shiftId = request.SlotOrShiftId?.Trim();
-            isMorningShift = string.Equals(shiftId, "shift-morning", StringComparison.OrdinalIgnoreCase);
-            var isAfternoonShift = string.Equals(shiftId, "shift-afternoon", StringComparison.OrdinalIgnoreCase);
+            var shiftOrSlot = request.SlotOrShiftId?.Trim();
+            isMorningShift = string.Equals(shiftOrSlot, "shift-morning", StringComparison.OrdinalIgnoreCase);
+            var isAfternoonShift = string.Equals(shiftOrSlot, "shift-afternoon", StringComparison.OrdinalIgnoreCase);
 
             if (!isMorningShift && !isAfternoonShift)
-                throw new ValidationException("Khung giờ khám không hợp lệ.");
+            {
+                if (string.IsNullOrWhiteSpace(shiftOrSlot) ||
+                    !long.TryParse(shiftOrSlot, NumberStyles.Integer, CultureInfo.InvariantCulture, out requestedSlotId) ||
+                    requestedSlotId <= 0)
+                {
+                    throw new ValidationException("Khung giờ khám không hợp lệ.");
+                }
+            }
         }
 
         var serviceDto = await _serviceCatalog.GetByIdOrCodeAsync(request.ServiceId, ct);
@@ -294,6 +319,25 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
             }
 
             AppointmentBookingRules.EnsureSlotBookable(candidate, nowLocal, today, policy);
+            isMorningShift = candidate.StartsAt.Value.TimeOfDay < AppointmentBookingRules.AfternoonShiftStart;
+            preselectedSlot = candidate;
+        }
+        else if (requestedSlotId > 0)
+        {
+            var candidate = await _db.ExaminationSlots
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == requestedSlotId, ct)
+                ?? throw new NotFoundException("ExaminationSlot", requestedSlotId);
+
+            if (candidate.ServiceId != serviceId ||
+                candidate.StartsAt is null ||
+                DateOnly.FromDateTime(candidate.StartsAt.Value) != dateIso)
+            {
+                throw new ValidationException("Khung giờ khám không khớp với bác sĩ, dịch vụ hoặc ngày đã chọn.");
+            }
+
+            AppointmentBookingRules.EnsureSlotBookable(candidate, nowLocal, today, policy);
+            isMorningShift = candidate.StartsAt.Value.TimeOfDay < AppointmentBookingRules.AfternoonShiftStart;
             preselectedSlot = candidate;
         }
         else
@@ -311,6 +355,7 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
         return new BookingSelection(
             IsDoctorMode: isDoctorMode,
             IsMorningShift: isMorningShift,
+            HasExplicitSlotId: isDoctorMode || requestedSlotId > 0,
             PatientId: patientId,
             SymptomNote: symptomNote,
             Service: serviceDto,
@@ -390,6 +435,7 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
     private sealed record BookingSelection(
         bool IsDoctorMode,
         bool IsMorningShift,
+        bool HasExplicitSlotId,
         long PatientId,
         string? SymptomNote,
         ExaminationServiceDto Service,

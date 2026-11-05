@@ -284,20 +284,23 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
     {
         var specialtyId = ResolveSpecialtySlug(core.SpecialtyCode);
 
-        var upcoming = (doctor.ExaminationSlots ?? [])
+        var openSlots = (doctor.ExaminationSlots ?? [])
             .Where(s =>
                 string.Equals(s.Status, "OPEN", StringComparison.OrdinalIgnoreCase) &&
                 s.StartsAt.HasValue &&
-                s.EndsAt.HasValue &&
-                s.StartsAt.Value >= nowLocal)
+                s.EndsAt.HasValue)
+            .ToList();
+
+        var upcoming = openSlots
+            .Where(s => s.StartsAt!.Value >= nowLocal)
             .OrderBy(s => s.StartsAt!.Value)
             .ThenBy(s => s.Id)
             .ToList();
 
         var first = upcoming.FirstOrDefault();
-        var hasScheduleToday = upcoming.Any(s => s.StartsAt!.Value.Date == today);
-        var hasScheduleThisWeek = upcoming.Any(s => s.StartsAt!.Value.Date <= weekEnd);
-
+        var hasScheduleToday = openSlots.Any(s => s.StartsAt!.Value.Date == today);
+        var hasScheduleThisWeek = openSlots.Any(s =>
+            s.StartsAt!.Value.Date >= today && s.StartsAt!.Value.Date <= weekEnd);
         string nearestSchedule;
         if (first is null)
         {
