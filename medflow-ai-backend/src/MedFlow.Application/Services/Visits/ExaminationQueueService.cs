@@ -3,6 +3,7 @@ using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Application.Services.Visits.Queueing;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -10,7 +11,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.Application.Services.Visits;
 
-public sealed class ExaminationQueueService : IExaminationQueueService
+public sealed partial class ExaminationQueueService : IExaminationQueueService
 {
     private static readonly HashSet<string> AllowedRoleCodes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -89,6 +90,133 @@ public sealed class ExaminationQueueService : IExaminationQueueService
         var normalizedVisitTypeFilter = NormalizeAndValidateVisitTypeFilter(request.VisitType);
         var normalizedKeyword = NormalizeAndValidateKeyword(request.Keyword);
 
+        var board = await BuildQueueBoardAsync(actorUserId, explicitQueueDate, ct);
+
+        if (board.Buckets.Count == 0)
+        {
+            return new ExaminationQueueResponseDto(
+                QueueDate: board.EffectiveQueueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                FacilityName: board.Hospital.Name,
+                ShiftLabel: ResolveShiftLabel(board.NowLocal),
+                GeneratedAtUtc: board.NowUtc,
+                Stats: new ExaminationQueueStatsDto(0, 0, 0, 0, 0, 0),
+                ServicePoints: []);
+        }
+
+        var hasEntryLevelFilters =
+            normalizedStatusFilter is not null ||
+            normalizedPriorityFilter is not null ||
+            normalizedVisitTypeFilter is not null ||
+            normalizedKeyword is not null;
+
+        var servicePointDtos = new List<ServicePointQueueDto>(board.Buckets.Count);
+
+        foreach (var boardBucket in board.Buckets)
+        {
+            var bucket = boardBucket.Bucket;
+            if (normalizedServicePointFilter is not null &&
+                !MatchesServicePointFilter(bucket, normalizedServicePointFilter))
+            {
+                continue;
+            }
+
+            var sortedFullBucket = boardBucket.Entries.Select(e => e.Dto).ToList();
+            var filteredEntries = sortedFullBucket
+                .Where(e => MatchesEntryFilters(
+                    e,
+                    normalizedStatusFilter,
+                    normalizedPriorityFilter,
+                    normalizedVisitTypeFilter,
+                    normalizedKeyword))
+                .Select((e, index) => e with { ServingOrder = index + 1 })
+                .ToList();
+
+            if (hasEntryLevelFilters && filteredEntries.Count == 0)
+            {
+                continue;
+            }
+
+            if (!hasEntryLevelFilters && !bucket.IsActive && sortedFullBucket.Count == 0 && normalizedServicePointFilter is null)
+            {
+                continue;
+            }
+
+            var entriesForMetrics = hasEntryLevelFilters ? filteredEntries : sortedFullBucket;
+
+            var currentServingTicketNo = sortedFullBucket
+                .FirstOrDefault(e => e.Status == "IN_PROGRESS")?.TicketNo
+                ?? sortedFullBucket.FirstOrDefault(e => e.Status == "CALLED")?.TicketNo;
+
+            var nextTicketNo = sortedFullBucket
+                .FirstOrDefault(e =>
+                    e.Status is "READY" or "WAITING" &&
+                    !string.Equals(e.PresenceStatus, "LEFT", StringComparison.OrdinalIgnoreCase))
+                ?.TicketNo;
+
+            var waitingCount = entriesForMetrics.Count(e => e.Status is "WAITING" or "READY");
+            var inProgressCount = entriesForMetrics.Count(e => e.Status is "CALLED" or "IN_PROGRESS");
+            var completedCount = entriesForMetrics.Count(e => e.Status == "COMPLETED");
+            var skippedCount = entriesForMetrics.Count(e => e.Status == "SKIPPED");
+
+            // Update bucket doctor name if bucket had placeholder and an entry resolved a real doctor
+            var effectiveDoctorName = bucket.DoctorName;
+            if (string.Equals(effectiveDoctorName, "Chưa phân công bác sĩ", StringComparison.OrdinalIgnoreCase))
+            {
+                var firstEntryDoctor = sortedFullBucket
+                    .Select(e => e.DoctorName)
+                    .FirstOrDefault(d =>
+                        !string.IsNullOrWhiteSpace(d) &&
+                        !string.Equals(d, "Chưa phân công bác sĩ", StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrWhiteSpace(firstEntryDoctor))
+                {
+                    effectiveDoctorName = firstEntryDoctor;
+                }
+            }
+
+            servicePointDtos.Add(new ServicePointQueueDto(
+                ServicePointId: bucket.ServicePointId,
+                ServicePointName: bucket.ServicePointName,
+                RoomCode: bucket.RoomCode,
+                RoomName: bucket.RoomName,
+                DepartmentName: bucket.DepartmentName,
+                DoctorName: effectiveDoctorName,
+                IsActive: bucket.IsActive,
+                CurrentServingTicketNo: currentServingTicketNo,
+                NextTicketNo: nextTicketNo,
+                WaitingCount: waitingCount,
+                InProgressCount: inProgressCount,
+                CompletedCount: completedCount,
+                SkippedCount: skippedCount,
+                Entries: filteredEntries));
+        }
+
+
+        var allReturnedEntries = servicePointDtos
+            .SelectMany(sp => sp.Entries)
+            .ToList();
+
+        var stats = new ExaminationQueueStatsDto(
+            TotalEntries: allReturnedEntries.Count,
+            WaitingCount: allReturnedEntries.Count(e => e.Status is "WAITING" or "READY"),
+            CalledOrServingCount: allReturnedEntries.Count(e => e.Status is "CALLED" or "IN_PROGRESS"),
+            CompletedCount: allReturnedEntries.Count(e => e.Status == "COMPLETED"),
+            SkippedCount: allReturnedEntries.Count(e => e.Status == "SKIPPED"),
+            ActiveServicePoints: servicePointDtos.Count(sp => sp.IsActive));
+
+        return new ExaminationQueueResponseDto(
+            QueueDate: board.EffectiveQueueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            FacilityName: board.Hospital.Name,
+            ShiftLabel: ResolveShiftLabel(board.NowLocal),
+            GeneratedAtUtc: board.NowUtc,
+            Stats: stats,
+            ServicePoints: servicePointDtos);
+    }
+
+    private async Task<QueueBoard> BuildQueueBoardAsync(
+        long actorUserId,
+        DateOnly? explicitQueueDate,
+        CancellationToken ct)
+    {
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
@@ -162,13 +290,7 @@ public sealed class ExaminationQueueService : IExaminationQueueService
 
         if (buckets.Count == 0)
         {
-            return new ExaminationQueueResponseDto(
-                QueueDate: (explicitQueueDate ?? today).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-                FacilityName: hospital.Name,
-                ShiftLabel: ResolveShiftLabel(nowLocal),
-                GeneratedAtUtc: nowUtc,
-                Stats: new ExaminationQueueStatsDto(0, 0, 0, 0, 0, 0),
-                ServicePoints: []);
+            return new QueueBoard(hospital, nowUtc, nowLocal, explicitQueueDate ?? today, []);
         }
 
         var allRoomHospitalMap = await _db.HospitalRooms
@@ -282,22 +404,11 @@ public sealed class ExaminationQueueService : IExaminationQueueService
                 new ResolvedCandidateEntry(candidate, targetBucket));
         }
 
-        var hasEntryLevelFilters =
-            normalizedStatusFilter is not null ||
-            normalizedPriorityFilter is not null ||
-            normalizedVisitTypeFilter is not null ||
-            normalizedKeyword is not null;
-
-        var servicePointDtos = new List<ServicePointQueueDto>(buckets.Count);
+        var policySet = await QueueOrderingPolicyLoader.LoadAsync(_db, hospital.Id, nowUtc, ct);
+        var boardBuckets = new List<QueueBoardBucket>(buckets.Count);
 
         foreach (var bucket in buckets)
         {
-            if (normalizedServicePointFilter is not null &&
-                !MatchesServicePointFilter(bucket, normalizedServicePointFilter))
-            {
-                continue;
-            }
-
             var rawBucketItems = bucketEntriesMap[bucket.ServicePointId];
 
             // Assign fallback queue numbers for visit-only candidates without an explicit QueueNumber
@@ -306,7 +417,8 @@ public sealed class ExaminationQueueService : IExaminationQueueService
                 .DefaultIfEmpty(0)
                 .Max() + 1;
 
-            var unsortedEntries = new List<SortableQueueEntry>(rawBucketItems.Count);
+            var rawEntries = new List<(ExaminationQueueEntryDto Dto, QueueEntry? QueueEntry)>(rawBucketItems.Count);
+            var orderingItems = new List<QueueOrderingItem>(rawBucketItems.Count);
 
             foreach (var item in rawBucketItems
                          .OrderBy(x => x.Candidate.CheckInSortTime)
@@ -391,115 +503,50 @@ public sealed class ExaminationQueueService : IExaminationQueueService
                     CheckedInAt: checkedInAt,
                     CalledAt: calledAt,
                     StartedAt: startedAt,
-                    BlockedReason: blockedReason);
+                    BlockedReason: blockedReason,
+                    IsBackfilled: q?.BackfilledAt != null,
+                    BackfillReason: q?.BackfillReason,
+                    BackfillUpdatedAt: q?.BackfilledAt?.ToString("HH:mm", CultureInfo.InvariantCulture));
 
-                unsortedEntries.Add(new SortableQueueEntry(
-                    Dto: dto,
-                    StatusOrder: GetStatusSortOrder(status),
-                    PriorityOrder: GetPrioritySortOrder(status, priority),
-                    ArrivalOrder: GetArrivalSortOrder(status, arrivalClass),
-                    CheckInTimestamp: checkedInDateTime ?? DateTime.MaxValue,
-                    RawId: q?.Id ?? v?.Id ?? 0));
+                rawEntries.Add((dto, q));
+                orderingItems.Add(new QueueOrderingItem(
+                    Status: status,
+                    Priority: priority,
+                    PresenceStatus: presenceStatus,
+                    IsScheduled: visitType == "SCHEDULED",
+                    StoredArrivalClass: arrivalClass,
+                    ScheduledAt: scheduledDateTime,
+                    ArrivedAt: v?.CheckedInAt ?? q?.ArrivedAt,
+                    ReadySince: q?.ReadyAt ?? checkedInDateTime,
+                    BackfilledAt: q?.BackfilledAt,
+                    QueueNumber: queueNumber));
             }
 
-            var sortedFullBucket = unsortedEntries
-                .OrderBy(e => e.StatusOrder)
-                .ThenBy(e => e.PriorityOrder)
-                .ThenBy(e => e.ArrivalOrder)
-                .ThenBy(e => e.CheckInTimestamp)
-                .ThenBy(e => e.Dto.QueueNumber)
-                .ThenBy(e => e.RawId)
-                .Select((e, index) => e.Dto with { ServingOrder = index + 1 })
-                .ToList();
+            var bucketPolicy = policySet.ForServicePoint(bucket.RawServicePointId);
+            var orderingResult = ExaminationQueueOrderingEngine.Evaluate(orderingItems, bucketPolicy, nowLocal);
 
-            var filteredEntries = sortedFullBucket
-                .Where(e => MatchesEntryFilters(
-                    e,
-                    normalizedStatusFilter,
-                    normalizedPriorityFilter,
-                    normalizedVisitTypeFilter,
-                    normalizedKeyword))
-                .Select((e, index) => e with { ServingOrder = index + 1 })
-                .ToList();
-
-            if (hasEntryLevelFilters && filteredEntries.Count == 0)
+            var boardEntries = new List<QueueBoardEntry>(orderingResult.OrderedIndices.Count);
+            foreach (var idx in orderingResult.OrderedIndices)
             {
-                continue;
-            }
-
-            if (!hasEntryLevelFilters && !bucket.IsActive && sortedFullBucket.Count == 0 && normalizedServicePointFilter is null)
-            {
-                continue;
-            }
-
-            var entriesForMetrics = hasEntryLevelFilters ? filteredEntries : sortedFullBucket;
-
-            var currentServingTicketNo = sortedFullBucket
-                .FirstOrDefault(e => e.Status == "IN_PROGRESS")?.TicketNo
-                ?? sortedFullBucket.FirstOrDefault(e => e.Status == "CALLED")?.TicketNo;
-
-            var nextTicketNo = sortedFullBucket
-                .FirstOrDefault(e =>
-                    e.Status is "READY" or "WAITING" &&
-                    !string.Equals(e.PresenceStatus, "LEFT", StringComparison.OrdinalIgnoreCase))
-                ?.TicketNo;
-
-            var waitingCount = entriesForMetrics.Count(e => e.Status is "WAITING" or "READY");
-            var inProgressCount = entriesForMetrics.Count(e => e.Status is "CALLED" or "IN_PROGRESS");
-            var completedCount = entriesForMetrics.Count(e => e.Status == "COMPLETED");
-            var skippedCount = entriesForMetrics.Count(e => e.Status == "SKIPPED");
-
-            // Update bucket doctor name if bucket had placeholder and an entry resolved a real doctor
-            var effectiveDoctorName = bucket.DoctorName;
-            if (string.Equals(effectiveDoctorName, "Chưa phân công bác sĩ", StringComparison.OrdinalIgnoreCase))
-            {
-                var firstEntryDoctor = sortedFullBucket
-                    .Select(e => e.DoctorName)
-                    .FirstOrDefault(d =>
-                        !string.IsNullOrWhiteSpace(d) &&
-                        !string.Equals(d, "Chưa phân công bác sĩ", StringComparison.OrdinalIgnoreCase));
-                if (!string.IsNullOrWhiteSpace(firstEntryDoctor))
+                var eval = orderingResult.Evaluations[idx];
+                var (rawDto, rawQueueEntry) = rawEntries[idx];
+                var evaluatedDto = rawDto with
                 {
-                    effectiveDoctorName = firstEntryDoctor;
-                }
+                    ServingOrder = eval.ServingOrder,
+                    ArrivalClass = eval.EffectiveArrivalClass,
+                    IsEligible = eval.IsEligible,
+                    CanSafeBackfill = eval.CanSafeBackfill,
+                    IsAppointmentProtected = eval.IsAppointmentProtected,
+                    HoldReason = eval.HoldReason,
+                };
+
+                boardEntries.Add(new QueueBoardEntry(evaluatedDto, rawQueueEntry, eval));
             }
 
-            servicePointDtos.Add(new ServicePointQueueDto(
-                ServicePointId: bucket.ServicePointId,
-                ServicePointName: bucket.ServicePointName,
-                RoomCode: bucket.RoomCode,
-                RoomName: bucket.RoomName,
-                DepartmentName: bucket.DepartmentName,
-                DoctorName: effectiveDoctorName,
-                IsActive: bucket.IsActive,
-                CurrentServingTicketNo: currentServingTicketNo,
-                NextTicketNo: nextTicketNo,
-                WaitingCount: waitingCount,
-                InProgressCount: inProgressCount,
-                CompletedCount: completedCount,
-                SkippedCount: skippedCount,
-                Entries: filteredEntries));
+            boardBuckets.Add(new QueueBoardBucket(bucket, bucketPolicy, boardEntries));
         }
 
-        var allReturnedEntries = servicePointDtos
-            .SelectMany(sp => sp.Entries)
-            .ToList();
-
-        var stats = new ExaminationQueueStatsDto(
-            TotalEntries: allReturnedEntries.Count,
-            WaitingCount: allReturnedEntries.Count(e => e.Status is "WAITING" or "READY"),
-            CalledOrServingCount: allReturnedEntries.Count(e => e.Status is "CALLED" or "IN_PROGRESS"),
-            CompletedCount: allReturnedEntries.Count(e => e.Status == "COMPLETED"),
-            SkippedCount: allReturnedEntries.Count(e => e.Status == "SKIPPED"),
-            ActiveServicePoints: servicePointDtos.Count(sp => sp.IsActive));
-
-        return new ExaminationQueueResponseDto(
-            QueueDate: effectiveQueueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            FacilityName: hospital.Name,
-            ShiftLabel: ResolveShiftLabel(nowLocal),
-            GeneratedAtUtc: nowUtc,
-            Stats: stats,
-            ServicePoints: servicePointDtos);
+        return new QueueBoard(hospital, nowUtc, nowLocal, effectiveQueueDate, boardBuckets);
     }
 
     private static DateOnly? ParseAndValidateQueueDate(string? queueDate)
@@ -1516,52 +1563,6 @@ public sealed class ExaminationQueueService : IExaminationQueueService
         };
     }
 
-    private static int GetStatusSortOrder(string status) => status switch
-    {
-        "IN_PROGRESS" => 0,
-        "CALLED" => 1,
-        "READY" => 2,
-        "WAITING" => 3,
-        "SKIPPED" => 4,
-        "COMPLETED" => 5,
-        _ => 6,
-    };
-
-    private static int GetPrioritySortOrder(string status, string priority)
-    {
-        if (status is "SKIPPED" or "COMPLETED")
-        {
-            return 0;
-        }
-
-        return priority switch
-        {
-            "URGENT" => 0,
-            "RETURN_RESULT" => 1,
-            "ELDERLY" => 2,
-            "PREGNANT" => 3,
-            "NORMAL" => 4,
-            _ => 5,
-        };
-    }
-
-    private static int GetArrivalSortOrder(string status, string arrivalClass)
-    {
-        if (status is not ("READY" or "WAITING"))
-        {
-            return 0;
-        }
-
-        return arrivalClass switch
-        {
-            "ON_TIME_OR_GRACE" => 0,
-            "EARLY" => 1,
-            "WALK_IN" => 2,
-            "LATE" => 3,
-            _ => 4,
-        };
-    }
-
     private static bool MatchesServicePointFilter(ServicePointBucket bucket, string filter)
     {
         if (string.Equals(bucket.ServicePointId, filter, StringComparison.OrdinalIgnoreCase) ||
@@ -1692,11 +1693,20 @@ public sealed class ExaminationQueueService : IExaminationQueueService
         QueueCandidate Candidate,
         ServicePointBucket Bucket);
 
-    private sealed record SortableQueueEntry(
+    private sealed record QueueBoard(
+        Hospital Hospital,
+        DateTime NowUtc,
+        DateTime NowLocal,
+        DateOnly EffectiveQueueDate,
+        IReadOnlyList<QueueBoardBucket> Buckets);
+
+    private sealed record QueueBoardBucket(
+        ServicePointBucket Bucket,
+        QueueOrderingPolicy Policy,
+        IReadOnlyList<QueueBoardEntry> Entries);
+
+    private sealed record QueueBoardEntry(
         ExaminationQueueEntryDto Dto,
-        int StatusOrder,
-        int PriorityOrder,
-        int ArrivalOrder,
-        DateTime CheckInTimestamp,
-        long RawId);
+        QueueEntry? QueueEntry,
+        QueueEntryEvaluation Evaluation);
 }

@@ -372,5 +372,13 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
                         ]),
                 ]));
         }
+
+        public Task<EarlyArrivalBackfillResponseDto> ApplyEarlyArrivalBackfillAsync(
+            long actorUserId,
+            string idOrCode,
+            EarlyArrivalBackfillRequest request,
+            string? ipAddress = null,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 }

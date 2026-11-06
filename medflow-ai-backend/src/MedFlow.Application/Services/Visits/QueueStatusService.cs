@@ -103,7 +103,7 @@ public sealed class QueueStatusService : IQueueStatusService
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
         }
 
-        var (numericId, code) = ParseIdentifier(idOrCode);
+        var (numericId, code) = QueueEntryRequestParsing.ParseIdentifier(idOrCode);
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
         var operatorAccess = await EnsureOperatorAccessAsync(actorUserId, nowUtc, ct);
 
@@ -179,7 +179,7 @@ public sealed class QueueStatusService : IQueueStatusService
 
         ArgumentNullException.ThrowIfNull(request);
 
-        var (numericId, code) = ParseIdentifier(idOrCode);
+        var (numericId, code) = QueueEntryRequestParsing.ParseIdentifier(idOrCode);
         var targetStatus = ResolveAndValidateTargetStatus(request);
         var requestedPresence = NormalizeAndValidatePresenceStatus(request.PresenceStatus);
         var requestedPriority = NormalizeAndValidatePriority(request.Priority);
@@ -323,7 +323,7 @@ public sealed class QueueStatusService : IQueueStatusService
             EntityId = queueEntry.Id.ToString(CultureInfo.InvariantCulture),
             Reason = effectiveReason,
             ChangeData = JsonSerializer.Serialize(auditPayload, JsonOptions),
-            IpAddress = ParseIpAddress(ipAddress),
+            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
             OccurredAt = nowUtc,
         };
 
@@ -386,57 +386,6 @@ public sealed class QueueStatusService : IQueueStatusService
             UpdatedAtUtc: nowUtc,
             AllowedTargetStatuses: nextAllowedTargets,
             StatusHistory: statusHistory);
-    }
-
-    private static (long? Id, string? Code) ParseIdentifier(string? idOrCode)
-    {
-        if (string.IsNullOrWhiteSpace(idOrCode))
-        {
-            throw new ValidationException("Mã định danh lượt xếp hàng không hợp lệ.");
-        }
-
-        var trimmed = idOrCode.Trim();
-        if (trimmed.StartsWith('#'))
-        {
-            trimmed = trimmed[1..].TrimStart();
-        }
-
-        if (trimmed.Length >= 3 &&
-            (trimmed.StartsWith("q-", StringComparison.OrdinalIgnoreCase) ||
-             trimmed.StartsWith("q_", StringComparison.OrdinalIgnoreCase)))
-        {
-            var suffix = trimmed[2..];
-            if (suffix.All(char.IsAsciiDigit) ||
-                (suffix.StartsWith('-') && suffix.Length > 1 && suffix[1..].All(char.IsAsciiDigit)))
-            {
-                trimmed = suffix;
-            }
-        }
-
-        if (string.IsNullOrEmpty(trimmed) || trimmed.Length > 40)
-        {
-            throw new ValidationException("Mã định danh lượt xếp hàng không hợp lệ.");
-        }
-
-        if (trimmed.All(char.IsAsciiDigit) ||
-            (trimmed.StartsWith('-') && trimmed.Length > 1 && trimmed[1..].All(char.IsAsciiDigit)))
-        {
-            if (!long.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out var numericId) ||
-                numericId <= 0)
-            {
-                throw new ValidationException("ID lượt xếp hàng phải lớn hơn 0.");
-            }
-
-            return (numericId, null);
-        }
-
-        if (trimmed.StartsWith('-') ||
-            !trimmed.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '-' || ch == '_'))
-        {
-            throw new ValidationException("Mã định danh lượt xếp hàng không hợp lệ.");
-        }
-
-        return (null, trimmed.ToUpperInvariant());
     }
 
     private static string ResolveAndValidateTargetStatus(UpdateQueueStatusRequest request)
@@ -1150,16 +1099,6 @@ public sealed class QueueStatusService : IQueueStatusService
         }
 
         return $"{prefix}{queueNumber:D3}";
-    }
-
-    private static IPAddress? ParseIpAddress(string? ipAddress)
-    {
-        if (string.IsNullOrWhiteSpace(ipAddress))
-        {
-            return null;
-        }
-
-        return IPAddress.TryParse(ipAddress.Trim(), out var parsed) ? parsed : null;
     }
 
     private sealed record OperatorAccessContext(

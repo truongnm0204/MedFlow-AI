@@ -54,4 +54,11 @@ public sealed record ExaminationQueueEntryDto(
     string CheckedInAt,
     string? CalledAt,
     string? StartedAt,
-    string? BlockedReason);
+    string? BlockedReason,
+    bool IsEligible = false,
+    bool CanSafeBackfill = false,
+    bool IsAppointmentProtected = false,
+    string? HoldReason = null,
+    bool IsBackfilled = false,
+    string? BackfillReason = null,
+    string? BackfillUpdatedAt = null);
