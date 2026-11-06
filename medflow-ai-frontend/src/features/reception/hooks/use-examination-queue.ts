@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   applyEarlyArrivalBackfill,
   fetchExaminationQueue,
+  markQueueEntryMissedTurn,
+  restoreSkippedQueueTurn,
   updateExaminationQueueStatus,
 } from '../api/examination-queue.api';
 import { applyQueueStatusUpdateToResponse } from '../data/examination-queue-mock';
@@ -10,6 +12,9 @@ import type {
   EarlyArrivalBackfillRequestPayload,
   ExaminationQueueQueryParams,
   ExaminationQueueResponseDto,
+  MarkMissedTurnRequestPayload,
+  QueueTurnActionResponseDto,
+  RestoreQueueTurnRequestPayload,
   UpdateExaminationQueueStatusPayload,
   UpdateExaminationQueueStatusResponseDto,
 } from '../types/examination-queue.types';
@@ -62,6 +67,48 @@ export function useUpdateExaminationQueueStatus() {
         { queryKey: ['reception', 'examination-queue'] },
         (old) => (old ? applyQueueStatusUpdateToResponse(old, result.entry) : old),
       );
+    },
+  });
+}
+
+export interface MarkMissedTurnVariables {
+  idOrCode: string;
+  payload: MarkMissedTurnRequestPayload;
+}
+
+export function useMarkMissedTurn() {
+  const queryClient = useQueryClient();
+
+  return useMutation<QueueTurnActionResponseDto, unknown, MarkMissedTurnVariables>({
+    mutationFn: ({ idOrCode, payload }) => markQueueEntryMissedTurn(idOrCode, payload),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: ['reception', 'examination-queue'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['queue-entry-status', variables.idOrCode.trim()],
+      });
+    },
+  });
+}
+
+export interface RestoreSkippedTurnVariables {
+  idOrCode: string;
+  payload: RestoreQueueTurnRequestPayload;
+}
+
+export function useRestoreSkippedTurn() {
+  const queryClient = useQueryClient();
+
+  return useMutation<QueueTurnActionResponseDto, unknown, RestoreSkippedTurnVariables>({
+    mutationFn: ({ idOrCode, payload }) => restoreSkippedQueueTurn(idOrCode, payload),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: ['reception', 'examination-queue'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['queue-entry-status', variables.idOrCode.trim()],
+      });
     },
   });
 }

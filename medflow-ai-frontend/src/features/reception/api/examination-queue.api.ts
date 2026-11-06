@@ -12,6 +12,9 @@ import type {
   EarlyArrivalBackfillResponseDto,
   ExaminationQueueQueryParams,
   ExaminationQueueResponseDto,
+  MarkMissedTurnRequestPayload,
+  QueueTurnActionResponseDto,
+  RestoreQueueTurnRequestPayload,
   UpdateExaminationQueueStatusPayload,
   UpdateExaminationQueueStatusResponseDto,
 } from '../types/examination-queue.types';
@@ -94,4 +97,28 @@ export async function updateExaminationQueueStatus(
   }
 
   return buildMockUpdateExaminationQueueStatusResponse(queueEntryId, payload, currentQueueData);
+}
+
+export async function markQueueEntryMissedTurn(
+  idOrCode: string,
+  payload: MarkMissedTurnRequestPayload,
+): Promise<QueueTurnActionResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+  const { data } = await apiClient.post<QueueTurnActionResponseDto>(
+    `/reception/examination-queue/entries/${encoded}/missed-turn`,
+    payload,
+  );
+  return data;
+}
+
+export async function restoreSkippedQueueTurn(
+  idOrCode: string,
+  payload: RestoreQueueTurnRequestPayload,
+): Promise<QueueTurnActionResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+  const { data } = await apiClient.post<QueueTurnActionResponseDto>(
+    `/reception/examination-queue/entries/${encoded}/restore-turn`,
+    payload,
+  );
+  return data;
 }
