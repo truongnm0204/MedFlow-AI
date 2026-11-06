@@ -58,13 +58,9 @@ export const createFamilyMemberSchema = z.object({
     .refine((v) => /^[\p{L}\s.'-]+$/u.test(v), {
       message: 'Họ và tên chỉ được chứa chữ cái và khoảng trắng',
     }),
-  relationship: z
-    .enum(['Con trai', 'Con gái', 'Vợ', 'Chồng', 'Mẹ ruột', 'Bố ruột', 'Khác'], {
-      error: 'Vui lòng chọn mối quan hệ',
-    })
-    .refine((v) => v !== ('Bản thân' as string), {
-      message: 'Không thể tạo hồ sơ người thân với mối quan hệ là Bản thân',
-    }),
+  relationship: z.enum(['Con trai', 'Con gái', 'Vợ', 'Chồng', 'Mẹ ruột', 'Bố ruột', 'Khác'], {
+    error: 'Vui lòng chọn mối quan hệ',
+  }),
   gender: z.enum(['Nam', 'Nữ'], { error: 'Vui lòng chọn giới tính' }),
   birthDate: z
     .string()

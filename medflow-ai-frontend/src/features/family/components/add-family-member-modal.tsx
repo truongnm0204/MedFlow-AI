@@ -22,7 +22,7 @@ import {
   createFamilyMemberSchema,
   type CreateFamilyMemberInput,
 } from '../schemas/family-member.schema';
-import type { FamilyMember, RelationshipType } from '../types/family.types';
+import type { FamilyMember } from '../types/family.types';
 
 interface AddFamilyMemberModalProps {
   open: boolean;
@@ -40,7 +40,8 @@ export function AddFamilyMemberModal({
   const createMutation = useCreateFamilyMember();
 
   const [fullName, setFullName] = useState('');
-  const [relationship, setRelationship] = useState<RelationshipType>('Con trai');
+  const [relationship, setRelationship] =
+    useState<CreateFamilyMemberInput['relationship']>('Con trai');
   const [birthDate, setBirthDate] = useState('');
   const [gender, setGender] = useState<'Nam' | 'Nữ'>('Nam');
   const [identificationNo, setIdentificationNo] = useState('');
@@ -192,7 +193,7 @@ export function AddFamilyMemberModal({
                 <select
                   value={relationship}
                   onChange={(e) => {
-                    setRelationship(e.target.value as RelationshipType);
+                    setRelationship(e.target.value as CreateFamilyMemberInput['relationship']);
                     clearFieldError('relationship');
                   }}
                   className={`w-full rounded-xl border bg-white py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 focus:outline-hidden ${
