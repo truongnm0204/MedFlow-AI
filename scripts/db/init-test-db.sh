@@ -27,7 +27,7 @@ if [[ "$existing" != "0" ]]; then
   exit 1
 fi
 
-# v4.1 migrations: schema (002) → seed (003) → deltas (004..008), all in order.
+# v4.1 migrations: schema (002) → seed (003) → deltas (004..011), all in order.
 # Each file already wraps itself in BEGIN;…COMMIT;.
 for f in \
   "$REPO_ROOT/database/migrations/002_v41_priority1_schema.sql" \
@@ -36,7 +36,9 @@ for f in \
   "$REPO_ROOT/database/migrations/005_readd_auth_session_and_audit_cols.sql" \
   "$REPO_ROOT/database/migrations/006_seed_upcoming_examination_slots.sql" \
   "$REPO_ROOT/database/migrations/007_add_appointments_reason_for_visit.sql" \
-  "$REPO_ROOT/database/migrations/008_add_appointments_cancellation_fields.sql"; do
+  "$REPO_ROOT/database/migrations/008_add_appointments_cancellation_fields.sql" \
+  "$REPO_ROOT/database/migrations/009_sync_doctor_schedule_slots.sql" \
+  "$REPO_ROOT/database/migrations/011_outpatient_clinical_priority.sql"; do
   echo "applying: $(basename "$f")"
   psql "$DB" -X -v ON_ERROR_STOP=1 -q -f "$f"
 done

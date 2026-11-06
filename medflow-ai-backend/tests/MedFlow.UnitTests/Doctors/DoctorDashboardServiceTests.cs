@@ -546,7 +546,7 @@ public sealed class DoctorDashboardServiceTests : IDisposable
                 QueueNumber = 8,
                 QueueType = "EXAMINATION",
                 Status = "IN_CONSULTATION",
-                ManualPriority = "URGENT",
+                ManualPriority = "PREGNANT",
                 ArrivedAt = new DateTime(2026, 4, 20, 8, 10, 0),
                 StartedAt = new DateTime(2026, 4, 20, 8, 15, 0),
             },
@@ -661,9 +661,9 @@ public sealed class DoctorDashboardServiceTests : IDisposable
         // AssignedQueue contains only Doctor 1's 5 visits, never Doctor 2's patient
         Assert.Equal(5, result.AssignedQueue.Count);
         Assert.DoesNotContain(result.AssignedQueue, q => q.PatientCode == "PAT-0201");
-        Assert.Contains(result.AssignedQueue, q => q.QueueNo == "B008" && q.Status == "IN_CONSULTATION" && q.Priority == "URGENT");
+        Assert.Contains(result.AssignedQueue, q => q.QueueNo == "B008" && q.Status == "IN_CONSULTATION" && q.Priority == "PREGNANT");
         Assert.Contains(result.AssignedQueue, q => q.QueueNo == "B009" && q.Status == "CALLED");
-        Assert.Contains(result.AssignedQueue, q => q.QueueNo == "B005" && q.Status == "WAITING" && q.Priority == "RETURN_RESULT");
+        Assert.Contains(result.AssignedQueue, q => q.QueueNo == "B005" && q.Status == "WAITING" && q.Priority == "NORMAL" && q.QueueType == "RETURN_CONSULTATION");
         Assert.Contains(result.AssignedQueue, q => q.QueueNo == "B006" && q.Status == "AWAITING_RESULTS");
         Assert.Contains(result.AssignedQueue, q => q.QueueNo == "B004" && q.Status == "COMPLETED");
 
@@ -709,7 +709,7 @@ public sealed class DoctorDashboardServiceTests : IDisposable
 
         var urgentResult = await _service.GetDashboardAsync(
             3,
-            new GetDoctorDashboardRequest(Priority: "URGENT", Keyword: "Nguyễn Văn An"));
+            new GetDoctorDashboardRequest(Priority: "PREGNANT", Keyword: "Nguyễn Văn An"));
 
         var singleUrgent = Assert.Single(urgentResult.AssignedQueue);
         Assert.Equal("PAT-0101", singleUrgent.PatientCode);
