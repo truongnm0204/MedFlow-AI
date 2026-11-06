@@ -38,7 +38,7 @@ describe('Check-in Scheduled Patient Components (Issue #71)', () => {
             priority: 'NORMAL',
           }}
           onChange={handleChange}
-        />
+        />,
       );
 
       expect(screen.getByLabelText(/Lý do đến khám hôm nay/i)).toBeInTheDocument();
@@ -53,23 +53,15 @@ describe('Check-in Scheduled Patient Components (Issue #71)', () => {
 
   describe('CheckInModal', () => {
     it('shows validation errors if required fields are missing', async () => {
-      render(
-        <CheckInModal
-          isOpen={true}
-          onClose={vi.fn()}
-          appointment={mockAppointment}
-        />
-      );
+      render(<CheckInModal isOpen={true} onClose={vi.fn()} appointment={mockAppointment} />);
 
       const submitBtn = screen.getByRole('button', { name: /Xác nhận Check-in & Cấp STT/i });
       fireEvent.click(submitBtn);
 
       await waitFor(() => {
+        expect(screen.getByText(/Lý do khám sơ bộ phải có ít nhất 3 ký tự/i)).toBeInTheDocument();
         expect(
-          screen.getByText(/Lý do khám sơ bộ phải có ít nhất 3 ký tự/i)
-        ).toBeInTheDocument();
-        expect(
-          screen.getByText(/Bắt buộc xác nhận đã đối chiếu giấy tờ tùy thân của bệnh nhân/i)
+          screen.getByText(/Bắt buộc xác nhận đã đối chiếu giấy tờ tùy thân của bệnh nhân/i),
         ).toBeInTheDocument();
       });
     });
@@ -82,12 +74,14 @@ describe('Check-in Scheduled Patient Components (Issue #71)', () => {
           onClose={vi.fn()}
           appointment={mockAppointment}
           onSuccess={handleSuccess}
-        />
+        />,
       );
 
       // Fill reason
       const reasonInput = screen.getByLabelText(/Lý do đến khám hôm nay/i);
-      fireEvent.change(reasonInput, { target: { value: 'Tái khám huyết áp và xét nghiệm định kỳ' } });
+      fireEvent.change(reasonInput, {
+        target: { value: 'Tái khám huyết áp và xét nghiệm định kỳ' },
+      });
 
       // Check identity verification
       const verifyCheckbox = screen.getByRole('checkbox', {
@@ -105,14 +99,14 @@ describe('Check-in Scheduled Patient Components (Issue #71)', () => {
           expect(screen.getByText(/Check-in Thành Công/i)).toBeInTheDocument();
           expect(screen.getByText('A018')).toBeInTheDocument();
         },
-        { timeout: 2000 }
+        { timeout: 2000 },
       );
 
       expect(handleSuccess).toHaveBeenCalledWith(
         expect.objectContaining({
           ticketNo: 'A018',
           patientName: mockAppointment.patientName,
-        })
+        }),
       );
     });
   });
@@ -138,7 +132,7 @@ describe('Check-in Scheduled Patient Components (Issue #71)', () => {
           <MemoryRouter>
             <ReceptionDashboardPage />
           </MemoryRouter>
-        </QueryClientProvider>
+        </QueryClientProvider>,
       );
 
       const checkInBtns = screen.getAllByRole('button', { name: 'Check-in' });
