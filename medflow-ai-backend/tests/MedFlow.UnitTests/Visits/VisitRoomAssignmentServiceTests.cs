@@ -573,4 +573,28 @@ public sealed class VisitRoomAssignmentServiceTests : IDisposable
         var updatedQueue = await _db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == 500);
         Assert.Equal("LATE", updatedQueue.ArrivalClass);
     }
+
+    [Fact]
+    public async Task AssignExaminationRoomAsync_ExistingCancelledReservation_CreatesNewQueueEntryWithoutReusingCancelledNumber()
+    {
+        var entry500 = await _db.QueueEntries.SingleAsync(q => q.Id == 500);
+        entry500.Status = "CANCELLED";
+        entry500.QueueDate = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
+        await _db.SaveChangesAsync();
+
+        var result = await _service.AssignExaminationRoomAsync(
+            5,
+            "VIS-202610-0100",
+            new AssignExaminationRoomRequest(ExaminationRoomId: 1),
+            "127.0.0.1");
+
+        Assert.NotNull(result.QueueEntryId);
+        Assert.NotEqual(500L, result.QueueEntryId.Value);
+        Assert.Equal("WAITING", result.QueueStatus);
+        Assert.Equal(4, result.QueueNumber);
+
+        var cancelledEntryInDb = await _db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == 500);
+        Assert.Equal("CANCELLED", cancelledEntryInDb.Status);
+        Assert.Equal(3, cancelledEntryInDb.QueueNumber);
+    }
 }

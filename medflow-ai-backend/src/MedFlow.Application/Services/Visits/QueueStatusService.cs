@@ -17,9 +17,10 @@ public sealed class QueueStatusService : IQueueStatusService
 {
     public const string QueueStatusUpdateAction = "QUEUE_STATUS_UPDATED";
     public const string QueuePriorityUpdateAction = "QUEUE_PRIORITY_UPDATED";
+    public const string QueueEntryCancelAction = "QUEUE_ENTRY_CANCELLED";
     public const string QueueEntryEntityType = "QUEUE_ENTRY";
 
-    private static readonly string[] PriorityManagerRoles =
+    private static readonly string[] QueueManagerRoles =
     [
         "RECEPTION",
         "HOSPITAL_ADMIN",
@@ -53,7 +54,6 @@ public sealed class QueueStatusService : IQueueStatusService
         "IN_PROGRESS",
         "COMPLETED",
         "SKIPPED",
-        "CANCELLED",
     };
 
     private static readonly HashSet<string> ValidPresenceStatuses = new(StringComparer.OrdinalIgnoreCase)
@@ -66,12 +66,12 @@ public sealed class QueueStatusService : IQueueStatusService
     private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> AllowedTransitions =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["RESERVED"] = ["WAITING", "READY", "CANCELLED"],
-            ["WAITING"] = ["READY", "CALLED", "SKIPPED", "CANCELLED"],
-            ["READY"] = ["WAITING", "CALLED", "SKIPPED", "CANCELLED"],
-            ["CALLED"] = ["IN_PROGRESS", "WAITING", "READY", "SKIPPED", "CANCELLED"],
+            ["RESERVED"] = ["WAITING", "READY"],
+            ["WAITING"] = ["READY", "CALLED", "SKIPPED"],
+            ["READY"] = ["WAITING", "CALLED", "SKIPPED"],
+            ["CALLED"] = ["IN_PROGRESS", "WAITING", "READY", "SKIPPED"],
             ["IN_PROGRESS"] = ["COMPLETED", "WAITING", "SKIPPED"],
-            ["SKIPPED"] = ["WAITING", "READY", "CALLED", "CANCELLED"],
+            ["SKIPPED"] = ["WAITING", "READY", "CALLED"],
             ["COMPLETED"] = [],
             ["CANCELLED"] = [],
         };
@@ -194,9 +194,9 @@ public sealed class QueueStatusService : IQueueStatusService
         var effectiveReason = trimmedReason ?? trimmedBlockedReason;
         var effectiveBlockedReason = trimmedBlockedReason ?? trimmedReason;
 
-        if (targetStatus is "SKIPPED" or "CANCELLED" && string.IsNullOrWhiteSpace(effectiveBlockedReason))
+        if (targetStatus == "SKIPPED" && string.IsNullOrWhiteSpace(effectiveBlockedReason))
         {
-            throw new ValidationException("Vui lòng nhập lý do khi chuyển trạng thái sang Qua lượt (SKIPPED) hoặc Hủy (CANCELLED).");
+            throw new ValidationException("Vui lòng nhập lý do khi chuyển trạng thái sang Qua lượt (SKIPPED).");
         }
 
         if (targetStatus == "IN_PROGRESS" && requestedPresence is "NOT_ARRIVED" or "LEFT")
@@ -325,62 +325,19 @@ public sealed class QueueStatusService : IQueueStatusService
         _db.AuditLogs.Add(auditLog);
         await _db.SaveChangesAsync(ct);
 
-        var nextAllowedTargets = GetAllowedTargetStatuses(targetStatus, visit);
-        var statusHistory = await LoadStatusHistoryAsync(queueEntry.Id, ct);
-        var queueNumber = queueEntry.QueueNumber is > 0 ? queueEntry.QueueNumber.Value : 1;
-        var ticketNo = FormatTicketNo(queueNumber, context.Room?.RoomCode);
-
-        return new UpdateQueueStatusResponseDto(
-            QueueEntryId: queueEntry.Id,
-            VisitId: visit?.Id ?? queueEntry.VisitId,
-            VisitCode: visit is not null
-                ? (string.IsNullOrWhiteSpace(visit.VisitCode) ? $"VIS-{visit.Id:D4}" : visit.VisitCode)
-                : null,
-            AppointmentId: queueEntry.AppointmentId ?? visit?.AppointmentId,
-            PatientId: context.Patient?.Id ?? visit?.PatientId,
-            PatientCode: context.Patient?.PatientCode,
-            PatientName: context.Patient?.FullName,
-            HospitalId: context.HospitalId,
-            DepartmentId: context.Department?.Id ?? context.Room?.DepartmentId,
-            DepartmentCode: context.Department?.DepartmentCode,
-            DepartmentName: context.Department?.Name,
-            RoomId: context.Room?.Id ?? visit?.ExaminationRoomId,
-            RoomCode: context.Room?.RoomCode,
-            RoomName: context.Room?.Name,
-            AssignedDoctorId: context.AssignedDoctor?.Id ?? visit?.AssignedDoctorId,
-            AssignedDoctorCode: context.AssignedDoctor?.DoctorCode,
-            AssignedDoctorName: context.AssignedDoctor?.Staff?.FullName,
-            ServicePointId: context.ServicePoint?.Id ?? queueEntry.CurrentServicePointId ?? queueEntry.ServicePointId,
-            ServicePointName: context.ServicePoint?.Name ?? context.Room?.Name,
-            QueueDate: queueEntry.QueueDate,
-            QueueNumber: queueNumber,
-            TicketNo: ticketNo,
-            QueueType: string.IsNullOrWhiteSpace(queueEntry.QueueType) ? "EXAMINATION" : queueEntry.QueueType.ToUpperInvariant(),
-            PreviousStatus: currentStatus,
-            CurrentStatus: targetStatus,
-            PreviousVisitStatus: previousVisitStatus,
-            VisitStatus: visit?.Status,
-            PreviousPresenceStatus: previousPresenceStatus,
-            PresenceStatus: queueEntry.PresenceStatus ?? "PRESENT",
-            Priority: ClinicalQueueRules.NormalizeStoredPriority(queueEntry.ManualPriority),
-            ArrivalClass: string.IsNullOrWhiteSpace(queueEntry.ArrivalClass) ? "ON_TIME_OR_GRACE" : queueEntry.ArrivalClass.ToUpperInvariant(),
-            PreviousStateVersion: previousStateVersion,
-            StateVersion: queueEntry.StateVersion ?? (previousStateVersion + 1),
-            ScheduledAt: queueEntry.ScheduledAt,
-            ArrivedAt: queueEntry.ArrivedAt,
-            ReadyAt: queueEntry.ReadyAt,
-            CalledAt: queueEntry.CalledAt,
-            StartedAt: queueEntry.StartedAt,
-            CompletedAt: queueEntry.CompletedAt,
-            BlockedReason: queueEntry.BlockedReason,
-            Reason: effectiveReason,
-            Notes: trimmedNotes,
-            UpdatedByUserId: actorUserId,
-            UpdatedByStaffCode: operatorAccess.ActorStaff?.StaffCode,
-            UpdatedByName: updatedByName,
-            UpdatedAtUtc: nowUtc,
-            AllowedTargetStatuses: nextAllowedTargets,
-            StatusHistory: statusHistory);
+        return await BuildStatusResponseAsync(
+            context,
+            currentStatus,
+            previousVisitStatus,
+            previousPresenceStatus,
+            previousStateVersion,
+            effectiveReason,
+            trimmedNotes,
+            operatorAccess,
+            actorUserId,
+            updatedByName,
+            nowUtc,
+            ct);
     }
 
     public async Task<UpdateQueuePriorityResponseDto> UpdateQueueEntryPriorityAsync(
@@ -413,7 +370,7 @@ public sealed class QueueStatusService : IQueueStatusService
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
         var operatorAccess = await EnsureOperatorAccessAsync(actorUserId, nowUtc, ct);
-        EnsurePriorityManagerAccess(operatorAccess);
+        EnsureQueueManagerAccess(operatorAccess, "Chỉ nhân viên tiếp đón hoặc quản trị được phép áp dụng mức ưu tiên.");
 
         var context = await ResolveQueueEntryContextAsync(
             numericId,
@@ -533,6 +490,223 @@ public sealed class QueueStatusService : IQueueStatusService
             UpdatedByName: updatedByName,
             UpdatedAtUtc: nowUtc);
     }
+
+    public async Task<UpdateQueueStatusResponseDto> CancelQueueEntryAsync(
+        long actorUserId,
+        string idOrCode,
+        CancelQueueEntryRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        if (actorUserId <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        ArgumentNullException.ThrowIfNull(request);
+
+        var (numericId, code) = QueueEntryRequestParsing.ParseIdentifier(idOrCode);
+
+        var reason = TrimAndValidateLength(request.Reason, "Lý do hủy lượt")
+            ?? throw new ValidationException("Vui lòng nhập lý do hủy lượt xếp hàng.");
+
+        var notes = TrimAndValidateLength(request.Notes, "Ghi chú");
+
+        if (!request.ExpectedStateVersion.HasValue || request.ExpectedStateVersion.Value < 1)
+        {
+            throw new ValidationException("Phiên bản trạng thái (ExpectedStateVersion) là bắt buộc và phải lớn hơn hoặc bằng 1.");
+        }
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var operatorAccess = await EnsureOperatorAccessAsync(actorUserId, nowUtc, ct);
+        EnsureQueueManagerAccess(operatorAccess, "Chỉ nhân viên tiếp đón hoặc quản trị được phép hủy lượt xếp hàng.");
+
+        var context = await ResolveQueueEntryContextAsync(
+            numericId,
+            code,
+            idOrCode,
+            operatorAccess,
+            trackEntities: true,
+            ct);
+
+        var queueEntry = context.QueueEntry;
+        var visit = context.Visit;
+
+        if (!ClinicalQueueRules.IsClinicalExaminationQueueType(queueEntry.QueueType))
+        {
+            throw new ConflictException("Chỉ hủy được lượt khám lâm sàng (không áp dụng cho hàng đợi cận lâm sàng).");
+        }
+
+        var currentStatus = NormalizeCurrentQueueStatus(queueEntry.Status);
+        if (currentStatus == "CANCELLED")
+        {
+            throw new ConflictException("Lượt xếp hàng đã được hủy trước đó.");
+        }
+
+        if (currentStatus is "IN_PROGRESS" or "COMPLETED" ||
+            (visit is not null && IsTerminalVisitStatus(visit.Status)))
+        {
+            throw new ConflictException("Không thể hủy lượt đang khám (IN_PROGRESS) hoặc đã hoàn tất.");
+        }
+
+        var previousStateVersion = queueEntry.StateVersion is > 0 ? queueEntry.StateVersion.Value : 1;
+        if (request.ExpectedStateVersion.Value != previousStateVersion)
+        {
+            throw new ConflictException("Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
+        }
+
+        var previousVisitStatus = visit?.Status;
+        var previousPresenceStatus = string.IsNullOrWhiteSpace(queueEntry.PresenceStatus)
+            ? "PRESENT"
+            : queueEntry.PresenceStatus.ToUpperInvariant();
+        var previousPriority = ClinicalQueueRules.NormalizeStoredPriority(queueEntry.ManualPriority);
+
+        var resolvedQueueType = ClinicalQueueRules.ResolveQueueType(queueEntry.QueueType, visit?.Status);
+        var visitToCancel = resolvedQueueType == ClinicalQueueRules.QueueTypeExamination ? visit : null;
+
+        var cancelPresence = previousPresenceStatus == "NOT_ARRIVED" ? "NOT_ARRIVED" : "LEFT";
+
+        ApplyStatusTransition(
+            queueEntry,
+            visitToCancel,
+            "CANCELLED",
+            cancelPresence,
+            reason,
+            previousStateVersion,
+            nowLocal);
+
+        var updatedByName = !string.IsNullOrWhiteSpace(operatorAccess.ActorStaff?.FullName)
+            ? operatorAccess.ActorStaff.FullName
+            : operatorAccess.ActorUser.Email;
+
+        var auditPayload = new QueueStatusTransitionAuditPayload(
+            QueueEntryId: queueEntry.Id,
+            VisitId: visit?.Id ?? queueEntry.VisitId,
+            VisitCode: visit?.VisitCode,
+            PreviousStatus: currentStatus,
+            TargetStatus: "CANCELLED",
+            PreviousVisitStatus: previousVisitStatus,
+            UpdatedVisitStatus: visit?.Status,
+            PreviousPresenceStatus: previousPresenceStatus,
+            UpdatedPresenceStatus: queueEntry.PresenceStatus,
+            PreviousPriority: previousPriority,
+            UpdatedPriority: queueEntry.ManualPriority,
+            PreviousStateVersion: previousStateVersion,
+            UpdatedStateVersion: queueEntry.StateVersion ?? (previousStateVersion + 1),
+            Reason: reason,
+            BlockedReason: queueEntry.BlockedReason,
+            Notes: notes,
+            UpdatedByUserId: actorUserId,
+            UpdatedByStaffCode: operatorAccess.ActorStaff?.StaffCode,
+            UpdatedByName: updatedByName,
+            UpdatedAtUtc: nowUtc);
+
+        var auditLog = new AuditLog
+        {
+            ActorUserId = actorUserId,
+            HospitalId = context.HospitalId,
+            Action = QueueEntryCancelAction,
+            EntityType = QueueEntryEntityType,
+            EntityId = queueEntry.Id.ToString(CultureInfo.InvariantCulture),
+            Reason = reason,
+            ChangeData = JsonSerializer.Serialize(auditPayload, JsonOptions),
+            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+            OccurredAt = nowUtc,
+        };
+
+        _db.AuditLogs.Add(auditLog);
+        await _db.SaveChangesAsync(ct);
+
+        return await BuildStatusResponseAsync(
+            context,
+            currentStatus,
+            previousVisitStatus,
+            previousPresenceStatus,
+            previousStateVersion,
+            reason,
+            notes,
+            operatorAccess,
+            actorUserId,
+            updatedByName,
+            nowUtc,
+            ct);
+    }
+
+    private async Task<UpdateQueueStatusResponseDto> BuildStatusResponseAsync(
+        QueueEntryContext context,
+        string previousStatus,
+        string? previousVisitStatus,
+        string previousPresenceStatus,
+        int previousStateVersion,
+        string? reason,
+        string? notes,
+        OperatorAccessContext operatorAccess,
+        long actorUserId,
+        string updatedByName,
+        DateTime nowUtc,
+        CancellationToken ct)
+    {
+        var queueEntry = context.QueueEntry;
+        var visit = context.Visit;
+        var currentStatus = NormalizeCurrentQueueStatus(queueEntry.Status);
+        var nextAllowedTargets = GetAllowedTargetStatuses(currentStatus, visit);
+        var statusHistory = await LoadStatusHistoryAsync(queueEntry.Id, ct);
+        var queueNumber = queueEntry.QueueNumber is > 0 ? queueEntry.QueueNumber.Value : 1;
+        var ticketNo = FormatTicketNo(queueNumber, context.Room?.RoomCode);
+
+        return new UpdateQueueStatusResponseDto(
+            QueueEntryId: queueEntry.Id,
+            VisitId: visit?.Id ?? queueEntry.VisitId,
+            VisitCode: visit is not null
+                ? (string.IsNullOrWhiteSpace(visit.VisitCode) ? $"VIS-{visit.Id:D4}" : visit.VisitCode)
+                : null,
+            AppointmentId: queueEntry.AppointmentId ?? visit?.AppointmentId,
+            PatientId: context.Patient?.Id ?? visit?.PatientId,
+            PatientCode: context.Patient?.PatientCode,
+            PatientName: context.Patient?.FullName,
+            HospitalId: context.HospitalId,
+            DepartmentId: context.Department?.Id ?? context.Room?.DepartmentId,
+            DepartmentCode: context.Department?.DepartmentCode,
+            DepartmentName: context.Department?.Name,
+            RoomId: context.Room?.Id ?? visit?.ExaminationRoomId,
+            RoomCode: context.Room?.RoomCode,
+            RoomName: context.Room?.Name,
+            AssignedDoctorId: context.AssignedDoctor?.Id ?? visit?.AssignedDoctorId,
+            AssignedDoctorCode: context.AssignedDoctor?.DoctorCode,
+            AssignedDoctorName: context.AssignedDoctor?.Staff?.FullName,
+            ServicePointId: context.ServicePoint?.Id ?? queueEntry.CurrentServicePointId ?? queueEntry.ServicePointId,
+            ServicePointName: context.ServicePoint?.Name ?? context.Room?.Name,
+            QueueDate: queueEntry.QueueDate,
+            QueueNumber: queueNumber,
+            TicketNo: ticketNo,
+            QueueType: string.IsNullOrWhiteSpace(queueEntry.QueueType) ? "EXAMINATION" : queueEntry.QueueType.ToUpperInvariant(),
+            PreviousStatus: previousStatus,
+            CurrentStatus: currentStatus,
+            PreviousVisitStatus: previousVisitStatus,
+            VisitStatus: visit?.Status,
+            PreviousPresenceStatus: previousPresenceStatus,
+            PresenceStatus: queueEntry.PresenceStatus ?? "PRESENT",
+            Priority: ClinicalQueueRules.NormalizeStoredPriority(queueEntry.ManualPriority),
+            ArrivalClass: string.IsNullOrWhiteSpace(queueEntry.ArrivalClass) ? "ON_TIME_OR_GRACE" : queueEntry.ArrivalClass.ToUpperInvariant(),
+            PreviousStateVersion: previousStateVersion,
+            StateVersion: queueEntry.StateVersion ?? (previousStateVersion + 1),
+            ScheduledAt: queueEntry.ScheduledAt,
+            ArrivedAt: queueEntry.ArrivedAt,
+            ReadyAt: queueEntry.ReadyAt,
+            CalledAt: queueEntry.CalledAt,
+            StartedAt: queueEntry.StartedAt,
+            CompletedAt: queueEntry.CompletedAt,
+            BlockedReason: queueEntry.BlockedReason,
+            Reason: reason,
+            Notes: notes,
+            UpdatedByUserId: actorUserId,
+            UpdatedByStaffCode: operatorAccess.ActorStaff?.StaffCode,
+            UpdatedByName: updatedByName,
+            UpdatedAtUtc: nowUtc,
+            AllowedTargetStatuses: nextAllowedTargets,
+            StatusHistory: statusHistory);
+    }
     private static string ResolveAndValidateTargetStatus(UpdateQueueStatusRequest request)
     {
         var hasTarget = !string.IsNullOrWhiteSpace(request.TargetStatus);
@@ -554,9 +728,14 @@ public sealed class QueueStatusService : IQueueStatusService
         }
 
         var resolved = normalizedTarget ?? normalizedStatus!;
+        if (resolved == "CANCELLED")
+        {
+            throw new ValidationException("Vui lòng sử dụng chức năng Hủy lượt (POST /api/v1/queue-entries/{idOrCode}/cancel) để hủy lượt xếp hàng.");
+        }
+
         if (!ValidTargetStatuses.Contains(resolved))
         {
-            throw new ValidationException("Trạng thái hàng đợi không hợp lệ. Chỉ chấp nhận: WAITING, READY, CALLED, IN_PROGRESS, COMPLETED, SKIPPED, CANCELLED.");
+            throw new ValidationException("Trạng thái hàng đợi không hợp lệ. Chỉ chấp nhận: WAITING, READY, CALLED, IN_PROGRESS, COMPLETED, SKIPPED.");
         }
 
         return resolved;
@@ -961,14 +1140,14 @@ public sealed class QueueStatusService : IQueueStatusService
             PermissionCodes: resolvedPermissionCodes);
     }
 
-    private static void EnsurePriorityManagerAccess(OperatorAccessContext operatorAccess)
+    private static void EnsureQueueManagerAccess(OperatorAccessContext operatorAccess, string forbiddenRoleMessage)
     {
         var hasManagerRole = operatorAccess.RoleCodes.Any(code =>
-            PriorityManagerRoles.Any(allowed => string.Equals(code, allowed, StringComparison.OrdinalIgnoreCase)));
+            QueueManagerRoles.Any(allowed => string.Equals(code, allowed, StringComparison.OrdinalIgnoreCase)));
 
         if (!hasManagerRole)
         {
-            throw new ForbiddenException("Chỉ nhân viên tiếp đón hoặc quản trị được phép áp dụng mức ưu tiên.");
+            throw new ForbiddenException(forbiddenRoleMessage);
         }
 
         if (!operatorAccess.IsSystemAdmin &&
@@ -1179,7 +1358,7 @@ public sealed class QueueStatusService : IQueueStatusService
         var queueEntryIdStr = queueEntryId.ToString(CultureInfo.InvariantCulture);
         var auditLogs = await _db.AuditLogs
             .AsNoTracking()
-            .Where(a => a.Action == QueueStatusUpdateAction && a.EntityId == queueEntryIdStr)
+            .Where(a => (a.Action == QueueStatusUpdateAction || a.Action == QueueEntryCancelAction) && a.EntityId == queueEntryIdStr)
             .OrderByDescending(a => a.OccurredAt)
             .ThenByDescending(a => a.Id)
             .ToListAsync(ct);

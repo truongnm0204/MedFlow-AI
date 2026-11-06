@@ -41,3 +41,4 @@ Quyet dinh gi — cu the.
 - `0014-early-arrival-safe-backfill-contract.md` — Early Arrival / Safe Backfill command & ExaminationQueueOrderingEngine (`#96` / `M2-044`)
 - `0015-outpatient-clinical-priority.md` — Outpatient Clinical Priority (`NORMAL`/`ELDERLY`/`PREGNANT`), `RETURN_CONSULTATION` queue class & 3-tier waiting queue ordering (`#102`)
 - `0016-late-arrival-missed-turn-contract.md` — Late arrival classification (`LATE` via `grace_minutes`) and dedicated `missed-turn` / `restore-turn` endpoints (`#98` / `M2-046`)
+- `0016-cancel-queue-entry-contract.md` — Dedicated Cancel Queue Entry endpoint (`POST /api/v1/queue-entries/{idOrCode}/cancel`), single entry point consolidation & non-reuse of cancelled queue numbers (`#104` / `M2-050`)

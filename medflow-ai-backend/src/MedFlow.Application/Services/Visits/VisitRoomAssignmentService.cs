@@ -933,7 +933,8 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
                  (visit.AppointmentId.HasValue && q.AppointmentId == visit.AppointmentId.Value)) &&
                 (q.QueueType == null ||
                  q.QueueType.ToUpper() == "EXAMINATION" ||
-                 q.QueueType.ToUpper() == "RETURN_CONSULTATION"))
+                 q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
+                (q.Status == null || q.Status.ToUpper() != "CANCELLED"))
             .OrderByDescending(q => q.Id)
             .ToListAsync(ct);
 
