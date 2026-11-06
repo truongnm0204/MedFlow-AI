@@ -366,7 +366,7 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateFamilyMember_ValidNewChild_Returns201Created()
     {
-        var tokens = await LoginAsync("patient01@medflow.test", "Demo@12345");
+        var (_, tokens) = await RegisterVerifyLoginAsync();
 
         var request = new CreateFamilyMemberRequest
         {
@@ -397,7 +397,7 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateFamilyMember_AliasRoute_Returns201Created()
     {
-        var tokens = await LoginAsync("patient01@medflow.test", "Demo@12345");
+        var (_, tokens) = await RegisterVerifyLoginAsync();
 
         var request = new CreateFamilyMemberRequest
         {

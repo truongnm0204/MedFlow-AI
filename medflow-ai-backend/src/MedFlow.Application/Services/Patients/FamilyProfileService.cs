@@ -215,7 +215,7 @@ public sealed class FamilyProfileService : IFamilyProfileService
                     existingLink.RevokedAt = null;
                     existingLink.Relationship = canonicalRel;
                     existingLink.VerificationStatus = "VERIFIED";
-                    existingLink.VerifiedAt = DateTime.UtcNow;
+                    existingLink.VerifiedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
                     await _db.SaveChangesAsync(ct);
 
                     return BuildMemberResponse(self, existingPatient, existingLink, 0, false, null);
@@ -228,7 +228,7 @@ public sealed class FamilyProfileService : IFamilyProfileService
                     MemberPatientId = existingPatient.Id,
                     Relationship = canonicalRel,
                     VerificationStatus = "VERIFIED",
-                    VerifiedAt = DateTime.UtcNow,
+                    VerifiedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified),
                     RevokedAt = null
                 };
 
@@ -265,7 +265,7 @@ public sealed class FamilyProfileService : IFamilyProfileService
             MemberPatientId = newPatient.Id,
             Relationship = canonicalRel,
             VerificationStatus = idHash != null ? "VERIFIED" : "ACTIVE",
-            VerifiedAt = DateTime.UtcNow,
+            VerifiedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified),
             RevokedAt = null
         };
 
