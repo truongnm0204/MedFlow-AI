@@ -1,12 +1,9 @@
 import {
-  CheckCircle,
   Clock,
   Coins,
   CreditCard,
   FileSpreadsheet,
-  History,
   PauseCircle,
-  Pencil,
   Printer,
   RotateCcw,
   Search,
@@ -17,8 +14,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
 
 import { ServicePagination } from '../components/service-pagination';
-import { ServicePriceHistoryModal } from '../components/service-price-history-modal';
-import { ServicePriceUpdateModal } from '../components/service-price-update-modal';
 import { DEPARTMENTS } from '../data/examination-services-data';
 import { useExaminationServiceStore } from '../store/examination-service.store';
 import type { ExaminationService } from '../types/examination-service.types';
@@ -59,19 +54,12 @@ export function ServicePricingPage() {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const services = useExaminationServiceStore((state) => state.services);
-  const setPriceHistoryService = useExaminationServiceStore(
-    (state) => state.setPriceHistoryService,
-  );
 
   const [search, setSearch] = useState('');
   const [department, setDepartment] = useState('all');
   const [status, setStatus] = useState('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [selectedUpdateService, setSelectedUpdateService] = useState<ExaminationService | null>(
-    null,
-  );
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -119,13 +107,6 @@ export function ServicePricingPage() {
     setDepartment('all');
     setStatus('all');
     setPage(1);
-  };
-
-  const handleUpdateSuccess = (updated: ExaminationService) => {
-    setSuccessMessage(
-      `Đã cập nhật mức giá mới ${updated.price.toLocaleString('vi-VN')} đ theo ${updated.decisionNumber || 'QĐ mới'} thành công.`,
-    );
-    setTimeout(() => setSuccessMessage(null), 5000);
   };
 
   const isFiltered = Boolean(search.trim()) || department !== 'all' || status !== 'all';
@@ -184,7 +165,7 @@ export function ServicePricingPage() {
               </p>
             </div>
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
-              <CheckCircle className="h-5 w-5" aria-hidden="true" />
+              <CreditCard className="h-5 w-5" aria-hidden="true" />
             </div>
           </div>
 
@@ -328,24 +309,7 @@ export function ServicePricingPage() {
           </div>
         </div>
 
-        {/* Success Alert */}
-        {successMessage && (
-          <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-xs text-emerald-900 shadow-xs">
-            <div className="flex items-center gap-2">
-              <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" aria-hidden="true" />
-              <span className="font-semibold">{successMessage}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSuccessMessage(null)}
-              className="text-emerald-700 font-bold text-xs"
-            >
-              Đóng
-            </button>
-          </div>
-        )}
-
-        {/* Table View */}
+        {/* Table View (Pure View: No update or history buttons) */}
         <div className="rounded-xl border border-border bg-white shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
@@ -358,7 +322,6 @@ export function ServicePricingPage() {
                   <th className="px-4 py-3 text-right">Đơn Giá Niêm Yết</th>
                   <th className="px-4 py-3">Số Quyết Định</th>
                   <th className="px-4 py-3 text-center">Trạng Thái</th>
-                  <th className="px-4 py-3 text-center">Thao Tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -404,28 +367,6 @@ export function ServicePricingPage() {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-center">
-                      <div className="flex items-center justify-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedUpdateService(service)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50/70 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"
-                          aria-label={`Cập nhật giá của ${service.name}`}
-                        >
-                          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                          <span>Cập nhật giá</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPriceHistoryService(service)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-border bg-white px-2 py-1 text-[11px] font-semibold text-primary hover:bg-sky-50"
-                          aria-label={`Xem lịch sử giá của ${service.name}`}
-                        >
-                          <History className="h-3.5 w-3.5" aria-hidden="true" />
-                          <span>Lịch sử giá</span>
-                        </button>
-                      </div>
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -445,14 +386,6 @@ export function ServicePricingPage() {
           />
         </div>
       </div>
-
-      <ServicePriceHistoryModal />
-      <ServicePriceUpdateModal
-        service={selectedUpdateService}
-        isOpen={Boolean(selectedUpdateService)}
-        onClose={() => setSelectedUpdateService(null)}
-        onSuccess={handleUpdateSuccess}
-      />
     </AdminPortalShell>
   );
 }

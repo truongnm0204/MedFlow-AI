@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,7 +14,7 @@ function renderPricingPage() {
   );
 }
 
-describe('ServicePricingPage (UC52 / SCR-ADM-PRC-01)', () => {
+describe('ServicePricingPage (UC52 / SCR-ADM-PRC-01 - View Service Pricing)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useExaminationServiceStore.setState({
@@ -75,48 +75,11 @@ describe('ServicePricingPage (UC52 / SCR-ADM-PRC-01)', () => {
     expect(screen.getByText('Khám Chuyên khoa Nội Tiêu hóa & Gan Mật')).toBeInTheDocument();
   });
 
-  it('opens and closes the price history modal with chronological price adjustments', async () => {
+  it('does not render update price or price history buttons in view screen', () => {
     renderPricingPage();
 
-    const historyBtn = screen.getByRole('button', {
-      name: 'Xem lịch sử giá của Khám Nội Tổng quát & Tư vấn Sức khỏe',
-    });
-    fireEvent.click(historyBtn);
-
-    expect(screen.getByText('Lịch Sử Biểu Phí & Quy Tắc Cơ Sở UC52')).toBeInTheDocument();
-
-    const closeBtn = screen.getByLabelText('Đóng');
-    fireEvent.click(closeBtn);
-
-    await waitFor(() => {
-      expect(screen.queryByText('Lịch Sử Biểu Phí & Quy Tắc Cơ Sở UC52')).not.toBeInTheDocument();
-    });
-  });
-
-  it('opens and submits the update price modal with new price and decision number', async () => {
-    renderPricingPage();
-
-    const updateBtn = screen.getByRole('button', {
-      name: 'Cập nhật giá của Khám Nội Tổng quát & Tư vấn Sức khỏe',
-    });
-    fireEvent.click(updateBtn);
-
-    expect(screen.getByText('Cập Nhật Mức Giá & Quyết Định Áp Dụng (UC52)')).toBeInTheDocument();
-
-    const priceInput = screen.getByPlaceholderText('Nhập đơn giá mới...');
-    fireEvent.change(priceInput, { target: { value: '380000' } });
-
-    const decisionInput = screen.getByPlaceholderText('Ví dụ: QĐ-145/BV-KH');
-    fireEvent.change(decisionInput, { target: { value: 'QĐ-888/BV-KH' } });
-
-    const confirmBtn = screen.getByRole('button', { name: 'Xác nhận cập nhật giá' });
-    fireEvent.click(confirmBtn);
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(/Đã cập nhật mức giá mới 380\.000 đ theo QĐ-888\/BV-KH thành công/i),
-      ).toBeInTheDocument();
-    });
+    expect(screen.queryByRole('button', { name: /Cập nhật giá/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Lịch sử giá/i })).not.toBeInTheDocument();
   });
 
   it('triggers CSV export and print actions', () => {
