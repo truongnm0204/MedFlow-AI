@@ -8,6 +8,7 @@ import type {
   ExaminationQueueEntryDto,
   ExaminationQueuePriority,
   ExaminationQueueStatus,
+  QueueArrivalClass,
   QueuePresenceStatus,
   ServicePointQueueDto,
 } from '../types/examination-queue.types';
@@ -16,13 +17,18 @@ export interface ExaminationQueueServicePointCardProps {
   servicePoint: ServicePointQueueDto;
   canManageQueue: boolean;
   onSelectPatient: (patientCode: string) => void;
+  onOpenEarlyArrivalBackfill?: (
+    entry: ExaminationQueueEntryDto,
+    servicePoint: ServicePointQueueDto,
+  ) => void;
   onUpdateStatus?: (
     entry: ExaminationQueueEntryDto,
     initialTargetStatus?: ExaminationQueueStatus,
   ) => void;
 }
 
-const EXAMINATION_QUEUE_STATUS_META: Record<
+// oxlint-disable-next-line react/only-export-components
+export const EXAMINATION_QUEUE_STATUS_META: Record<
   ExaminationQueueStatus,
   { label: string; tone: 'amber' | 'sky' | 'emerald' | 'slate' | 'rose' }
 > = {
@@ -34,7 +40,8 @@ const EXAMINATION_QUEUE_STATUS_META: Record<
   SKIPPED: { label: 'Qua lượt', tone: 'rose' },
 };
 
-const EXAMINATION_QUEUE_PRIORITY_META: Record<
+// oxlint-disable-next-line react/only-export-components
+export const EXAMINATION_QUEUE_PRIORITY_META: Record<
   ExaminationQueuePriority,
   { label: string; tone: 'slate' | 'rose' | 'amber' | 'sky' | 'emerald' }
 > = {
@@ -45,7 +52,8 @@ const EXAMINATION_QUEUE_PRIORITY_META: Record<
   RETURN_RESULT: { label: 'Trả KQ CLS', tone: 'emerald' },
 };
 
-const PRESENCE_STATUS_META: Record<
+// oxlint-disable-next-line react/only-export-components
+export const PRESENCE_STATUS_META: Record<
   QueuePresenceStatus,
   { label: string; tone: 'emerald' | 'amber' | 'rose' }
 > = {
@@ -54,10 +62,21 @@ const PRESENCE_STATUS_META: Record<
   LEFT: { label: 'Vắng mặt', tone: 'rose' },
 };
 
+const ARRIVAL_CLASS_META: Record<
+  QueueArrivalClass,
+  { label: string; tone: 'emerald' | 'sky' | 'amber' | 'slate' }
+> = {
+  ON_TIME_OR_GRACE: { label: 'Đúng giờ', tone: 'emerald' },
+  EARLY: { label: 'Đến sớm', tone: 'sky' },
+  LATE: { label: 'Đến muộn', tone: 'amber' },
+  WALK_IN: { label: 'Vãng lai', tone: 'slate' },
+};
+
 export function ExaminationQueueServicePointCard({
   servicePoint,
   canManageQueue,
   onSelectPatient,
+  onOpenEarlyArrivalBackfill,
   onUpdateStatus,
 }: ExaminationQueueServicePointCardProps) {
   return (
@@ -121,6 +140,7 @@ export function ExaminationQueueServicePointCard({
                 const statusMeta = EXAMINATION_QUEUE_STATUS_META[entry.status];
                 const priorityMeta = EXAMINATION_QUEUE_PRIORITY_META[entry.priority];
                 const presenceMeta = PRESENCE_STATUS_META[entry.presenceStatus];
+                const arrivalMeta = ARRIVAL_CLASS_META[entry.arrivalClass];
                 const isServingOrCalled =
                   entry.status === 'IN_PROGRESS' || entry.status === 'CALLED';
 
@@ -160,6 +180,8 @@ export function ExaminationQueueServicePointCard({
                           {entry.visitType === 'SCHEDULED' ? 'Hẹn trước' : 'Walk-in'}
                         </Badge>
                         <Badge tone={presenceMeta.tone}>{presenceMeta.label}</Badge>
+                        <Badge tone={arrivalMeta.tone}>{arrivalMeta.label}</Badge>
+                        {entry.isBackfilled && <Badge tone="emerald">Safe Backfill</Badge>}
                       </div>
                     </td>
                     <td className="py-3 text-sub font-mono tabular-nums">
@@ -180,10 +202,26 @@ export function ExaminationQueueServicePointCard({
                           {entry.blockedReason}
                         </div>
                       )}
+                      {entry.isBackfilled && entry.backfillReason && (
+                        <div className="text-[10px] text-emerald-700 mt-1 max-w-44">
+                          {entry.backfillReason}
+                        </div>
+                      )}
                     </td>
                     {canManageQueue && (
                       <td className="py-3 text-right">
                         <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
+                          {onOpenEarlyArrivalBackfill &&
+                            (entry.status === 'WAITING' || entry.status === 'READY') && (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => onOpenEarlyArrivalBackfill(entry, servicePoint)}
+                                aria-label={`Xử lý đến sớm hoặc Safe Backfill cho ${entry.patientName}`}
+                              >
+                                Xử lý đến sớm / Backfill
+                              </Button>
+                            )}
                           {onUpdateStatus && (
                             <Button
                               variant="primary"
