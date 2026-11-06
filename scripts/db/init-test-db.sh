@@ -38,6 +38,7 @@ for f in \
   "$REPO_ROOT/database/migrations/007_add_appointments_reason_for_visit.sql" \
   "$REPO_ROOT/database/migrations/008_add_appointments_cancellation_fields.sql" \
   "$REPO_ROOT/database/migrations/009_sync_doctor_schedule_slots.sql" \
+  "$REPO_ROOT/database/migrations/010_queue_early_arrival_backfill.sql" \
   "$REPO_ROOT/database/migrations/011_outpatient_clinical_priority.sql"; do
   echo "applying: $(basename "$f")"
   psql "$DB" -X -v ON_ERROR_STOP=1 -q -f "$f"

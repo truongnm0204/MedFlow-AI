@@ -241,7 +241,9 @@ CREATE TABLE "queue_entries" (
     "called_at" timestamp without time zone,
     "started_at" timestamp without time zone,
     "completed_at" timestamp without time zone,
-    "blocked_reason" text
+    "blocked_reason" text,
+    "backfilled_at" timestamp without time zone,
+    "backfill_reason" text
 );
 
 CREATE TABLE "queue_fairness_states" (
