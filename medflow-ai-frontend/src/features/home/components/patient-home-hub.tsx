@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
 import { Calendar, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 
+import { AppointmentReminderBanner } from '@/features/appointment/components/appointment-reminder-banner';
+import { APPOINTMENT_REMINDERS_MOCK } from '@/features/appointment/data/appointment-reminder-mock';
 import type { UserDto } from '@/features/auth/types/auth.types';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert } from '@/shared/ui';
@@ -83,6 +85,8 @@ export function PatientHomeHub({ user }: PatientHomeHubProps) {
             </Link>
           </div>
         </div>
+
+        <AppointmentReminderBanner reminder={APPOINTMENT_REMINDERS_MOCK[0]} />
 
         {isPending && (
           <div
