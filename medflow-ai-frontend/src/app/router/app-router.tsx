@@ -12,6 +12,7 @@ import { StaffAccountListPage } from '@/features/admin-staff/pages/staff-account
 import { RoleListPage } from '@/features/admin-roles/pages/role-list-page';
 import { OperationalReportsPage } from '@/features/admin-reports/pages/operational-reports-page';
 import { AppointmentPolicyPage } from '@/features/admin-policies/pages/appointment-policy-page';
+import { ServicePricingPage } from '@/features/admin-services/pages/service-pricing-page';
 import { RoomListPage } from '@/features/admin-rooms/pages/room-list-page';
 import { StaffAccountEditPage } from '@/features/admin-staff/pages/staff-account-edit-page';
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
@@ -429,6 +430,26 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <OperationalReportsPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/pricing"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ServicePricingPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/service-pricing"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ServicePricingPage />
             </RequireAdmin>
           </RequireAuth>
         }

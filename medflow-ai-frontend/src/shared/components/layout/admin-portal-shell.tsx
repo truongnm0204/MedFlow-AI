@@ -59,7 +59,7 @@ const TABS: { name: AdminPortalTab; href?: string; icon: LucideIcon }[] = [
   { name: 'Buồng khám & Kỹ thuật', href: '/admin/rooms', icon: DoorOpen },
   { name: 'Bác sĩ & Nhân sự Y tế', href: '/admin/doctors', icon: UserCheck },
   { name: 'Danh mục Dịch vụ & Kỹ thuật', href: '/admin/services', icon: ClipboardList },
-  { name: 'Bảng giá & Biểu phí', icon: CreditCard },
+  { name: 'Bảng giá & Biểu phí', href: '/admin/pricing', icon: CreditCard },
   { name: 'Quản lý Slot khám', href: '/admin/slots', icon: CalendarClock },
   { name: 'Chính sách hẹn', href: '/admin/policies', icon: SlidersHorizontal },
   { name: 'Vai trò & Phân quyền', href: '/admin/roles', icon: ShieldCheck },
