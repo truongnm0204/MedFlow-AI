@@ -73,6 +73,23 @@ public sealed class QueueStatusController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>PATCH /api/v1/queue-entries/{idOrCode}/priority — Áp dụng/thay đổi mức ưu tiên ngoại trú (NORMAL/ELDERLY/PREGNANT) có lý do, xác minh theo chính sách, tăng state_version và ghi audit.</summary>
+    [HttpPatch("/api/v1/queue-entries/{idOrCode}/priority")]
+    [HttpPatch("/api/v1/reception/queue-entries/{idOrCode}/priority")]
+    [HttpPatch("/api/v1/reception/examination-queue/entries/{idOrCode}/priority")]
+    [Authorize(Roles = "RECEPTION,HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+    [ProducesResponseType<UpdateQueuePriorityResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<UpdateQueuePriorityResponseDto>> UpdateQueuePriority(
+        [FromRoute] string idOrCode,
+        [FromBody] UpdateQueuePriorityRequest request,
+        CancellationToken ct)
+        => Ok(await _queueStatusService.UpdateQueueEntryPriorityAsync(GetUserId(), idOrCode, request, GetIp(), ct));
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)

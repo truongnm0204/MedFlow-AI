@@ -15,4 +15,11 @@ public interface IQueueStatusService
         UpdateQueueStatusRequest request,
         string? ipAddress = null,
         CancellationToken ct = default);
+
+    Task<UpdateQueuePriorityResponseDto> UpdateQueueEntryPriorityAsync(
+        long actorUserId,
+        string idOrCode,
+        UpdateQueuePriorityRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
 }
