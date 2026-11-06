@@ -1,4 +1,4 @@
-export type VisitPriority = 'NORMAL' | 'URGENT' | 'ELDERLY' | 'PREGNANT' | 'RETURN_RESULT';
+export type VisitPriority = 'NORMAL' | 'ELDERLY' | 'PREGNANT';
 
 export interface CompatibleExaminationRoomItemDto {
   id: number;
@@ -41,6 +41,7 @@ export interface AssignExaminationRoomPayload {
   priority?: VisitPriority | null;
   reason?: string | null;
   note?: string | null;
+  priorityVerificationConfirmed?: boolean | null;
 }
 
 export interface AssignExaminationRoomResponseDto {

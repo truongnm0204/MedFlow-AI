@@ -25,6 +25,7 @@ export interface ExaminationQueueServicePointCardProps {
     entry: ExaminationQueueEntryDto,
     initialTargetStatus?: ExaminationQueueStatus,
   ) => void;
+  onApplyPriority?: (entry: ExaminationQueueEntryDto) => void;
 }
 
 // oxlint-disable-next-line react/only-export-components
@@ -43,13 +44,11 @@ export const EXAMINATION_QUEUE_STATUS_META: Record<
 // oxlint-disable-next-line react/only-export-components
 export const EXAMINATION_QUEUE_PRIORITY_META: Record<
   ExaminationQueuePriority,
-  { label: string; tone: 'slate' | 'rose' | 'amber' | 'sky' | 'emerald' }
+  { label: string; tone: 'slate' | 'amber' | 'sky' }
 > = {
   NORMAL: { label: 'Bình thường', tone: 'slate' },
-  URGENT: { label: 'Khẩn cấp', tone: 'rose' },
   ELDERLY: { label: 'Người cao tuổi', tone: 'amber' },
   PREGNANT: { label: 'Thai phụ', tone: 'sky' },
-  RETURN_RESULT: { label: 'Trả KQ CLS', tone: 'emerald' },
 };
 
 // oxlint-disable-next-line react/only-export-components
@@ -78,6 +77,7 @@ export function ExaminationQueueServicePointCard({
   onSelectPatient,
   onOpenEarlyArrivalBackfill,
   onUpdateStatus,
+  onApplyPriority,
 }: ExaminationQueueServicePointCardProps) {
   return (
     <Card>
@@ -176,6 +176,9 @@ export function ExaminationQueueServicePointCard({
                     </td>
                     <td className="py-3">
                       <div className="flex flex-wrap items-center gap-1">
+                        {entry.queueType === 'RETURN_CONSULTATION' && (
+                          <Badge tone="emerald">Đọc KQ CLS</Badge>
+                        )}
                         <Badge tone={entry.visitType === 'SCHEDULED' ? 'sky' : 'slate'}>
                           {entry.visitType === 'SCHEDULED' ? 'Hẹn trước' : 'Walk-in'}
                         </Badge>
@@ -222,6 +225,19 @@ export function ExaminationQueueServicePointCard({
                                 Xử lý đến sớm / Backfill
                               </Button>
                             )}
+                          {onApplyPriority && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              disabled={
+                                entry.status === 'IN_PROGRESS' || entry.status === 'COMPLETED'
+                              }
+                              aria-label={`Áp dụng ưu tiên khám ngoại trú cho ${entry.patientName}`}
+                              onClick={() => onApplyPriority(entry)}
+                            >
+                              Áp dụng ưu tiên
+                            </Button>
+                          )}
                           {onUpdateStatus && (
                             <Button
                               variant="primary"

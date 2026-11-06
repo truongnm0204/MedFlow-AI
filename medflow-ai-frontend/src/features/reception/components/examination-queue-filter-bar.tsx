@@ -8,6 +8,7 @@ import type { ExaminationQueueFilterFormValues } from '../schemas/examination-qu
 import type {
   ExaminationQueuePriorityFilter,
   ExaminationQueueStatusFilter,
+  ExaminationQueueTypeFilter,
   ExaminationVisitTypeFilter,
   QueueArrivalClassFilter,
 } from '../types/examination-queue.types';
@@ -43,6 +44,7 @@ export function ExaminationQueueFilterBar({
     filters.servicePointId !== 'ALL' ||
     filters.status !== 'ALL' ||
     filters.priority !== 'ALL' ||
+    filters.queueType !== 'ALL' ||
     filters.visitType !== 'ALL' ||
     filters.arrivalClass !== 'ALL' ||
     filters.keyword.trim() !== '' ||
@@ -86,11 +88,22 @@ export function ExaminationQueueFilterBar({
             className="rounded-xl border border-border bg-white px-3 py-2 text-xs font-medium text-ink focus:border-primary focus:outline-none"
           >
             <option value="ALL">Mọi mức ưu tiên</option>
-            <option value="URGENT">Khẩn cấp</option>
             <option value="ELDERLY">Người cao tuổi</option>
             <option value="PREGNANT">Thai phụ</option>
-            <option value="RETURN_RESULT">Trả KQ CLS</option>
             <option value="NORMAL">Bình thường</option>
+          </select>
+
+          <select
+            aria-label="Lọc theo loại lượt khám"
+            value={filters.queueType}
+            onChange={(e) =>
+              onFilterChange({ queueType: e.target.value as ExaminationQueueTypeFilter })
+            }
+            className="rounded-xl border border-border bg-white px-3 py-2 text-xs font-medium text-ink focus:border-primary focus:outline-none"
+          >
+            <option value="ALL">Mọi loại lượt</option>
+            <option value="EXAMINATION">Khám ban đầu</option>
+            <option value="RETURN_CONSULTATION">Đọc KQ CLS</option>
           </select>
 
           <select

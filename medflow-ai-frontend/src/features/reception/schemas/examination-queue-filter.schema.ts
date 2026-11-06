@@ -7,7 +7,8 @@ export const examinationQueueFilterSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Ngày hàng đợi không hợp lệ (định dạng YYYY-MM-DD).'),
   servicePointId: z.string().trim().min(1, 'Vui lòng chọn điểm dịch vụ / phòng khám.'),
   status: z.enum(['ALL', 'WAITING', 'READY', 'CALLED', 'IN_PROGRESS', 'COMPLETED', 'SKIPPED']),
-  priority: z.enum(['ALL', 'NORMAL', 'URGENT', 'ELDERLY', 'PREGNANT', 'RETURN_RESULT']),
+  priority: z.enum(['ALL', 'NORMAL', 'ELDERLY', 'PREGNANT']),
+  queueType: z.enum(['ALL', 'EXAMINATION', 'RETURN_CONSULTATION']).default('ALL'),
   visitType: z.enum(['ALL', 'SCHEDULED', 'WALK_IN']),
   arrivalClass: z.enum(['ALL', 'ON_TIME_OR_GRACE', 'EARLY', 'LATE', 'WALK_IN']).default('ALL'),
   keyword: z

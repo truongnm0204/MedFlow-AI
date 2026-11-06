@@ -1,6 +1,7 @@
 import type {
   ExaminationQueuePriority,
   ExaminationQueueStatus,
+  ExaminationQueueType,
   QueueArrivalClass,
   QueuePresenceStatus,
 } from './examination-queue.types';
@@ -38,7 +39,6 @@ export interface UpdateQueueStatusTarget {
 export interface UpdateQueueStatusRequestPayload {
   targetStatus: ExaminationQueueStatus;
   presenceStatus?: QueuePresenceStatus | null;
-  priority?: ExaminationQueuePriority | null;
   reason?: string | null;
   blockedReason?: string | null;
   notes?: string | null;
@@ -157,4 +157,32 @@ export interface UpdateQueueStatusResponseDto {
   updatedAtUtc: string;
   allowedTargetStatuses: ExaminationQueueStatus[];
   statusHistory: QueueStatusTransitionHistoryItemDto[];
+}
+
+export interface UpdateQueuePriorityRequestPayload {
+  priority: ExaminationQueuePriority;
+  reason: string;
+  verificationConfirmed: boolean;
+  expectedStateVersion: number;
+}
+
+export interface UpdateQueuePriorityResponseDto {
+  queueEntryId: number;
+  visitId: number | null;
+  visitCode: string | null;
+  ticketNo: string;
+  queueNumber: number;
+  queueType: ExaminationQueueType;
+  currentStatus: ExaminationQueueStatus;
+  previousPriority: ExaminationQueuePriority;
+  priority: ExaminationQueuePriority;
+  verificationRequired: boolean;
+  verificationConfirmed: boolean;
+  reason: string;
+  previousStateVersion: number;
+  stateVersion: number;
+  updatedByUserId: number;
+  updatedByStaffCode: string | null;
+  updatedByName: string;
+  updatedAtUtc: string;
 }

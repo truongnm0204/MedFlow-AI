@@ -1,9 +1,9 @@
 export type ExaminationQueueStatus =
   'WAITING' | 'READY' | 'CALLED' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED';
 
-export type ExaminationQueuePriority =
-  'NORMAL' | 'URGENT' | 'ELDERLY' | 'PREGNANT' | 'RETURN_RESULT';
+export type ExaminationQueuePriority = 'NORMAL' | 'ELDERLY' | 'PREGNANT';
 
+export type ExaminationQueueType = 'EXAMINATION' | 'RETURN_CONSULTATION';
 export type QueuePresenceStatus = 'PRESENT' | 'NOT_ARRIVED' | 'LEFT';
 
 export type QueueArrivalClass = 'ON_TIME_OR_GRACE' | 'EARLY' | 'LATE' | 'WALK_IN';
@@ -12,6 +12,7 @@ export type ExaminationVisitType = 'SCHEDULED' | 'WALK_IN';
 
 export type ExaminationQueueStatusFilter = 'ALL' | ExaminationQueueStatus;
 export type ExaminationQueuePriorityFilter = 'ALL' | ExaminationQueuePriority;
+export type ExaminationQueueTypeFilter = 'ALL' | ExaminationQueueType;
 export type ExaminationVisitTypeFilter = 'ALL' | ExaminationVisitType;
 export type QueueArrivalClassFilter = 'ALL' | QueueArrivalClass;
 export type EarlyArrivalBackfillActionMode = 'SAFE_BACKFILL' | 'HOLD_FOR_SLOT';
@@ -32,6 +33,7 @@ export interface ExaminationQueueEntryDto {
   doctorName: string;
   status: ExaminationQueueStatus;
   priority: ExaminationQueuePriority;
+  queueType: ExaminationQueueType;
   presenceStatus: QueuePresenceStatus;
   arrivalClass: QueueArrivalClass;
   scheduledAt: string | null;
@@ -155,6 +157,8 @@ export const EXAMINATION_QUEUE_STATUS_VALUES = [
   'COMPLETED',
   'SKIPPED',
 ] as const;
+
+export const EXAMINATION_QUEUE_PRIORITY_VALUES = ['NORMAL', 'ELDERLY', 'PREGNANT'] as const;
 
 export const QUEUE_PRESENCE_STATUS_VALUES = ['PRESENT', 'NOT_ARRIVED', 'LEFT'] as const;
 
