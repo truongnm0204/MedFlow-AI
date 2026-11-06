@@ -5,6 +5,7 @@ using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MedFlow.UnitTests.Visits;
@@ -50,7 +51,7 @@ public sealed class ExaminationQueueServiceTests : IDisposable
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => Set<Service>();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
-        public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
+        public DbSet<HospitalPolicy> HospitalPolicies => Set<HospitalPolicy>();
         public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
@@ -70,7 +71,6 @@ public sealed class ExaminationQueueServiceTests : IDisposable
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<ServicePrice>();
-            modelBuilder.Ignore<HospitalPolicy>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<PatientFamilyLink>();
             modelBuilder.Ignore<Payment>();
@@ -85,6 +85,7 @@ public sealed class ExaminationQueueServiceTests : IDisposable
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
             modelBuilder.Entity<Specialty>().HasKey(s => s.Id);
             modelBuilder.Entity<Service>().HasKey(s => s.Id);
+            modelBuilder.Entity<HospitalPolicy>().HasKey(p => p.Id);
             modelBuilder.Entity<HospitalRoom>(b =>
             {
                 b.HasKey(r => r.Id);
@@ -132,6 +133,7 @@ public sealed class ExaminationQueueServiceTests : IDisposable
     {
         _dbOptions = new DbContextOptionsBuilder<ExaminationQueueTestDbContext>()
             .UseInMemoryDatabase($"ExaminationQueueServiceTests_{Guid.NewGuid():N}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         _db = new ExaminationQueueTestDbContext(_dbOptions);
@@ -480,21 +482,20 @@ public sealed class ExaminationQueueServiceTests : IDisposable
 
         // Verify sp-1 (RM-001) serving order:
         // 1. IN_PROGRESS (QueueNumber 3 -> A003)
-        // 2. WAITING + URGENT (QueueNumber 4 -> A004, even though LATE arrival)
-        // 3. WAITING + NORMAL + ON_TIME_OR_GRACE (QueueNumber 2 -> A002)
-        // 4. COMPLETED (QueueNumber 1 -> A001)
+        // 2. Due protected by ready time (QueueNumber 2 -> A002 at 07:50, then QueueNumber 4 -> A004 at 08:10)
+        // 3. COMPLETED (QueueNumber 1 -> A001)
         var sp1 = Assert.Single(result.ServicePoints, sp => sp.ServicePointId == "sp-1");
         Assert.Equal("RM-001", sp1.RoomCode);
         Assert.Equal("BS.CKI BS Nguyễn Minh Đức", sp1.DoctorName);
         Assert.Equal("A003", sp1.CurrentServingTicketNo);
-        Assert.Equal("A004", sp1.NextTicketNo);
+        Assert.Equal("A002", sp1.NextTicketNo);
         Assert.Equal(2, sp1.WaitingCount);
         Assert.Equal(1, sp1.InProgressCount);
         Assert.Equal(1, sp1.CompletedCount);
         Assert.Equal(0, sp1.SkippedCount);
 
         Assert.Equal(4, sp1.Entries.Count);
-        Assert.Equal(["A003", "A004", "A002", "A001"], sp1.Entries.Select(e => e.TicketNo).ToArray());
+        Assert.Equal(["A003", "A002", "A004", "A001"], sp1.Entries.Select(e => e.TicketNo).ToArray());
         Assert.Equal([1, 2, 3, 4], sp1.Entries.Select(e => e.ServingOrder).ToArray());
 
         // Verify sp-2 (RM-003)
@@ -679,5 +680,332 @@ public sealed class ExaminationQueueServiceTests : IDisposable
         Assert.Equal("RM-201", hos2Sp.RoomCode);
         Assert.Single(hos2Sp.Entries);
         Assert.Equal("VIS-202610-0020", hos2Sp.Entries[0].VisitCode);
+    }
+
+    private void SeedEarlyArrivalScenario(int? expectedDurationMinutes = 15)
+    {
+        _db.ExaminationSlots.AddRange(
+            new ExaminationSlot
+            {
+                Id = 3,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 2,
+                StartsAt = new DateTime(2026, 10, 22, 9, 30, 0),
+                EndsAt = new DateTime(2026, 10, 22, 10, 0, 0),
+                Capacity = 5,
+                Status = "OPEN",
+            },
+            new ExaminationSlot
+            {
+                Id = 4,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 2,
+                StartsAt = new DateTime(2026, 10, 22, 10, 0, 0),
+                EndsAt = new DateTime(2026, 10, 22, 10, 30, 0),
+                Capacity = 5,
+                Status = "OPEN",
+            });
+
+        _db.Appointments.AddRange(
+            new Appointment
+            {
+                Id = 31,
+                AppointmentCode = "APT-202610-0031",
+                PatientId = 1,
+                SlotId = 3,
+                Status = "BOOKED",
+            },
+            new Appointment
+            {
+                Id = 30,
+                AppointmentCode = "APT-202610-0030",
+                PatientId = 4,
+                SlotId = 4,
+                Status = "CHECKED_IN",
+            });
+
+        _db.Visits.Add(new Visit
+        {
+            Id = 30,
+            VisitCode = "VIS-202610-0030",
+            PatientId = 4,
+            AppointmentId = 30,
+            AssignedDoctorId = 1,
+            ExaminationRoomId = 2,
+            CheckedInByStaffId = 3,
+            Status = "WAITING",
+            CheckedInAt = new DateTime(2026, 10, 22, 8, 40, 0),
+        });
+
+        _db.QueueEntries.AddRange(
+            new QueueEntry
+            {
+                Id = 31,
+                VisitId = null,
+                AppointmentId = 31,
+                ServicePointId = null,
+                CurrentServicePointId = null,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 1,
+                QueueType = "EXAMINATION",
+                Status = "RESERVED",
+                PresenceStatus = "NOT_ARRIVED",
+                ScheduledAt = new DateTime(2026, 10, 22, 9, 30, 0),
+                StateVersion = 1,
+            },
+            new QueueEntry
+            {
+                Id = 30,
+                VisitId = 30,
+                AppointmentId = 30,
+                ServicePointId = null,
+                CurrentServicePointId = null,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 2,
+                QueueType = "EXAMINATION",
+                Status = "WAITING",
+                PresenceStatus = "PRESENT",
+                ScheduledAt = new DateTime(2026, 10, 22, 10, 0, 0),
+                ArrivedAt = new DateTime(2026, 10, 22, 8, 40, 0),
+                StateVersion = 1,
+            });
+
+        _db.HospitalPolicies.AddRange(
+            new HospitalPolicy
+            {
+                Id = 101,
+                HospitalId = 1,
+                QueueServicePointId = null,
+                PolicyType = "QUEUE",
+                PolicyKey = "grace_minutes",
+                PolicyValue = "{\"minutes\":15}",
+                PolicyVersion = 1,
+                EffectiveFrom = new DateTime(2026, 10, 1, 0, 0, 0),
+            },
+            new HospitalPolicy
+            {
+                Id = 102,
+                HospitalId = 1,
+                QueueServicePointId = null,
+                PolicyType = "QUEUE",
+                PolicyKey = "safety_buffer_minutes",
+                PolicyValue = "{\"minutes\":5}",
+                PolicyVersion = 1,
+                EffectiveFrom = new DateTime(2026, 10, 1, 0, 0, 0),
+            });
+
+        if (expectedDurationMinutes.HasValue)
+        {
+            _db.HospitalPolicies.Add(new HospitalPolicy
+            {
+                Id = 103,
+                HospitalId = 1,
+                QueueServicePointId = null,
+                PolicyType = "QUEUE",
+                PolicyKey = "expected_duration_minutes",
+                PolicyValue = $"{{\"minutes\":{expectedDurationMinutes.Value}}}",
+                PolicyVersion = 1,
+                EffectiveFrom = new DateTime(2026, 10, 1, 0, 0, 0),
+            });
+        }
+
+        _db.SaveChanges();
+    }
+
+    [Fact]
+    public async Task ApplyEarlyArrivalBackfillAsync_SafeBackfill_UpdatesReadyStatusServingOrderAndWritesAuditLog()
+    {
+        SeedEarlyArrivalScenario(expectedDurationMinutes: 15);
+
+        var response = await _service.ApplyEarlyArrivalBackfillAsync(
+            actorUserId: 5,
+            idOrCode: "q-030",
+            request: new EarlyArrivalBackfillRequest(
+                ServicePointId: "sp-room-2",
+                ActionMode: "SAFE_BACKFILL",
+                ArrivalClass: "EARLY",
+                Reason: "Bệnh nhân đến sớm, phòng trống an toàn",
+                Notes: "Đã kiểm tra lịch hẹn kế tiếp",
+                AcknowledgeAppointmentProtection: true),
+            ipAddress: "127.0.0.1");
+
+        Assert.Equal("q-030", response.QueueEntryId);
+        Assert.Equal("WAITING", response.PreviousStatus);
+        Assert.Equal("READY", response.CurrentStatus);
+        Assert.True(response.IsBackfilled);
+        Assert.Equal("EARLY", response.ArrivalClass);
+        Assert.Equal(1, response.ServingOrder);
+        Assert.Equal(2, response.QueueNumber);
+        Assert.Equal(2, response.StateVersion);
+        Assert.True(response.UpdatedEntry.IsBackfilled);
+        Assert.Equal("09:00", response.UpdatedEntry.BackfillUpdatedAt);
+
+        var dbEntry = await _db.QueueEntries.SingleAsync(q => q.Id == 30);
+        Assert.Equal("READY", dbEntry.Status);
+        Assert.Equal(new DateTime(2026, 10, 22, 9, 0, 0), dbEntry.BackfilledAt);
+        Assert.Equal("Bệnh nhân đến sớm, phòng trống an toàn", dbEntry.BackfillReason);
+        Assert.Equal(2, dbEntry.StateVersion);
+
+        var audit = Assert.Single(_db.AuditLogs);
+        Assert.Equal(ExaminationQueueService.EarlyArrivalBackfillAction, audit.Action);
+        Assert.Equal("30", audit.EntityId);
+        Assert.Equal(1, audit.HospitalId);
+    }
+
+    [Fact]
+    public async Task ApplyEarlyArrivalBackfillAsync_WhenDurationExceedsSafeGap_ThrowsConflictExceptionWithoutMutating()
+    {
+        SeedEarlyArrivalScenario(expectedDurationMinutes: 30);
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ApplyEarlyArrivalBackfillAsync(
+                actorUserId: 5,
+                idOrCode: "q-030",
+                request: new EarlyArrivalBackfillRequest(
+                    ServicePointId: "sp-room-2",
+                    ActionMode: "SAFE_BACKFILL",
+                    ArrivalClass: "EARLY",
+                    Reason: "Bệnh nhân đến sớm, xin khám trước",
+                    Notes: null,
+                    AcknowledgeAppointmentProtection: true)));
+
+        Assert.Contains("09:30", ex.Message);
+
+        var dbEntry = await _db.QueueEntries.SingleAsync(q => q.Id == 30);
+        Assert.Equal("WAITING", dbEntry.Status);
+        Assert.Equal(1, dbEntry.StateVersion);
+        Assert.Null(dbEntry.BackfilledAt);
+        Assert.Empty(_db.AuditLogs);
+    }
+
+    [Fact]
+    public async Task ApplyEarlyArrivalBackfillAsync_WhenDurationPolicyMissing_ThrowsConflictException()
+    {
+        SeedEarlyArrivalScenario(expectedDurationMinutes: null);
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ApplyEarlyArrivalBackfillAsync(
+                actorUserId: 5,
+                idOrCode: "q-030",
+                request: new EarlyArrivalBackfillRequest(
+                    ServicePointId: "sp-room-2",
+                    ActionMode: "SAFE_BACKFILL",
+                    ArrivalClass: "EARLY",
+                    Reason: "Bệnh nhân đến sớm, xin khám trước",
+                    Notes: null,
+                    AcknowledgeAppointmentProtection: true)));
+
+        Assert.Contains("Chưa xác định", ex.Message);
+    }
+
+    [Fact]
+    public async Task ApplyEarlyArrivalBackfillAsync_HoldForSlot_SetsWaitingAndBlockedReason()
+    {
+        SeedEarlyArrivalScenario(expectedDurationMinutes: 15);
+
+        var response = await _service.ApplyEarlyArrivalBackfillAsync(
+            actorUserId: 5,
+            idOrCode: "q-030",
+            request: new EarlyArrivalBackfillRequest(
+                ServicePointId: "sp-room-2",
+                ActionMode: "HOLD_FOR_SLOT",
+                ArrivalClass: "EARLY",
+                Reason: "Giữ chờ đúng khung giờ hẹn 10:00",
+                Notes: null,
+                AcknowledgeAppointmentProtection: false));
+
+        Assert.Equal("WAITING", response.CurrentStatus);
+        Assert.Equal("Giữ chờ tới khung giờ hẹn 10:00 (Bảo vệ lịch hẹn đúng giờ)", response.BlockedReason);
+        Assert.False(response.IsBackfilled);
+        Assert.Equal(2, response.StateVersion);
+    }
+
+    [Fact]
+    public async Task ApplyEarlyArrivalBackfillAsync_SecondSafeBackfill_ThrowsConflictException()
+    {
+        SeedEarlyArrivalScenario(expectedDurationMinutes: 15);
+
+        var req = new EarlyArrivalBackfillRequest(
+            ServicePointId: "sp-room-2",
+            ActionMode: "SAFE_BACKFILL",
+            ArrivalClass: "EARLY",
+            Reason: "Bệnh nhân đến sớm, phòng trống an toàn",
+            Notes: null,
+            AcknowledgeAppointmentProtection: true);
+
+        await _service.ApplyEarlyArrivalBackfillAsync(5, "q-030", req);
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ApplyEarlyArrivalBackfillAsync(5, "q-030", req));
+
+        Assert.Contains("trước đó", ex.Message);
+    }
+
+    [Fact]
+    public async Task ApplyEarlyArrivalBackfillAsync_MismatchedServicePoint_ThrowsConflictException()
+    {
+        SeedEarlyArrivalScenario(expectedDurationMinutes: 15);
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ApplyEarlyArrivalBackfillAsync(
+                actorUserId: 5,
+                idOrCode: "q-030",
+                request: new EarlyArrivalBackfillRequest(
+                    ServicePointId: "sp-1",
+                    ActionMode: "SAFE_BACKFILL",
+                    ArrivalClass: "EARLY",
+                    Reason: "Bệnh nhân đến sớm, phòng trống",
+                    Notes: null,
+                    AcknowledgeAppointmentProtection: true)));
+    }
+
+    [Fact]
+    public async Task ApplyEarlyArrivalBackfillAsync_InvalidReasonOrMissingAcknowledge_ThrowsValidationException()
+    {
+        SeedEarlyArrivalScenario(expectedDurationMinutes: 15);
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.ApplyEarlyArrivalBackfillAsync(
+                actorUserId: 5,
+                idOrCode: "q-030",
+                request: new EarlyArrivalBackfillRequest(
+                    ServicePointId: "sp-room-2",
+                    ActionMode: "SAFE_BACKFILL",
+                    ArrivalClass: "EARLY",
+                    Reason: "abc",
+                    Notes: null,
+                    AcknowledgeAppointmentProtection: true)));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.ApplyEarlyArrivalBackfillAsync(
+                actorUserId: 5,
+                idOrCode: "q-030",
+                request: new EarlyArrivalBackfillRequest(
+                    ServicePointId: "sp-room-2",
+                    ActionMode: "SAFE_BACKFILL",
+                    ArrivalClass: "EARLY",
+                    Reason: "Lý do hợp lệ từ 5 ký tự",
+                    Notes: null,
+                    AcknowledgeAppointmentProtection: false)));
+    }
+
+    [Fact]
+    public async Task ApplyEarlyArrivalBackfillAsync_CrossHospitalActor_ThrowsNotFoundException()
+    {
+        SeedEarlyArrivalScenario(expectedDurationMinutes: 15);
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.ApplyEarlyArrivalBackfillAsync(
+                actorUserId: 25,
+                idOrCode: "q-030",
+                request: new EarlyArrivalBackfillRequest(
+                    ServicePointId: "sp-room-2",
+                    ActionMode: "SAFE_BACKFILL",
+                    ArrivalClass: "EARLY",
+                    Reason: "Bệnh nhân đến sớm, phòng trống",
+                    Notes: null,
+                    AcknowledgeAppointmentProtection: true)));
     }
 }
