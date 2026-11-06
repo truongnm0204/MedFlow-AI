@@ -26,6 +26,8 @@ export interface ExaminationQueueServicePointCardProps {
     initialTargetStatus?: ExaminationQueueStatus,
   ) => void;
   onApplyPriority?: (entry: ExaminationQueueEntryDto) => void;
+  onOpenMissedTurn?: (entry: ExaminationQueueEntryDto, servicePoint: ServicePointQueueDto) => void;
+  onOpenRestoreTurn?: (entry: ExaminationQueueEntryDto, servicePoint: ServicePointQueueDto) => void;
 }
 
 // oxlint-disable-next-line react/only-export-components
@@ -61,7 +63,8 @@ export const PRESENCE_STATUS_META: Record<
   LEFT: { label: 'Vắng mặt', tone: 'rose' },
 };
 
-const ARRIVAL_CLASS_META: Record<
+// oxlint-disable-next-line react/only-export-components
+export const ARRIVAL_CLASS_META: Record<
   QueueArrivalClass,
   { label: string; tone: 'emerald' | 'sky' | 'amber' | 'slate' }
 > = {
@@ -78,6 +81,8 @@ export function ExaminationQueueServicePointCard({
   onOpenEarlyArrivalBackfill,
   onUpdateStatus,
   onApplyPriority,
+  onOpenMissedTurn,
+  onOpenRestoreTurn,
 }: ExaminationQueueServicePointCardProps) {
   return (
     <Card>
@@ -184,6 +189,11 @@ export function ExaminationQueueServicePointCard({
                         </Badge>
                         <Badge tone={presenceMeta.tone}>{presenceMeta.label}</Badge>
                         <Badge tone={arrivalMeta.tone}>{arrivalMeta.label}</Badge>
+                        {entry.visitType === 'SCHEDULED' &&
+                          (entry.arrivalClass === 'LATE' ||
+                            entry.isAppointmentProtected === false) && (
+                            <Badge tone="amber">Mất bảo vệ giờ hẹn</Badge>
+                          )}
                         {entry.isBackfilled && <Badge tone="emerald">Safe Backfill</Badge>}
                       </div>
                     </td>
@@ -225,6 +235,26 @@ export function ExaminationQueueServicePointCard({
                                 Xử lý đến sớm / Backfill
                               </Button>
                             )}
+                          {onOpenMissedTurn && entry.status === 'CALLED' && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => onOpenMissedTurn(entry, servicePoint)}
+                              aria-label={`Đánh dấu qua lượt khám cho ${entry.patientName}`}
+                            >
+                              Đánh dấu qua lượt
+                            </Button>
+                          )}
+                          {onOpenRestoreTurn && entry.status === 'SKIPPED' && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => onOpenRestoreTurn(entry, servicePoint)}
+                              aria-label={`Khôi phục lượt khám cho ${entry.patientName}`}
+                            >
+                              Khôi phục lượt khám
+                            </Button>
+                          )}
                           {onApplyPriority && (
                             <Button
                               variant="secondary"

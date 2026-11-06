@@ -736,4 +736,227 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
     expect(phuongRow).not.toBeNull();
     expect(within(phuongRow!).getByText('Người cao tuổi')).toBeInTheDocument();
   });
+
+  it('displays LATE appointment-protection loss badge and executes Missed Turn (CALLED -> SKIPPED) & Restore Turn (SKIPPED -> READY) via live API (Issue #97)', async () => {
+    window.localStorage.setItem('medflow.access_token', 'jwt-reception-token');
+
+    const initialList = buildMockExaminationQueueResponse();
+    const afterMissedList = buildMockExaminationQueueResponse();
+    const room102AfterMissed = afterMissedList.servicePoints.find(
+      (sp) => sp.servicePointId === 'sp-room-102',
+    )!;
+    room102AfterMissed.entries = room102AfterMissed.entries.map((entry) =>
+      entry.id === 'q-002'
+        ? {
+            ...entry,
+            status: 'SKIPPED',
+            presenceStatus: 'LEFT',
+            servingOrder: 4,
+            blockedReason: 'Gọi 3 lần chưa có mặt tại cửa phòng khám',
+          }
+        : entry,
+    );
+
+    const afterRestoreList = buildMockExaminationQueueResponse();
+    const room103AfterRestore = afterRestoreList.servicePoints.find(
+      (sp) => sp.servicePointId === 'sp-room-103',
+    )!;
+    room103AfterRestore.entries = room103AfterRestore.entries.map((entry) =>
+      entry.id === 'q-008'
+        ? {
+            ...entry,
+            status: 'READY',
+            presenceStatus: 'PRESENT',
+            arrivalClass: 'LATE',
+            isAppointmentProtected: false,
+            servingOrder: 2,
+            blockedReason: null,
+          }
+        : entry.id === 'q-006'
+          ? { ...entry, servingOrder: 3 }
+          : entry,
+    );
+
+    let listCallCount = 0;
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/reception/examination-queue') {
+        listCallCount += 1;
+        if (listCallCount === 1) return { data: initialList };
+        if (listCallCount === 2) return { data: afterMissedList };
+        return { data: afterRestoreList };
+      }
+      if (url === '/reception/examination-queue/entries/q-002/status') {
+        return {
+          data: {
+            queueEntryId: 2,
+            currentStatus: 'CALLED',
+            stateVersion: 2,
+            allowedTargetStatuses: ['IN_PROGRESS', 'SKIPPED', 'WAITING'],
+            statusHistory: [],
+          },
+        };
+      }
+      if (url === '/reception/examination-queue/entries/q-008/status') {
+        return {
+          data: {
+            queueEntryId: 8,
+            currentStatus: 'SKIPPED',
+            stateVersion: 3,
+            allowedTargetStatuses: ['READY', 'WAITING', 'CALLED'],
+            statusHistory: [],
+          },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    const postSpy = vi
+      .spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({
+        data: {
+          queueEntryId: 'q-002',
+          ticketNo: 'A013',
+          queueNumber: 13,
+          visitCode: 'VIS-2026-0102',
+          patientCode: 'BN-2024-0042',
+          patientName: 'Trần Thị Bích',
+          servicePointId: 'sp-room-102',
+          action: 'MISSED_TURN',
+          previousStatus: 'CALLED',
+          currentStatus: 'SKIPPED',
+          presenceStatus: 'LEFT',
+          arrivalClass: 'ON_TIME_OR_GRACE',
+          previousServingOrder: 2,
+          servingOrder: 4,
+          isAppointmentProtected: false,
+          blockedReason: 'Gọi 3 lần chưa có mặt tại cửa phòng khám',
+          reason: 'Gọi 3 lần chưa có mặt tại cửa phòng khám',
+          notes: null,
+          previousStateVersion: 2,
+          stateVersion: 3,
+          updatedAtUtc: '2026-11-04T02:10:00Z',
+          updatedEntry: room102AfterMissed.entries.find((e) => e.id === 'q-002')!,
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          queueEntryId: 'q-008',
+          ticketNo: 'B004',
+          queueNumber: 4,
+          visitCode: 'VIS-2026-0099',
+          patientCode: 'BN-2024-0055',
+          patientName: 'Ngô Minh Tuấn',
+          servicePointId: 'sp-room-103',
+          action: 'RESTORE_TURN',
+          previousStatus: 'SKIPPED',
+          currentStatus: 'READY',
+          presenceStatus: 'PRESENT',
+          arrivalClass: 'LATE',
+          previousServingOrder: 3,
+          servingOrder: 2,
+          isAppointmentProtected: false,
+          blockedReason: null,
+          reason: 'Bệnh nhân đã có mặt trở lại tại phòng khám, xác nhận sẵn sàng khám',
+          notes: null,
+          previousStateVersion: 3,
+          stateVersion: 4,
+          updatedAtUtc: '2026-11-04T02:15:00Z',
+          updatedEntry: room103AfterRestore.entries.find((e) => e.id === 'q-008')!,
+        },
+      });
+
+    renderQueuePage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Ngô Minh Tuấn')).toBeInTheDocument();
+    });
+
+    // Scheduled LATE entry (Ngô Minh Tuấn - B004) shows "Đến muộn" and "Mất bảo vệ giờ hẹn"
+    const tuanRow = screen.getByText('Ngô Minh Tuấn').closest('tr');
+    expect(tuanRow).not.toBeNull();
+    expect(within(tuanRow!).getByText('Đến muộn')).toBeInTheDocument();
+    expect(within(tuanRow!).getByText('Mất bảo vệ giờ hẹn')).toBeInTheDocument();
+    expect(within(tuanRow!).getByText('Qua lượt')).toBeInTheDocument();
+
+    // 1. Mark CALLED entry (Trần Thị Bích - A013) as Missed Turn (CALLED -> SKIPPED)
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Đánh dấu qua lượt khám cho Trần Thị Bích',
+      }),
+    );
+
+    const missedDialog = screen.getByRole('dialog');
+    await waitFor(() => {
+      expect(
+        within(missedDialog).getByRole('button', { name: 'Xác nhận đánh dấu qua lượt' }),
+      ).not.toBeDisabled();
+    });
+
+    fireEvent.click(
+      within(missedDialog).getByRole('button', {
+        name: 'Gọi 3 lần chưa có mặt tại cửa phòng khám',
+      }),
+    );
+    fireEvent.click(
+      within(missedDialog).getByRole('button', { name: 'Xác nhận đánh dấu qua lượt' }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    expect(postSpy).toHaveBeenCalledWith('/reception/examination-queue/entries/q-002/missed-turn', {
+      servicePointId: 'sp-room-102',
+      reason: 'Gọi 3 lần chưa có mặt tại cửa phòng khám',
+      notes: null,
+      expectedStateVersion: 2,
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(
+      /Đã đánh dấu Qua lượt \(SKIPPED\) cho phiếu A013 \(Trần Thị Bích\) — Thứ tự hiển thị: #4, giữ nguyên số phiếu #13\./i,
+    );
+
+    // 2. Restore SKIPPED entry (Ngô Minh Tuấn - B004) back to READY
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Khôi phục lượt khám cho Ngô Minh Tuấn',
+      }),
+    );
+
+    const restoreDialog = screen.getByRole('dialog');
+    await waitFor(() => {
+      expect(
+        within(restoreDialog).getByRole('button', { name: 'Xác nhận khôi phục lượt khám' }),
+      ).not.toBeDisabled();
+    });
+
+    fireEvent.click(
+      within(restoreDialog).getByRole('button', {
+        name: 'Bệnh nhân đã có mặt trở lại tại phòng khám, xác nhận sẵn sàng khám',
+      }),
+    );
+    fireEvent.click(
+      within(restoreDialog).getByLabelText(/Tôi xác nhận bệnh nhân đã có mặt trực tiếp/i),
+    );
+    fireEvent.click(
+      within(restoreDialog).getByRole('button', { name: 'Xác nhận khôi phục lượt khám' }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    expect(postSpy).toHaveBeenCalledWith(
+      '/reception/examination-queue/entries/q-008/restore-turn',
+      {
+        servicePointId: 'sp-room-103',
+        confirmPresent: true,
+        reason: 'Bệnh nhân đã có mặt trở lại tại phòng khám, xác nhận sẵn sàng khám',
+        notes: null,
+        expectedStateVersion: 3,
+      },
+    );
+    expect(screen.getByRole('status')).toHaveTextContent(
+      /Đã khôi phục lượt khám sang Sẵn sàng \(READY\) cho phiếu B004 \(Ngô Minh Tuấn\) — Phân loại: Đến muộn \(mất bảo vệ giờ hẹn cũ\), thứ tự phục vụ mới: #2, giữ nguyên số phiếu #4\./i,
+    );
+  });
 });
