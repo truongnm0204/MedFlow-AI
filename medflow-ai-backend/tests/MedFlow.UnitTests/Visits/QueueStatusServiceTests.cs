@@ -430,6 +430,7 @@ public sealed class QueueStatusServiceTests : IDisposable
         Assert.Contains("READY", byQueueId.AllowedTargetStatuses);
         Assert.Contains("CALLED", byQueueId.AllowedTargetStatuses);
         Assert.Contains("SKIPPED", byQueueId.AllowedTargetStatuses);
+        Assert.DoesNotContain("CANCELLED", byQueueId.AllowedTargetStatuses);
 
         var byVisitCode = await _service.GetQueueEntryStatusAsync(5, "VIS-202604-1002");
         Assert.Equal(11, byVisitCode.QueueEntryId);
@@ -557,6 +558,13 @@ public sealed class QueueStatusServiceTests : IDisposable
                 5,
                 "10",
                 new UpdateQueueStatusRequest(TargetStatus: "SKIPPED")));
+
+        // CANCELLED via generic status endpoint -> ValidationException
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateQueueEntryStatusAsync(
+                5,
+                "10",
+                new UpdateQueueStatusRequest(TargetStatus: "CANCELLED", Reason: "x")));
 
         // Conflicting TargetStatus and Status -> ValidationException
         await Assert.ThrowsAsync<ValidationException>(() =>
@@ -959,5 +967,255 @@ public sealed class QueueStatusServiceTests : IDisposable
         // Reception Hospital 1 (user 5) on Hospital 2 entry ("20") -> 403
         await Assert.ThrowsAsync<ForbiddenException>(() =>
             _service.UpdateQueueEntryPriorityAsync(5, "20", validRequest));
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_WaitingEntry_CancelsEntryAndVisitPreservesQueueNumberAndWritesAudit()
+    {
+        var res = await _service.CancelQueueEntryAsync(
+            5,
+            "10",
+            new CancelQueueEntryRequest(
+                Reason: "Bệnh nhân xin về",
+                ExpectedStateVersion: 1),
+            "127.0.0.1");
+
+        Assert.Equal("WAITING", res.PreviousStatus);
+        Assert.Equal("CANCELLED", res.CurrentStatus);
+        Assert.Equal(1, res.PreviousStateVersion);
+        Assert.Equal(2, res.StateVersion);
+        Assert.Equal(12, res.QueueNumber);
+        Assert.Equal("A012", res.TicketNo);
+        Assert.Equal("Bệnh nhân xin về", res.BlockedReason);
+        Assert.Equal("Bệnh nhân xin về", res.Reason);
+        Assert.Equal("LEFT", res.PresenceStatus);
+        Assert.Equal("CANCELLED", res.VisitStatus);
+        Assert.Empty(res.AllowedTargetStatuses);
+        var historyItem = Assert.Single(res.StatusHistory);
+        Assert.Equal("CANCELLED", historyItem.TargetStatus);
+        Assert.Equal("WAITING", historyItem.PreviousStatus);
+        Assert.Equal("Bệnh nhân xin về", historyItem.Reason);
+
+        var entryInDb = await _db.QueueEntries.AsNoTracking().FirstAsync(q => q.Id == 10);
+        Assert.Equal("CANCELLED", entryInDb.Status);
+        Assert.NotNull(entryInDb.CompletedAt);
+        Assert.Equal(12, entryInDb.QueueNumber);
+        Assert.Equal(2, entryInDb.StateVersion);
+
+        var visitInDb = await _db.Visits.AsNoTracking().FirstAsync(v => v.Id == 1001);
+        Assert.Equal("CANCELLED", visitInDb.Status);
+        Assert.NotNull(visitInDb.CompletedAt);
+
+        var audit = await _db.AuditLogs.AsNoTracking()
+            .SingleAsync(a => a.Action == QueueStatusService.QueueEntryCancelAction && a.EntityId == "10");
+        Assert.Equal("Bệnh nhân xin về", audit.Reason);
+        Assert.Equal(1L, audit.HospitalId);
+        Assert.Equal(5L, audit.ActorUserId);
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_CalledEntryByVisitCode_Succeeds()
+    {
+        var res = await _service.CancelQueueEntryAsync(
+            5,
+            "VIS-202604-1002",
+            new CancelQueueEntryRequest(
+                Reason: "Bệnh nhân rời khỏi bệnh viện sau khi được gọi số",
+                ExpectedStateVersion: 2));
+
+        Assert.Equal(11L, res.QueueEntryId);
+        Assert.Equal("CALLED", res.PreviousStatus);
+        Assert.Equal("CANCELLED", res.CurrentStatus);
+        Assert.Equal(3, res.StateVersion);
+        Assert.Equal(13, res.QueueNumber);
+        Assert.Equal("CANCELLED", res.VisitStatus);
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_ReturnConsultationEntry_KeepsVisitOpen()
+    {
+        var entry10 = await _db.QueueEntries.FirstAsync(q => q.Id == 10);
+        entry10.QueueType = "RETURN_CONSULTATION";
+        await _db.SaveChangesAsync();
+
+        var res = await _service.CancelQueueEntryAsync(
+            5,
+            "10",
+            new CancelQueueEntryRequest(
+                Reason: "Bệnh nhân xin về chờ đọc kết quả sau",
+                ExpectedStateVersion: 1));
+
+        Assert.Equal("CANCELLED", res.CurrentStatus);
+        Assert.Equal("WAITING", res.VisitStatus);
+
+        var visitInDb = await _db.Visits.AsNoTracking().FirstAsync(v => v.Id == 1001);
+        Assert.Equal("WAITING", visitInDb.Status);
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_ReservedEntryWithoutVisit_KeepsNotArrivedPresence()
+    {
+        _db.QueueEntries.Add(new QueueEntry
+        {
+            Id = 30,
+            VisitId = null,
+            AppointmentId = null,
+            ServicePointId = 1,
+            CurrentServicePointId = 1,
+            QueueDate = new DateOnly(2026, 4, 18),
+            QueueNumber = 14,
+            QueueType = "EXAMINATION",
+            Status = "RESERVED",
+            PresenceStatus = "NOT_ARRIVED",
+            StateVersion = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var res = await _service.CancelQueueEntryAsync(
+            5,
+            "30",
+            new CancelQueueEntryRequest(
+                Reason: "Hủy lượt đặt trước chưa đến",
+                ExpectedStateVersion: 1));
+
+        Assert.Equal("RESERVED", res.PreviousStatus);
+        Assert.Equal("CANCELLED", res.CurrentStatus);
+        Assert.Equal("NOT_ARRIVED", res.PresenceStatus);
+        Assert.Null(res.VisitId);
+        Assert.Equal(14, res.QueueNumber);
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_MissingReasonOrVersion_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "10",
+                new CancelQueueEntryRequest(
+                    Reason: "   ",
+                    ExpectedStateVersion: 1)));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "10",
+                new CancelQueueEntryRequest(
+                    Reason: "Bệnh nhân xin về",
+                    ExpectedStateVersion: null)));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "10",
+                new CancelQueueEntryRequest(
+                    Reason: "Bệnh nhân xin về",
+                    ExpectedStateVersion: 0)));
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_StaleVersionInProgressCompletedAlreadyCancelledOrDiagnostic_ThrowsConflictException()
+    {
+        // 1. Stale version (entry 11 is at StateVersion 2)
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "11",
+                new CancelQueueEntryRequest(
+                    Reason: "Bệnh nhân xin về",
+                    ExpectedStateVersion: 1)));
+
+        // 2. IN_PROGRESS -> conflict
+        var entry10 = await _db.QueueEntries.FirstAsync(q => q.Id == 10);
+        entry10.Status = "IN_PROGRESS";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "10",
+                new CancelQueueEntryRequest(
+                    Reason: "Đang khám",
+                    ExpectedStateVersion: 1)));
+
+        // 3. COMPLETED -> conflict
+        entry10.Status = "COMPLETED";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "10",
+                new CancelQueueEntryRequest(
+                    Reason: "Đã hoàn tất",
+                    ExpectedStateVersion: 1)));
+
+        // 4. Cancel entry 11 OK, then cancel again with v3 -> conflict "đã được hủy"
+        var cancelRes = await _service.CancelQueueEntryAsync(
+            5,
+            "11",
+            new CancelQueueEntryRequest(
+                Reason: "Bệnh nhân xin về",
+                ExpectedStateVersion: 2));
+        Assert.Equal("CANCELLED", cancelRes.CurrentStatus);
+        Assert.Equal(3, cancelRes.StateVersion);
+
+        var exAlreadyCancelled = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "11",
+                new CancelQueueEntryRequest(
+                    Reason: "Hủy lần 2",
+                    ExpectedStateVersion: 3)));
+        Assert.Contains("đã được hủy", exAlreadyCancelled.Message);
+
+        // 5. DIAGNOSTIC queue entry -> conflict
+        _db.QueueEntries.Add(new QueueEntry
+        {
+            Id = 31,
+            VisitId = 1001,
+            ServicePointId = 1,
+            CurrentServicePointId = 1,
+            QueueDate = new DateOnly(2026, 4, 18),
+            QueueNumber = 1,
+            QueueType = "DIAGNOSTIC",
+            Status = "WAITING",
+            ManualPriority = "NORMAL",
+            StateVersion = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "31",
+                new CancelQueueEntryRequest(
+                    Reason: "Hàng đợi cận lâm sàng",
+                    ExpectedStateVersion: 1)));
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_DoctorPharmacyOrOtherHospital_ThrowsForbiddenException()
+    {
+        var req = new CancelQueueEntryRequest(
+            Reason: "Bệnh nhân xin về",
+            ExpectedStateVersion: 1);
+
+        // Doctor (user 3) on "10" -> 403
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CancelQueueEntryAsync(3, "10", req));
+
+        // Pharmacy (user 9) on "10" -> 403
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CancelQueueEntryAsync(9, "10", req));
+
+        // Reception Hospital 1 (user 5) on Hospital 2 entry "20" -> 403
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CancelQueueEntryAsync(5, "20", req));
+
+        // Sysadmin (user 11) on Hospital 2 entry "20" with v1 succeeds
+        var sysRes = await _service.CancelQueueEntryAsync(11, "20", req);
+        Assert.Equal("CANCELLED", sysRes.CurrentStatus);
+        Assert.Equal(2, sysRes.StateVersion);
     }
 }
