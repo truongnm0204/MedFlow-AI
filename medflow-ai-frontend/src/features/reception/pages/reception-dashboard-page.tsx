@@ -6,6 +6,8 @@ import { useLogout } from '@/features/auth/hooks/use-auth';
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
+import { CheckInModal } from '../components/checkin-modal';
+import { CheckInResultModal } from '../components/checkin-result-modal';
 import { CreatePatientModal } from '../components/create-patient-modal';
 import { AssignExaminationRoomModal } from '../components/assign-examination-room-modal';
 import { PatientDetailModal } from '../components/patient-detail-modal';
@@ -13,6 +15,8 @@ import { PrintExaminationTicketModal } from '../components/print-examination-tic
 import { UpdatePatientModal } from '../components/update-patient-modal';
 import { TransferVisitRoomModal } from '../components/transfer-visit-room-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
+import { SCHEDULED_CHECKIN_APPOINTMENTS_MOCK, createMockCheckInResult } from '../data/checkin-mock';
+import type { CheckInSuccessResult, ScheduledCheckInAppointment } from '../types/checkin.types';
 import { QueuePreviewTable } from '../components/queue-preview-table';
 import { ReceptionSidebar } from '../components/reception-sidebar';
 import { ReceptionStatCards } from '../components/reception-stat-cards';
@@ -54,6 +58,11 @@ export function ReceptionDashboardPage() {
   const [selectedPatientCode, setSelectedPatientCode] = useState<string | null>(null);
   const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
+  const [appointments, setAppointments] = useState(TODAY_APPOINTMENTS_MOCK);
+  const [selectedCheckIn, setSelectedCheckIn] = useState<ScheduledCheckInAppointment | null>(null);
+  const [selectedCheckInResult, setSelectedCheckInResult] = useState<CheckInSuccessResult | null>(
+    null,
+  );
   const [editingPatient, setEditingPatient] = useState<UpdatePatientFormData | null>(null);
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
   const [queueEntries, setQueueEntries] = useState<QueueEntry[]>(QUEUE_ENTRIES_MOCK);
@@ -200,7 +209,9 @@ export function ReceptionDashboardPage() {
                   <QuickActionsPanel
                     actions={QUICK_ACTIONS_MOCK}
                     onAction={(id) => {
-                      if (id === 'new-patient') {
+                      if (id === 'check-in') {
+                        setSelectedCheckIn(SCHEDULED_CHECKIN_APPOINTMENTS_MOCK[0]);
+                      } else if (id === 'new-patient') {
                         setCreateOpen(true);
                       } else if (id === 'search') {
                         navigate('/reception/patients');
@@ -255,7 +266,7 @@ export function ReceptionDashboardPage() {
                 </CardHeader>
                 <CardContent className="p-0">
                   <ul className="divide-y divide-slate-100">
-                    {TODAY_APPOINTMENTS_MOCK.map((ap) => (
+                    {appointments.map((ap) => (
                       <li key={ap.id} className="px-6 py-3 flex items-center gap-3">
                         <div className="w-12 text-center font-mono text-xs font-bold text-slate-700">
                           {ap.time}
@@ -271,6 +282,66 @@ export function ReceptionDashboardPage() {
                         <Badge tone={APPOINTMENT_STATUS_LABEL[ap.status].tone}>
                           {APPOINTMENT_STATUS_LABEL[ap.status].label}
                         </Badge>
+                        {ap.status === 'BOOKED' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const found = SCHEDULED_CHECKIN_APPOINTMENTS_MOCK.find(
+                                (item) => item.id === ap.id,
+                              ) || {
+                                id: ap.id,
+                                appointmentCode: `APT-2024-${ap.id}`,
+                                patientCode: 'BN-2024-0018',
+                                patientName: ap.patientName,
+                                gender: 'MALE' as const,
+                                birthYear: 1988,
+                                identityCard: '001088012345',
+                                phoneNumber: '0912345678',
+                                healthInsuranceNumber: 'DN4010123456789',
+                                doctorName: ap.doctorName,
+                                department: ap.department,
+                                roomName: 'P.102',
+                                time: ap.time,
+                                date: 'Hôm nay',
+                                status: 'BOOKED' as const,
+                              };
+                              setSelectedCheckIn(found);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] shadow-2xs transition-colors shrink-0"
+                          >
+                            Check-in
+                          </button>
+                        )}
+                        {ap.status === 'CHECKED_IN' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const found = SCHEDULED_CHECKIN_APPOINTMENTS_MOCK.find(
+                                (item) => item.id === ap.id,
+                              ) || {
+                                id: ap.id,
+                                appointmentCode: `APT-2024-${ap.id}`,
+                                patientCode: 'BN-2024-0018',
+                                patientName: ap.patientName,
+                                gender: 'MALE' as const,
+                                birthYear: 1988,
+                                identityCard: '001088012345',
+                                phoneNumber: '0912345678',
+                                healthInsuranceNumber: 'DN4010123456789',
+                                doctorName: ap.doctorName,
+                                department: ap.department,
+                                roomName: 'P.102',
+                                time: ap.time,
+                                date: 'Hôm nay',
+                                status: 'CHECKED_IN' as const,
+                              };
+                              setSelectedCheckInResult(createMockCheckInResult(found));
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-semibold text-[11px] transition-colors shrink-0"
+                          >
+                            Xem kết quả
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -285,6 +356,26 @@ export function ReceptionDashboardPage() {
           onClose={() => setSelectedPatientCode(null)}
         />
       </div>
+
+      <CheckInModal
+        isOpen={!!selectedCheckIn}
+        onClose={() => setSelectedCheckIn(null)}
+        appointment={selectedCheckIn}
+        onSuccess={() => {
+          if (selectedCheckIn) {
+            setAppointments((prev) =>
+              prev.map((item) =>
+                item.id === selectedCheckIn.id ? { ...item, status: 'CHECKED_IN' } : item,
+              ),
+            );
+          }
+        }}
+      />
+      <CheckInResultModal
+        isOpen={!!selectedCheckInResult}
+        onClose={() => setSelectedCheckInResult(null)}
+        result={selectedCheckInResult}
+      />
 
       <CreatePatientModal
         open={createOpen}
