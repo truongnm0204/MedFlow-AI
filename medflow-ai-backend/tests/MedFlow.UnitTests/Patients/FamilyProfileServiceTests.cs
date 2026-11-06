@@ -1113,15 +1113,53 @@ public sealed class FamilyProfileServiceTests : IDisposable
             _sut.CreateFamilyMemberAsync(1, request));
     }
 
-    [Fact]
-    public async Task CreateFamilyMember_InvalidBirthDateFormat_ThrowsValidationException()
+    [Theory]
+    [InlineData("10/08/201")] // 3-digit year
+    [InlineData("201-08-10")] // 3-digit year
+    [InlineData("not-a-date")]
+    [InlineData("31/02/2020")] // Invalid calendar date
+    public async Task CreateFamilyMember_InvalidBirthDateFormatOrDigits_ThrowsValidationException(string birthDate)
     {
         var request = new CreateFamilyMemberRequest
         {
             FullName = "Bé Sai Ngày",
             Relationship = "Con trai",
             Gender = "Nam",
-            BirthDate = "not-a-date",
+            BirthDate = birthDate,
+            Address = "Hà Nội"
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_BirthYearBefore1900_ThrowsValidationException()
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Cụ Quá Xưa",
+            Relationship = "Bố ruột",
+            Gender = "Nam",
+            BirthDate = "15/08/1880",
+            Address = "Hà Nội"
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Theory]
+    [InlineData("Nguyen 123")]
+    [InlineData("Bé @#$%")]
+    public async Task CreateFamilyMember_FullNameWithDigitsOrSpecialChars_ThrowsValidationException(string name)
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = name,
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
             Address = "Hà Nội"
         };
 

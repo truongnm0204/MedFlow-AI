@@ -133,6 +133,9 @@ public sealed class FamilyProfileService : IFamilyProfileService
         if (request.FullName.Trim().Length > 100)
             throw new ValidationException("Họ và tên người thân không được vượt quá 100 ký tự.");
 
+        if (!Regex.IsMatch(request.FullName.Trim(), @"^[\p{L}\s.'-]+$"))
+            throw new ValidationException("Họ và tên người thân chỉ được chứa chữ cái và khoảng trắng.");
+
         if (string.IsNullOrWhiteSpace(request.Relationship))
             throw new ValidationException("Vui lòng chọn mối quan hệ.");
 
@@ -560,7 +563,7 @@ public sealed class FamilyProfileService : IFamilyProfileService
     {
         if (dateOfBirth.HasValue)
         {
-            ValidateNotFuture(dateOfBirth.Value);
+            ValidateBirthDate(dateOfBirth.Value);
             return dateOfBirth.Value;
         }
 
@@ -568,28 +571,33 @@ public sealed class FamilyProfileService : IFamilyProfileService
             throw new ValidationException("Vui lòng nhập ngày sinh.");
 
         var trimmed = birthDateStr.Trim();
+
+        // Kiểm tra chặt chẽ năm sinh phải có đúng 4 chữ số: DD/MM/YYYY hoặc YYYY-MM-DD
+        var matchDmy = Regex.Match(trimmed, @"^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$");
+        var matchYmd = Regex.Match(trimmed, @"^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})$");
+
+        if (!matchDmy.Success && !matchYmd.Success)
+            throw new ValidationException("Định dạng ngày sinh phải là DD/MM/YYYY hoặc YYYY-MM-DD, năm sinh gồm 4 chữ số (ví dụ: 15/08/2018).");
+
         string[] formats = ["yyyy-MM-dd", "dd/MM/yyyy", "d/M/yyyy", "yyyy/MM/dd", "dd-MM-yyyy"];
 
         if (DateOnly.TryParseExact(trimmed, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedExact))
         {
-            ValidateNotFuture(parsedExact);
+            ValidateBirthDate(parsedExact);
             return parsedExact;
         }
 
-        if (DateOnly.TryParse(trimmed, CultureInfo.InvariantCulture, out var parsedGeneral))
-        {
-            ValidateNotFuture(parsedGeneral);
-            return parsedGeneral;
-        }
-
-        throw new ValidationException("Ngày sinh không hợp lệ (định dạng hợp lệ: YYYY-MM-DD hoặc DD/MM/YYYY).");
+        throw new ValidationException("Ngày sinh không hợp lệ (vui lòng kiểm tra lại ngày và tháng sinh trên lịch).");
     }
 
-    private static void ValidateNotFuture(DateOnly dob)
+    private static void ValidateBirthDate(DateOnly dob)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         if (dob > today)
             throw new ValidationException("Ngày sinh không được lớn hơn ngày hiện tại.");
+
+        if (dob.Year < 1900)
+            throw new ValidationException("Năm sinh không hợp lệ (năm sinh từ năm 1900 đến nay).");
     }
 
     private static string ComputeIdentificationHash(string idNo)
