@@ -512,7 +512,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                     IsScheduled: visitType == "SCHEDULED",
                     StoredArrivalClass: arrivalClass,
                     ScheduledAt: scheduledDateTime,
-                    ArrivedAt: v?.CheckedInAt ?? q?.ArrivedAt,
+                    ArrivedAt: q?.ArrivedAt ?? v?.CheckedInAt,
                     ReadySince: q?.ReadyAt ?? checkedInDateTime,
                     BackfilledAt: q?.BackfilledAt,
                     QueueNumber: queueNumber));

@@ -37,32 +37,12 @@ public static class ExaminationQueueOrderingEngine
                 roomIdle = false;
             }
 
-            string effectiveArrivalClass;
-            if (!item.IsScheduled)
-            {
-                effectiveArrivalClass = "WALK_IN";
-            }
-            else if (item.ScheduledAt.HasValue && item.ArrivedAt.HasValue)
-            {
-                var scheduled = item.ScheduledAt.Value;
-                var arrived = item.ArrivedAt.Value;
-                if (arrived < scheduled.AddMinutes(-g))
-                {
-                    effectiveArrivalClass = "EARLY";
-                }
-                else if (arrived > scheduled.AddMinutes(g))
-                {
-                    effectiveArrivalClass = "LATE";
-                }
-                else
-                {
-                    effectiveArrivalClass = "ON_TIME_OR_GRACE";
-                }
-            }
-            else
-            {
-                effectiveArrivalClass = item.StoredArrivalClass;
-            }
+            var effectiveArrivalClass = QueueArrivalClassifier.Classify(
+                item.IsScheduled,
+                item.ScheduledAt,
+                item.ArrivedAt,
+                g,
+                item.StoredArrivalClass);
 
             var activeWaiting = item.Status is "WAITING" or "READY";
             var isEligible = activeWaiting && item.PresenceStatus == "PRESENT";
