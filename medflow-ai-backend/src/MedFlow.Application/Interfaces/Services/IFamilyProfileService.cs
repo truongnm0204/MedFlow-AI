@@ -13,4 +13,9 @@ public interface IFamilyProfileService
         long userId,
         string identifier,
         CancellationToken ct = default);
+
+    Task<FamilyMemberResponse> CreateFamilyMemberAsync(
+        long userId,
+        CreateFamilyMemberRequest request,
+        CancellationToken ct = default);
 }
