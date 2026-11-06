@@ -40,7 +40,7 @@ public sealed class VisitRoomAssignmentServiceTests : IDisposable
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => Set<Service>();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
-        public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
+        public DbSet<HospitalPolicy> HospitalPolicies => Set<HospitalPolicy>();
         public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
@@ -56,7 +56,6 @@ public sealed class VisitRoomAssignmentServiceTests : IDisposable
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<ServicePrice>();
-            modelBuilder.Ignore<HospitalPolicy>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<PatientFamilyLink>();
             modelBuilder.Ignore<Payment>();
@@ -68,6 +67,7 @@ public sealed class VisitRoomAssignmentServiceTests : IDisposable
             modelBuilder.Entity<RolePermission>().HasKey(rp => new { rp.RoleId, rp.PermissionId });
             modelBuilder.Entity<Patient>().HasKey(p => p.Id);
             modelBuilder.Entity<Hospital>().HasKey(h => h.Id);
+            modelBuilder.Entity<HospitalPolicy>().HasKey(p => p.Id);
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
             modelBuilder.Entity<Specialty>().HasKey(s => s.Id);
             modelBuilder.Entity<Service>().HasKey(s => s.Id);
@@ -315,8 +315,9 @@ public sealed class VisitRoomAssignmentServiceTests : IDisposable
     {
         var request = new AssignExaminationRoomRequest(
             ExaminationRoomId: 1,
-            Priority: "URGENT",
-            Reason: "Điều phối bệnh nhân đau thượng vị vào buồng khám 101");
+            Priority: "PREGNANT",
+            Reason: "Điều phối bệnh nhân đau thượng vị vào buồng khám 101",
+            PriorityVerificationConfirmed: true);
 
         var result = await _service.AssignExaminationRoomAsync(
             actorUserId: 5,
@@ -337,7 +338,7 @@ public sealed class VisitRoomAssignmentServiceTests : IDisposable
         Assert.Equal(3, result.QueueNumber);
         Assert.Equal("B003", result.QueueCode);
         Assert.Equal("WAITING", result.QueueStatus);
-        Assert.Equal("URGENT", result.Priority);
+        Assert.Equal("PREGNANT", result.Priority);
         Assert.Equal(1L, result.ServicePointId);
         Assert.Equal(2, result.CurrentRoomOccupancy); // Visit 104 (IN_CONSULTATION) + Visit 100 (WAITING)
 
@@ -350,7 +351,7 @@ public sealed class VisitRoomAssignmentServiceTests : IDisposable
         Assert.Equal(100L, updatedQueue.VisitId);
         Assert.Equal("WAITING", updatedQueue.Status);
         Assert.Equal("PRESENT", updatedQueue.PresenceStatus);
-        Assert.Equal("URGENT", updatedQueue.ManualPriority);
+        Assert.Equal("PREGNANT", updatedQueue.ManualPriority);
         Assert.Equal(1L, updatedQueue.CurrentServicePointId);
         Assert.NotNull(updatedQueue.ReadyAt);
 
@@ -379,7 +380,11 @@ public sealed class VisitRoomAssignmentServiceTests : IDisposable
         var slotBackedResult = await _service.AssignExaminationRoomAsync(
             actorUserId: 5,
             visitIdOrCode: "101",
-            request: new AssignExaminationRoomRequest(RoomCode: "rm-002", Priority: "ELDERLY"));
+            request: new AssignExaminationRoomRequest(
+                RoomCode: "rm-002",
+                Priority: "ELDERLY",
+                Reason: "Người bệnh cao tuổi ≥ 75 tuổi",
+                PriorityVerificationConfirmed: true));
 
         Assert.Equal(101L, slotBackedResult.VisitId);
         Assert.Equal(1L, slotBackedResult.AssignedDoctorId);
@@ -456,7 +461,11 @@ public sealed class VisitRoomAssignmentServiceTests : IDisposable
         var idempotentReassign = await _service.AssignExaminationRoomAsync(
             actorUserId: 5,
             visitIdOrCode: "VIS-202610-0100",
-            request: new AssignExaminationRoomRequest(RoomCode: "RM-002", Priority: "PREGNANT"));
+            request: new AssignExaminationRoomRequest(
+                RoomCode: "RM-002",
+                Priority: "PREGNANT",
+                Reason: "Thai phụ có sổ khám thai",
+                PriorityVerificationConfirmed: true));
 
         Assert.Equal("PREGNANT", idempotentReassign.Priority);
         Assert.Equal(1, idempotentReassign.CurrentRoomOccupancy);

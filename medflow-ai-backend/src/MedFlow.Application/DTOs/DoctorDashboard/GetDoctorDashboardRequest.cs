@@ -5,5 +5,6 @@ public sealed record GetDoctorDashboardRequest(
     int DiagnosticLimit = 10,
     string? Status = null,
     string? Priority = null,
-    string? Keyword = null
+    string? Keyword = null,
+    string? QueueType = null
 );

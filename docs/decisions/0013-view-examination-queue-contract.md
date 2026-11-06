@@ -25,6 +25,7 @@ Reception staff (`RECEPTION`) and hospital administrators (`HOSPITAL_ADMIN`, `SY
    - Reconciles `Visit.ExaminationRoomId` overrides (e.g., after UC27 room assignment `#80` or room transfer `#82`) so transferred visits appear under their target room's service point bucket immediately.
 
 4. **UC28 1-Based Serving Order**:
+   - Serving order superseded by ADR 0014.
    - Sorts entries within each service point bucket by:
      1. Status order: `IN_PROGRESS` (0) < `CALLED` (1) < `READY` (2) < `WAITING` (3) < `SKIPPED` (4) < `COMPLETED` (5).
      2. Clinical priority (for active/waiting entries): `URGENT` (0) < `RETURN_RESULT` (1) < `ELDERLY` (2) < `PREGNANT` (3) < `NORMAL` (4).
