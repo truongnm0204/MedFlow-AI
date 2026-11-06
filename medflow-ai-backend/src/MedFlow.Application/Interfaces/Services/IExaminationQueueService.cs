@@ -15,4 +15,18 @@ public interface IExaminationQueueService
         EarlyArrivalBackfillRequest request,
         string? ipAddress = null,
         CancellationToken ct = default);
+
+    Task<QueueTurnActionResponseDto> MarkMissedTurnAsync(
+        long actorUserId,
+        string idOrCode,
+        MarkMissedTurnRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
+
+    Task<QueueTurnActionResponseDto> RestoreSkippedTurnAsync(
+        long actorUserId,
+        string idOrCode,
+        RestoreQueueTurnRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
 }

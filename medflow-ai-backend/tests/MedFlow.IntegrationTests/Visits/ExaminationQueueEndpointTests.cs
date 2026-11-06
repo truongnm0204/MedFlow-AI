@@ -383,5 +383,21 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
             string? ipAddress = null,
             CancellationToken ct = default)
             => throw new NotSupportedException();
+
+        public Task<QueueTurnActionResponseDto> MarkMissedTurnAsync(
+            long actorUserId,
+            string idOrCode,
+            MarkMissedTurnRequest request,
+            string? ipAddress = null,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<QueueTurnActionResponseDto> RestoreSkippedTurnAsync(
+            long actorUserId,
+            string idOrCode,
+            RestoreQueueTurnRequest request,
+            string? ipAddress = null,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 }
