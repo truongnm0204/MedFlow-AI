@@ -26,19 +26,15 @@ describe('Appointment Reminder Components', () => {
       fireEvent.click(actionBtn);
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
-      expect(screen.getByRole('heading', { name: /Nhắc Lịch Khám Bệnh Ngoại Trú/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole('heading', { name: /Nhắc Lịch Khám Bệnh Ngoại Trú/i }),
+      ).toBeInTheDocument();
     });
   });
 
   describe('AppointmentReminderModal', () => {
     it('renders all preparations and documents required', () => {
-      render(
-        <AppointmentReminderModal
-          isOpen={true}
-          onClose={vi.fn()}
-          reminder={mockReminder}
-        />
-      );
+      render(<AppointmentReminderModal isOpen={true} onClose={vi.fn()} reminder={mockReminder} />);
 
       expect(screen.getByText(/P.102 • Tầng 1 - Khu Khám Đa Khoa/)).toBeInTheDocument();
       expect(screen.getByText(/Nhịn ăn sáng ít nhất 6 tiếng/)).toBeInTheDocument();
@@ -53,7 +49,7 @@ describe('Appointment Reminder Components', () => {
           onClose={vi.fn()}
           reminder={mockReminder}
           onConfirmAttendance={handleConfirm}
-        />
+        />,
       );
 
       const confirmBtn = screen.getByRole('button', { name: /Xác nhận sẽ đến khám/i });
@@ -67,11 +63,7 @@ describe('Appointment Reminder Components', () => {
     it('calls onClose when close button clicked', () => {
       const handleClose = vi.fn();
       render(
-        <AppointmentReminderModal
-          isOpen={true}
-          onClose={handleClose}
-          reminder={mockReminder}
-        />
+        <AppointmentReminderModal isOpen={true} onClose={handleClose} reminder={mockReminder} />,
       );
 
       const closeBtn = screen.getByRole('button', { name: /Đóng hộp thoại nhắc lịch/i });

@@ -9,7 +9,9 @@ import { AppointmentReminderModal } from './appointment-reminder-modal';
 
 export function NotificationBellPopover() {
   const [isOpen, setIsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<PatientNotification[]>(PATIENT_NOTIFICATIONS_MOCK);
+  const [notifications, setNotifications] = useState<PatientNotification[]>(
+    PATIENT_NOTIFICATIONS_MOCK,
+  );
   const [selectedReminder, setSelectedReminder] = useState<AppointmentReminder | null>(null);
 
   const containerRef = useClickOutside<HTMLDivElement>(() => setIsOpen(false));
@@ -21,9 +23,7 @@ export function NotificationBellPopover() {
   };
 
   const handleNotificationClick = (item: PatientNotification) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === item.id ? { ...n, isRead: true } : n))
-    );
+    setNotifications((prev) => prev.map((n) => (n.id === item.id ? { ...n, isRead: true } : n)));
     if (item.appointmentReminder) {
       setSelectedReminder(item.appointmentReminder);
       setIsOpen(false);
@@ -37,9 +37,7 @@ export function NotificationBellPopover() {
           type="button"
           onClick={() => setIsOpen((prev) => !prev)}
           aria-label={
-            unreadCount > 0
-              ? `Thông báo: có ${unreadCount} thông báo chưa đọc`
-              : 'Thông báo'
+            unreadCount > 0 ? `Thông báo: có ${unreadCount} thông báo chưa đọc` : 'Thông báo'
           }
           aria-expanded={isOpen}
           aria-haspopup="true"
@@ -87,9 +85,7 @@ export function NotificationBellPopover() {
             {/* List */}
             <div className="max-h-[360px] overflow-y-auto divide-y divide-slate-100">
               {notifications.length === 0 ? (
-                <div className="p-8 text-center text-xs text-sub">
-                  Bạn không có thông báo nào.
-                </div>
+                <div className="p-8 text-center text-xs text-sub">Bạn không có thông báo nào.</div>
               ) : (
                 notifications.map((item) => {
                   const isReminder = item.category === 'APPOINTMENT_REMINDER';
@@ -132,9 +128,7 @@ export function NotificationBellPopover() {
                           >
                             {item.title}
                           </p>
-                          <span className="text-[10px] text-sub shrink-0">
-                            {item.createdAt}
-                          </span>
+                          <span className="text-[10px] text-sub shrink-0">{item.createdAt}</span>
                         </div>
                         <p className="text-[11px] text-sub mt-0.5 line-clamp-2 leading-relaxed">
                           {item.message}

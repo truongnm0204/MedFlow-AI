@@ -75,10 +75,7 @@ export function AppointmentReminderModal({
                     : 'LỊCH HẸN SẮP TỚI'}
                 </Badge>
               </div>
-              <h2
-                id="reminder-modal-title"
-                className="text-lg font-bold text-ink mt-1"
-              >
+              <h2 id="reminder-modal-title" className="text-lg font-bold text-ink mt-1">
                 Nhắc Lịch Khám Bệnh Ngoại Trú
               </h2>
             </div>
@@ -101,7 +98,9 @@ export function AppointmentReminderModal({
               className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center gap-2.5 text-xs font-medium animate-in fade-in slide-in-from-top-2"
             >
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />
-              <span>Đã ghi nhận bạn sẽ đến đúng giờ! Bệnh viện đã giữ chỗ khám ưu tiên cho bạn.</span>
+              <span>
+                Đã ghi nhận bạn sẽ đến đúng giờ! Bệnh viện đã giữ chỗ khám ưu tiên cho bạn.
+              </span>
             </div>
           )}
 
@@ -149,7 +148,8 @@ export function AppointmentReminderModal({
                 <div className="text-sm font-bold text-ink">
                   {isConfirmed ? (
                     <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Đã xác nhận tham gia
+                      <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" /> Đã xác nhận tham
+                      gia
                     </span>
                   ) : (
                     <span className="text-amber-700 font-medium">Chờ người bệnh xác nhận</span>

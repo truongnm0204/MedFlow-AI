@@ -6,7 +6,8 @@ export const APPOINTMENT_REMINDERS_MOCK: AppointmentReminder[] = [
     appointmentCode: 'APT-2024-0891',
     patientName: 'Nguyễn Văn An',
     doctorName: 'BS. CKII Trần Khánh',
-    doctorAvatar: 'https://images.unsplash.com/photo-1622253692010-333f2da6031d?w=150&auto=format&fit=crop&q=80',
+    doctorAvatar:
+      'https://images.unsplash.com/photo-1622253692010-333f2da6031d?w=150&auto=format&fit=crop&q=80',
     specialtyName: 'Nội tổng quát',
     roomName: 'P.102 • Tầng 1 - Khu Khám Đa Khoa',
     scheduledDate: '2026-10-30',
@@ -31,7 +32,8 @@ export const APPOINTMENT_REMINDERS_MOCK: AppointmentReminder[] = [
     appointmentCode: 'APT-2024-0895',
     patientName: 'Nguyễn Văn An',
     doctorName: 'ThS. BS Đinh Long',
-    doctorAvatar: 'https://images.unsplash.com/photo-1537368910025-700350fe46c7?w=150&auto=format&fit=crop&q=80',
+    doctorAvatar:
+      'https://images.unsplash.com/photo-1537368910025-700350fe46c7?w=150&auto=format&fit=crop&q=80',
     specialtyName: 'Tai mũi họng',
     roomName: 'P.204 • Tầng 2 - Khu Khám Chuyên Sâu',
     scheduledDate: '2026-11-02',
@@ -42,10 +44,7 @@ export const APPOINTMENT_REMINDERS_MOCK: AppointmentReminder[] = [
       'Không dùng thuốc xịt mũi có chứa corticoid trước khi khám 24 giờ.',
       'Đeo khẩu trang y tế khi đến bệnh viện.',
     ],
-    documentsRequired: [
-      'Căn cước công dân gắn chip hoặc VNeID mức 2.',
-      'Thẻ BHYT (nếu có).',
-    ],
+    documentsRequired: ['Căn cước công dân gắn chip hoặc VNeID mức 2.', 'Thẻ BHYT (nếu có).'],
     isConfirmedByPatient: true,
     notifiedAt: 'Hôm qua, 14:30',
   },

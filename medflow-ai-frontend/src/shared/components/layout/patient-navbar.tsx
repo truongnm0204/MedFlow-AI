@@ -14,7 +14,11 @@ interface PatientNavbarProps {
 }
 
 /** Header bệnh nhân đã đăng nhập theo Figma `10:106`. */
-export function PatientNavbar({ user, notificationCount: _notificationCount = 0, onLogout }: PatientNavbarProps) {
+export function PatientNavbar({
+  user,
+  notificationCount: _notificationCount = 0,
+  onLogout,
+}: PatientNavbarProps) {
   const [open, setOpen] = useState(false);
   const { pathname } = useLocation();
 
