@@ -7,6 +7,7 @@ import { ServiceFilters } from '../components/service-filters';
 import { ServiceMetrics } from '../components/service-metrics';
 import { ServicePagination } from '../components/service-pagination';
 import { ServicePriceHistoryModal } from '../components/service-price-history-modal';
+import { ServicePriceUpdateModal } from '../components/service-price-update-modal';
 import { ServiceTable } from '../components/service-table';
 import { useExaminationServiceStore } from '../store/examination-service.store';
 import type { ExaminationService } from '../types/examination-service.types';
@@ -140,6 +141,7 @@ export function ExaminationServiceListPage() {
       </main>
 
       <ServicePriceHistoryModal />
+      <ServicePriceUpdateModal />
       <ServiceColumnModal />
       <Outlet />
     </AdminServicesShell>

@@ -1,4 +1,4 @@
-import { CheckCircle2, History, Pencil, Power } from 'lucide-react';
+import { CheckCircle2, DollarSign, History, Pencil, Power } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { useExaminationServiceStore } from '../store/examination-service.store';
@@ -18,6 +18,7 @@ export function ServiceTable({ services, onViewHistory }: ServiceTableProps) {
   const clearSelection = useExaminationServiceStore((state) => state.clearSelection);
   const batchToggleStatus = useExaminationServiceStore((state) => state.batchToggleStatus);
 
+  const setUpdatePriceService = useExaminationServiceStore((state) => state.setUpdatePriceService);
   const visibleIds = services.map((s) => s.id);
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
   const formatVnd = (num: number) => num.toLocaleString('vi-VN') + ' đ';
@@ -126,8 +127,20 @@ export function ServiceTable({ services, onViewHistory }: ServiceTableProps) {
                 )}
 
                 {visibleColumns.price && (
-                  <td className="px-3 py-3.5 font-bold text-slate-900">
-                    {formatVnd(service.price)}
+                  <td className="px-3 py-3.5">
+                    <button
+                      type="button"
+                      onClick={() => setUpdatePriceService(service)}
+                      title="Bấm để cập nhật giá"
+                      aria-label={`Biểu phí ${service.name}`}
+                      className="group inline-flex items-center gap-1 font-bold text-slate-900 hover:text-primary transition-colors cursor-pointer text-left"
+                    >
+                      <span>{formatVnd(service.price)}</span>
+                      <DollarSign
+                        className="h-3 w-3 opacity-0 group-hover:opacity-100 text-primary transition-opacity"
+                        aria-hidden="true"
+                      />
+                    </button>
                   </td>
                 )}
 
@@ -174,6 +187,15 @@ export function ServiceTable({ services, onViewHistory }: ServiceTableProps) {
                       >
                         <Pencil className="h-4 w-4" />
                       </Link>
+                      <button
+                        type="button"
+                        onClick={() => setUpdatePriceService(service)}
+                        title="Cập nhật biểu phí (UC52)"
+                        aria-label={`Cập nhật giá ${service.name}`}
+                        className="p-1 hover:text-emerald-600 transition-colors"
+                      >
+                        <DollarSign className="h-4 w-4" aria-hidden="true" />
+                      </button>
                       <button
                         type="button"
                         onClick={() => onViewHistory(service)}
