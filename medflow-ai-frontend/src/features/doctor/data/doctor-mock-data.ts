@@ -34,7 +34,8 @@ export const ASSIGNED_QUEUE_MOCK: AssignedPatientEntry[] = [
     gender: 'Nam',
     chiefComplaint: 'Đau tức ngực trái lan lên vai, khó thở khi gắng sức',
     assignedAt: '08:10',
-    priority: 'URGENT',
+    priority: 'NORMAL',
+    queueType: 'EXAMINATION',
     status: 'IN_CONSULTATION',
   },
   {
@@ -47,6 +48,7 @@ export const ASSIGNED_QUEUE_MOCK: AssignedPatientEntry[] = [
     chiefComplaint: 'Ho khan kéo dài 2 tuần kèm sốt nhẹ về chiều',
     assignedAt: '08:18',
     priority: 'NORMAL',
+    queueType: 'EXAMINATION',
     status: 'CALLED',
   },
   {
@@ -58,7 +60,8 @@ export const ASSIGNED_QUEUE_MOCK: AssignedPatientEntry[] = [
     gender: 'Nam',
     chiefComplaint: 'Quay lại đọc kết quả xét nghiệm máu & điện tâm đồ',
     assignedAt: '08:25',
-    priority: 'RETURN_RESULT',
+    priority: 'NORMAL',
+    queueType: 'RETURN_CONSULTATION',
     status: 'WAITING',
   },
   {
@@ -71,6 +74,7 @@ export const ASSIGNED_QUEUE_MOCK: AssignedPatientEntry[] = [
     chiefComplaint: 'Tái khám tăng huyết áp, chóng mặt khi thay đổi tư thế',
     assignedAt: '08:30',
     priority: 'ELDERLY',
+    queueType: 'EXAMINATION',
     status: 'WAITING',
   },
   {
@@ -83,6 +87,7 @@ export const ASSIGNED_QUEUE_MOCK: AssignedPatientEntry[] = [
     chiefComplaint: 'Đau thượng vị sau ăn, ợ chua nhiều về đêm',
     assignedAt: '08:00',
     priority: 'NORMAL',
+    queueType: 'EXAMINATION',
     status: 'AWAITING_RESULTS',
   },
   {
@@ -95,6 +100,7 @@ export const ASSIGNED_QUEUE_MOCK: AssignedPatientEntry[] = [
     chiefComplaint: 'Khám nội tổng quát định kỳ, tư vấn chỉ số mỡ máu',
     assignedAt: '07:45',
     priority: 'NORMAL',
+    queueType: 'EXAMINATION',
     status: 'COMPLETED',
   },
 ];

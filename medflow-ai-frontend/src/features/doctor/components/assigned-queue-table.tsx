@@ -27,9 +27,8 @@ const PRIORITY_META: Record<
   { label: string; tone: 'sky' | 'emerald' | 'amber' | 'slate' | 'rose' } | null
 > = {
   NORMAL: null,
-  URGENT: { label: 'Cấp cứu / Ưu tiên', tone: 'rose' },
   ELDERLY: { label: 'Người cao tuổi', tone: 'amber' },
-  RETURN_RESULT: { label: 'Đọc kết quả CLS', tone: 'sky' },
+  PREGNANT: { label: 'Thai phụ', tone: 'sky' },
 };
 
 export function AssignedQueueTable({ entries, onSelectPatient }: AssignedQueueTableProps) {
@@ -79,8 +78,15 @@ export function AssignedQueueTable({ entries, onSelectPatient }: AssignedQueueTa
                   {entry.assignedAt}
                 </td>
                 <td className="py-2.5 pr-3">
-                  {priorityBadge ? (
-                    <Badge tone={priorityBadge.tone}>{priorityBadge.label}</Badge>
+                  {entry.queueType === 'RETURN_CONSULTATION' || priorityBadge ? (
+                    <div className="flex flex-wrap items-center gap-1">
+                      {entry.queueType === 'RETURN_CONSULTATION' && (
+                        <Badge tone="emerald">Đọc KQ CLS</Badge>
+                      )}
+                      {priorityBadge && (
+                        <Badge tone={priorityBadge.tone}>{priorityBadge.label}</Badge>
+                      )}
+                    </div>
                   ) : (
                     <span className="text-[11px] text-slate-400">Thường quy</span>
                   )}
