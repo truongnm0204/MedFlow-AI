@@ -32,6 +32,7 @@ public static class DependencyInjection
         services.AddScoped<IDoctorCatalogService, DoctorCatalogService>();
         services.AddScoped<IHospitalCatalogService, HospitalCatalogService>();
         services.AddScoped<IPatientProfileService, PatientProfileService>();
+        services.AddScoped<IFamilyProfileService, FamilyProfileService>();
         services.AddScoped<IAppointmentPolicyService, AppointmentPolicyService>();
         services.AddScoped<IDepartmentService, DepartmentService>();
         services.AddScoped<IExaminationRoomService, ExaminationRoomService>();
@@ -52,6 +53,8 @@ public static class DependencyInjection
         services.AddScoped<IVisitRoomTransferService, VisitRoomTransferService>();
         services.AddScoped<IVisitTicketService, VisitTicketService>();
         services.AddScoped<IVisitRoomAssignmentService, VisitRoomAssignmentService>();
+        services.AddScoped<IExaminationQueueService, ExaminationQueueService>();
+        services.AddScoped<IQueueStatusService, QueueStatusService>();
         return services;
     }
 }

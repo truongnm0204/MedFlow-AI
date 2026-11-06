@@ -1,4 +1,5 @@
-import { CheckCircle2, DollarSign, History, Pencil, Power } from 'lucide-react';
+import { CheckCircle2, DollarSign, History, MoreVertical, Pencil, Power } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { useExaminationServiceStore } from '../store/examination-service.store';
@@ -7,9 +8,28 @@ import type { ExaminationService } from '../types/examination-service.types';
 interface ServiceTableProps {
   services: ExaminationService[];
   onViewHistory: (service: ExaminationService) => void;
+  onToggleStatus?: (id: string) => void;
+  onRequestDeactivate?: (service: ExaminationService) => void;
 }
 
-export function ServiceTable({ services, onViewHistory }: ServiceTableProps) {
+export function ServiceTable({
+  services,
+  onViewHistory,
+  onToggleStatus,
+  onRequestDeactivate,
+}: ServiceTableProps) {
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setOpenMenuId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   const selectedIds = useExaminationServiceStore((state) => state.selectedIds);
   const visibleColumns = useExaminationServiceStore((state) => state.visibleColumns);
   const toggleSelection = useExaminationServiceStore((state) => state.toggleSelection);
@@ -178,14 +198,17 @@ export function ServiceTable({ services, onViewHistory }: ServiceTableProps) {
 
                 {visibleColumns.actions && (
                   <td className="px-3 py-3.5 text-right pr-5">
-                    <div className="flex items-center justify-end gap-1 text-slate-500">
+                    <div
+                      ref={openMenuId === service.id ? menuRef : undefined}
+                      className="relative flex items-center justify-end gap-1 text-slate-500"
+                    >
                       <Link
                         to={`/admin/services/${service.id}/edit`}
                         title="Chỉnh sửa dịch vụ"
                         aria-label={`Chỉnh sửa ${service.name}`}
-                        className="p-1 hover:text-primary transition-colors"
+                        className="rounded p-1 hover:text-primary transition-colors hover:bg-slate-100"
                       >
-                        <Pencil className="h-4 w-4" />
+                        <Pencil className="h-4 w-4" aria-hidden="true" />
                       </Link>
                       <button
                         type="button"
@@ -201,23 +224,111 @@ export function ServiceTable({ services, onViewHistory }: ServiceTableProps) {
                         onClick={() => onViewHistory(service)}
                         title="Xem lịch sử giá & chính sách UC52"
                         aria-label={`Xem lịch sử giá ${service.name}`}
-                        className="p-1 hover:text-primary transition-colors"
+                        className="rounded p-1 hover:text-primary transition-colors hover:bg-slate-100"
                       >
-                        <History className="h-4 w-4" />
+                        <History className="h-4 w-4" aria-hidden="true" />
                       </button>
                       <button
                         type="button"
-                        onClick={() => toggleStatus(service.id)}
+                        onClick={() => {
+                          if (service.status === 'ACTIVE') {
+                            if (onRequestDeactivate) {
+                              onRequestDeactivate(service);
+                            } else {
+                              toggleStatus(service.id);
+                            }
+                          } else {
+                            if (onToggleStatus) {
+                              onToggleStatus(service.id);
+                            } else {
+                              toggleStatus(service.id);
+                            }
+                          }
+                        }}
                         title={
                           service.status === 'ACTIVE' ? 'Tạm dừng dịch vụ' : 'Kích hoạt dịch vụ'
                         }
                         aria-label={`Đổi trạng thái ${service.name}`}
-                        className="p-1 hover:text-primary transition-colors"
+                        className="rounded p-1 hover:text-primary transition-colors hover:bg-slate-100"
                       >
                         <Power
                           className={`h-4 w-4 ${service.status === 'ACTIVE' ? 'text-emerald-600' : 'text-slate-400'}`}
+                          aria-hidden="true"
                         />
                       </button>
+
+                      <div className="relative">
+                        <button
+                          type="button"
+                          aria-label={`Thao tác ${service.name}`}
+                          title="Tùy chọn thao tác"
+                          aria-expanded={openMenuId === service.id}
+                          onClick={() =>
+                            setOpenMenuId((current) => (current === service.id ? null : service.id))
+                          }
+                          className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-ink"
+                        >
+                          <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                        {openMenuId === service.id && (
+                          <div className="absolute right-0 top-full z-30 mt-1 w-48 rounded-xl border border-border bg-white p-1.5 shadow-lg text-left">
+                            {service.status === 'ACTIVE' ? (
+                              <button
+                                type="button"
+                                aria-label={`Ngừng hoạt động ${service.name}`}
+                                onClick={() => {
+                                  setOpenMenuId(null);
+                                  if (onRequestDeactivate) {
+                                    onRequestDeactivate(service);
+                                  } else {
+                                    toggleStatus(service.id);
+                                  }
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-50"
+                              >
+                                <Power className="h-3.5 w-3.5" aria-hidden="true" />
+                                Tạm ngừng dịch vụ
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                aria-label={`Kích hoạt lại ${service.name}`}
+                                onClick={() => {
+                                  setOpenMenuId(null);
+                                  if (onToggleStatus) {
+                                    onToggleStatus(service.id);
+                                  } else {
+                                    toggleStatus(service.id);
+                                  }
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-50"
+                              >
+                                <Power className="h-3.5 w-3.5" aria-hidden="true" />
+                                Kích hoạt dịch vụ
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenMenuId(null);
+                                onViewHistory(service);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                            >
+                              <History className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+                              Lịch sử giá & chính sách
+                            </button>
+                            <Link
+                              to={`/admin/services/${service.id}/edit`}
+                              onClick={() => setOpenMenuId(null)}
+                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                            >
+                              <Pencil className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+                              Chỉnh sửa dịch vụ
+                            </Link>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </td>
                 )}

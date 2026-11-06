@@ -6,6 +6,12 @@ export interface DepartmentItem {
   name: string;
   facility: string;
   status: DepartmentStatus;
+  activeRoomsCount?: number;
+  activeDoctorsCount?: number;
+  activeServicesCount?: number;
+  pendingAppointmentsCount?: number;
+  hasActiveDependencies?: boolean;
+  deactivateReason?: string;
 }
 
 export interface DepartmentFilters {

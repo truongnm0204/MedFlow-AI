@@ -9,6 +9,7 @@ export const examinationQueueFilterSchema = z.object({
   status: z.enum(['ALL', 'WAITING', 'READY', 'CALLED', 'IN_PROGRESS', 'COMPLETED', 'SKIPPED']),
   priority: z.enum(['ALL', 'NORMAL', 'URGENT', 'ELDERLY', 'PREGNANT', 'RETURN_RESULT']),
   visitType: z.enum(['ALL', 'SCHEDULED', 'WALK_IN']),
+  arrivalClass: z.enum(['ALL', 'ON_TIME_OR_GRACE', 'EARLY', 'LATE', 'WALK_IN']).default('ALL'),
   keyword: z
     .string()
     .trim()
