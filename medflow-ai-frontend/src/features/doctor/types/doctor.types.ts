@@ -4,7 +4,9 @@
 export type AssignedQueueStatus =
   'WAITING' | 'CALLED' | 'IN_CONSULTATION' | 'AWAITING_RESULTS' | 'COMPLETED';
 
-export type VisitPriority = 'NORMAL' | 'URGENT' | 'ELDERLY' | 'RETURN_RESULT';
+export type VisitPriority = 'NORMAL' | 'ELDERLY' | 'PREGNANT';
+
+export type AssignedQueueType = 'EXAMINATION' | 'RETURN_CONSULTATION';
 
 export interface AssignedPatientEntry {
   id: string;
@@ -16,6 +18,7 @@ export interface AssignedPatientEntry {
   chiefComplaint: string; // lý do khám / triệu chứng chính
   assignedAt: string; // giờ phân công vào phòng, vd "08:05"
   priority: VisitPriority;
+  queueType: AssignedQueueType;
   status: AssignedQueueStatus;
 }
 

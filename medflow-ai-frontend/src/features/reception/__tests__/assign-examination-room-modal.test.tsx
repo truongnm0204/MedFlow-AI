@@ -50,7 +50,7 @@ const MOCK_RESPONSE: AssignExaminationRoomResponseDto = {
   queueNumber: 1,
   queueCode: 'B001',
   queueStatus: 'WAITING',
-  priority: 'URGENT',
+  priority: 'ELDERLY',
   servicePointId: 1,
   servicePointName: 'Hàng đợi bác sĩ 1',
   roomCapacity: 2,
@@ -141,15 +141,17 @@ describe('AssignExaminationRoomModal & visit-room-assignment API', () => {
 
     const assignResp = await assignExaminationRoom('VIS-202610-0003', {
       roomCode: 'RM-002',
-      priority: 'URGENT',
+      priority: 'ELDERLY',
       reason: 'Điều phối sang phòng 102',
+      priorityVerificationConfirmed: true,
     });
     expect(apiClient.put).toHaveBeenCalledWith(
       '/reception/visits/VIS-202610-0003/examination-room',
       {
         roomCode: 'RM-002',
-        priority: 'URGENT',
+        priority: 'ELDERLY',
         reason: 'Điều phối sang phòng 102',
+        priorityVerificationConfirmed: true,
       },
     );
     expect(assignResp.roomCode).toBe('RM-002');
@@ -182,10 +184,13 @@ describe('AssignExaminationRoomModal & visit-room-assignment API', () => {
     const { user, onSubmitOverride, onAssigned } = setup();
 
     await user.click(screen.getByText('Khám Tiêu hóa 102'));
-    await user.selectOptions(screen.getByLabelText('Mức độ ưu tiên'), 'URGENT');
+    await user.selectOptions(screen.getByLabelText('Mức độ ưu tiên'), 'ELDERLY');
     await user.type(
       screen.getByLabelText('Lý do / ghi chú điều phối (tùy chọn)'),
       'Điều phối vào phòng Tiêu hóa 102',
+    );
+    await user.click(
+      screen.getByLabelText(/Tôi đã kiểm tra giấy tờ chứng minh đối tượng ưu tiên/i),
     );
     await user.click(screen.getByRole('button', { name: 'Xác nhận phân phòng' }));
 
@@ -193,15 +198,16 @@ describe('AssignExaminationRoomModal & visit-room-assignment API', () => {
     expect(onSubmitOverride).toHaveBeenCalledWith('VIS-202610-0003', {
       examinationRoomId: 2,
       roomCode: 'RM-002',
-      priority: 'URGENT',
+      priority: 'ELDERLY',
       reason: 'Điều phối vào phòng Tiêu hóa 102',
+      priorityVerificationConfirmed: true,
     });
     expect(onAssigned).toHaveBeenCalledWith(
       expect.objectContaining({
         visitCode: 'VIS-202610-0003',
         roomCode: 'RM-002',
         roomName: 'Khám Tiêu hóa 102',
-        priority: 'URGENT',
+        priority: 'ELDERLY',
       }),
     );
   });

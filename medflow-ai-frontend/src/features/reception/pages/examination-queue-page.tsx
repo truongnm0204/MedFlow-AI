@@ -12,10 +12,14 @@ import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { Spinner } from '@/shared/ui/spinner';
 
+import { ApplyClinicalPriorityModal } from '../components/apply-clinical-priority-modal';
 import { EarlyArrivalBackfillModal } from '../components/early-arrival-backfill-modal';
 import { ExaminationQueueEmptyState } from '../components/examination-queue-empty-state';
 import { ExaminationQueueFilterBar } from '../components/examination-queue-filter-bar';
-import { ExaminationQueueServicePointCard } from '../components/examination-queue-service-point-card';
+import {
+  EXAMINATION_QUEUE_PRIORITY_META,
+  ExaminationQueueServicePointCard,
+} from '../components/examination-queue-service-point-card';
 import { ExaminationQueueStatCards } from '../components/examination-queue-stat-cards';
 import { PatientDetailModal } from '../components/patient-detail-modal';
 import { ReceptionSidebar } from '../components/reception-sidebar';
@@ -36,7 +40,10 @@ import type {
   ExaminationQueueStatusFilter,
   ServicePointQueueDto,
 } from '../types/examination-queue.types';
-import type { UpdateQueueStatusTarget } from '../types/queue-status-update.types';
+import type {
+  UpdateQueuePriorityResponseDto,
+  UpdateQueueStatusTarget,
+} from '../types/queue-status-update.types';
 import { recalculateServicePointServingOrder } from '../utils/early-arrival-backfill.utils';
 
 const STATUS_LABEL: Record<ExaminationQueueStatus, string> = {
@@ -53,6 +60,7 @@ const INITIAL_FILTERS: ExaminationQueueFilterFormValues = {
   servicePointId: 'ALL',
   status: 'ALL',
   priority: 'ALL',
+  queueType: 'ALL',
   visitType: 'ALL',
   arrivalClass: 'ALL',
   keyword: '',
@@ -79,6 +87,7 @@ export function ExaminationQueuePage() {
   const [updatingQueueTarget, setUpdatingQueueTarget] = useState<UpdateQueueStatusTarget | null>(
     null,
   );
+  const [priorityTarget, setPriorityTarget] = useState<ExaminationQueueEntryDto | null>(null);
   const [statusOverrides, setStatusOverrides] = useState<
     Record<string, Partial<ExaminationQueueEntryDto>>
   >({});
@@ -229,6 +238,22 @@ export function ExaminationQueuePage() {
     });
   };
 
+  const handlePriorityApplied = (result: UpdateQueuePriorityResponseDto) => {
+    if (priorityTarget) {
+      const overrideKey = `${appliedFilters.queueDate}:${priorityTarget.servicePointId}`;
+      setEntryOverridesByServicePoint((prev) => {
+        if (!(overrideKey in prev)) return prev;
+        const next = { ...prev };
+        delete next[overrideKey];
+        return next;
+      });
+      setUpdateNotice(
+        `Đã áp dụng mức ưu tiên ${EXAMINATION_QUEUE_PRIORITY_META[result.priority].label} cho phiếu ${result.ticketNo} (${priorityTarget.patientName}). Thứ tự phục vụ đã được hệ thống tính lại, giữ nguyên số phiếu #${result.queueNumber}.`,
+      );
+    }
+    setPriorityTarget(null);
+  };
+
   const servicePointOptions = useMemo(() => {
     const totalCount = servicePoints.reduce((acc, sp) => acc + sp.entries.length, 0);
     return [
@@ -279,6 +304,7 @@ export function ExaminationQueuePage() {
     const hasEntryFilter =
       appliedFilters.status !== 'ALL' ||
       appliedFilters.priority !== 'ALL' ||
+      appliedFilters.queueType !== 'ALL' ||
       appliedFilters.visitType !== 'ALL' ||
       appliedFilters.arrivalClass !== 'ALL' ||
       kw.length > 0;
@@ -295,6 +321,12 @@ export function ExaminationQueuePage() {
               return false;
             }
             if (appliedFilters.priority !== 'ALL' && entry.priority !== appliedFilters.priority) {
+              return false;
+            }
+            if (
+              appliedFilters.queueType !== 'ALL' &&
+              entry.queueType !== appliedFilters.queueType
+            ) {
               return false;
             }
             if (
@@ -479,6 +511,14 @@ export function ExaminationQueuePage() {
                             setBackfillTarget({ entry, servicePoint: sp })
                           }
                           onUpdateStatus={canManageQueue ? handleOpenUpdateStatus : undefined}
+                          onApplyPriority={
+                            canManageQueue
+                              ? (entry) => {
+                                  setUpdateNotice(null);
+                                  setPriorityTarget(entry);
+                                }
+                              : undefined
+                          }
                         />
                       ))
                     ) : (
@@ -557,7 +597,8 @@ export function ExaminationQueuePage() {
                         <ol className="list-decimal list-inside space-y-1.5 text-ink font-medium">
                           <li>Lượt đang khám (IN_PROGRESS) và đã gọi số (CALLED)</li>
                           <li>
-                            Mức độ ưu tiên lâm sàng (Khẩn cấp, Cao tuổi, Thai phụ, Trả KQ CLS)
+                            Ưu tiên theo quy định: Người cao tuổi (≥ 75 tuổi), Thai phụ — không áp
+                            dụng cấp cứu
                           </li>
                           <li>Bệnh nhân đặt lịch hẹn đúng giờ (ON_TIME_OR_GRACE)</li>
                           <li>Thời điểm check-in thực tế tại quầy tiếp đón</li>
@@ -617,6 +658,16 @@ export function ExaminationQueuePage() {
               );
               setUpdatingQueueTarget(null);
             }}
+          />
+        )}
+
+        {priorityTarget && (
+          <ApplyClinicalPriorityModal
+            key={priorityTarget.id}
+            open
+            entry={priorityTarget}
+            onClose={() => setPriorityTarget(null)}
+            onApplied={handlePriorityApplied}
           />
         )}
       </div>
