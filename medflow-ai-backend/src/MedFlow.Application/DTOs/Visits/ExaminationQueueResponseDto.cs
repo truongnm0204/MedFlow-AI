@@ -48,6 +48,7 @@ public sealed record ExaminationQueueEntryDto(
     string DoctorName,
     string Status,
     string Priority,
+    string QueueType,
     string PresenceStatus,
     string ArrivalClass,
     string? ScheduledAt,

@@ -238,7 +238,7 @@ public sealed class ExaminationQueueOrderingEngineTests
     }
 
     [Fact]
-    public void Evaluate_Ordering_SortsDueProtectedThenBackfilledReadyThenPriorityAndFifo()
+    public void Evaluate_Ordering_SortsLegalPriorityThenProtectedScheduledThenBackfilledReadyThenStandardFifo()
     {
         var normalEarlyReady = new QueueOrderingItem(
             Status: "WAITING",
@@ -302,19 +302,19 @@ public sealed class ExaminationQueueOrderingEngineTests
 
         var items = new[]
         {
-            normalEarlyReady,      // idx 0 -> tier 2, priority 2, ready 08:00 -> order 4
-            legacyUrgentLaterReady,// idx 1 -> tier 2, priority 2, ready 08:10 -> order 5
-            elderlyWaiting,        // idx 2 -> tier 2, priority 0, ready 08:20 -> order 3
-            backfilledReady,       // idx 3 -> tier 1 -> order 2
-            dueProtected,          // idx 4 -> tier 0 -> order 1
+            normalEarlyReady,      // idx 0 -> tier 3, ready 08:00 -> order 4
+            legacyUrgentLaterReady,// idx 1 -> tier 3, ready 08:10 -> order 5
+            elderlyWaiting,        // idx 2 -> tier 0 (legal priority), ready 08:20 -> order 1
+            backfilledReady,       // idx 3 -> tier 2 (safe backfilled) -> order 3
+            dueProtected,          // idx 4 -> tier 1 (protected scheduled) -> order 2
         };
 
         var result = ExaminationQueueOrderingEngine.Evaluate(items, DefaultPolicy, Now);
 
-        Assert.Equal([4, 3, 2, 0, 1], result.OrderedIndices.ToArray());
-        Assert.Equal(1, result.Evaluations[4].ServingOrder);
-        Assert.Equal(2, result.Evaluations[3].ServingOrder);
-        Assert.Equal(3, result.Evaluations[2].ServingOrder);
+        Assert.Equal([2, 4, 3, 0, 1], result.OrderedIndices.ToArray());
+        Assert.Equal(1, result.Evaluations[2].ServingOrder);
+        Assert.Equal(2, result.Evaluations[4].ServingOrder);
+        Assert.Equal(3, result.Evaluations[3].ServingOrder);
         Assert.Equal(4, result.Evaluations[0].ServingOrder);
         Assert.Equal(5, result.Evaluations[1].ServingOrder);
     }

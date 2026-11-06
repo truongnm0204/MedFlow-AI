@@ -251,7 +251,7 @@ public sealed class VisitTicketService : IVisitTicketService
             .AsNoTracking()
             .Where(q =>
                 (q.VisitId == visit.Id || (visit.AppointmentId.HasValue && q.AppointmentId == visit.AppointmentId.Value)) &&
-                (q.QueueType == null || q.QueueType.ToUpper() == "EXAMINATION"))
+                (q.QueueType == null || q.QueueType.ToUpper() == "EXAMINATION" || q.QueueType.ToUpper() == "RETURN_CONSULTATION"))
             .OrderByDescending(q => q.VisitId == visit.Id)
             .ThenByDescending(q => q.Id)
             .ToListAsync(ct);
@@ -323,7 +323,7 @@ public sealed class VisitTicketService : IVisitTicketService
                     q.Id != examQueue.Id &&
                     q.ServicePointId == servicePointId &&
                     q.QueueDate == queueDate &&
-                    (q.QueueType == null || q.QueueType.ToUpper() == "EXAMINATION") &&
+                    (q.QueueType == null || q.QueueType.ToUpper() == "EXAMINATION" || q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
                     q.QueueNumber != null &&
                     q.QueueNumber < queueNumber &&
                     q.Status != null &&
@@ -703,13 +703,8 @@ public sealed class VisitTicketService : IVisitTicketService
     private static (string Priority, string PriorityLabel) ResolvePriority(string? manualPriority, int? patientAge)
     {
         var normalized = AppointmentBookingRules.NormalizeStatusKey(manualPriority);
-        if (normalized is "URGENT" or "EMERGENCY")
-        {
-            return ("URGENT", "Ưu tiên khẩn");
-        }
-
-        if (normalized is "PRIORITY" or "ELDERLY" ||
-            (patientAge.HasValue && (patientAge.Value >= 60 || patientAge.Value < 6)))
+        if (normalized is "PRIORITY" or "ELDERLY" or "PREGNANT" ||
+            (patientAge.HasValue && (patientAge.Value >= ClinicalQueueRules.ElderlyMinimumAge || patientAge.Value < 6)))
         {
             return ("PRIORITY", "Ưu tiên");
         }

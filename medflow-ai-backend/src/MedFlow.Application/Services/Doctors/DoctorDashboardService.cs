@@ -2,6 +2,8 @@ using System.Globalization;
 using MedFlow.Application.DTOs.DoctorDashboard;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Appointments;
+using MedFlow.Application.Services.Visits;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -32,14 +34,6 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
         "IN_CONSULTATION",
         "AWAITING_RESULTS",
         "COMPLETED",
-    };
-
-    private static readonly HashSet<string> ValidPriorities = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "NORMAL",
-        "URGENT",
-        "ELDERLY",
-        "RETURN_RESULT",
     };
 
     private readonly IApplicationDbContext _db;
@@ -87,13 +81,26 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
         if (!string.IsNullOrWhiteSpace(request.Priority) &&
             !string.Equals(request.Priority.Trim(), "ALL", StringComparison.OrdinalIgnoreCase))
         {
-            var trimmedPriority = request.Priority.Trim();
-            if (!ValidPriorities.Contains(trimmedPriority))
+            var trimmedPriority = AppointmentBookingRules.NormalizeStatusKey(request.Priority);
+            if (!ClinicalQueueRules.ValidPriorities.Contains(trimmedPriority))
             {
                 throw new ValidationException("Mức độ ưu tiên lọc không hợp lệ.");
             }
 
-            normalizedPriority = trimmedPriority.ToUpperInvariant();
+            normalizedPriority = trimmedPriority;
+        }
+
+        string? normalizedQueueType = null;
+        if (!string.IsNullOrWhiteSpace(request.QueueType) &&
+            !string.Equals(request.QueueType.Trim(), "ALL", StringComparison.OrdinalIgnoreCase))
+        {
+            var trimmedQueueType = AppointmentBookingRules.NormalizeStatusKey(request.QueueType);
+            if (!ClinicalQueueRules.ValidQueueTypes.Contains(trimmedQueueType))
+            {
+                throw new ValidationException("Loại lượt khám lọc không hợp lệ.");
+            }
+
+            normalizedQueueType = trimmedQueueType;
         }
 
         var normalizedKeyword = string.IsNullOrWhiteSpace(request.Keyword)
@@ -436,6 +443,12 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
                 string.Equals(item.Priority, normalizedPriority, StringComparison.OrdinalIgnoreCase));
         }
 
+        if (normalizedQueueType is not null)
+        {
+            filteredQueue = filteredQueue.Where(item =>
+                string.Equals(item.QueueType, normalizedQueueType, StringComparison.OrdinalIgnoreCase));
+        }
+
         if (normalizedKeyword is not null)
         {
             filteredQueue = filteredQueue.Where(item =>
@@ -655,7 +668,7 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
         IReadOnlyList<QueueEntry> scopedQueueEntries,
         DateOnly today)
     {
-        var entries = new List<AssignedPatientEntryDto>();
+        var entries = new List<(AssignedPatientEntryDto Dto, int TierOrder)>();
         var appointmentsById = scopedAppointments.ToDictionary(a => a.Id);
         var coveredAppointmentIds = new HashSet<long>();
 
@@ -751,19 +764,26 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
                 : "08:00";
 
             var status = ResolveQueueStatus(visit.Status, examQueue, visitDiagQueues);
-            var priority = ResolvePriority(visit.Status, examQueue?.ManualPriority, visitDiagQueues, age, status);
+            var priority = ResolvePriority(examQueue?.ManualPriority, age);
+            var queueType = ResolveQueueType(visit.Status, examQueue, visitDiagQueues, status);
+            var tierOrder = status == "WAITING"
+                ? ClinicalQueueRules.GetWaitingTier(priority, visit.AppointmentId.HasValue, examQueue?.ArrivalClass)
+                : 0;
 
-            entries.Add(new AssignedPatientEntryDto(
-                Id: $"vis-{visit.Id}",
-                QueueNo: queueNo,
-                PatientName: patientName,
-                PatientCode: patientCode,
-                Age: age,
-                Gender: gender,
-                ChiefComplaint: chiefComplaint,
-                AssignedAt: assignedAt,
-                Priority: priority,
-                Status: status));
+            entries.Add((
+                new AssignedPatientEntryDto(
+                    Id: $"vis-{visit.Id}",
+                    QueueNo: queueNo,
+                    PatientName: patientName,
+                    PatientCode: patientCode,
+                    Age: age,
+                    Gender: gender,
+                    ChiefComplaint: chiefComplaint,
+                    AssignedAt: assignedAt,
+                    Priority: priority,
+                    QueueType: queueType,
+                    Status: status),
+                tierOrder));
         }
 
         foreach (var appt in scopedAppointments)
@@ -822,31 +842,38 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
                 : "08:30";
 
             var status = ResolveQueueStatus(null, examQueue, null);
-            var priority = ResolvePriority(null, examQueue?.ManualPriority, null, age, status);
+            var priority = ResolvePriority(examQueue?.ManualPriority, age);
+            var queueType = ResolveQueueType(null, examQueue, null, status);
+            var tierOrder = status == "WAITING"
+                ? ClinicalQueueRules.GetWaitingTier(priority, isScheduled: true, examQueue?.ArrivalClass)
+                : 0;
 
-            entries.Add(new AssignedPatientEntryDto(
-                Id: $"apt-{appt.Id}",
-                QueueNo: queueNo,
-                PatientName: patientName,
-                PatientCode: patientCode,
-                Age: age,
-                Gender: gender,
-                ChiefComplaint: chiefComplaint,
-                AssignedAt: assignedAt,
-                Priority: priority,
-                Status: status));
+            entries.Add((
+                new AssignedPatientEntryDto(
+                    Id: $"apt-{appt.Id}",
+                    QueueNo: queueNo,
+                    PatientName: patientName,
+                    PatientCode: patientCode,
+                    Age: age,
+                    Gender: gender,
+                    ChiefComplaint: chiefComplaint,
+                    AssignedAt: assignedAt,
+                    Priority: priority,
+                    QueueType: queueType,
+                    Status: status),
+                tierOrder));
         }
 
         return entries
-            .OrderBy(e => GetStatusSortOrder(e.Status))
-            .ThenBy(e => GetPrioritySortOrder(e.Priority))
-            .ThenBy(e => e.QueueNo, StringComparer.Ordinal)
+            .OrderBy(e => GetStatusSortOrder(e.Dto.Status))
+            .ThenBy(e => e.TierOrder)
+            .ThenBy(e => e.Dto.QueueNo, StringComparer.Ordinal)
+            .Select(e => e.Dto)
             .ToList();
     }
 
     private static bool IsExaminationQueue(string? queueType)
-        => string.IsNullOrWhiteSpace(queueType) ||
-           string.Equals(queueType, "EXAMINATION", StringComparison.OrdinalIgnoreCase);
+        => ClinicalQueueRules.IsClinicalExaminationQueueType(queueType);
 
     private static string ResolveQueueStatus(
         string? visitStatus,
@@ -895,43 +922,41 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
         return "WAITING";
     }
 
-    private static string ResolvePriority(
+    private static string ResolvePriority(string? manualPriority, int age)
+    {
+        var normalizedManual = ClinicalQueueRules.NormalizeStoredPriority(manualPriority);
+        if (normalizedManual == ClinicalQueueRules.PriorityPregnant)
+        {
+            return ClinicalQueueRules.PriorityPregnant;
+        }
+
+        if (normalizedManual == ClinicalQueueRules.PriorityElderly || age >= ClinicalQueueRules.ElderlyMinimumAge)
+        {
+            return ClinicalQueueRules.PriorityElderly;
+        }
+
+        return ClinicalQueueRules.PriorityNormal;
+    }
+
+    private static string ResolveQueueType(
         string? visitStatus,
-        string? manualPriority,
+        QueueEntry? examQueue,
         IReadOnlyList<QueueEntry>? diagQueues,
-        int age,
         string resolvedStatus)
     {
-        var normalizedManual = NormalizeStatusToken(manualPriority);
-        if (normalizedManual is "URGENT" or "EMERGENCY" or "HIGH" or "CRITICAL")
+        if (ClinicalQueueRules.ResolveQueueType(examQueue?.QueueType, visitStatus) == ClinicalQueueRules.QueueTypeReturnConsultation)
         {
-            return "URGENT";
-        }
-
-        if (normalizedManual == "RETURN_RESULT")
-        {
-            return "RETURN_RESULT";
-        }
-
-        var normalizedVisit = NormalizeStatusToken(visitStatus);
-        if (normalizedVisit == "RETURN_CONSULTATION")
-        {
-            return "RETURN_RESULT";
+            return ClinicalQueueRules.QueueTypeReturnConsultation;
         }
 
         if (resolvedStatus is "WAITING" or "CALLED" &&
             diagQueues is { Count: > 0 } &&
             diagQueues.All(d => string.Equals(d.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase) || d.CompletedAt.HasValue))
         {
-            return "RETURN_RESULT";
+            return ClinicalQueueRules.QueueTypeReturnConsultation;
         }
 
-        if (normalizedManual == "ELDERLY" || age >= 65)
-        {
-            return "ELDERLY";
-        }
-
-        return "NORMAL";
+        return ClinicalQueueRules.QueueTypeExamination;
     }
 
     private static string? NormalizeStatusToken(string? raw)
@@ -952,15 +977,6 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
         "AWAITING_RESULTS" => 3,
         "COMPLETED" => 4,
         _ => 5,
-    };
-
-    private static int GetPrioritySortOrder(string priority) => priority switch
-    {
-        "URGENT" => 0,
-        "RETURN_RESULT" => 1,
-        "ELDERLY" => 2,
-        "NORMAL" => 3,
-        _ => 4,
     };
 
     private static List<PendingDiagnosticItemDto> BuildPendingDiagnostics(

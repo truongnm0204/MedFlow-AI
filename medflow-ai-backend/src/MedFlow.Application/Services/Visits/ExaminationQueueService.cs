@@ -38,15 +38,6 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         "SKIPPED",
     };
 
-    private static readonly HashSet<string> ValidPriorities = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "NORMAL",
-        "URGENT",
-        "ELDERLY",
-        "PREGNANT",
-        "RETURN_RESULT",
-    };
-
     private static readonly HashSet<string> ValidVisitTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "SCHEDULED",
@@ -87,6 +78,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         var normalizedServicePointFilter = NormalizeAndValidateServicePointFilter(request.ServicePointId);
         var normalizedStatusFilter = NormalizeAndValidateStatusFilter(request.Status);
         var normalizedPriorityFilter = NormalizeAndValidatePriorityFilter(request.Priority);
+        var normalizedQueueTypeFilter = NormalizeAndValidateQueueTypeFilter(request.QueueType);
         var normalizedVisitTypeFilter = NormalizeAndValidateVisitTypeFilter(request.VisitType);
         var normalizedKeyword = NormalizeAndValidateKeyword(request.Keyword);
 
@@ -106,6 +98,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         var hasEntryLevelFilters =
             normalizedStatusFilter is not null ||
             normalizedPriorityFilter is not null ||
+            normalizedQueueTypeFilter is not null ||
             normalizedVisitTypeFilter is not null ||
             normalizedKeyword is not null;
 
@@ -126,6 +119,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                     e,
                     normalizedStatusFilter,
                     normalizedPriorityFilter,
+                    normalizedQueueTypeFilter,
                     normalizedVisitTypeFilter,
                     normalizedKeyword))
                 .Select((e, index) => e with { ServingOrder = index + 1 })
@@ -462,7 +456,8 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                     : bucket.DoctorName;
 
                 var status = NormalizeEntryStatus(q, v);
-                var priority = NormalizeEntryPriority(q, v, patient, effectiveQueueDate);
+                var priority = ClinicalQueueRules.ResolveEffectivePriority(q?.ManualPriority, patient?.DateOfBirth, effectiveQueueDate);
+                var queueType = ClinicalQueueRules.ResolveQueueType(q?.QueueType, v?.Status);
                 var presenceStatus = NormalizePresenceStatus(q, v);
                 var arrivalClass = NormalizeArrivalClass(q, visitType);
 
@@ -497,6 +492,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                     DoctorName: doctorName,
                     Status: status,
                     Priority: priority,
+                    QueueType: queueType,
                     PresenceStatus: presenceStatus,
                     ArrivalClass: arrivalClass,
                     ScheduledAt: scheduledAt,
@@ -654,9 +650,30 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             return null;
         }
 
-        if (!ValidPriorities.Contains(normalized))
+        if (!ClinicalQueueRules.ValidPriorities.Contains(normalized))
         {
             throw new ValidationException("Mức độ ưu tiên lọc không hợp lệ.");
+        }
+
+        return normalized;
+    }
+
+    private static string? NormalizeAndValidateQueueTypeFilter(string? queueType)
+    {
+        if (string.IsNullOrWhiteSpace(queueType))
+        {
+            return null;
+        }
+
+        var normalized = AppointmentBookingRules.NormalizeStatusKey(queueType);
+        if (string.Equals(normalized, "ALL", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (!ClinicalQueueRules.ValidQueueTypes.Contains(normalized))
+        {
+            throw new ValidationException("Loại lượt khám lọc không hợp lệ.");
         }
 
         return normalized;
@@ -1073,8 +1090,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         IReadOnlyDictionary<long, Appointment> hospitalAppointmentsById,
         IReadOnlySet<long> hospitalServicePointIds)
     {
-        var normalizedType = AppointmentBookingRules.NormalizeStatusKey(queueEntry.QueueType);
-        if (!string.IsNullOrEmpty(normalizedType) && normalizedType != "EXAMINATION")
+        if (!ClinicalQueueRules.IsClinicalExaminationQueueType(queueEntry.QueueType))
         {
             return false;
         }
@@ -1488,52 +1504,6 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         return "WAITING";
     }
 
-    private static string NormalizeEntryPriority(
-        QueueEntry? queueEntry,
-        Visit? visit,
-        Patient? patient,
-        DateOnly effectiveQueueDate)
-    {
-        var rawPriority = AppointmentBookingRules.NormalizeStatusKey(queueEntry?.ManualPriority);
-        var visitStatus = AppointmentBookingRules.NormalizeStatusKey(visit?.Status);
-
-        if (rawPriority is "URGENT" or "EMERGENCY" or "HIGH" or "CRITICAL")
-        {
-            return "URGENT";
-        }
-
-        if (rawPriority == "RETURN_RESULT" || visitStatus == "RETURN_CONSULTATION")
-        {
-            return "RETURN_RESULT";
-        }
-
-        if (rawPriority == "PREGNANT")
-        {
-            return "PREGNANT";
-        }
-
-        if (rawPriority == "ELDERLY")
-        {
-            return "ELDERLY";
-        }
-
-        if (patient?.DateOfBirth is DateOnly dob)
-        {
-            var age = effectiveQueueDate.Year - dob.Year;
-            if (dob > effectiveQueueDate.AddYears(-age))
-            {
-                age--;
-            }
-
-            if (age >= 65)
-            {
-                return "ELDERLY";
-            }
-        }
-
-        return "NORMAL";
-    }
-
     private static string NormalizePresenceStatus(QueueEntry? queueEntry, Visit? visit)
     {
         var rawPresence = AppointmentBookingRules.NormalizeStatusKey(queueEntry?.PresenceStatus);
@@ -1562,6 +1532,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                 : "ON_TIME_OR_GRACE",
         };
     }
+
 
     private static bool MatchesServicePointFilter(ServicePointBucket bucket, string filter)
     {
@@ -1599,6 +1570,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         ExaminationQueueEntryDto entry,
         string? normalizedStatusFilter,
         string? normalizedPriorityFilter,
+        string? normalizedQueueTypeFilter,
         string? normalizedVisitTypeFilter,
         string? normalizedKeyword)
     {
@@ -1614,12 +1586,17 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             return false;
         }
 
+        if (normalizedQueueTypeFilter is not null &&
+            !string.Equals(entry.QueueType, normalizedQueueTypeFilter, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         if (normalizedVisitTypeFilter is not null &&
             !string.Equals(entry.VisitType, normalizedVisitTypeFilter, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
-
         if (normalizedKeyword is not null)
         {
             var matched =

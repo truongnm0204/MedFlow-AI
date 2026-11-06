@@ -85,17 +85,11 @@ public static class ExaminationQueueOrderingEngine
 
         var orderedIndices = Enumerable.Range(0, count)
             .OrderBy(i => GetStatusRank(items[i].Status))
-            .ThenBy(i => GetTier(items[i], GetStatusRank(items[i].Status), isDueProtecteds[i], isEligibles[i]))
+            .ThenBy(i => GetTier(items[i], GetStatusRank(items[i].Status), effectiveArrivalClasses[i], isDueProtecteds[i], isEligibles[i]))
             .ThenBy(i =>
             {
                 var statusRank = GetStatusRank(items[i].Status);
-                var tier = GetTier(items[i], statusRank, isDueProtecteds[i], isEligibles[i]);
-                return statusRank == 2 && tier == 2 ? GetPriorityRank(items[i].Priority) : 0;
-            })
-            .ThenBy(i =>
-            {
-                var statusRank = GetStatusRank(items[i].Status);
-                var tier = GetTier(items[i], statusRank, isDueProtecteds[i], isEligibles[i]);
+                var tier = GetTier(items[i], statusRank, effectiveArrivalClasses[i], isDueProtecteds[i], isEligibles[i]);
                 return GetPrimaryTime(items[i], statusRank, tier);
             })
             .ThenBy(i => items[i].ReadySince ?? DateTime.MaxValue)
@@ -231,37 +225,40 @@ public static class ExaminationQueueOrderingEngine
         _ => 5,
     };
 
-    private static int GetTier(QueueOrderingItem item, int statusRank, bool isDueProtected, bool isEligible)
+    private static int GetTier(
+        QueueOrderingItem item,
+        int statusRank,
+        string effectiveArrivalClass,
+        bool isDueProtected,
+        bool isEligible)
     {
         if (statusRank != 2)
         {
             return 0;
         }
 
-        if (isDueProtected)
+        if (isEligible && ClinicalQueueRules.IsElevated(item.Priority))
         {
             return 0;
         }
 
-        if (isEligible && item.Status == "READY" && item.BackfilledAt.HasValue)
+        if (isDueProtected || (isEligible && item.IsScheduled && effectiveArrivalClass == "ON_TIME_OR_GRACE"))
         {
             return 1;
         }
 
-        if (isEligible)
+        if (isEligible && item.Status == "READY" && item.BackfilledAt.HasValue)
         {
             return 2;
         }
 
-        return 3;
-    }
+        if (isEligible)
+        {
+            return 3;
+        }
 
-    private static int GetPriorityRank(string priority) => priority switch
-    {
-        "ELDERLY" => 0,
-        "PREGNANT" => 1,
-        _ => 2,
-    };
+        return 4;
+    }
 
     private static DateTime GetPrimaryTime(QueueOrderingItem item, int statusRank, int tier)
     {
@@ -272,10 +269,11 @@ public static class ExaminationQueueOrderingEngine
 
         return tier switch
         {
-            0 => item.ScheduledAt ?? DateTime.MaxValue,
-            1 => item.BackfilledAt ?? DateTime.MaxValue,
-            2 => item.ReadySince ?? DateTime.MaxValue,
-            _ => item.ScheduledAt ?? DateTime.MaxValue,
+            0 => item.ReadySince ?? item.ArrivedAt ?? DateTime.MaxValue,
+            1 => item.ScheduledAt ?? item.ReadySince ?? DateTime.MaxValue,
+            2 => item.BackfilledAt ?? item.ReadySince ?? DateTime.MaxValue,
+            3 => item.ReadySince ?? item.ArrivedAt ?? DateTime.MaxValue,
+            _ => item.ScheduledAt ?? item.ReadySince ?? DateTime.MaxValue,
         };
     }
 }
