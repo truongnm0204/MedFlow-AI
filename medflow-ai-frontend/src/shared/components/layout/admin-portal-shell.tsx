@@ -9,6 +9,7 @@ import {
   CreditCard,
   DoorOpen,
   LayoutDashboard,
+  ListOrdered,
   Phone,
   ShieldCheck,
   SlidersHorizontal,
@@ -34,6 +35,7 @@ export type AdminPortalTab =
   | 'Bảng giá & Biểu phí'
   | 'Quản lý Slot khám'
   | 'Chính sách hẹn'
+  | 'Chính sách hàng đợi'
   | 'Vai trò & Phân quyền'
   | 'Báo cáo vận hành';
 
@@ -62,6 +64,7 @@ const TABS: { name: AdminPortalTab; href?: string; icon: LucideIcon }[] = [
   { name: 'Bảng giá & Biểu phí', icon: CreditCard },
   { name: 'Quản lý Slot khám', href: '/admin/slots', icon: CalendarClock },
   { name: 'Chính sách hẹn', href: '/admin/policies', icon: SlidersHorizontal },
+  { name: 'Chính sách hàng đợi', href: '/admin/queue-policy', icon: ListOrdered },
   { name: 'Vai trò & Phân quyền', href: '/admin/roles', icon: ShieldCheck },
   { name: 'Báo cáo vận hành', href: '/admin/reports', icon: BarChart3 },
 ];
