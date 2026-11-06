@@ -20,6 +20,10 @@ public sealed class FamilyProfileServiceTests : IDisposable
         public DbSet<User> Users => Set<User>();
         public DbSet<Patient> Patients => Set<Patient>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => Set<PatientFamilyLink>();
+        public DbSet<Appointment> Appointments => Set<Appointment>();
+        public DbSet<Visit> Visits => Set<Visit>();
+        public DbSet<ExaminationSlot> ExaminationSlots => Set<ExaminationSlot>();
+        public DbSet<Service> Services => Set<Service>();
 
         public DbSet<Role> Roles => throw NotUsed();
         public DbSet<Permission> Permissions => throw NotUsed();
@@ -28,7 +32,6 @@ public sealed class FamilyProfileServiceTests : IDisposable
         public DbSet<Staff> Staff => throw NotUsed();
         public DbSet<Doctor> Doctors => throw NotUsed();
         public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => throw NotUsed();
-        public DbSet<ExaminationSlot> ExaminationSlots => throw NotUsed();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => throw NotUsed();
@@ -36,11 +39,8 @@ public sealed class FamilyProfileServiceTests : IDisposable
         public DbSet<Department> Departments => throw NotUsed();
         public DbSet<HospitalRoom> HospitalRooms => throw NotUsed();
         public DbSet<Specialty> Specialties => throw NotUsed();
-        public DbSet<Service> Services => throw NotUsed();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
-        public DbSet<Appointment> Appointments => throw NotUsed();
-        public DbSet<Visit> Visits => throw NotUsed();
         public DbSet<QueueEntry> QueueEntries => throw NotUsed();
         public DbSet<Payment> Payments => throw NotUsed();
 
@@ -56,7 +56,6 @@ public sealed class FamilyProfileServiceTests : IDisposable
             modelBuilder.Ignore<Staff>();
             modelBuilder.Ignore<Doctor>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
-            modelBuilder.Ignore<ExaminationSlot>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<AuditLog>();
@@ -64,11 +63,8 @@ public sealed class FamilyProfileServiceTests : IDisposable
             modelBuilder.Ignore<Department>();
             modelBuilder.Ignore<HospitalRoom>();
             modelBuilder.Ignore<Specialty>();
-            modelBuilder.Ignore<Service>();
             modelBuilder.Ignore<ServicePrice>();
             modelBuilder.Ignore<HospitalPolicy>();
-            modelBuilder.Ignore<Appointment>();
-            modelBuilder.Ignore<Visit>();
             modelBuilder.Ignore<QueueEntry>();
             modelBuilder.Ignore<Payment>();
 
@@ -90,6 +86,28 @@ public sealed class FamilyProfileServiceTests : IDisposable
                     .WithMany()
                     .HasForeignKey(l => l.MemberPatientId);
             });
+            modelBuilder.Entity<Service>(b =>
+            {
+                b.HasKey(s => s.Id);
+                b.Ignore(s => s.Department);
+                b.Ignore(s => s.Specialty);
+                b.Ignore(s => s.ServicePrices);
+            });
+            modelBuilder.Entity<ExaminationSlot>(b =>
+            {
+                b.HasKey(s => s.Id);
+                b.Ignore(s => s.Doctor);
+                b.Ignore(s => s.Room);
+                b.Ignore(s => s.Appointments);
+                b.HasOne(s => s.Service).WithMany().HasForeignKey(s => s.ServiceId);
+            });
+            modelBuilder.Entity<Appointment>(b =>
+            {
+                b.HasKey(a => a.Id);
+                b.HasOne(a => a.Slot).WithMany().HasForeignKey(a => a.SlotId);
+                b.HasOne(a => a.Patient).WithMany().HasForeignKey(a => a.PatientId);
+            });
+            modelBuilder.Entity<Visit>().HasKey(v => v.Id);
         }
 
         private static NotSupportedException NotUsed()
@@ -416,5 +434,314 @@ public sealed class FamilyProfileServiceTests : IDisposable
         Assert.Single(result);
         Assert.Equal(expectedRelationship, result[0].Relationship);
         Assert.Equal(expectedBadgeColor, result[0].RelationshipBadgeColor);
+    }
+
+    // ==================== TESTS FOR GetFamilyMemberDetailAsync (M1-030) ====================
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_ValidLinkedMemberById_ReturnsCorrectDetail()
+    {
+        // Arrange
+        var user = new User { Id = 401, Email = "detail_owner@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient
+        {
+            Id = 410,
+            UserId = user.Id,
+            User = user,
+            PatientCode = "PAT-0410",
+            FullName = "Nguyễn Văn Cha",
+            Status = "ACTIVE",
+            Phone = "0909999888",
+            Address = "Hà Nội"
+        };
+        var child = new Patient
+        {
+            Id = 420,
+            PatientCode = "PAT-0420",
+            FullName = "Nguyễn Văn Con",
+            Gender = "MALE",
+            DateOfBirth = new DateOnly(2015, 6, 1),
+            Status = "ACTIVE",
+            BloodType = "AB+",
+            IdentificationHash = "child-hash"
+        };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = child.Id,
+            MemberPatient = child,
+            Relationship = "CHILD",
+            VerificationStatus = "VERIFIED",
+            VerifiedAt = DateTime.UtcNow
+        };
+
+        var visit = new Visit { Id = 1001, PatientId = child.Id, Status = "COMPLETED" };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, child);
+        _db.PatientFamilyLinks.Add(link);
+        _db.Visits.Add(visit);
+        await _db.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetFamilyMemberDetailAsync(user.Id, "420");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("FAM-420", result.Id);
+        Assert.Equal(420, result.MemberPatientId);
+        Assert.Equal("Nguyễn Văn Con", result.FullName);
+        Assert.Equal("Con trai", result.Relationship);
+        Assert.Equal("blue", result.RelationshipBadgeColor);
+        Assert.Equal("Nguyễn Văn Cha", result.Guardian);
+        Assert.Equal("AB+", result.Vitals?.BloodType);
+        Assert.Equal(1, result.OutpatientVisitsCount);
+        Assert.True(result.IsIdentityVerified);
+        Assert.NotNull(result.Permissions);
+        Assert.True(result.Permissions.CanManage);
+        Assert.True(result.Permissions.CanBookAppointments);
+    }
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_ValidLinkedMemberByFamCode_ReturnsCorrectDetail()
+    {
+        // Arrange
+        var user = new User { Id = 402, Email = "fam_code_test@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 411, UserId = user.Id, User = user, Status = "ACTIVE", FullName = "Owner" };
+        var member = new Patient { Id = 421, PatientCode = "PAT-0421", FullName = "Spouse Member", Gender = "FEMALE", Status = "ACTIVE" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            MemberPatient = member,
+            Relationship = "SPOUSE",
+            VerificationStatus = "VERIFIED"
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetFamilyMemberDetailAsync(user.Id, "FAM-421");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("Spouse Member", result.FullName);
+        Assert.Equal("Vợ", result.Relationship);
+        Assert.Equal("rose", result.RelationshipBadgeColor);
+    }
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_ValidLinkedMemberByPatientCode_ReturnsCorrectDetail()
+    {
+        // Arrange
+        var user = new User { Id = 403, Email = "pat_code_test@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 412, UserId = user.Id, User = user, Status = "ACTIVE" };
+        var member = new Patient { Id = 422, PatientCode = "PAT-2026-9042", FullName = "Khang", Gender = "MALE", Status = "ACTIVE" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            MemberPatient = member,
+            Relationship = "CHILD",
+            VerificationStatus = "VERIFIED"
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        // Act & Assert with '#PAT-2026-9042'
+        var result = await _sut.GetFamilyMemberDetailAsync(user.Id, "#PAT-2026-9042");
+        Assert.NotNull(result);
+        Assert.Equal("Khang", result.FullName);
+
+        // Act & Assert without '#'
+        var result2 = await _sut.GetFamilyMemberDetailAsync(user.Id, "PAT-2026-9042");
+        Assert.NotNull(result2);
+        Assert.Equal("Khang", result2.FullName);
+    }
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_SelfIdentifier_ReturnsPrimaryAccountDetail()
+    {
+        // Arrange
+        var user = new User { Id = 404, Email = "self_test@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 413, UserId = user.Id, User = user, FullName = "Primary An", Status = "ACTIVE", PatientCode = "PAT-0413" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        // Act
+        var resultMe = await _sut.GetFamilyMemberDetailAsync(user.Id, "me");
+        var resultSelf = await _sut.GetFamilyMemberDetailAsync(user.Id, "self");
+
+        // Assert
+        Assert.True(resultMe.IsPrimaryAccount);
+        Assert.Equal("Primary An", resultMe.FullName);
+        Assert.Equal("Bản thân", resultMe.Relationship);
+
+        Assert.True(resultSelf.IsPrimaryAccount);
+        Assert.Equal("Primary An", resultSelf.FullName);
+    }
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_NeedsReviewLink_ReturnsReadOnlySubStatusAndCanManageFalse()
+    {
+        // Arrange
+        var user = new User { Id = 405, Email = "readonly_test@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 414, UserId = user.Id, User = user, Status = "ACTIVE" };
+        var member = new Patient { Id = 424, FullName = "Unverified Mai", Gender = "FEMALE", Status = "ACTIVE" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            MemberPatient = member,
+            Relationship = "PARENT",
+            VerificationStatus = "NEEDS_REVIEW"
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        // Act
+        var result = await _sut.GetFamilyMemberDetailAsync(user.Id, "424");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("Chỉ đọc", result.SubStatus);
+        Assert.NotNull(result.Permissions);
+        Assert.False(result.Permissions.CanManage);
+        Assert.Equal("NEEDS_REVIEW", result.Permissions.RelationshipStatus);
+    }
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_UnlinkedPatient_ThrowsNotFoundException()
+    {
+        // Arrange - Patient 425 exists in DB but is NOT linked to owner 415
+        var user = new User { Id = 406, Email = "unlinked_test@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 415, UserId = user.Id, User = user, Status = "ACTIVE" };
+        var stranger = new Patient { Id = 425, FullName = "Stranger Patient", Status = "ACTIVE" };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, stranger);
+        await _db.SaveChangesAsync();
+
+        // Act & Assert (Layer 2 ownership enforcement!)
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.GetFamilyMemberDetailAsync(user.Id, "425"));
+    }
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_RevokedLink_ThrowsNotFoundException()
+    {
+        // Arrange
+        var user = new User { Id = 407, Email = "revoked_detail_test@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 416, UserId = user.Id, User = user, Status = "ACTIVE" };
+        var member = new Patient { Id = 426, FullName = "Revoked Detail", Status = "ACTIVE" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            MemberPatient = member,
+            Relationship = "CHILD",
+            RevokedAt = DateTime.UtcNow
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.GetFamilyMemberDetailAsync(user.Id, "426"));
+    }
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_InactiveMemberPatient_ThrowsNotFoundException()
+    {
+        // Arrange
+        var user = new User { Id = 408, Email = "inactive_patient_test@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 417, UserId = user.Id, User = user, Status = "ACTIVE" };
+        var inactiveMember = new Patient { Id = 427, FullName = "Inactive Patient", Status = "INACTIVE" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = inactiveMember.Id,
+            MemberPatient = inactiveMember,
+            Relationship = "CHILD",
+            RevokedAt = null
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, inactiveMember);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.GetFamilyMemberDetailAsync(user.Id, "427"));
+    }
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_NonExistentIdentifier_ThrowsNotFoundException()
+    {
+        var user = new User { Id = 409, Email = "nonexistent_test@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 418, UserId = user.Id, User = user, Status = "ACTIVE" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.GetFamilyMemberDetailAsync(user.Id, "FAM-9999"));
+    }
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_EmptyIdentifier_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.GetFamilyMemberDetailAsync(1, ""));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.GetFamilyMemberDetailAsync(1, "   "));
+    }
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_InvalidUserId_ThrowsUnauthorizedAccessException()
+    {
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.GetFamilyMemberDetailAsync(0, "FAM-001"));
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.GetFamilyMemberDetailAsync(-10, "FAM-001"));
+    }
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_OwnerNotFound_ThrowsNotFoundException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.GetFamilyMemberDetailAsync(99999, "FAM-001"));
+    }
+
+    [Fact]
+    public async Task GetFamilyMemberDetail_OwnerInactive_ThrowsUnauthorizedAccessException()
+    {
+        var user = new User { Id = 450, Email = "inactive_owner@test.com", AccountStatus = AccountStatus.LOCKED };
+        var owner = new Patient { Id = 460, UserId = user.Id, User = user, Status = "ACTIVE" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.GetFamilyMemberDetailAsync(user.Id, "FAM-001"));
     }
 }
