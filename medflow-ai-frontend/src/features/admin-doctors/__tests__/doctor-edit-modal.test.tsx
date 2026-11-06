@@ -100,18 +100,19 @@ describe('DoctorEditModal (SCR-ADM-DOC-03)', () => {
   it('stages suspend status in form and persists only on save', async () => {
     renderModal('DOC-0142');
 
-    fireEvent.click(screen.getByRole('button', { name: /⊖ Ngừng hoạt động/ }));
-
-    expect(screen.getByText('● Tạm ngừng')).toBeInTheDocument();
     const activeCheckbox = screen.getByRole('checkbox', {
-      name: /Ngừng hoạt động/,
+      name: /Trạng thái hoạt động bác sĩ/,
     }) as HTMLInputElement;
+    expect(activeCheckbox.checked).toBe(true);
+
+    fireEvent.click(activeCheckbox);
+
     expect(activeCheckbox.checked).toBe(false);
+    expect(screen.getByText('○ Ngừng hoạt động (Inactive)')).toBeInTheDocument();
 
     expect(useDoctorDemoStore.getState().doctors.find((d) => d.id === 'DOC-0142')?.active).toBe(
       true,
     );
-
     fireEvent.click(screen.getByRole('button', { name: /Lưu hồ sơ Bác sĩ/ }));
 
     await waitFor(() => {

@@ -50,28 +50,15 @@ export function DoctorEditHeader({
   );
 }
 
-export function DoctorEditFooter({
-  isActive = true,
-  onClose,
-  onSuspend,
-}: {
-  isActive?: boolean;
-  onClose: () => void;
-  onSuspend: () => void;
-}) {
+export function DoctorEditFooter({ onClose }: { onClose: () => void }) {
   return (
     <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-slate-50 px-6 py-4">
-      <button
-        type="button"
-        className={`rounded border px-3 py-2 text-[11px] font-semibold transition-colors ${
-          isActive
-            ? 'border-rose-200 text-rose-600 hover:bg-rose-50'
-            : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
-        }`}
-        onClick={onSuspend}
-      >
-        {isActive ? '⊖ Ngừng hoạt động' : '⊕ Kích hoạt hoạt động'}
-      </button>
+      <div className="flex items-center gap-2">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-[11px] font-medium text-rose-700">
+          <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+          Có 6 ca hẹn tuần này
+        </span>
+      </div>
       <div className="flex gap-2">
         <Button type="button" variant="secondary" size="sm" onClick={onClose}>
           Hủy bỏ [Esc]

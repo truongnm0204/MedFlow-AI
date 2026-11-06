@@ -186,7 +186,8 @@ export function DoctorEditModal() {
               </span>
               <input
                 type="checkbox"
-                className="accent-emerald-500"
+                aria-label="Trạng thái hoạt động bác sĩ"
+                className="accent-emerald-500 h-4 w-4 cursor-pointer"
                 checked={isActive}
                 onChange={(event) =>
                   setValue('active', event.target.checked, { shouldDirty: true })
@@ -207,11 +208,7 @@ export function DoctorEditModal() {
             </div>
           </div>
         </div>
-        <DoctorEditFooter
-          isActive={isActive}
-          onClose={() => navigate('/admin/doctors')}
-          onSuspend={() => setValue('active', !isActive, { shouldDirty: true })}
-        />
+        <DoctorEditFooter onClose={() => navigate('/admin/doctors')} />
       </form>
     </div>
   );
