@@ -97,28 +97,62 @@ describe('DoctorEditModal (SCR-ADM-DOC-03)', () => {
     expect(current?.name).toBe('BS. CKI Lê Hoàng Minh');
   });
 
-  it('stages suspend status in form and persists only on save', async () => {
+  it('shows appointments badge and pops up warning modal when deactivating doctor with appointments', async () => {
     renderModal('DOC-0142');
+
+    // Footer badge reflects 6 appointments for DOC-0142
+    expect(screen.getByText('Có 6 ca hẹn tuần này')).toBeInTheDocument();
 
     const activeCheckbox = screen.getByRole('checkbox', {
       name: /Trạng thái hoạt động bác sĩ/,
     }) as HTMLInputElement;
     expect(activeCheckbox.checked).toBe(true);
 
+    // Clicking checkbox triggers warning pop-up modal
     fireEvent.click(activeCheckbox);
 
+    expect(screen.getByRole('heading', { name: 'Ngừng hoạt động bác sĩ?' })).toBeInTheDocument();
+    expect(
+      screen.getByText(/Không thể ngừng hoạt động khi còn 6 lượt khám đang xử lý/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ngừng hoạt động' })).toBeDisabled();
+
+    // Close modal keeps doctor active
+    fireEvent.click(screen.getByRole('button', { name: 'Giữ hồ sơ' }));
+    expect(screen.queryByRole('heading', { name: 'Ngừng hoạt động bác sĩ?' })).toBeNull();
+    expect(activeCheckbox.checked).toBe(true);
+  });
+
+  it('opens confirmation modal and deactivates doctor without appointments on confirm', async () => {
+    renderModal('DOC-0089');
+
+    // Footer badge reflects 0 appointments for DOC-0089
+    expect(screen.getByText('Không có ca hẹn tuần này')).toBeInTheDocument();
+
+    const activeCheckbox = screen.getByRole('checkbox', {
+      name: /Trạng thái hoạt động bác sĩ/,
+    }) as HTMLInputElement;
+    expect(activeCheckbox.checked).toBe(true);
+
+    // Clicking checkbox opens confirmation modal
+    fireEvent.click(activeCheckbox);
+
+    expect(screen.getByRole('heading', { name: 'Ngừng hoạt động bác sĩ?' })).toBeInTheDocument();
+    const confirmBtn = screen.getByRole('button', { name: 'Ngừng hoạt động' });
+    expect(confirmBtn).not.toBeDisabled();
+
+    fireEvent.click(confirmBtn);
+
+    expect(screen.queryByRole('heading', { name: 'Ngừng hoạt động bác sĩ?' })).toBeNull();
     expect(activeCheckbox.checked).toBe(false);
     expect(screen.getByText('○ Ngừng hoạt động (Inactive)')).toBeInTheDocument();
 
-    expect(useDoctorDemoStore.getState().doctors.find((d) => d.id === 'DOC-0142')?.active).toBe(
-      true,
-    );
+    // Save persists changes
     fireEvent.click(screen.getByRole('button', { name: /Lưu hồ sơ Bác sĩ/ }));
-
     await waitFor(() => {
       expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
     });
-    expect(useDoctorDemoStore.getState().doctors.find((d) => d.id === 'DOC-0142')?.active).toBe(
+    expect(useDoctorDemoStore.getState().doctors.find((d) => d.id === 'DOC-0089')?.active).toBe(
       false,
     );
   });

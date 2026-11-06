@@ -50,20 +50,20 @@ describe('DoctorListPage (SCR-ADM-DOC-01 & SCR-ADM-DOC-05)', () => {
     expect(activeBadges.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('opens DoctorDeactivateModal and deactivates doctor upon confirmation', async () => {
+  it('opens DoctorDeactivateModal and deactivates doctor upon confirmation when no appointments', async () => {
     renderPage();
 
-    // Find active doctor DOC-0142
-    const doctorRow = screen.getByText('DOC-0142').closest('tr');
+    // Find active doctor DOC-0089 (has 0 appointments)
+    const doctorRow = screen.getByText('DOC-0089').closest('tr');
     expect(doctorRow).toBeInTheDocument();
 
-    // Open action menu for DOC-0142
-    const moreBtn = screen.getByRole('button', { name: 'Thao tác BS. CKI Lê Hoàng Minh' });
+    // Open action menu for DOC-0089
+    const moreBtn = screen.getByRole('button', { name: 'Thao tác PGS. TS. BS Trần Hoài Nam' });
     fireEvent.click(moreBtn);
 
     // Click "Ngừng hoạt động" in dropdown
     const deactivateBtn = screen.getByRole('button', {
-      name: 'Ngừng hoạt động BS. CKI Lê Hoàng Minh',
+      name: 'Ngừng hoạt động PGS. TS. BS Trần Hoài Nam',
     });
     fireEvent.click(deactivateBtn);
 
@@ -72,13 +72,14 @@ describe('DoctorListPage (SCR-ADM-DOC-01 & SCR-ADM-DOC-05)', () => {
     expect(
       within(dialog).getByRole('heading', { name: 'Ngừng hoạt động bác sĩ?' }),
     ).toBeInTheDocument();
-    expect(within(dialog).getByText(/BS\. CKI Lê Hoàng Minh/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/PGS\. TS\. BS Trần Hoài Nam/)).toBeInTheDocument();
     expect(
       within(dialog).getByText(/Bác sĩ sẽ không nhận lịch hoặc phân công mới/i),
     ).toBeInTheDocument();
 
     // Confirm deactivation
     const confirmBtn = screen.getByRole('button', { name: 'Ngừng hoạt động' });
+    expect(confirmBtn).not.toBeDisabled();
     fireEvent.click(confirmBtn);
 
     // Modal closes
@@ -87,13 +88,41 @@ describe('DoctorListPage (SCR-ADM-DOC-01 & SCR-ADM-DOC-05)', () => {
     // Feedback notification shows
     expect(
       screen.getByText(
-        /Đã chuyển trạng thái bác sĩ BS\. CKI Lê Hoàng Minh sang Ngừng hoạt động\./i,
+        /Đã chuyển trạng thái bác sĩ PGS\. TS\. BS Trần Hoài Nam sang Ngừng hoạt động\./i,
       ),
     ).toBeInTheDocument();
 
-    // Doctor DOC-0142 should now be inactive in the store
+    // Doctor DOC-0089 should now be inactive in the store
     const storeDoctors = useDoctorDemoStore.getState().doctors;
-    const doc142 = storeDoctors.find((d) => d.id === 'DOC-0142');
-    expect(doc142?.active).toBe(false);
+    const doc089 = storeDoctors.find((d) => d.id === 'DOC-0089');
+    expect(doc089?.active).toBe(false);
+  });
+
+  it('blocks deactivation and shows warning when doctor has pending appointments', () => {
+    renderPage();
+
+    // Find active doctor DOC-0142 (has 6 appointments)
+    const moreBtn = screen.getByRole('button', { name: 'Thao tác BS. CKI Lê Hoàng Minh' });
+    fireEvent.click(moreBtn);
+
+    const deactivateBtn = screen.getByRole('button', {
+      name: 'Ngừng hoạt động BS. CKI Lê Hoàng Minh',
+    });
+    fireEvent.click(deactivateBtn);
+
+    const dialog = screen.getByRole('dialog');
+    expect(
+      within(dialog).getByText(/Không thể ngừng hoạt động khi còn 6 lượt khám đang xử lý/i),
+    ).toBeInTheDocument();
+
+    const confirmBtn = screen.getByRole('button', { name: 'Ngừng hoạt động' });
+    expect(confirmBtn).toBeDisabled();
+
+    // Cancel keeps doctor active
+    fireEvent.click(screen.getByRole('button', { name: 'Giữ hồ sơ' }));
+    expect(screen.queryByRole('heading', { name: 'Ngừng hoạt động bác sĩ?' })).toBeNull();
+    expect(useDoctorDemoStore.getState().doctors.find((d) => d.id === 'DOC-0142')?.active).toBe(
+      true,
+    );
   });
 });

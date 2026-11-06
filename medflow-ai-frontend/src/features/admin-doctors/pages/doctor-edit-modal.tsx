@@ -6,6 +6,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 
 import { Button } from '@/shared/ui/button';
 
+import { DoctorDeactivateModal } from '../components/doctor-deactivate-modal';
 import { DoctorEditFooter, DoctorEditHeader } from '../components/doctor-edit-chrome';
 import { DEGREES, DEPARTMENTS } from '../data/doctor-demo-data';
 import { doctorSchema, type DoctorFormValues } from '../schemas/doctor.schema';
@@ -19,6 +20,7 @@ export function DoctorEditModal() {
   const doctor = useDoctorDemoStore((state) => state.doctors.find((item) => item.id === doctorId));
   const updateDoctor = useDoctorDemoStore((state) => state.updateDoctor);
   const [message, setMessage] = useState('');
+  const [showDeactivateModal, setShowDeactivateModal] = useState(false);
   const {
     register,
     handleSubmit,
@@ -189,9 +191,13 @@ export function DoctorEditModal() {
                 aria-label="Trạng thái hoạt động bác sĩ"
                 className="accent-emerald-500 h-4 w-4 cursor-pointer"
                 checked={isActive}
-                onChange={(event) =>
-                  setValue('active', event.target.checked, { shouldDirty: true })
-                }
+                onChange={(event) => {
+                  if (isActive && !event.target.checked) {
+                    setShowDeactivateModal(true);
+                  } else {
+                    setValue('active', event.target.checked, { shouldDirty: true });
+                  }
+                }}
               />
             </label>
             <div className="sm:col-span-2">
@@ -208,8 +214,20 @@ export function DoctorEditModal() {
             </div>
           </div>
         </div>
-        <DoctorEditFooter onClose={() => navigate('/admin/doctors')} />
+        <DoctorEditFooter
+          onClose={() => navigate('/admin/doctors')}
+          pendingAppointmentsCount={doctor.pendingAppointmentsCount ?? 0}
+        />
       </form>
+      <DoctorDeactivateModal
+        doctor={doctor}
+        open={showDeactivateModal}
+        onClose={() => setShowDeactivateModal(false)}
+        onConfirm={() => {
+          setValue('active', false, { shouldDirty: true });
+          setShowDeactivateModal(false);
+        }}
+      />
     </div>
   );
 }
