@@ -108,16 +108,16 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Đặt lại bộ lọc/i }));
     expect(screen.getByText('Nguyễn Văn An')).toBeInTheDocument();
 
-    // 3. Filter by priority URGENT and visitType WALK_IN
+    // 3. Filter by priority ELDERLY and visitType WALK_IN
     fireEvent.change(screen.getByLabelText('Lọc theo độ ưu tiên'), {
-      target: { value: 'URGENT' },
+      target: { value: 'ELDERLY' },
     });
     fireEvent.change(screen.getByLabelText('Lọc theo phân loại khám'), {
       target: { value: 'WALK_IN' },
     });
     expect(screen.getByText('Hoàng Đức Em')).toBeInTheDocument();
     expect(screen.queryByText('Nguyễn Văn An')).not.toBeInTheDocument();
-
+    expect(screen.queryByText('Trần Thị Bích')).not.toBeInTheDocument();
     // 4. Filter by keyword with no matches -> empty state -> reset
     const searchInput = screen.getByLabelText('Tìm kiếm trong hàng đợi khám');
     fireEvent.change(searchInput, { target: { value: 'KHONG_CO_BENH_NHAN_999' } });
@@ -598,5 +598,142 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
         name: 'Cập nhật trạng thái hàng đợi cho Nguyễn Văn An',
       }),
     ).toBeDisabled();
+  });
+
+  it('displays RETURN_CONSULTATION badge, filters by queueType, and disables Apply Priority for IN_PROGRESS entries in mock mode', async () => {
+    renderQueuePage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Lê Minh Cường')).toBeInTheDocument();
+    });
+
+    const cuongRow = screen.getByText('Lê Minh Cường').closest('tr');
+    expect(cuongRow).not.toBeNull();
+    expect(within(cuongRow!).getByText('Đọc KQ CLS')).toBeInTheDocument();
+
+    const applyPriorityBtn = screen.getByRole('button', {
+      name: 'Áp dụng ưu tiên khám ngoại trú cho Lê Minh Cường',
+    });
+    expect(applyPriorityBtn).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText('Lọc theo loại lượt khám'), {
+      target: { value: 'RETURN_CONSULTATION' },
+    });
+
+    expect(screen.getByText('Lê Minh Cường')).toBeInTheDocument();
+    expect(screen.queryByText('Nguyễn Văn An')).not.toBeInTheDocument();
+    expect(screen.queryByText('Vũ Thị Phương')).not.toBeInTheDocument();
+  });
+
+  it('applies clinical priority via live API and refetches examination queue with backend servingOrder', async () => {
+    window.localStorage.setItem('medflow.access_token', 'jwt-reception-token');
+
+    const initialList = buildMockExaminationQueueResponse();
+    const refetchedList = buildMockExaminationQueueResponse();
+    const room103 = refetchedList.servicePoints.find((sp) => sp.servicePointId === 'sp-room-103')!;
+    room103.entries = room103.entries.map((entry) =>
+      entry.id === 'q-006'
+        ? { ...entry, priority: 'ELDERLY', servingOrder: 1 }
+        : entry.id === 'q-003'
+          ? { ...entry, servingOrder: 2 }
+          : entry,
+    );
+
+    let listCallCount = 0;
+    const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/reception/examination-queue') {
+        listCallCount += 1;
+        return { data: listCallCount === 1 ? initialList : refetchedList };
+      }
+      if (url === '/reception/examination-queue/entries/q-006/status') {
+        return {
+          data: {
+            queueEntryId: 6,
+            currentStatus: 'WAITING',
+            stateVersion: 2,
+            allowedTargetStatuses: ['READY', 'CALLED', 'SKIPPED'],
+            statusHistory: [],
+          },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    const patchSpy = vi.spyOn(apiClient, 'patch').mockResolvedValueOnce({
+      data: {
+        queueEntryId: 6,
+        visitId: 106,
+        visitCode: 'VIS-2026-0106',
+        ticketNo: 'B006',
+        queueNumber: 6,
+        queueType: 'EXAMINATION',
+        currentStatus: 'WAITING',
+        previousPriority: 'NORMAL',
+        priority: 'ELDERLY',
+        verificationRequired: true,
+        verificationConfirmed: true,
+        reason: 'Đã kiểm tra CCCD, bệnh nhân sinh năm 1945',
+        previousStateVersion: 2,
+        stateVersion: 3,
+        updatedByUserId: 5,
+        updatedByStaffCode: 'STF-005',
+        updatedByName: 'Lê Tân Tiếp Đón',
+        updatedAtUtc: '2026-11-04T02:00:00Z',
+      },
+    });
+
+    renderQueuePage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Vũ Thị Phương')).toBeInTheDocument();
+    });
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Áp dụng ưu tiên khám ngoại trú cho Vũ Thị Phương',
+      }),
+    );
+
+    const dialog = screen.getByRole('dialog');
+    await waitFor(() => {
+      expect(
+        within(dialog).getByRole('button', { name: 'Xác nhận áp dụng ưu tiên' }),
+      ).not.toBeDisabled();
+    });
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Người cao tuổi (ELDERLY)' }));
+    fireEvent.change(within(dialog).getByLabelText('Lý do xác minh đối tượng ưu tiên (bắt buộc)'), {
+      target: { value: 'Đã kiểm tra CCCD, bệnh nhân sinh năm 1945' },
+    });
+    fireEvent.click(
+      within(dialog).getByLabelText(/Tôi đã kiểm tra giấy tờ chứng minh đối tượng ưu tiên/i),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Xác nhận áp dụng ưu tiên' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    expect(patchSpy).toHaveBeenCalledWith('/reception/examination-queue/entries/q-006/priority', {
+      priority: 'ELDERLY',
+      reason: 'Đã kiểm tra CCCD, bệnh nhân sinh năm 1945',
+      verificationConfirmed: true,
+      expectedStateVersion: 2,
+    });
+
+    await waitFor(() => {
+      expect(listCallCount).toBe(2);
+    });
+    expect(getSpy).toHaveBeenCalledWith('/reception/examination-queue', {
+      params: { queueDate: '2026-11-04' },
+    });
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      /Đã áp dụng mức ưu tiên Người cao tuổi cho phiếu B006/i,
+    );
+
+    const phuongRow = screen.getByText('Vũ Thị Phương').closest('tr');
+    expect(phuongRow).not.toBeNull();
+    expect(within(phuongRow!).getByText('Người cao tuổi')).toBeInTheDocument();
   });
 });

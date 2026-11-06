@@ -89,7 +89,7 @@ export const QUEUE_ENTRIES_MOCK: QueueEntry[] = [
     departmentName: 'Khoa Tiêu hóa',
     status: 'WAITING',
     checkedInAt: '08:40',
-    priority: 'URGENT',
+    priority: 'ELDERLY',
   },
   {
     id: 'q-006',
@@ -347,13 +347,8 @@ export function buildFallbackExaminationTicket(
     queueEntryId: queueNumber,
     queueDate: '2026-10-15',
     queueStatus: matchedEntry.status === 'DONE' ? 'COMPLETED' : matchedEntry.status,
-    priority: matchedEntry.priority === 'URGENT' ? 'URGENT' : 'NORMAL',
-    priorityLabel:
-      matchedEntry.priority === 'URGENT'
-        ? 'Ưu tiên khẩn'
-        : matchedEntry.priority === 'ELDERLY'
-          ? 'Ưu tiên (Người cao tuổi)'
-          : 'Thông thường',
+    priority: matchedEntry.priority === 'NORMAL' ? 'NORMAL' : 'PRIORITY',
+    priorityLabel: matchedEntry.priority === 'NORMAL' ? 'Thông thường' : 'Ưu tiên',
     waitingAheadCount: matchedEntry.status === 'WAITING' ? 1 : 0,
     estimatedWaitMinutes: matchedEntry.status === 'WAITING' ? 15 : 0,
     visitType: matchedEntry.visitType,

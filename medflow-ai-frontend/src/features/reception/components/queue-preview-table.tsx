@@ -25,10 +25,8 @@ const STATUS_META: Record<
 
 const PRIORITY_LABEL: Record<QueueEntry['priority'], string> = {
   NORMAL: '',
-  URGENT: 'Ưu tiên',
   ELDERLY: 'Người cao tuổi',
   PREGNANT: 'Phụ nữ mang thai',
-  RETURN_RESULT: 'Trả kết quả',
 };
 
 export function QueuePreviewTable({
