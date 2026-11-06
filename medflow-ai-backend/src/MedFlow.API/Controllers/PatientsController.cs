@@ -70,10 +70,7 @@ public sealed class PatientsController : ControllerBase
         CancellationToken ct = default)
     {
         var result = await _familyProfileService.CreateFamilyMemberAsync(GetUserId(), request, ct);
-        return CreatedAtAction(
-            nameof(GetMyFamilyMemberDetail),
-            new { identifier = result.Id },
-            result);
+        return StatusCode(StatusCodes.Status201Created, result);
     }
 
     private long GetUserId()

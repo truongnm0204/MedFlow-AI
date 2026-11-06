@@ -17,3 +17,4 @@ public sealed record CreateFamilyMemberRequest
     public string? EmergencyPhone { get; init; }
     public string? BloodType { get; init; }
 }
+
