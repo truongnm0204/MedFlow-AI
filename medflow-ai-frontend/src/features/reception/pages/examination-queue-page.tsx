@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { Spinner } from '@/shared/ui/spinner';
 
 import { ApplyClinicalPriorityModal } from '../components/apply-clinical-priority-modal';
+import { CancelQueueEntryModal } from '../components/cancel-queue-entry-modal';
 import { EarlyArrivalBackfillModal } from '../components/early-arrival-backfill-modal';
 import { ExaminationQueueEmptyState } from '../components/examination-queue-empty-state';
 import { ExaminationQueueFilterBar } from '../components/examination-queue-filter-bar';
@@ -45,6 +46,8 @@ import type {
   ServicePointQueueDto,
 } from '../types/examination-queue.types';
 import type {
+  CancelQueueEntryResponseDto,
+  CancelQueueEntryTarget,
   UpdateQueuePriorityResponseDto,
   UpdateQueueStatusTarget,
 } from '../types/queue-status-update.types';
@@ -95,6 +98,7 @@ export function ExaminationQueuePage() {
   const [turnActionTarget, setTurnActionTarget] = useState<LateArrivalMissedTurnTarget | null>(
     null,
   );
+  const [cancelTarget, setCancelTarget] = useState<CancelQueueEntryTarget | null>(null);
   const [statusOverrides, setStatusOverrides] = useState<
     Record<string, Partial<ExaminationQueueEntryDto>>
   >({});
@@ -299,6 +303,31 @@ export function ExaminationQueuePage() {
     }
 
     setTurnActionTarget(null);
+  };
+
+  const handleQueueEntryCancelled = (result: CancelQueueEntryResponseDto) => {
+    if (!cancelTarget) return;
+    const { entry, servicePoint } = cancelTarget;
+    const overrideKey = `${appliedFilters.queueDate}:${servicePoint.servicePointId}`;
+
+    // Bỏ override cục bộ để danh sách refetch từ BE (đã loại lượt CANCELLED, tính lại servingOrder) được hiển thị.
+    setEntryOverridesByServicePoint((prev) => {
+      if (!(overrideKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[overrideKey];
+      return next;
+    });
+    setStatusOverrides((prev) => {
+      if (!(entry.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[entry.id];
+      return next;
+    });
+
+    setUpdateNotice(
+      `Đã hủy lượt khám phiếu ${entry.ticketNo} (${entry.patientName}) tại ${servicePoint.roomCode} — giữ nguyên số phiếu #${result.queueNumber}, thứ tự phục vụ các lượt còn lại đã được hệ thống tính lại.`,
+    );
+    setCancelTarget(null);
   };
 
   const servicePointOptions = useMemo(() => {
@@ -590,6 +619,14 @@ export function ExaminationQueuePage() {
                                 }
                               : undefined
                           }
+                          onOpenCancelEntry={
+                            canManageQueue
+                              ? (entry, sp) => {
+                                  setUpdateNotice(null);
+                                  setCancelTarget({ entry, servicePoint: sp });
+                                }
+                              : undefined
+                          }
                         />
                       ))
                     ) : (
@@ -683,6 +720,10 @@ export function ExaminationQueuePage() {
                             khi xác nhận có mặt (PRESENT), giữ nguyên số phiếu và tính lại thứ tự
                             phục vụ từ Backend
                           </li>
+                          <li>
+                            Lượt bị hủy (CANCELLED) được loại khỏi hàng đợi; số phiếu đã cấp không
+                            được cấp lại và thứ tự phục vụ các lượt còn lại được tính lại từ Backend
+                          </li>
                         </ol>
                       </CardContent>
                     </Card>
@@ -755,6 +796,16 @@ export function ExaminationQueuePage() {
             target={turnActionTarget}
             onClose={() => setTurnActionTarget(null)}
             onApplied={handleTurnActionApplied}
+          />
+        )}
+
+        {cancelTarget && (
+          <CancelQueueEntryModal
+            key={cancelTarget.entry.id}
+            open
+            target={cancelTarget}
+            onClose={() => setCancelTarget(null)}
+            onCancelled={handleQueueEntryCancelled}
           />
         )}
       </div>
