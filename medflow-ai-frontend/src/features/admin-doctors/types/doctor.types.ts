@@ -20,4 +20,6 @@ export interface Doctor {
   active: boolean;
   portrait?: string;
   history: WorkHistoryEntry[];
+  hasPendingAppointments?: boolean;
+  pendingAppointmentsCount?: number;
 }
