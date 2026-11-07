@@ -1097,4 +1097,269 @@ public sealed class ExaminationQueueServiceTests : IDisposable
                     Notes: null,
                     AcknowledgeAppointmentProtection: true)));
     }
+
+    private void SeedMissedTurnScenario(string entryStatus)
+    {
+        _db.ExaminationSlots.Add(new ExaminationSlot
+        {
+            Id = 40,
+            ServiceId = 1,
+            DoctorId = 1,
+            RoomId = 2,
+            StartsAt = new DateTime(2026, 10, 22, 8, 30, 0),
+            EndsAt = new DateTime(2026, 10, 22, 9, 0, 0),
+            Capacity = 5,
+            Status = "OPEN",
+        });
+
+        _db.Appointments.Add(new Appointment
+        {
+            Id = 40,
+            AppointmentCode = "APT-202610-0040",
+            PatientId = 1,
+            SlotId = 40,
+            Status = "CHECKED_IN",
+        });
+
+        _db.Visits.AddRange(
+            new Visit
+            {
+                Id = 40,
+                VisitCode = "VIS-202610-0040",
+                PatientId = 1,
+                AppointmentId = 40,
+                AssignedDoctorId = 1,
+                ExaminationRoomId = 2,
+                CheckedInByStaffId = 3,
+                Status = entryStatus == "CALLED" ? "CALLED" : "WAITING",
+                CheckedInAt = new DateTime(2026, 10, 22, 8, 25, 0),
+            },
+            new Visit
+            {
+                Id = 41,
+                VisitCode = "VIS-202610-0041",
+                PatientId = 4,
+                AppointmentId = null,
+                AssignedDoctorId = 1,
+                ExaminationRoomId = 2,
+                CheckedInByStaffId = 3,
+                Status = "WAITING",
+                CheckedInAt = new DateTime(2026, 10, 22, 8, 20, 0),
+            });
+
+        _db.QueueEntries.AddRange(
+            new QueueEntry
+            {
+                Id = 40,
+                VisitId = 40,
+                AppointmentId = 40,
+                ServicePointId = null,
+                CurrentServicePointId = null,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 1,
+                QueueType = "EXAMINATION",
+                Status = entryStatus,
+                PresenceStatus = entryStatus == "CALLED" ? "PRESENT" : "LEFT",
+                BlockedReason = entryStatus == "SKIPPED" ? "Vắng mặt khi gọi số" : null,
+                ScheduledAt = new DateTime(2026, 10, 22, 8, 30, 0),
+                ArrivedAt = new DateTime(2026, 10, 22, 8, 25, 0),
+                CalledAt = new DateTime(2026, 10, 22, 8, 35, 0),
+                StateVersion = 3,
+            },
+            new QueueEntry
+            {
+                Id = 41,
+                VisitId = 41,
+                AppointmentId = null,
+                ServicePointId = null,
+                CurrentServicePointId = null,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 2,
+                QueueType = "EXAMINATION",
+                Status = "WAITING",
+                PresenceStatus = "PRESENT",
+                ArrivedAt = new DateTime(2026, 10, 22, 8, 20, 0),
+                ReadyAt = new DateTime(2026, 10, 22, 8, 20, 0),
+                StateVersion = 1,
+            });
+
+        _db.HospitalPolicies.Add(new HospitalPolicy
+        {
+            Id = 141,
+            HospitalId = 1,
+            QueueServicePointId = null,
+            PolicyType = "QUEUE",
+            PolicyKey = "grace_minutes",
+            PolicyValue = "{\"minutes\":15}",
+            PolicyVersion = 1,
+            EffectiveFrom = new DateTime(2026, 10, 1, 0, 0, 0),
+        });
+
+        _db.SaveChanges();
+    }
+
+    [Fact]
+    public async Task MarkMissedTurnAsync_CalledEntry_SetsSkippedKeepsQueueNumberAndWritesAudit()
+    {
+        SeedMissedTurnScenario("CALLED");
+
+        var reason = "Gọi 3 lần không có mặt tại buồng khám";
+        var response = await _service.MarkMissedTurnAsync(
+            actorUserId: 5,
+            idOrCode: "q-040",
+            request: new MarkMissedTurnRequest(
+                ServicePointId: "sp-room-2",
+                Reason: reason,
+                Notes: "Bệnh nhân ra ngoài lấy nước",
+                ExpectedStateVersion: 3),
+            ipAddress: "127.0.0.1");
+
+        Assert.Equal("q-040", response.QueueEntryId);
+        Assert.Equal("MISSED_TURN", response.Action);
+        Assert.Equal("CALLED", response.PreviousStatus);
+        Assert.Equal("SKIPPED", response.CurrentStatus);
+        Assert.Equal("LEFT", response.PresenceStatus);
+        Assert.Equal(1, response.QueueNumber);
+        Assert.Equal(2, response.ServingOrder);
+        Assert.Equal(3, response.PreviousStateVersion);
+        Assert.Equal(4, response.StateVersion);
+        Assert.Equal(reason, response.BlockedReason);
+
+        var dbEntry = await _db.QueueEntries.SingleAsync(q => q.Id == 40);
+        Assert.Equal("SKIPPED", dbEntry.Status);
+        Assert.Equal("LEFT", dbEntry.PresenceStatus);
+        Assert.Equal(reason, dbEntry.BlockedReason);
+        Assert.Equal(1, dbEntry.QueueNumber);
+        Assert.Equal(4, dbEntry.StateVersion);
+
+        var audit = Assert.Single(_db.AuditLogs);
+        Assert.Equal(ExaminationQueueService.MissedTurnAction, audit.Action);
+        Assert.Equal("40", audit.EntityId);
+    }
+
+    [Fact]
+    public async Task MarkMissedTurnAsync_NonCalledEntry_ThrowsConflictWithoutMutating()
+    {
+        SeedMissedTurnScenario("CALLED");
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.MarkMissedTurnAsync(
+                actorUserId: 5,
+                idOrCode: "q-041",
+                request: new MarkMissedTurnRequest(
+                    ServicePointId: "sp-room-2",
+                    Reason: "Gọi nhầm lượt đang chờ",
+                    Notes: null,
+                    ExpectedStateVersion: 1)));
+
+        var dbEntry = await _db.QueueEntries.SingleAsync(q => q.Id == 41);
+        Assert.Equal("WAITING", dbEntry.Status);
+        Assert.Equal(1, dbEntry.StateVersion);
+        Assert.Empty(_db.AuditLogs);
+    }
+
+    [Fact]
+    public async Task RestoreSkippedTurnAsync_ReturnAfterGrace_ReclassifiesLateAndQueuesFifoFromReturn()
+    {
+        SeedMissedTurnScenario("SKIPPED");
+
+        var response = await _service.RestoreSkippedTurnAsync(
+            actorUserId: 5,
+            idOrCode: "q-040",
+            request: new RestoreQueueTurnRequest(
+                ServicePointId: "sp-room-2",
+                ConfirmPresent: true,
+                Reason: "Bệnh nhân đã quay lại quầy tiếp đón lúc 09:00",
+                Notes: "Quá thời gian ân hạn 15 phút",
+                ExpectedStateVersion: 3),
+            ipAddress: "127.0.0.1");
+
+        Assert.Equal("RESTORE_TURN", response.Action);
+        Assert.Equal("SKIPPED", response.PreviousStatus);
+        Assert.Equal("READY", response.CurrentStatus);
+        Assert.Equal("PRESENT", response.PresenceStatus);
+        Assert.Equal("LATE", response.ArrivalClass);
+        Assert.False(response.IsAppointmentProtected);
+        Assert.Equal(1, response.QueueNumber);
+        Assert.Equal(2, response.ServingOrder);
+        Assert.Equal(4, response.StateVersion);
+
+        var dbEntry = await _db.QueueEntries.SingleAsync(q => q.Id == 40);
+        Assert.Equal("READY", dbEntry.Status);
+        Assert.Equal("PRESENT", dbEntry.PresenceStatus);
+        Assert.Equal("LATE", dbEntry.ArrivalClass);
+        Assert.Null(dbEntry.CalledAt);
+        Assert.Null(dbEntry.BlockedReason);
+
+        var audit = Assert.Single(_db.AuditLogs);
+        Assert.Equal(ExaminationQueueService.RestoreTurnAction, audit.Action);
+        Assert.Equal("40", audit.EntityId);
+    }
+
+    [Fact]
+    public async Task RestoreSkippedTurnAsync_ReturnWithinGrace_KeepsAppointmentProtection()
+    {
+        SeedMissedTurnScenario("SKIPPED");
+
+        var withinGraceClock = new FixedTimeProvider(new DateTimeOffset(2026, 10, 22, 1, 40, 0, TimeSpan.Zero));
+        var serviceWithinGrace = new ExaminationQueueService(_db, withinGraceClock);
+
+        var response = await serviceWithinGrace.RestoreSkippedTurnAsync(
+            actorUserId: 5,
+            idOrCode: "q-040",
+            request: new RestoreQueueTurnRequest(
+                ServicePointId: "sp-room-2",
+                ConfirmPresent: true,
+                Reason: "Bệnh nhân quay lại lúc 08:40 trong thời gian ân hạn",
+                Notes: null,
+                ExpectedStateVersion: 3));
+
+        Assert.Equal("READY", response.CurrentStatus);
+        Assert.Equal("ON_TIME_OR_GRACE", response.ArrivalClass);
+        Assert.True(response.IsAppointmentProtected);
+        Assert.Equal(1, response.ServingOrder);
+        Assert.Equal(1, response.QueueNumber);
+
+        var dbEntry = await _db.QueueEntries.SingleAsync(q => q.Id == 40);
+        Assert.Equal("ON_TIME_OR_GRACE", dbEntry.ArrivalClass);
+    }
+
+    [Fact]
+    public async Task RestoreSkippedTurnAsync_ValidationAndConcurrencyGuards()
+    {
+        SeedMissedTurnScenario("SKIPPED");
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.RestoreSkippedTurnAsync(
+                actorUserId: 5,
+                idOrCode: "q-040",
+                request: new RestoreQueueTurnRequest(
+                    ServicePointId: "sp-room-2",
+                    ConfirmPresent: false,
+                    Reason: "Chưa xác nhận bệnh nhân có mặt",
+                    Notes: null,
+                    ExpectedStateVersion: 3)));
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.RestoreSkippedTurnAsync(
+                actorUserId: 5,
+                idOrCode: "q-040",
+                request: new RestoreQueueTurnRequest(
+                    ServicePointId: "sp-room-2",
+                    ConfirmPresent: true,
+                    Reason: "Phiên bản trạng thái cũ không khớp",
+                    Notes: null,
+                    ExpectedStateVersion: 2)));
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.RestoreSkippedTurnAsync(
+                actorUserId: 5,
+                idOrCode: "q-041",
+                request: new RestoreQueueTurnRequest(
+                    ServicePointId: "sp-room-2",
+                    ConfirmPresent: true,
+                    Reason: "Lượt đang ở trạng thái WAITING không phải SKIPPED",
+                    Notes: null,
+                    ExpectedStateVersion: 1)));
+    }
 }

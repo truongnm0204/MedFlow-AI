@@ -90,6 +90,23 @@ public sealed class QueueStatusController : ControllerBase
         CancellationToken ct)
         => Ok(await _queueStatusService.UpdateQueueEntryPriorityAsync(GetUserId(), idOrCode, request, GetIp(), ct));
 
+    /// <summary>POST /api/v1/queue-entries/{idOrCode}/cancel — Hủy lượt xếp hàng khám (RESERVED/WAITING/READY/CALLED/SKIPPED → CANCELLED) kèm lý do, giữ nguyên queueNumber, tăng state_version và ghi audit (UC28 / M2-050).</summary>
+    [HttpPost("/api/v1/queue-entries/{idOrCode}/cancel")]
+    [HttpPost("/api/v1/reception/queue-entries/{idOrCode}/cancel")]
+    [HttpPost("/api/v1/reception/examination-queue/entries/{idOrCode}/cancel")]
+    [Authorize(Roles = "RECEPTION,HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+    [ProducesResponseType<UpdateQueueStatusResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<UpdateQueueStatusResponseDto>> CancelQueueEntry(
+        [FromRoute] string idOrCode,
+        [FromBody] CancelQueueEntryRequest request,
+        CancellationToken ct)
+        => Ok(await _queueStatusService.CancelQueueEntryAsync(GetUserId(), idOrCode, request, GetIp(), ct));
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)

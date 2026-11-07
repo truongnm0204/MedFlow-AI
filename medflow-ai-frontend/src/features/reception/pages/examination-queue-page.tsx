@@ -17,9 +17,11 @@ import { EarlyArrivalBackfillModal } from '../components/early-arrival-backfill-
 import { ExaminationQueueEmptyState } from '../components/examination-queue-empty-state';
 import { ExaminationQueueFilterBar } from '../components/examination-queue-filter-bar';
 import {
+  ARRIVAL_CLASS_META,
   EXAMINATION_QUEUE_PRIORITY_META,
   ExaminationQueueServicePointCard,
 } from '../components/examination-queue-service-point-card';
+import { LateArrivalMissedTurnModal } from '../components/late-arrival-missed-turn-modal';
 import { ExaminationQueueStatCards } from '../components/examination-queue-stat-cards';
 import { PatientDetailModal } from '../components/patient-detail-modal';
 import { ReceptionSidebar } from '../components/reception-sidebar';
@@ -38,6 +40,8 @@ import type {
   ExaminationQueueStatsDto,
   ExaminationQueueStatus,
   ExaminationQueueStatusFilter,
+  LateArrivalMissedTurnTarget,
+  QueueTurnActionResponseDto,
   ServicePointQueueDto,
 } from '../types/examination-queue.types';
 import type {
@@ -88,6 +92,9 @@ export function ExaminationQueuePage() {
     null,
   );
   const [priorityTarget, setPriorityTarget] = useState<ExaminationQueueEntryDto | null>(null);
+  const [turnActionTarget, setTurnActionTarget] = useState<LateArrivalMissedTurnTarget | null>(
+    null,
+  );
   const [statusOverrides, setStatusOverrides] = useState<
     Record<string, Partial<ExaminationQueueEntryDto>>
   >({});
@@ -252,6 +259,46 @@ export function ExaminationQueuePage() {
       );
     }
     setPriorityTarget(null);
+  };
+
+  const handleTurnActionApplied = (result: QueueTurnActionResponseDto) => {
+    const overrideKey = `${appliedFilters.queueDate}:${result.servicePointId}`;
+    setEntryOverridesByServicePoint((prev) => {
+      if (!(overrideKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[overrideKey];
+      return next;
+    });
+
+    setStatusOverrides((prev) => ({
+      ...prev,
+      [result.queueEntryId]: {
+        ...result.updatedEntry,
+        status: result.currentStatus,
+        presenceStatus: result.presenceStatus,
+        arrivalClass: result.arrivalClass,
+        servingOrder: result.servingOrder,
+        isAppointmentProtected: result.isAppointmentProtected,
+        blockedReason: result.blockedReason,
+      },
+    }));
+
+    if (result.action === 'MISSED_TURN') {
+      setUpdateNotice(
+        `Đã đánh dấu Qua lượt (SKIPPED) cho phiếu ${result.ticketNo} (${result.patientName}) — Thứ tự hiển thị: #${result.servingOrder}, giữ nguyên số phiếu #${result.queueNumber}.`,
+      );
+    } else {
+      const arrivalLabel = ARRIVAL_CLASS_META[result.arrivalClass].label;
+      const protectionNote =
+        !result.isAppointmentProtected && result.arrivalClass === 'LATE'
+          ? ' (mất bảo vệ giờ hẹn cũ)'
+          : '';
+      setUpdateNotice(
+        `Đã khôi phục lượt khám sang Sẵn sàng (READY) cho phiếu ${result.ticketNo} (${result.patientName}) — Phân loại: ${arrivalLabel}${protectionNote}, thứ tự phục vụ mới: #${result.servingOrder}, giữ nguyên số phiếu #${result.queueNumber}.`,
+      );
+    }
+
+    setTurnActionTarget(null);
   };
 
   const servicePointOptions = useMemo(() => {
@@ -519,6 +566,30 @@ export function ExaminationQueuePage() {
                                 }
                               : undefined
                           }
+                          onOpenMissedTurn={
+                            canManageQueue
+                              ? (entry, sp) => {
+                                  setUpdateNotice(null);
+                                  setTurnActionTarget({
+                                    entry,
+                                    servicePoint: sp,
+                                    mode: 'MISSED_TURN',
+                                  });
+                                }
+                              : undefined
+                          }
+                          onOpenRestoreTurn={
+                            canManageQueue
+                              ? (entry, sp) => {
+                                  setUpdateNotice(null);
+                                  setTurnActionTarget({
+                                    entry,
+                                    servicePoint: sp,
+                                    mode: 'RESTORE_TURN',
+                                  });
+                                }
+                              : undefined
+                          }
                         />
                       ))
                     ) : (
@@ -606,6 +677,12 @@ export function ExaminationQueuePage() {
                             Bệnh nhân đến sớm (EARLY) chỉ được Safe Backfill khi phòng trống lịch
                             hẹn đúng giờ (Appointment Protection) và giữ nguyên số phiếu đã cấp
                           </li>
+                          <li>
+                            Bệnh nhân đến muộn ngoài thời gian ân hạn (LATE) mất quyền bảo vệ khung
+                            giờ hẹn cũ; lượt qua lượt (SKIPPED) được khôi phục sang Sẵn sàng (READY)
+                            khi xác nhận có mặt (PRESENT), giữ nguyên số phiếu và tính lại thứ tự
+                            phục vụ từ Backend
+                          </li>
                         </ol>
                       </CardContent>
                     </Card>
@@ -668,6 +745,16 @@ export function ExaminationQueuePage() {
             entry={priorityTarget}
             onClose={() => setPriorityTarget(null)}
             onApplied={handlePriorityApplied}
+          />
+        )}
+
+        {turnActionTarget && (
+          <LateArrivalMissedTurnModal
+            key={`${turnActionTarget.entry.id}:${turnActionTarget.mode}`}
+            open={Boolean(turnActionTarget)}
+            target={turnActionTarget}
+            onClose={() => setTurnActionTarget(null)}
+            onApplied={handleTurnActionApplied}
           />
         )}
       </div>

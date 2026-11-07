@@ -16,6 +16,7 @@ export type ExaminationQueueTypeFilter = 'ALL' | ExaminationQueueType;
 export type ExaminationVisitTypeFilter = 'ALL' | ExaminationVisitType;
 export type QueueArrivalClassFilter = 'ALL' | QueueArrivalClass;
 export type EarlyArrivalBackfillActionMode = 'SAFE_BACKFILL' | 'HOLD_FOR_SLOT';
+export type QueueTurnActionMode = 'MISSED_TURN' | 'RESTORE_TURN';
 
 export interface ExaminationQueueEntryDto {
   id: string;
@@ -41,6 +42,10 @@ export interface ExaminationQueueEntryDto {
   calledAt: string | null;
   startedAt: string | null;
   blockedReason: string | null;
+  isEligible?: boolean;
+  canSafeBackfill?: boolean;
+  isAppointmentProtected?: boolean;
+  holdReason?: string | null;
   isBackfilled?: boolean;
   backfillReason?: string | null;
   backfillUpdatedAt?: string | null;
@@ -147,6 +152,52 @@ export interface EarlyArrivalBackfillResponseDto {
 export interface EarlyArrivalBackfillTarget {
   entry: ExaminationQueueEntryDto;
   servicePoint: ServicePointQueueDto;
+}
+
+export interface MarkMissedTurnRequestPayload {
+  servicePointId: string;
+  reason: string;
+  notes?: string | null;
+  expectedStateVersion?: number | null;
+}
+
+export interface RestoreQueueTurnRequestPayload {
+  servicePointId: string;
+  confirmPresent: boolean;
+  reason: string;
+  notes?: string | null;
+  expectedStateVersion?: number | null;
+}
+
+export interface QueueTurnActionResponseDto {
+  queueEntryId: string;
+  ticketNo: string;
+  queueNumber: number;
+  visitCode: string;
+  patientCode: string;
+  patientName: string;
+  servicePointId: string;
+  action: QueueTurnActionMode;
+  previousStatus: ExaminationQueueStatus;
+  currentStatus: ExaminationQueueStatus;
+  presenceStatus: QueuePresenceStatus;
+  arrivalClass: QueueArrivalClass;
+  previousServingOrder: number;
+  servingOrder: number;
+  isAppointmentProtected: boolean;
+  blockedReason: string | null;
+  reason: string;
+  notes: string | null;
+  previousStateVersion: number;
+  stateVersion: number;
+  updatedAtUtc: string;
+  updatedEntry: ExaminationQueueEntryDto;
+}
+
+export interface LateArrivalMissedTurnTarget {
+  entry: ExaminationQueueEntryDto;
+  servicePoint: ServicePointQueueDto;
+  mode: QueueTurnActionMode;
 }
 
 export const EXAMINATION_QUEUE_STATUS_VALUES = [

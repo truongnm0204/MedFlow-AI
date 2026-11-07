@@ -6,6 +6,7 @@ using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Policies;
+using MedFlow.Application.Services.Visits.Queueing;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -291,6 +292,10 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
             }
         }
 
+        var graceMinutes = effectiveHospitalId.HasValue
+            ? (await QueueOrderingPolicyLoader.LoadAsync(_db, effectiveHospitalId.Value, nowUtc, ct)).ForServicePoint(servicePoint?.Id).GraceMinutes
+            : Queueing.QueuePolicyKeys.DefaultGraceMinutes;
+
         var queueEntry = await UpsertExaminationQueueEntryAsync(
             visit,
             existingEntry,
@@ -299,6 +304,7 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
             normalizedPriority,
             today,
             nowLocal,
+            graceMinutes,
             ct);
 
         var effectiveHospitalForAudit = visitHospitalId ?? room.HospitalId ?? actor.ActorHospitalId;
@@ -927,7 +933,8 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
                  (visit.AppointmentId.HasValue && q.AppointmentId == visit.AppointmentId.Value)) &&
                 (q.QueueType == null ||
                  q.QueueType.ToUpper() == "EXAMINATION" ||
-                 q.QueueType.ToUpper() == "RETURN_CONSULTATION"))
+                 q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
+                (q.Status == null || q.Status.ToUpper() != "CANCELLED"))
             .OrderByDescending(q => q.Id)
             .ToListAsync(ct);
 
@@ -943,6 +950,7 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
         string? normalizedPriority,
         DateOnly today,
         DateTime nowLocal,
+        int graceMinutes,
         CancellationToken ct)
     {
         var queueEntry = existingEntry;
@@ -976,7 +984,12 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
             queueEntry.QueueDate ??= today;
             queueEntry.ArrivedAt ??= visit.CheckedInAt ?? nowLocal;
             queueEntry.ReadyAt ??= nowLocal;
-            queueEntry.ArrivalClass ??= "ON_TIME_OR_GRACE";
+            queueEntry.ArrivalClass = QueueArrivalClassifier.Classify(
+                visit.AppointmentId.HasValue || queueEntry.AppointmentId.HasValue,
+                queueEntry.ScheduledAt ?? appointment?.Slot?.StartsAt,
+                queueEntry.ArrivedAt,
+                graceMinutes,
+                queueEntry.ArrivalClass ?? "ON_TIME_OR_GRACE");
 
             if (normalizedPriority is not null)
             {
@@ -1026,7 +1039,12 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
             ScheduledAt = appointment?.Slot?.StartsAt,
             PresenceStatus = "PRESENT",
             ArrivedAt = visit.CheckedInAt ?? nowLocal,
-            ArrivalClass = "ON_TIME_OR_GRACE",
+            ArrivalClass = QueueArrivalClassifier.Classify(
+                visit.AppointmentId.HasValue,
+                appointment?.Slot?.StartsAt,
+                visit.CheckedInAt ?? nowLocal,
+                graceMinutes,
+                "ON_TIME_OR_GRACE"),
             ManualPriority = normalizedPriority ?? "NORMAL",
             ReadyAt = nowLocal,
         };
