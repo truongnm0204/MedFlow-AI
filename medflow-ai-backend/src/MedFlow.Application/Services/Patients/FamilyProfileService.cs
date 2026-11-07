@@ -278,6 +278,207 @@ public sealed class FamilyProfileService : IFamilyProfileService
         return BuildMemberResponse(self, newPatient, link, 0, false, null);
     }
 
+    public async Task<FamilyMemberResponse> UpdateFamilyMemberAsync(
+        long userId,
+        string identifier,
+        UpdateFamilyMemberRequest request,
+        CancellationToken ct = default)
+    {
+        if (request is null)
+            throw new ValidationException("Dữ liệu cập nhật hồ sơ người thân không hợp lệ.");
+
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ValidationException("Mã hồ sơ người thân không hợp lệ.");
+
+        var self = await LoadActiveSelfAsync(userId, ct);
+        var (parsedId, parsedCode, isSelf) = ParseMemberIdentifier(identifier);
+
+        if (isSelf ||
+            (parsedId.HasValue && parsedId.Value == self.Id) ||
+            (!string.IsNullOrEmpty(parsedCode) && (string.Equals(parsedCode, self.PatientCode, StringComparison.OrdinalIgnoreCase) || string.Equals(identifier.Trim(), self.PatientCode, StringComparison.OrdinalIgnoreCase))))
+        {
+            throw new ValidationException("Vui lòng sử dụng tính năng cập nhật hồ sơ cá nhân để chỉnh sửa thông tin của chính mình.");
+        }
+
+        var linksQuery = _db.PatientFamilyLinks
+            .Include(l => l.MemberPatient)
+            .Where(l => l.OwnerPatientId == self.Id && l.RevokedAt == null);
+
+        PatientFamilyLink? link;
+        if (parsedId.HasValue)
+        {
+            link = await linksQuery.FirstOrDefaultAsync(l => l.MemberPatientId == parsedId.Value, ct);
+        }
+        else
+        {
+            var trimmed = identifier.Trim();
+            link = await linksQuery.FirstOrDefaultAsync(l =>
+                l.MemberPatient != null &&
+                (l.MemberPatient.PatientCode == parsedCode || l.MemberPatient.PatientCode == trimmed), ct);
+        }
+
+        if (link is null || link.MemberPatient is null)
+            throw new NotFoundException("FamilyMember", identifier);
+
+        var member = link.MemberPatient;
+        if (!string.Equals(member.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+            throw new NotFoundException("FamilyMember", identifier);
+
+        // 1. Validate & update FullName if provided
+        if (request.FullName is not null)
+        {
+            var nameTrimmed = request.FullName.Trim();
+            if (nameTrimmed.Length < 2)
+                throw new ValidationException("Họ và tên người thân tối thiểu 2 ký tự.");
+            if (nameTrimmed.Length > 100)
+                throw new ValidationException("Họ và tên người thân không được vượt quá 100 ký tự.");
+            if (!Regex.IsMatch(nameTrimmed, @"^[\p{L}\s.'-]+$"))
+                throw new ValidationException("Họ và tên người thân chỉ được chứa chữ cái và khoảng trắng.");
+
+            member.FullName = nameTrimmed;
+        }
+
+        // 2. Validate & update Relationship if provided
+        if (request.Relationship is not null)
+        {
+            var trimmedRel = request.Relationship.Trim();
+            if (string.IsNullOrWhiteSpace(trimmedRel))
+                throw new ValidationException("Mối quan hệ không được để trống.");
+
+            if (trimmedRel.Equals("Bản thân", StringComparison.OrdinalIgnoreCase) ||
+                trimmedRel.Equals("SELF", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ValidationException("Không thể cập nhật mối quan hệ người thân thành Bản thân.");
+            }
+
+            link.Relationship = ToCanonicalRelationship(trimmedRel, member.Gender);
+        }
+
+        // 3. Validate & update Gender if provided
+        if (request.Gender is not null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Gender))
+                throw new ValidationException("Giới tính không được để trống.");
+
+            member.Gender = NormalizeGender(request.Gender);
+        }
+
+        // 4. Validate & update BirthDate if provided
+        if (request.BirthDate is not null || request.DateOfBirth.HasValue)
+        {
+            var dob = ParseBirthDate(request.BirthDate, request.DateOfBirth);
+            member.DateOfBirth = dob;
+        }
+
+        // 5. Validate & update Address if provided
+        if (request.Address is not null)
+        {
+            var addrTrimmed = request.Address.Trim();
+            if (addrTrimmed.Length < 5)
+                throw new ValidationException("Địa chỉ thường trú tối thiểu 5 ký tự.");
+            if (addrTrimmed.Length > 255)
+                throw new ValidationException("Địa chỉ thường trú không được vượt quá 255 ký tự.");
+
+            member.Address = addrTrimmed;
+        }
+
+        // 6. Validate & update Phone if provided
+        if (request.Phone is not null)
+        {
+            var trimmedPhone = request.Phone.Trim();
+            if (!string.IsNullOrWhiteSpace(trimmedPhone))
+            {
+                var cleanedPhone = Regex.Replace(trimmedPhone, @"\s+", "");
+                if (!Regex.IsMatch(cleanedPhone, @"^0[35789]\d{8}$|^0\d{9}$"))
+                    throw new ValidationException("Số điện thoại liên hệ không hợp lệ (cần 10 chữ số bắt đầu bằng 0).");
+
+                member.Phone = cleanedPhone;
+            }
+            else
+            {
+                member.Phone = null;
+            }
+        }
+
+        // 7. Validate & update Email if provided
+        if (request.Email is not null)
+        {
+            var trimmedEmail = request.Email.Trim();
+            if (!string.IsNullOrWhiteSpace(trimmedEmail))
+            {
+                if (!Regex.IsMatch(trimmedEmail, @"^[^\s@]+@[^\s@]+\.[^\s@]+$"))
+                    throw new ValidationException("Email nhận kết quả không hợp lệ.");
+
+                member.Email = trimmedEmail;
+            }
+            else
+            {
+                member.Email = null;
+            }
+        }
+
+        // 8. Validate Emergency Contact fields if provided
+        if (request.EmergencyPhone is not null)
+        {
+            var trimmedEmergencyPhone = request.EmergencyPhone.Trim();
+            if (!string.IsNullOrWhiteSpace(trimmedEmergencyPhone))
+            {
+                var cleanedEmergencyPhone = Regex.Replace(trimmedEmergencyPhone, @"\s+", "");
+                if (!Regex.IsMatch(cleanedEmergencyPhone, @"^0[35789]\d{8}$|^0\d{9}$"))
+                    throw new ValidationException("Số điện thoại khẩn cấp không hợp lệ.");
+            }
+        }
+
+        if (request.EmergencyContactName is not null)
+        {
+            var trimmedName = request.EmergencyContactName.Trim();
+            if (!string.IsNullOrWhiteSpace(trimmedName))
+            {
+                if (trimmedName.Length < 2)
+                    throw new ValidationException("Họ tên người liên hệ khẩn cấp tối thiểu 2 ký tự.");
+                if (!Regex.IsMatch(trimmedName, @"^[\p{L}\s.'-]+$"))
+                    throw new ValidationException("Họ tên người liên hệ khẩn cấp chỉ được chứa chữ cái và khoảng trắng.");
+            }
+        }
+
+        // 9. Validate & update BloodType if provided
+        if (request.BloodType is not null)
+        {
+            var trimmedBt = request.BloodType.Trim().ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(trimmedBt))
+            {
+                if (trimmedBt is not ("A+" or "A-" or "B+" or "B-" or "AB+" or "AB-" or "O+" or "O-"))
+                    throw new ValidationException("Nhóm máu không hợp lệ (chấp nhận A+, A-, B+, B-, AB+, AB-, O+, O-).");
+
+                member.BloodType = trimmedBt;
+            }
+            else
+            {
+                member.BloodType = null;
+            }
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        var visitsCount = await _db.Visits
+            .AsNoTracking()
+            .CountAsync(v => v.PatientId == member.Id, ct);
+
+        var activeAppointment = await _db.Appointments
+            .AsNoTracking()
+            .Include(a => a.Slot)
+            .ThenInclude(s => s!.Service)
+            .Where(a => a.PatientId == member.Id &&
+                        a.Status != "CANCELLED" && a.Status != "COMPLETED" && a.Status != "NO_SHOW")
+            .OrderByDescending(a => a.Id)
+            .FirstOrDefaultAsync(ct);
+
+        var hasActiveAppointment = activeAppointment != null;
+        var activeAppointmentDetails = activeAppointment?.Slot?.Service?.Name;
+
+        return BuildMemberResponse(self, member, link, visitsCount, hasActiveAppointment, activeAppointmentDetails);
+    }
+
     private async Task<Patient> LoadActiveSelfAsync(long userId, CancellationToken ct)
     {
         if (userId <= 0)
