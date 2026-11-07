@@ -42,3 +42,4 @@ Quyet dinh gi — cu the.
 - `0015-outpatient-clinical-priority.md` — Outpatient Clinical Priority (`NORMAL`/`ELDERLY`/`PREGNANT`), `RETURN_CONSULTATION` queue class & 3-tier waiting queue ordering (`#102`)
 - `0016-late-arrival-missed-turn-contract.md` — Late arrival classification (`LATE` via `grace_minutes`) and dedicated `missed-turn` / `restore-turn` endpoints (`#98` / `M2-046`)
 - `0016-cancel-queue-entry-contract.md` — Dedicated Cancel Queue Entry endpoint (`POST /api/v1/queue-entries/{idOrCode}/cancel`), single entry point consolidation & non-reuse of cancelled queue numbers (`#104` / `M2-050`)
+- `0017-doctor-assigned-queue-contract.md` — Doctor Assigned Queue (`GET /api/v1/doctor/assigned-queue`), `queueGroup`/`ineligibleReason`, engine tiers (due appointment > gap-safe ELDERLY/PREGNANT/`RETURN_CONSULTATION`), blocked/CLS eligibility; supersedes the waiting-tier order of 0015 (`#92` / UC30)

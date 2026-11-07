@@ -35,6 +35,7 @@ public sealed class ExaminationQueueOrderingEngineTests
         Assert.False(eval.CanSafeBackfill);
         Assert.NotNull(eval.HoldReason);
         Assert.Contains("Có mặt", eval.HoldReason);
+        Assert.Equal("NOT_ARRIVED", eval.IneligibleReason);
     }
 
     [Fact]
@@ -237,8 +238,7 @@ public sealed class ExaminationQueueOrderingEngineTests
         Assert.Equal([1, 2, 3, 4], result.Evaluations.Select(e => e.ServingOrder).OrderBy(x => x).ToArray());
     }
 
-    [Fact]
-    public void Evaluate_Ordering_SortsLegalPriorityThenProtectedScheduledThenBackfilledReadyThenStandardFifo()
+    private static QueueOrderingItem[] CreateOrderingScenario()
     {
         var normalEarlyReady = new QueueOrderingItem(
             Status: "WAITING",
@@ -300,22 +300,128 @@ public sealed class ExaminationQueueOrderingEngineTests
             BackfilledAt: null,
             QueueNumber: 5);
 
-        var items = new[]
-        {
-            normalEarlyReady,      // idx 0 -> tier 3, ready 08:00 -> order 4
-            legacyUrgentLaterReady,// idx 1 -> tier 3, ready 08:10 -> order 5
-            elderlyWaiting,        // idx 2 -> tier 0 (legal priority), ready 08:20 -> order 1
-            backfilledReady,       // idx 3 -> tier 2 (safe backfilled) -> order 3
-            dueProtected,          // idx 4 -> tier 1 (protected scheduled) -> order 2
-        };
+        return
+        [
+            normalEarlyReady,       // idx 0
+            legacyUrgentLaterReady, // idx 1 (legacy URGENT is treated as NORMAL)
+            elderlyWaiting,         // idx 2
+            backfilledReady,        // idx 3 (next protected appointment, not due yet)
+            dueProtected,           // idx 4
+        ];
+    }
+
+    [Fact]
+    public void Evaluate_Ordering_DueProtectedFirstThenGapSafeElderlyThenBackfilledThenFifo()
+    {
+        var items = CreateOrderingScenario();
 
         var result = ExaminationQueueOrderingEngine.Evaluate(items, DefaultPolicy, Now);
 
-        Assert.Equal([2, 4, 3, 0, 1], result.OrderedIndices.ToArray());
-        Assert.Equal(1, result.Evaluations[2].ServingOrder);
-        Assert.Equal(2, result.Evaluations[4].ServingOrder);
+        // idx 4 -> tier 0 (due protected appointment 08:50)
+        // idx 2 -> tier 1 (elderly: 09:00 + 15 + 5 <= next protected 10:00)
+        // idx 3 -> tier 3 (safe backfilled READY)
+        // idx 0, idx 1 -> tier 4 FIFO by ready time (08:00, 08:10)
+        Assert.Equal([4, 2, 3, 0, 1], result.OrderedIndices.ToArray());
+        Assert.Equal(1, result.Evaluations[4].ServingOrder);
+        Assert.Equal(2, result.Evaluations[2].ServingOrder);
         Assert.Equal(3, result.Evaluations[3].ServingOrder);
         Assert.Equal(4, result.Evaluations[0].ServingOrder);
         Assert.Equal(5, result.Evaluations[1].ServingOrder);
+    }
+
+    [Fact]
+    public void Evaluate_Ordering_ElderlyLosesFastTrackWhenGapBeforeNextProtectedIsTooShort()
+    {
+        var items = CreateOrderingScenario();
+        items[3] = items[3] with { ScheduledAt = new DateTime(2026, 10, 22, 9, 15, 0) };
+
+        var result = ExaminationQueueOrderingEngine.Evaluate(items, DefaultPolicy, Now);
+
+        // 09:00 + 15 + 5 > 09:15 -> elderly falls back to FIFO (ready 08:20) behind the backfilled entry.
+        Assert.Equal([4, 3, 0, 1, 2], result.OrderedIndices.ToArray());
+    }
+
+    [Fact]
+    public void Evaluate_ReturnConsultation_PendingResultsIsIneligibleUntilReady()
+    {
+        var returnPending = new QueueOrderingItem(
+            Status: "WAITING",
+            Priority: "NORMAL",
+            PresenceStatus: "PRESENT",
+            IsScheduled: false,
+            StoredArrivalClass: "WALK_IN",
+            ScheduledAt: null,
+            ArrivedAt: new DateTime(2026, 10, 22, 8, 40, 0),
+            ReadySince: new DateTime(2026, 10, 22, 8, 40, 0),
+            BackfilledAt: null,
+            QueueNumber: 2,
+            QueueType: "RETURN_CONSULTATION",
+            PendingRequiredResults: true);
+
+        var pending = Assert.Single(ExaminationQueueOrderingEngine.Evaluate([returnPending], DefaultPolicy, Now).Evaluations);
+        Assert.False(pending.IsEligible);
+        Assert.Equal("AWAITING_RESULTS", pending.IneligibleReason);
+        Assert.False(pending.CanSafeBackfill);
+
+        var notRequired = Assert.Single(ExaminationQueueOrderingEngine.Evaluate(
+            [returnPending],
+            DefaultPolicy with { FinalResultRequired = false },
+            Now).Evaluations);
+        Assert.True(notRequired.IsEligible);
+        Assert.Null(notRequired.IneligibleReason);
+
+        var earlierWalkIn = new QueueOrderingItem(
+            Status: "WAITING",
+            Priority: "NORMAL",
+            PresenceStatus: "PRESENT",
+            IsScheduled: false,
+            StoredArrivalClass: "WALK_IN",
+            ScheduledAt: null,
+            ArrivedAt: new DateTime(2026, 10, 22, 8, 0, 0),
+            ReadySince: new DateTime(2026, 10, 22, 8, 0, 0),
+            BackfilledAt: null,
+            QueueNumber: 1);
+        var returnReady = returnPending with { PendingRequiredResults = false };
+
+        var ordered = ExaminationQueueOrderingEngine.Evaluate([earlierWalkIn, returnReady], DefaultPolicy, Now);
+        Assert.Equal([1, 0], ordered.OrderedIndices.ToArray());
+        Assert.True(ordered.Evaluations[1].IsEligible);
+    }
+
+    [Fact]
+    public void Evaluate_BlockedReason_BlocksUntilScheduledTimeThenRestoresDueProtection()
+    {
+        var held = new QueueOrderingItem(
+            Status: "WAITING",
+            Priority: "NORMAL",
+            PresenceStatus: "PRESENT",
+            IsScheduled: true,
+            StoredArrivalClass: "EARLY",
+            ScheduledAt: new DateTime(2026, 10, 22, 9, 30, 0),
+            ArrivedAt: new DateTime(2026, 10, 22, 8, 40, 0),
+            ReadySince: new DateTime(2026, 10, 22, 8, 40, 0),
+            BackfilledAt: null,
+            QueueNumber: 1,
+            BlockedReason: "Giữ chờ tới khung giờ hẹn 09:30");
+
+        var beforeSlot = Assert.Single(ExaminationQueueOrderingEngine.Evaluate([held], DefaultPolicy, Now).Evaluations);
+        Assert.False(beforeSlot.IsEligible);
+        Assert.Equal("BLOCKED", beforeSlot.IneligibleReason);
+        Assert.False(beforeSlot.IsDueProtected);
+
+        var atSlot = Assert.Single(ExaminationQueueOrderingEngine.Evaluate([held], DefaultPolicy, Now.AddMinutes(30)).Evaluations);
+        Assert.True(atSlot.IsEligible);
+        Assert.True(atSlot.IsDueProtected);
+        Assert.Null(atSlot.IneligibleReason);
+
+        var blockedWalkIn = held with
+        {
+            IsScheduled = false,
+            StoredArrivalClass = "WALK_IN",
+            ScheduledAt = null,
+        };
+        var walkIn = Assert.Single(ExaminationQueueOrderingEngine.Evaluate([blockedWalkIn], DefaultPolicy, Now.AddMinutes(30)).Evaluations);
+        Assert.False(walkIn.IsEligible);
+        Assert.Equal("BLOCKED", walkIn.IneligibleReason);
     }
 }

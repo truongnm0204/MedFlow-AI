@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Application.Services.Policies;
 using MedFlow.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,10 +20,12 @@ public static class QueueOrderingPolicyLoader
             rows = await db.HospitalPolicies
                 .AsNoTracking()
                 .Where(p => p.HospitalId == hospitalId
-                    && p.PolicyType == QueuePolicyKeys.PolicyType
-                    && (p.PolicyKey == QueuePolicyKeys.GraceMinutes
-                        || p.PolicyKey == QueuePolicyKeys.ExpectedDurationMinutes
-                        || p.PolicyKey == QueuePolicyKeys.SafetyBufferMinutes))
+                    && ((p.PolicyType == QueuePolicyKeys.PolicyType
+                            && (p.PolicyKey == QueuePolicyKeys.GraceMinutes
+                                || p.PolicyKey == QueuePolicyKeys.ExpectedDurationMinutes
+                                || p.PolicyKey == QueuePolicyKeys.SafetyBufferMinutes))
+                        || (p.PolicyType == QueuePolicyKeys.DiagnosticPolicyType
+                            && p.PolicyKey == QueuePolicyKeys.FinalResultRequired)))
                 .ToListAsync(ct);
         }
         catch (NotSupportedException)
@@ -56,6 +59,7 @@ public sealed class QueueOrderingPolicySet
         var graceRow = SelectRow(QueuePolicyKeys.GraceMinutes, queueServicePointId);
         var durationRow = SelectRow(QueuePolicyKeys.ExpectedDurationMinutes, queueServicePointId);
         var bufferRow = SelectRow(QueuePolicyKeys.SafetyBufferMinutes, queueServicePointId);
+        var finalResultRow = SelectRow(QueuePolicyKeys.FinalResultRequired, queueServicePointId);
 
         var rawGrace = ReadInt(graceRow, QueuePolicyKeys.PropMinutes);
         var graceMinutes = rawGrace is >= 0 ? rawGrace.Value : QueuePolicyKeys.DefaultGraceMinutes;
@@ -66,7 +70,11 @@ public sealed class QueueOrderingPolicySet
         var rawBuffer = ReadInt(bufferRow, QueuePolicyKeys.PropMinutes);
         int? bufferMinutes = rawBuffer is >= 0 ? rawBuffer.Value : null;
 
-        return new QueueOrderingPolicy(graceMinutes, durationMinutes, bufferMinutes);
+        return new QueueOrderingPolicy(
+            graceMinutes,
+            durationMinutes,
+            bufferMinutes,
+            FinalResultRequired: HospitalPolicyStore.ReadBool(finalResultRow, QueuePolicyKeys.PropEnabled, defaultValue: true));
     }
 
     private HospitalPolicy? SelectRow(string policyKey, long? queueServicePointId)
