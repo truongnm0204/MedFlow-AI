@@ -22,7 +22,7 @@ import {
   createFamilyMemberSchema,
   type CreateFamilyMemberInput,
 } from '../schemas/family-member.schema';
-import type { FamilyMember, RelationshipType } from '../types/family.types';
+import type { FamilyMember } from '../types/family.types';
 
 interface AddFamilyMemberModalProps {
   open: boolean;
@@ -40,7 +40,8 @@ export function AddFamilyMemberModal({
   const createMutation = useCreateFamilyMember();
 
   const [fullName, setFullName] = useState('');
-  const [relationship, setRelationship] = useState<RelationshipType>('Con trai');
+  const [relationship, setRelationship] =
+    useState<CreateFamilyMemberInput['relationship']>('Con trai');
   const [birthDate, setBirthDate] = useState('');
   const [gender, setGender] = useState<'Nam' | 'Nữ'>('Nam');
   const [identificationNo, setIdentificationNo] = useState('');
@@ -54,12 +55,24 @@ export function AddFamilyMemberModal({
   const emergencyContactRelation = 'Bố ruột (Giám hộ)';
   const [emergencyPhone, setEmergencyPhone] = useState('0912 345 678');
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  const clearFieldError = (field: string) => {
+    if (fieldErrors[field]) {
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+    }
+  };
 
   const isPending = isSubmitting || createMutation.isPending;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setValidationError(null);
+    setFieldErrors({});
 
     const rawInput: CreateFamilyMemberInput = {
       fullName: fullName.trim(),
@@ -78,6 +91,14 @@ export function AddFamilyMemberModal({
 
     const result = createFamilyMemberSchema.safeParse(rawInput);
     if (!result.success) {
+      const errors: Record<string, string> = {};
+      for (const issue of result.error.issues) {
+        const field = issue.path[0] as string;
+        if (field && !errors[field]) {
+          errors[field] = issue.message;
+        }
+      }
+      setFieldErrors(errors);
       const firstIssue = result.error.issues[0];
       setValidationError(firstIssue?.message ?? 'Vui lòng kiểm tra lại thông tin nhập.');
       return;
@@ -146,11 +167,21 @@ export function AddFamilyMemberModal({
                 <input
                   type="text"
                   value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
+                  onChange={(e) => {
+                    setFullName(e.target.value);
+                    clearFieldError('fullName');
+                  }}
                   placeholder="VD: NGUYỄN VĂN B"
-                  className="w-full rounded-xl border border-slate-300 py-2.5 pr-3.5 pl-10 text-xs font-semibold uppercase text-slate-900 placeholder:normal-case placeholder:font-normal placeholder:text-slate-400 focus:border-sky-500 focus:outline-hidden"
+                  className={`w-full rounded-xl border py-2.5 pr-3.5 pl-10 text-xs font-semibold uppercase text-slate-900 placeholder:normal-case placeholder:font-normal placeholder:text-slate-400 focus:outline-hidden ${
+                    fieldErrors.fullName
+                      ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500'
+                      : 'border-slate-300 focus:border-sky-500'
+                  }`}
                 />
               </div>
+              {fieldErrors.fullName && (
+                <p className="mt-1 text-[11px] font-medium text-rose-600">{fieldErrors.fullName}</p>
+              )}
             </div>
 
             <div>
@@ -161,8 +192,15 @@ export function AddFamilyMemberModal({
                 <Users className="absolute left-3.5 h-4 w-4 text-slate-400" />
                 <select
                   value={relationship}
-                  onChange={(e) => setRelationship(e.target.value as RelationshipType)}
-                  className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 focus:border-sky-500 focus:outline-hidden"
+                  onChange={(e) => {
+                    setRelationship(e.target.value as CreateFamilyMemberInput['relationship']);
+                    clearFieldError('relationship');
+                  }}
+                  className={`w-full rounded-xl border bg-white py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 focus:outline-hidden ${
+                    fieldErrors.relationship
+                      ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500'
+                      : 'border-slate-300 focus:border-sky-500'
+                  }`}
                 >
                   <option value="Con trai">Con trai</option>
                   <option value="Con gái">Con gái</option>
@@ -173,6 +211,11 @@ export function AddFamilyMemberModal({
                   <option value="Khác">Khác</option>
                 </select>
               </div>
+              {fieldErrors.relationship && (
+                <p className="mt-1 text-[11px] font-medium text-rose-600">
+                  {fieldErrors.relationship}
+                </p>
+              )}
             </div>
 
             <div>
@@ -184,11 +227,27 @@ export function AddFamilyMemberModal({
                 <input
                   type="text"
                   value={birthDate}
-                  onChange={(e) => setBirthDate(e.target.value)}
+                  onChange={(e) => {
+                    setBirthDate(e.target.value);
+                    clearFieldError('birthDate');
+                  }}
                   placeholder="15/08/2018"
-                  className="w-full rounded-xl border border-slate-300 py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 focus:border-sky-500 focus:outline-hidden"
+                  className={`w-full rounded-xl border py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 focus:outline-hidden ${
+                    fieldErrors.birthDate
+                      ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500'
+                      : 'border-slate-300 focus:border-sky-500'
+                  }`}
                 />
               </div>
+              {fieldErrors.birthDate ? (
+                <p className="mt-1 text-[11px] font-medium text-rose-600">
+                  {fieldErrors.birthDate}
+                </p>
+              ) : (
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Ví dụ: 15/08/2018 (Năm sinh phải đủ 4 chữ số)
+                </p>
+              )}
             </div>
 
             <div>
@@ -202,7 +261,10 @@ export function AddFamilyMemberModal({
                     name="gender"
                     value="Nam"
                     checked={gender === 'Nam'}
-                    onChange={() => setGender('Nam')}
+                    onChange={() => {
+                      setGender('Nam');
+                      clearFieldError('gender');
+                    }}
                     className="h-4 w-4 text-sky-600 focus:ring-sky-500"
                   />
                   <span>Nam</span>
@@ -213,7 +275,10 @@ export function AddFamilyMemberModal({
                     name="gender"
                     value="Nữ"
                     checked={gender === 'Nữ'}
-                    onChange={() => setGender('Nữ')}
+                    onChange={() => {
+                      setGender('Nữ');
+                      clearFieldError('gender');
+                    }}
                     className="h-4 w-4 text-sky-600 focus:ring-sky-500"
                   />
                   <span>Nữ</span>
@@ -230,11 +295,23 @@ export function AddFamilyMemberModal({
                 <input
                   type="text"
                   value={identificationNo}
-                  onChange={(e) => setIdentificationNo(e.target.value)}
+                  onChange={(e) => {
+                    setIdentificationNo(e.target.value);
+                    clearFieldError('identificationNo');
+                  }}
                   placeholder="VD: 001218... (nếu có)"
-                  className="w-full rounded-xl border border-slate-300 py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 focus:border-sky-500 focus:outline-hidden"
+                  className={`w-full rounded-xl border py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 focus:outline-hidden ${
+                    fieldErrors.identificationNo
+                      ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500'
+                      : 'border-slate-300 focus:border-sky-500'
+                  }`}
                 />
               </div>
+              {fieldErrors.identificationNo && (
+                <p className="mt-1 text-[11px] font-medium text-rose-600">
+                  {fieldErrors.identificationNo}
+                </p>
+              )}
             </div>
 
             <div>
@@ -275,11 +352,21 @@ export function AddFamilyMemberModal({
                 <input
                   type="text"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    clearFieldError('phone');
+                  }}
                   placeholder="VD: 0912 345 678 (để trống sẽ dùng SĐT của bạn)"
-                  className="w-full rounded-xl border border-slate-300 py-2.5 pr-3.5 pl-10 font-mono text-xs font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 focus:border-sky-500 focus:outline-hidden"
+                  className={`w-full rounded-xl border py-2.5 pr-3.5 pl-10 font-mono text-xs font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 focus:outline-hidden ${
+                    fieldErrors.phone
+                      ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500'
+                      : 'border-slate-300 focus:border-sky-500'
+                  }`}
                 />
               </div>
+              {fieldErrors.phone && (
+                <p className="mt-1 text-[11px] font-medium text-rose-600">{fieldErrors.phone}</p>
+              )}
             </div>
 
             <div>
@@ -291,15 +378,26 @@ export function AddFamilyMemberModal({
                 <input
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    clearFieldError('email');
+                  }}
                   placeholder="VD: nguyenvana.patient@gmail.com"
-                  className="w-full rounded-xl border border-slate-300 py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 focus:border-sky-500 focus:outline-hidden"
+                  className={`w-full rounded-xl border py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 focus:outline-hidden ${
+                    fieldErrors.email
+                      ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500'
+                      : 'border-slate-300 focus:border-sky-500'
+                  }`}
                 />
               </div>
-              <p className="mt-1 text-[11px] text-slate-400">
-                File kết quả xét nghiệm định dạng PDF kèm chữ ký số bảo mật sẽ được gửi về hộp thư
-                này.
-              </p>
+              {fieldErrors.email ? (
+                <p className="mt-1 text-[11px] font-medium text-rose-600">{fieldErrors.email}</p>
+              ) : (
+                <p className="mt-1 text-[11px] text-slate-400">
+                  File kết quả xét nghiệm định dạng PDF kèm chữ ký số bảo mật sẽ được gửi về hộp thư
+                  này.
+                </p>
+              )}
             </div>
 
             <div>
@@ -311,10 +409,20 @@ export function AddFamilyMemberModal({
                 <input
                   type="text"
                   value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 focus:border-sky-500 focus:outline-hidden"
+                  onChange={(e) => {
+                    setAddress(e.target.value);
+                    clearFieldError('address');
+                  }}
+                  className={`w-full rounded-xl border py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 focus:outline-hidden ${
+                    fieldErrors.address
+                      ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500'
+                      : 'border-slate-300 focus:border-sky-500'
+                  }`}
                 />
               </div>
+              {fieldErrors.address && (
+                <p className="mt-1 text-[11px] font-medium text-rose-600">{fieldErrors.address}</p>
+              )}
             </div>
 
             <div>
@@ -322,26 +430,54 @@ export function AddFamilyMemberModal({
                 Thông tin người liên hệ khẩn cấp (Emergency Contact)
               </label>
               <div className="mt-1.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="relative flex items-center">
-                  <Users className="absolute left-3.5 h-4 w-4 text-slate-400" />
-                  <input
-                    type="text"
-                    value={emergencyContactName}
-                    onChange={(e) => setEmergencyContactName(e.target.value)}
-                    placeholder="Họ tên người giám hộ / liên hệ"
-                    className="w-full rounded-xl border border-slate-300 py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 focus:border-sky-500 focus:outline-hidden"
-                  />
+                <div>
+                  <div className="relative flex items-center">
+                    <Users className="absolute left-3.5 h-4 w-4 text-slate-400" />
+                    <input
+                      type="text"
+                      value={emergencyContactName}
+                      onChange={(e) => {
+                        setEmergencyContactName(e.target.value);
+                        clearFieldError('emergencyContactName');
+                      }}
+                      placeholder="Họ tên người giám hộ / liên hệ"
+                      className={`w-full rounded-xl border py-2.5 pr-3.5 pl-10 text-xs font-semibold text-slate-900 focus:outline-hidden ${
+                        fieldErrors.emergencyContactName
+                          ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500'
+                          : 'border-slate-300 focus:border-sky-500'
+                      }`}
+                    />
+                  </div>
+                  {fieldErrors.emergencyContactName && (
+                    <p className="mt-1 text-[11px] font-medium text-rose-600">
+                      {fieldErrors.emergencyContactName}
+                    </p>
+                  )}
                 </div>
 
-                <div className="relative flex items-center">
-                  <PhoneCall className="absolute left-3.5 h-4 w-4 text-slate-400" />
-                  <input
-                    type="text"
-                    value={emergencyPhone}
-                    onChange={(e) => setEmergencyPhone(e.target.value)}
-                    placeholder="Số điện thoại khẩn cấp"
-                    className="w-full rounded-xl border border-slate-300 py-2.5 pr-3.5 pl-10 font-mono text-xs font-semibold text-slate-900 focus:border-sky-500 focus:outline-hidden"
-                  />
+                <div>
+                  <div className="relative flex items-center">
+                    <PhoneCall className="absolute left-3.5 h-4 w-4 text-slate-400" />
+                    <input
+                      type="text"
+                      value={emergencyPhone}
+                      onChange={(e) => {
+                        setEmergencyPhone(e.target.value);
+                        clearFieldError('emergencyPhone');
+                      }}
+                      placeholder="Số điện thoại khẩn cấp"
+                      className={`w-full rounded-xl border py-2.5 pr-3.5 pl-10 font-mono text-xs font-semibold text-slate-900 focus:outline-hidden ${
+                        fieldErrors.emergencyPhone
+                          ? 'border-rose-400 bg-rose-50/20 text-rose-900 focus:border-rose-500'
+                          : 'border-slate-300 focus:border-sky-500'
+                      }`}
+                    />
+                  </div>
+                  {fieldErrors.emergencyPhone && (
+                    <p className="mt-1 text-[11px] font-medium text-rose-600">
+                      {fieldErrors.emergencyPhone}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
