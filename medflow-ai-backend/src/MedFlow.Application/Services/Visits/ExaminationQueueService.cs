@@ -417,6 +417,21 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         }
 
         var policySet = await QueueOrderingPolicyLoader.LoadAsync(_db, hospital.Id, nowUtc, ct);
+        Dictionary<long, QueueFairnessState> fairnessByServicePoint;
+        try
+        {
+            fairnessByServicePoint = bucketRawSpIds.Count == 0
+                ? new Dictionary<long, QueueFairnessState>()
+                : await _db.QueueFairnessStates
+                    .AsNoTracking()
+                    .Where(s => s.QueueDate == effectiveQueueDate && bucketRawSpIds.Contains(s.ServicePointId))
+                    .ToDictionaryAsync(s => s.ServicePointId, ct);
+        }
+        catch (NotSupportedException)
+        {
+            fairnessByServicePoint = new Dictionary<long, QueueFairnessState>();
+        }
+
         var boardBuckets = new List<QueueBoardBucket>(buckets.Count);
 
         foreach (var bucket in buckets)
@@ -543,7 +558,14 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             }
 
             var bucketPolicy = policySet.ForServicePoint(bucket.RawServicePointId);
-            var orderingResult = ExaminationQueueOrderingEngine.Evaluate(orderingItems, bucketPolicy, nowLocal);
+            var counter = bucket.RawServicePointId is long spId
+                && fairnessByServicePoint.TryGetValue(spId, out var fairnessRow)
+                    ? QueueFairnessRotation.ResolveEffectiveCounter(
+                        fairnessRow.ConsecutivePriorityStarted,
+                        fairnessRow.PolicyVersion,
+                        bucketPolicy)
+                    : 0;
+            var orderingResult = ExaminationQueueOrderingEngine.Evaluate(orderingItems, bucketPolicy, nowLocal, counter);
 
             var boardEntries = new List<QueueBoardEntry>(orderingResult.OrderedIndices.Count);
             foreach (var idx in orderingResult.OrderedIndices)

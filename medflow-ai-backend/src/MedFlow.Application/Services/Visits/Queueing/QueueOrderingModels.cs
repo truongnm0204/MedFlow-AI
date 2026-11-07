@@ -4,7 +4,10 @@ public sealed record QueueOrderingPolicy(
     int GraceMinutes,
     int? ExpectedDurationMinutes,
     int? SafetyBufferMinutes,
-    bool FinalResultRequired = true);
+    bool FinalResultRequired = true,
+    int PriorityWeight = QueuePolicyKeys.DefaultPriorityWeight,
+    int NormalWeight = QueuePolicyKeys.DefaultNormalWeight,
+    int WalkinPriorityRatioVersion = 0);
 
 public sealed record QueueOrderingItem(
     string Status,

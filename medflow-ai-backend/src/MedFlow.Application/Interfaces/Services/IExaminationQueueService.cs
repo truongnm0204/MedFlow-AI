@@ -34,4 +34,11 @@ public interface IExaminationQueueService
         RestoreQueueTurnRequest request,
         string? ipAddress = null,
         CancellationToken ct = default);
+
+    Task<CallNextPatientResponseDto> CallNextPatientAsync(
+        long actorUserId,
+        string servicePointId,
+        CallNextPatientRequest? request = null,
+        string? ipAddress = null,
+        CancellationToken ct = default);
 }

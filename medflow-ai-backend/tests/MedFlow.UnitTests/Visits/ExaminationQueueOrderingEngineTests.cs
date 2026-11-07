@@ -424,4 +424,66 @@ public sealed class ExaminationQueueOrderingEngineTests
         Assert.False(walkIn.IsEligible);
         Assert.Equal("BLOCKED", walkIn.IneligibleReason);
     }
+
+    [Fact]
+    public void Evaluate_FairnessRotation_InterleavesFiveElderlyAndTwoNormalAt3To1Ratio()
+    {
+        var items = new[]
+        {
+            CreateWalkInItem("ELDERLY", Now.AddMinutes(-50), queueNumber: 1), // idx 0: E1
+            CreateWalkInItem("ELDERLY", Now.AddMinutes(-45), queueNumber: 2), // idx 1: E2
+            CreateWalkInItem("ELDERLY", Now.AddMinutes(-40), queueNumber: 3), // idx 2: E3
+            CreateWalkInItem("ELDERLY", Now.AddMinutes(-35), queueNumber: 4), // idx 3: E4
+            CreateWalkInItem("ELDERLY", Now.AddMinutes(-30), queueNumber: 5), // idx 4: E5
+            CreateWalkInItem("NORMAL", Now.AddMinutes(-55), queueNumber: 6),  // idx 5: N1
+            CreateWalkInItem("NORMAL", Now.AddMinutes(-25), queueNumber: 7),  // idx 6: N2
+        };
+
+        var fromZero = ExaminationQueueOrderingEngine.Evaluate(items, DefaultPolicy, Now, consecutivePriorityCalls: 0);
+
+        // Expected order: E1(0), E2(1), E3(2), N1(5), E4(3), E5(4), N2(6)
+        Assert.Equal([0, 1, 2, 5, 3, 4, 6], fromZero.OrderedIndices.ToArray());
+        Assert.Equal(1, fromZero.Evaluations[0].ServingOrder);
+        Assert.Equal(2, fromZero.Evaluations[1].ServingOrder);
+        Assert.Equal(3, fromZero.Evaluations[2].ServingOrder);
+        Assert.Equal(4, fromZero.Evaluations[5].ServingOrder);
+        Assert.Equal(5, fromZero.Evaluations[3].ServingOrder);
+        Assert.Equal(6, fromZero.Evaluations[4].ServingOrder);
+        Assert.Equal(7, fromZero.Evaluations[6].ServingOrder);
+
+        var fromThree = ExaminationQueueOrderingEngine.Evaluate(items, DefaultPolicy, Now, consecutivePriorityCalls: 3);
+
+        // With counter=3, N1(5) is placed at the head of the eligible slice: N1(5), E1(0), E2(1), E3(2), N2(6), E4(3), E5(4)
+        Assert.Equal([5, 0, 1, 2, 6, 3, 4], fromThree.OrderedIndices.ToArray());
+        Assert.Equal(1, fromThree.Evaluations[5].ServingOrder);
+    }
+
+    [Fact]
+    public void Evaluate_FairnessRotation_OnlyElderlyWithCounterThree_KeepsSequentialOrderWithoutGaps()
+    {
+        var items = new[]
+        {
+            CreateWalkInItem("ELDERLY", Now.AddMinutes(-30), queueNumber: 1),
+            CreateWalkInItem("ELDERLY", Now.AddMinutes(-20), queueNumber: 2),
+            CreateWalkInItem("ELDERLY", Now.AddMinutes(-10), queueNumber: 3),
+        };
+
+        var result = ExaminationQueueOrderingEngine.Evaluate(items, DefaultPolicy, Now, consecutivePriorityCalls: 3);
+
+        Assert.Equal([0, 1, 2], result.OrderedIndices.ToArray());
+        Assert.Equal([1, 2, 3], result.Evaluations.Select(e => e.ServingOrder).ToArray());
+    }
+
+    private static QueueOrderingItem CreateWalkInItem(string priority, DateTime readySince, int queueNumber)
+        => new(
+            Status: "WAITING",
+            Priority: priority,
+            PresenceStatus: "PRESENT",
+            IsScheduled: false,
+            StoredArrivalClass: "WALK_IN",
+            ScheduledAt: null,
+            ArrivedAt: readySince,
+            ReadySince: readySince,
+            BackfilledAt: null,
+            QueueNumber: queueNumber);
 }

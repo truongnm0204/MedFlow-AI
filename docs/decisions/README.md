@@ -43,3 +43,4 @@ Quyet dinh gi — cu the.
 - `0016-late-arrival-missed-turn-contract.md` — Late arrival classification (`LATE` via `grace_minutes`) and dedicated `missed-turn` / `restore-turn` endpoints (`#98` / `M2-046`)
 - `0016-cancel-queue-entry-contract.md` — Dedicated Cancel Queue Entry endpoint (`POST /api/v1/queue-entries/{idOrCode}/cancel`), single entry point consolidation & non-reuse of cancelled queue numbers (`#104` / `M2-050`)
 - `0017-doctor-assigned-queue-contract.md` — Doctor Assigned Queue (`GET /api/v1/doctor/assigned-queue`), `queueGroup`/`ineligibleReason`, engine tiers (due appointment > gap-safe ELDERLY/PREGNANT/`RETURN_CONSULTATION`), blocked/CLS eligibility; supersedes the waiting-tier order of 0015 (`#92` / UC30)
+- `0018-call-next-eligible-patient-contract.md` — Call Next Eligible Patient (`POST /api/v1/queue/service-points/{servicePointId}/call-next`), `walkin_priority_ratio` / `queue_fairness_states` rotation & concurrency serialization (`#94` / UC31)
