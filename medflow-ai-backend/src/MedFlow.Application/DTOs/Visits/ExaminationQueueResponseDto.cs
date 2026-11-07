@@ -62,4 +62,6 @@ public sealed record ExaminationQueueEntryDto(
     string? HoldReason = null,
     bool IsBackfilled = false,
     string? BackfillReason = null,
-    string? BackfillUpdatedAt = null);
+    string? BackfillUpdatedAt = null,
+    string? QueueGroup = null,
+    string? IneligibleReason = null);

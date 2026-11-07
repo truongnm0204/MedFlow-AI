@@ -9,6 +9,11 @@ public interface IExaminationQueueService
         GetExaminationQueueRequest? request = null,
         CancellationToken ct = default);
 
+    Task<DoctorAssignedQueueResponseDto> GetDoctorAssignedQueueAsync(
+        long actorUserId,
+        GetDoctorAssignedQueueRequest? request = null,
+        CancellationToken ct = default);
+
     Task<EarlyArrivalBackfillResponseDto> ApplyEarlyArrivalBackfillAsync(
         long actorUserId,
         string idOrCode,

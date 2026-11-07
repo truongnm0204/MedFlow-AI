@@ -481,20 +481,22 @@ public sealed class ExaminationQueueServiceTests : IDisposable
         Assert.Equal(3, result.Stats.ActiveServicePoints);
 
         // Verify sp-1 (RM-001) serving order:
-        // IN_PROGRESS → PREGNANT (tier 0, even LATE) → protected ON_TIME NORMAL → COMPLETED
+        // IN_PROGRESS → due protected appointments by ScheduledAt then ReadySince (A002 07:51, PREGNANT A004 08:11
+        // arrived within the 15' grace) → COMPLETED
         var sp1 = Assert.Single(result.ServicePoints, sp => sp.ServicePointId == "sp-1");
         Assert.Equal("RM-001", sp1.RoomCode);
         Assert.Equal("BS.CKI BS Nguyễn Minh Đức", sp1.DoctorName);
         Assert.Equal("A003", sp1.CurrentServingTicketNo);
-        Assert.Equal("A004", sp1.NextTicketNo);
+        Assert.Equal("A002", sp1.NextTicketNo);
         Assert.Equal(2, sp1.WaitingCount);
         Assert.Equal(1, sp1.InProgressCount);
         Assert.Equal(1, sp1.CompletedCount);
         Assert.Equal(0, sp1.SkippedCount);
 
         Assert.Equal(4, sp1.Entries.Count);
-        Assert.Equal(["A003", "A004", "A002", "A001"], sp1.Entries.Select(e => e.TicketNo).ToArray());
+        Assert.Equal(["A003", "A002", "A004", "A001"], sp1.Entries.Select(e => e.TicketNo).ToArray());
         Assert.Equal([1, 2, 3, 4], sp1.Entries.Select(e => e.ServingOrder).ToArray());
+        Assert.Equal(["IN_PROGRESS", "ELIGIBLE", "ELIGIBLE", "COMPLETED"], sp1.Entries.Select(e => e.QueueGroup!).ToArray());
 
         // Verify sp-2 (RM-003)
         var sp2 = Assert.Single(result.ServicePoints, sp => sp.ServicePointId == "sp-2");
@@ -681,8 +683,7 @@ public sealed class ExaminationQueueServiceTests : IDisposable
         Assert.Equal("VIS-202610-0020", hos2Sp.Entries[0].VisitCode);
     }
 
-    [Fact]
-    public async Task GetExaminationQueueAsync_ThreeTierOrderingAge75ThresholdAndQueueTypeFilter_OrdersAndFiltersCorrectly()
+    private async Task SeedThreeTierScenarioAsync(bool withDurationPolicy)
     {
         var testDate = new DateOnly(2026, 10, 23);
 
@@ -728,7 +729,61 @@ public sealed class ExaminationQueueServiceTests : IDisposable
             new QueueEntry { Id = 107, VisitId = 107, ServicePointId = 1, CurrentServicePointId = 1, QueueDate = testDate, QueueNumber = 16, QueueType = "EXAMINATION", Status = "WAITING", ArrivalClass = "WALK_IN", ManualPriority = null, ArrivedAt = new DateTime(2026, 10, 23, 8, 25, 0) },
             new QueueEntry { Id = 108, VisitId = 108, ServicePointId = 1, CurrentServicePointId = 1, QueueDate = testDate, QueueNumber = 17, QueueType = "EXAMINATION", Status = "WAITING", ArrivalClass = "WALK_IN", ManualPriority = null, ArrivedAt = new DateTime(2026, 10, 23, 7, 55, 0) });
 
+        if (withDurationPolicy)
+        {
+            _db.HospitalPolicies.AddRange(
+                new HospitalPolicy
+                {
+                    Id = 111,
+                    HospitalId = 1,
+                    QueueServicePointId = null,
+                    PolicyType = "QUEUE",
+                    PolicyKey = "expected_duration_minutes",
+                    PolicyValue = "{\"minutes\":15}",
+                    PolicyVersion = 1,
+                    EffectiveFrom = new DateTime(2026, 10, 1, 0, 0, 0),
+                },
+                new HospitalPolicy
+                {
+                    Id = 112,
+                    HospitalId = 1,
+                    QueueServicePointId = null,
+                    PolicyType = "QUEUE",
+                    PolicyKey = "safety_buffer_minutes",
+                    PolicyValue = "{\"minutes\":5}",
+                    PolicyVersion = 1,
+                    EffectiveFrom = new DateTime(2026, 10, 1, 0, 0, 0),
+                });
+        }
+
         await _db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task GetExaminationQueueAsync_WithDurationPolicy_ElevatedAndReturnFastTrackWhenGapIsSafe()
+    {
+        await SeedThreeTierScenarioAsync(withDurationPolicy: true);
+
+        var result = await _service.GetExaminationQueueAsync(
+            actorUserId: 5,
+            new GetExaminationQueueRequest(QueueDate: "2026-10-23", ServicePointId: "sp-1"));
+
+        var sp1 = Assert.Single(result.ServicePoints);
+
+        // Now is 2026-10-22 09:00, so every 2026-10-23 appointment is upcoming: 09:00 + 15 + 5 fits before them.
+        // Tier 1 FIFO: VIS-T-103 (07:50, return), VIS-T-106 (08:20, stored ELDERLY), VIS-T-107 (08:25, aged 75)
+        // Tier 2 by schedule: VIS-T-105 (08:15), VIS-T-104 (08:30)
+        // Tier 4 FIFO: VIS-T-101 (07:40), VIS-T-102 (07:45), VIS-T-108 (07:55, aged 74)
+        Assert.Equal(
+            ["VIS-T-103", "VIS-T-106", "VIS-T-107", "VIS-T-105", "VIS-T-104", "VIS-T-101", "VIS-T-102", "VIS-T-108"],
+            sp1.Entries.Select(e => e.VisitCode).ToArray());
+        Assert.Equal([12, 15, 16, 14, 13, 10, 11, 17], sp1.Entries.Select(e => e.QueueNumber).ToArray());
+    }
+
+    [Fact]
+    public async Task GetExaminationQueueAsync_WithoutDurationPolicy_ElevatedAndReturnDoNotJumpProtectedAppointments_Age75ThresholdAndQueueTypeFilter()
+    {
+        await SeedThreeTierScenarioAsync(withDurationPolicy: false);
 
         var result = await _service.GetExaminationQueueAsync(
             actorUserId: 5,
@@ -737,15 +792,15 @@ public sealed class ExaminationQueueServiceTests : IDisposable
         var sp1 = Assert.Single(result.ServicePoints);
         Assert.Equal(8, sp1.Entries.Count);
 
-        // Expected order:
-        // Tier 0 FIFO: VIS-T-106 (08:20, stored ELDERLY), VIS-T-107 (08:25, aged 75)
-        // Tier 1 by schedule: VIS-T-105 (sched 08:15), VIS-T-104 (sched 08:30)
-        // Tier 2 FIFO: VIS-T-101 (07:40), VIS-T-102 (07:45), VIS-T-103 (07:50), VIS-T-108 (07:55, aged 74)
+        // Expected order (no expected duration → the safe-gap gate cannot pass while protected appointments exist):
+        // Tier 2 by schedule: VIS-T-105 (sched 08:15), VIS-T-104 (sched 08:30)
+        // Tier 4 FIFO: VIS-T-101 (07:40), VIS-T-102 (07:45), VIS-T-103 (07:50), VIS-T-108 (07:55),
+        //              VIS-T-106 (08:20, LATE ELDERLY), VIS-T-107 (08:25, aged 75)
         Assert.Equal(
-            ["VIS-T-106", "VIS-T-107", "VIS-T-105", "VIS-T-104", "VIS-T-101", "VIS-T-102", "VIS-T-103", "VIS-T-108"],
+            ["VIS-T-105", "VIS-T-104", "VIS-T-101", "VIS-T-102", "VIS-T-103", "VIS-T-108", "VIS-T-106", "VIS-T-107"],
             sp1.Entries.Select(e => e.VisitCode).ToArray());
         Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8], sp1.Entries.Select(e => e.ServingOrder).ToArray());
-        Assert.Equal([15, 16, 14, 13, 10, 11, 12, 17], sp1.Entries.Select(e => e.QueueNumber).ToArray());
+        Assert.Equal([14, 13, 10, 11, 12, 17, 15, 16], sp1.Entries.Select(e => e.QueueNumber).ToArray());
 
         var aged75Entry = sp1.Entries.Single(e => e.VisitCode == "VIS-T-107");
         Assert.Equal("ELDERLY", aged75Entry.Priority);
@@ -1009,6 +1064,9 @@ public sealed class ExaminationQueueServiceTests : IDisposable
         Assert.Equal("Giữ chờ tới khung giờ hẹn 10:00 (Bảo vệ lịch hẹn đúng giờ)", response.BlockedReason);
         Assert.False(response.IsBackfilled);
         Assert.Equal(2, response.StateVersion);
+        Assert.False(response.UpdatedEntry.IsEligible);
+        Assert.Equal("BLOCKED", response.UpdatedEntry.IneligibleReason);
+        Assert.Equal("NOT_ELIGIBLE", response.UpdatedEntry.QueueGroup);
     }
 
     [Fact]
@@ -1361,5 +1419,106 @@ public sealed class ExaminationQueueServiceTests : IDisposable
                     Reason: "Lượt đang ở trạng thái WAITING không phải SKIPPED",
                     Notes: null,
                     ExpectedStateVersion: 1)));
+    }
+
+    [Fact]
+    public async Task GetDoctorAssignedQueueAsync_ReturnsOnlyActorServicePointInEngineOrder()
+    {
+        var result = await _service.GetDoctorAssignedQueueAsync(actorUserId: 3);
+
+        Assert.Equal("2026-10-22", result.QueueDate);
+        Assert.Equal("Bệnh viện MedFlow 1", result.FacilityName);
+        Assert.Equal("BS.CKI BS Nguyễn Minh Đức", result.DoctorName);
+
+        var sp = Assert.Single(result.ServicePoints);
+        Assert.Equal("sp-1", sp.ServicePointId);
+        Assert.Equal(["A003", "A002", "A004", "A001"], sp.Entries.Select(e => e.TicketNo).ToArray());
+        Assert.Equal([1, 2, 3, 4], sp.Entries.Select(e => e.ServingOrder).ToArray());
+        Assert.Equal(["IN_PROGRESS", "ELIGIBLE", "ELIGIBLE", "COMPLETED"], sp.Entries.Select(e => e.QueueGroup!).ToArray());
+        Assert.Equal("A003", sp.CurrentServingTicketNo);
+        Assert.Equal("A002", sp.NextEligibleTicketNo);
+        Assert.Equal(new DoctorAssignedQueueStatsDto(4, 1, 0, 2, 0, 0, 1), sp.Stats);
+        Assert.Equal(sp.Stats, result.Stats);
+        Assert.DoesNotContain(sp.Entries, e => e.VisitCode == "VIS-202610-0005");
+    }
+
+    [Fact]
+    public async Task GetDoctorAssignedQueueAsync_ClassifiesNotEligibleReasons()
+    {
+        var notArrived = await _db.QueueEntries.SingleAsync(q => q.Id == 1);
+        notArrived.PresenceStatus = "NOT_ARRIVED";
+
+        _db.Visits.AddRange(
+            new Visit { Id = 30, VisitCode = "VIS-202610-0030", PatientId = 4, AppointmentId = null, AssignedDoctorId = 1, ExaminationRoomId = 1, Status = "RETURN_CONSULTATION", CheckedInAt = new DateTime(2026, 10, 22, 8, 40, 0) },
+            new Visit { Id = 31, VisitCode = "VIS-202610-0031", PatientId = 5, AppointmentId = null, AssignedDoctorId = 1, ExaminationRoomId = 1, Status = "WAITING", CheckedInAt = new DateTime(2026, 10, 22, 8, 45, 0) });
+
+        _db.QueueEntries.AddRange(
+            new QueueEntry { Id = 30, VisitId = 30, ServicePointId = 1, CurrentServicePointId = 1, QueueDate = new DateOnly(2026, 10, 22), QueueNumber = 5, QueueType = "RETURN_CONSULTATION", Status = "WAITING", PresenceStatus = "PRESENT", ArrivedAt = new DateTime(2026, 10, 22, 8, 40, 0) },
+            new QueueEntry { Id = 31, VisitId = 30, ServicePointId = 3, CurrentServicePointId = 3, QueueDate = new DateOnly(2026, 10, 22), QueueNumber = 1, QueueType = "DIAGNOSTIC", Status = "WAITING" },
+            new QueueEntry { Id = 32, VisitId = 31, ServicePointId = 1, CurrentServicePointId = 1, QueueDate = new DateOnly(2026, 10, 22), QueueNumber = 6, QueueType = "EXAMINATION", Status = "WAITING", PresenceStatus = "PRESENT", ArrivedAt = new DateTime(2026, 10, 22, 8, 45, 0), BlockedReason = "Thiếu điều kiện khám" });
+
+        await _db.SaveChangesAsync();
+
+        var result = await _service.GetDoctorAssignedQueueAsync(actorUserId: 3);
+        var entries = Assert.Single(result.ServicePoints).Entries.ToDictionary(e => e.TicketNo);
+
+        Assert.Equal("NOT_ARRIVED", entries["A002"].IneligibleReason);
+        Assert.Equal("AWAITING_RESULTS", entries["A005"].IneligibleReason);
+        Assert.Equal("BLOCKED", entries["A006"].IneligibleReason);
+        Assert.All(new[] { "A002", "A005", "A006" }, t => Assert.Equal("NOT_ELIGIBLE", entries[t].QueueGroup));
+        Assert.Equal(3, result.Stats.NotEligibleCount);
+
+        var diagnostic = await _db.QueueEntries.SingleAsync(q => q.Id == 31);
+        diagnostic.Status = "COMPLETED";
+        diagnostic.CompletedAt = new DateTime(2026, 10, 22, 8, 55, 0);
+        await _db.SaveChangesAsync();
+
+        var afterResults = await _service.GetDoctorAssignedQueueAsync(actorUserId: 3);
+        var returnEntry = Assert.Single(Assert.Single(afterResults.ServicePoints).Entries, e => e.TicketNo == "A005");
+        Assert.Equal("ELIGIBLE", returnEntry.QueueGroup);
+        Assert.Null(returnEntry.IneligibleReason);
+    }
+
+    [Fact]
+    public async Task GetDoctorAssignedQueueAsync_EnforcesDoctorAccess()
+    {
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.GetDoctorAssignedQueueAsync(actorUserId: 0));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDoctorAssignedQueueAsync(actorUserId: 5));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDoctorAssignedQueueAsync(actorUserId: 1));
+
+        var doctor = await _db.Doctors.SingleAsync(d => d.Id == 1);
+        doctor.IsActive = false;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDoctorAssignedQueueAsync(actorUserId: 3));
+    }
+
+    [Fact]
+    public async Task GetDoctorAssignedQueueAsync_DoctorWithoutServicePoint_ReturnsEmpty()
+    {
+        _db.Users.Add(new User { Id = 30, Email = "doctor30@medflow.test", AccountStatus = AccountStatus.ACTIVE });
+        _db.UserRoles.Add(new UserRole { UserId = 30, RoleId = 2 });
+        _db.Staff.Add(new Staff { Id = 30, UserId = 30, HospitalId = 1, DepartmentId = 2, StaffCode = "STF-030", FullName = "BS Không Phòng", Status = "ACTIVE" });
+        _db.Doctors.Add(new Doctor { Id = 30, StaffId = 30, HospitalId = 1, DoctorCode = "DOC-030", SpecialtyId = 1, IsActive = true });
+        await _db.SaveChangesAsync();
+
+        var result = await _service.GetDoctorAssignedQueueAsync(actorUserId: 30);
+
+        Assert.Empty(result.ServicePoints);
+        Assert.Equal(new DoctorAssignedQueueStatsDto(0, 0, 0, 0, 0, 0, 0), result.Stats);
+        Assert.Equal("2026-10-22", result.QueueDate);
+    }
+
+    [Fact]
+    public async Task GetDoctorAssignedQueueAsync_InvalidQueueDate_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.GetDoctorAssignedQueueAsync(
+                actorUserId: 3,
+                new GetDoctorAssignedQueueRequest(QueueDate: "2026/10/22")));
     }
 }
