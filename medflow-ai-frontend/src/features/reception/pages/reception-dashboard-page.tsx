@@ -202,6 +202,8 @@ export function ReceptionDashboardPage() {
                     onAction={(id) => {
                       if (id === 'new-patient') {
                         setCreateOpen(true);
+                      } else if (id === 'walk-in') {
+                        navigate('/reception/walk-in');
                       } else if (id === 'search') {
                         navigate('/reception/patients');
                       } else if (id === 'update-patient') {
