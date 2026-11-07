@@ -4,11 +4,12 @@ namespace MedFlow.Application.Services.Visits.Queueing;
 
 public static class ExaminationQueueOrderingEngine
 {
-    // Note: Fairness counters (walkin_priority_ratio, queue_fairness_states) belong to #94 call-next, not #96.
+    // Fairness: tier 1 (fast-track priority group) and tiers 2-4 (other eligible) are interleaved by QueueFairnessRotation from consecutivePriorityCalls.
     public static QueueOrderingResult Evaluate(
         IReadOnlyList<QueueOrderingItem> items,
         QueueOrderingPolicy policy,
-        DateTime nowLocal)
+        DateTime nowLocal,
+        int consecutivePriorityCalls = 0)
     {
         ArgumentNullException.ThrowIfNull(items);
         ArgumentNullException.ThrowIfNull(policy);
@@ -151,6 +152,8 @@ public static class ExaminationQueueOrderingEngine
             .ThenBy(i => i)
             .ToArray();
 
+
+        ApplyFairnessRotation(orderedIndices, statusRanks, tiers, policy, consecutivePriorityCalls);
         var servingOrders = new int[count];
         for (var pos = 0; pos < count; pos++)
         {
@@ -187,6 +190,79 @@ public static class ExaminationQueueOrderingEngine
         return new QueueOrderingResult(orderedIndices, evaluations);
     }
 
+
+    private static void ApplyFairnessRotation(
+        int[] orderedIndices,
+        int[] statusRanks,
+        int[] tiers,
+        QueueOrderingPolicy policy,
+        int consecutivePriorityCalls)
+    {
+        var sliceStart = -1;
+        var sliceEnd = -1;
+
+        for (var pos = 0; pos < orderedIndices.Length; pos++)
+        {
+            var idx = orderedIndices[pos];
+            if (statusRanks[idx] == 2 && tiers[idx] is >= 1 and <= 4)
+            {
+                if (sliceStart < 0)
+                {
+                    sliceStart = pos;
+                }
+
+                sliceEnd = pos;
+            }
+            else if (sliceStart >= 0)
+            {
+                break;
+            }
+        }
+
+        if (sliceStart < 0 || sliceStart == sliceEnd)
+        {
+            return;
+        }
+
+        var priorityGroup = new List<int>();
+        var normalGroup = new List<int>();
+
+        for (var pos = sliceStart; pos <= sliceEnd; pos++)
+        {
+            var idx = orderedIndices[pos];
+            if (tiers[idx] == 1)
+            {
+                priorityGroup.Add(idx);
+            }
+            else
+            {
+                normalGroup.Add(idx);
+            }
+        }
+
+        if (priorityGroup.Count == 0 || normalGroup.Count == 0)
+        {
+            return;
+        }
+
+        var counter = consecutivePriorityCalls;
+        var pPos = 0;
+        var nPos = 0;
+        var writePos = sliceStart;
+
+        while (pPos < priorityGroup.Count || nPos < normalGroup.Count)
+        {
+            var takePriority = QueueFairnessRotation.PreferPriority(counter, policy.PriorityWeight, policy.NormalWeight)
+                ? pPos < priorityGroup.Count
+                : nPos >= normalGroup.Count;
+
+            orderedIndices[writePos++] = takePriority
+                ? priorityGroup[pPos++]
+                : normalGroup[nPos++];
+
+            counter = QueueFairnessRotation.Advance(counter, takePriority, policy.PriorityWeight, policy.NormalWeight);
+        }
+    }
     private static string? ResolveIneligibleReason(QueueOrderingItem item, bool isBlocked, bool isAwaitingResults)
     {
         if (item.PresenceStatus == "LEFT")

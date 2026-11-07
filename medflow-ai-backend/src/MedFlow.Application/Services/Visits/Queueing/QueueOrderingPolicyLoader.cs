@@ -23,7 +23,8 @@ public static class QueueOrderingPolicyLoader
                     && ((p.PolicyType == QueuePolicyKeys.PolicyType
                             && (p.PolicyKey == QueuePolicyKeys.GraceMinutes
                                 || p.PolicyKey == QueuePolicyKeys.ExpectedDurationMinutes
-                                || p.PolicyKey == QueuePolicyKeys.SafetyBufferMinutes))
+                                || p.PolicyKey == QueuePolicyKeys.SafetyBufferMinutes
+                                || p.PolicyKey == QueuePolicyKeys.WalkinPriorityRatio))
                         || (p.PolicyType == QueuePolicyKeys.DiagnosticPolicyType
                             && p.PolicyKey == QueuePolicyKeys.FinalResultRequired)))
                 .ToListAsync(ct);
@@ -60,6 +61,7 @@ public sealed class QueueOrderingPolicySet
         var durationRow = SelectRow(QueuePolicyKeys.ExpectedDurationMinutes, queueServicePointId);
         var bufferRow = SelectRow(QueuePolicyKeys.SafetyBufferMinutes, queueServicePointId);
         var finalResultRow = SelectRow(QueuePolicyKeys.FinalResultRequired, queueServicePointId);
+        var ratioRow = SelectRow(QueuePolicyKeys.WalkinPriorityRatio, queueServicePointId);
 
         var rawGrace = ReadInt(graceRow, QueuePolicyKeys.PropMinutes);
         var graceMinutes = rawGrace is >= 0 ? rawGrace.Value : QueuePolicyKeys.DefaultGraceMinutes;
@@ -70,11 +72,26 @@ public sealed class QueueOrderingPolicySet
         var rawBuffer = ReadInt(bufferRow, QueuePolicyKeys.PropMinutes);
         int? bufferMinutes = rawBuffer is >= 0 ? rawBuffer.Value : null;
 
+        var rawPriority = ReadInt(ratioRow, QueuePolicyKeys.PropPriority);
+        var priorityWeight = rawPriority is >= QueuePolicyKeys.MinRatioWeight and <= QueuePolicyKeys.MaxRatioWeight
+            ? rawPriority.Value
+            : QueuePolicyKeys.DefaultPriorityWeight;
+
+        var rawNormal = ReadInt(ratioRow, QueuePolicyKeys.PropNormal);
+        var normalWeight = rawNormal is >= QueuePolicyKeys.MinRatioWeight and <= QueuePolicyKeys.MaxRatioWeight
+            ? rawNormal.Value
+            : QueuePolicyKeys.DefaultNormalWeight;
+
+        var ratioVersion = ratioRow?.PolicyVersion ?? 0;
+
         return new QueueOrderingPolicy(
             graceMinutes,
             durationMinutes,
             bufferMinutes,
-            FinalResultRequired: HospitalPolicyStore.ReadBool(finalResultRow, QueuePolicyKeys.PropEnabled, defaultValue: true));
+            FinalResultRequired: HospitalPolicyStore.ReadBool(finalResultRow, QueuePolicyKeys.PropEnabled, defaultValue: true),
+            PriorityWeight: priorityWeight,
+            NormalWeight: normalWeight,
+            WalkinPriorityRatioVersion: ratioVersion);
     }
 
     private HospitalPolicy? SelectRow(string policyKey, long? queueServicePointId)
