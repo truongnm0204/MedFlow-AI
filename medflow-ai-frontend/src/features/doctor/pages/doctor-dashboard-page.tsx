@@ -1,5 +1,6 @@
 import { RefreshCw } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/features/auth/store/auth.store';
@@ -39,6 +40,7 @@ const DIAGNOSTIC_STATUS_META: Record<
 };
 
 export function DoctorDashboardPage() {
+  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
   const { data, isPending, isError, error, refetch } = useDoctorDashboard(undefined, true);
@@ -87,7 +89,13 @@ export function DoctorDashboardPage() {
         activeItem={activeNav}
         doctorName={doctorDisplayName}
         roomLabel={`${roomCode} • ${departmentName}`}
-        onItemSelect={setActiveNav}
+        onItemSelect={(item) => {
+          if (item === 'assigned-queue') {
+            navigate('/doctor/assigned-queue');
+            return;
+          }
+          setActiveNav(item);
+        }}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
