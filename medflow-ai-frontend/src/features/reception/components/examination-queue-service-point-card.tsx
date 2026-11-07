@@ -1,4 +1,4 @@
-import { Stethoscope } from 'lucide-react';
+import { Stethoscope, XCircle } from 'lucide-react';
 
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -12,6 +12,7 @@ import type {
   QueuePresenceStatus,
   ServicePointQueueDto,
 } from '../types/examination-queue.types';
+import { CANCELLABLE_QUEUE_STATUSES } from '../types/queue-status-update.types';
 
 export interface ExaminationQueueServicePointCardProps {
   servicePoint: ServicePointQueueDto;
@@ -28,6 +29,7 @@ export interface ExaminationQueueServicePointCardProps {
   onApplyPriority?: (entry: ExaminationQueueEntryDto) => void;
   onOpenMissedTurn?: (entry: ExaminationQueueEntryDto, servicePoint: ServicePointQueueDto) => void;
   onOpenRestoreTurn?: (entry: ExaminationQueueEntryDto, servicePoint: ServicePointQueueDto) => void;
+  onOpenCancelEntry?: (entry: ExaminationQueueEntryDto, servicePoint: ServicePointQueueDto) => void;
 }
 
 // oxlint-disable-next-line react/only-export-components
@@ -83,6 +85,7 @@ export function ExaminationQueueServicePointCard({
   onApplyPriority,
   onOpenMissedTurn,
   onOpenRestoreTurn,
+  onOpenCancelEntry,
 }: ExaminationQueueServicePointCardProps) {
   return (
     <Card>
@@ -279,6 +282,18 @@ export function ExaminationQueueServicePointCard({
                               Cập nhật TT
                             </Button>
                           )}
+                          {onOpenCancelEntry &&
+                            CANCELLABLE_QUEUE_STATUSES.includes(entry.status) && (
+                              <Button
+                                variant="danger"
+                                size="sm"
+                                onClick={() => onOpenCancelEntry(entry, servicePoint)}
+                                aria-label={`Hủy lượt khám cho ${entry.patientName}`}
+                              >
+                                <XCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                                Hủy lượt
+                              </Button>
+                            )}
                           <Button
                             variant="secondary"
                             size="sm"

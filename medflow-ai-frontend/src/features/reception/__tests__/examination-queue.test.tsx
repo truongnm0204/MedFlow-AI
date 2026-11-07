@@ -959,4 +959,104 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
       /Đã khôi phục lượt khám sang Sẵn sàng \(READY\) cho phiếu B004 \(Ngô Minh Tuấn\) — Phân loại: Đến muộn \(mất bảo vệ giờ hẹn cũ\), thứ tự phục vụ mới: #2, giữ nguyên số phiếu #4\./i,
     );
   });
+
+  it('shows Cancel Queue Entry only for WAITING/READY/CALLED/SKIPPED entries (Issue #103)', async () => {
+    renderQueuePage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Vũ Thị Phương')).toBeInTheDocument();
+    });
+
+    for (const name of ['Trần Thị Bích', 'Phạm Thu Dung', 'Vũ Thị Phương', 'Ngô Minh Tuấn']) {
+      expect(screen.getByRole('button', { name: `Hủy lượt khám cho ${name}` })).toBeInTheDocument();
+    }
+    for (const name of ['Nguyễn Văn An', 'Lê Minh Cường', 'Đặng Quốc Bảo']) {
+      expect(
+        screen.queryByRole('button', { name: `Hủy lượt khám cho ${name}` }),
+      ).not.toBeInTheDocument();
+    }
+  });
+
+  it('cancels a queue entry via live API and shows the backend-refetched queue without it (Issue #103)', async () => {
+    window.localStorage.setItem('medflow.access_token', 'jwt-reception-token');
+
+    const initialList = buildMockExaminationQueueResponse();
+    const refetchedList = buildMockExaminationQueueResponse();
+    const room103 = refetchedList.servicePoints.find((sp) => sp.servicePointId === 'sp-room-103')!;
+    room103.entries = room103.entries
+      .filter((entry) => entry.id !== 'q-006')
+      .map((entry) => (entry.id === 'q-008' ? { ...entry, servingOrder: 2 } : entry));
+
+    let listCallCount = 0;
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url: string) => {
+      if (url === '/reception/examination-queue') {
+        listCallCount += 1;
+        return { data: listCallCount === 1 ? initialList : refetchedList };
+      }
+      if (url === '/reception/examination-queue/entries/q-006/status') {
+        return {
+          data: {
+            queueEntryId: 6,
+            currentStatus: 'WAITING',
+            stateVersion: 4,
+            allowedTargetStatuses: ['READY', 'CALLED', 'SKIPPED'],
+            statusHistory: [],
+          },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: {
+        queueEntryId: 6,
+        ticketNo: 'B006',
+        queueNumber: 6,
+        previousStatus: 'WAITING',
+        currentStatus: 'CANCELLED',
+        presenceStatus: 'LEFT',
+        previousStateVersion: 4,
+        stateVersion: 5,
+        allowedTargetStatuses: [],
+        statusHistory: [],
+      },
+    });
+
+    renderQueuePage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Vũ Thị Phương')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hủy lượt khám cho Vũ Thị Phương' }));
+
+    const dialog = screen.getByRole('dialog');
+    await waitFor(() => {
+      expect(within(dialog).getByRole('button', { name: 'Xác nhận hủy lượt' })).not.toBeDisabled();
+    });
+    fireEvent.change(within(dialog).getByLabelText('Lý do hủy lượt (bắt buộc)'), {
+      target: { value: 'Bệnh nhân xin về, không tiếp tục khám' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Xác nhận hủy lượt' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    expect(postSpy).toHaveBeenCalledWith('/reception/examination-queue/entries/q-006/cancel', {
+      reason: 'Bệnh nhân xin về, không tiếp tục khám',
+      expectedStateVersion: 4,
+      notes: null,
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Vũ Thị Phương')).not.toBeInTheDocument();
+    });
+    expect(listCallCount).toBe(2);
+    expect(screen.getByRole('status')).toHaveTextContent(
+      /Đã hủy lượt khám phiếu B006 \(Vũ Thị Phương\) tại P\.103 — giữ nguyên số phiếu #6/i,
+    );
+
+    const tuanRow = screen.getByText('Ngô Minh Tuấn').closest('tr');
+    expect(tuanRow).not.toBeNull();
+    expect(within(tuanRow!).getByText('#2')).toBeInTheDocument();
+  });
 });
