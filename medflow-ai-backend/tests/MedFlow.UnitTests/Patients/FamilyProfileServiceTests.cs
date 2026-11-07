@@ -1685,4 +1685,318 @@ public sealed class FamilyProfileServiceTests : IDisposable
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             _sut.UpdateFamilyMemberAsync(user.Id, "FAM-001", request));
     }
+
+    [Fact]
+    public async Task RemoveFamilyMember_ValidLinkedMember_SuccessfullySetsRevokedAt()
+    {
+        var user = new User { Id = 801, Email = "remove_owner1@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 901, UserId = user.Id, User = user, Status = "ACTIVE", FullName = "CHỦ HỘ 1" };
+        var member = new Patient { Id = 902, FullName = "CON TRAI 1", Status = "ACTIVE", PatientCode = "PAT-2026-902" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "CHILD",
+            RevokedAt = null
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        await _sut.RemoveFamilyMemberAsync(user.Id, member.Id.ToString());
+
+        var updatedLink = await _db.PatientFamilyLinks.FindAsync(owner.Id, member.Id);
+        Assert.NotNull(updatedLink);
+        Assert.NotNull(updatedLink!.RevokedAt);
+
+        // Member is no longer returned in active list
+        var activeList = await _sut.GetFamilyMembersAsync(user.Id, includeSelf: false);
+        Assert.DoesNotContain(activeList, m => m.Id == member.Id.ToString() || m.PatientCode == member.PatientCode);
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_WithReason_SuccessfullyRemoves()
+    {
+        var user = new User { Id = 802, Email = "remove_owner2@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 903, UserId = user.Id, User = user, Status = "ACTIVE", FullName = "CHỦ HỘ 2" };
+        var member = new Patient { Id = 904, FullName = "CON GÁI 2", Status = "ACTIVE", PatientCode = "PAT-2026-904" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "DAUGHTER",
+            RevokedAt = null
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        await _sut.RemoveFamilyMemberAsync(user.Id, member.Id.ToString(), reason: "Người thân đã tự lập tài khoản riêng");
+
+        var updatedLink = await _db.PatientFamilyLinks.FindAsync(owner.Id, member.Id);
+        Assert.NotNull(updatedLink);
+        Assert.NotNull(updatedLink!.RevokedAt);
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_ByPatientCode_SuccessfullyRemoves()
+    {
+        var user = new User { Id = 803, Email = "remove_owner3@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 905, UserId = user.Id, User = user, Status = "ACTIVE", FullName = "CHỦ HỘ 3" };
+        var member = new Patient { Id = 906, FullName = "MẸ 3", Status = "ACTIVE", PatientCode = "PAT-2026-906" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "MOTHER",
+            RevokedAt = null
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        await _sut.RemoveFamilyMemberAsync(user.Id, "PAT-2026-906");
+
+        var updatedLink = await _db.PatientFamilyLinks.FindAsync(owner.Id, member.Id);
+        Assert.NotNull(updatedLink);
+        Assert.NotNull(updatedLink!.RevokedAt);
+    }
+
+    [Theory]
+    [InlineData("self")]
+    [InlineData("SELF")]
+    [InlineData("907")]
+    [InlineData("PAT-2026-907")]
+    public async Task RemoveFamilyMember_Self_ThrowsValidationException(string identifier)
+    {
+        var user = new User { Id = 804, Email = "remove_self@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 907, UserId = user.Id, User = user, Status = "ACTIVE", FullName = "CHỦ HỘ TỰ GỠ", PatientCode = "PAT-2026-907" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.RemoveFamilyMemberAsync(user.Id, identifier));
+
+        Assert.Contains("chính bản thân", ex.Message);
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_BlockedByActiveAppointment_ThrowsValidationException()
+    {
+        var user = new User { Id = 805, Email = "remove_appt@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 908, UserId = user.Id, User = user, Status = "ACTIVE" };
+        var member = new Patient { Id = 909, FullName = "NGƯỜI THÂN CÓ LỊCH HẸN", Status = "ACTIVE" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "CHILD",
+            RevokedAt = null
+        };
+
+        var appt = new Appointment
+        {
+            Id = 401,
+            PatientId = member.Id,
+            Status = "CONFIRMED",
+            BookedAt = DateTime.UtcNow
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        _db.Appointments.Add(appt);
+        await _db.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.RemoveFamilyMemberAsync(user.Id, member.Id.ToString()));
+
+        Assert.Contains("lịch hẹn khám chưa hoàn tất", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("CANCELLED")]
+    [InlineData("COMPLETED")]
+    [InlineData("NO_SHOW")]
+    public async Task RemoveFamilyMember_WithInactiveAppointments_SuccessfullyRemoves(string status)
+    {
+        var user = new User { Id = 806 + (int)status[0], Email = $"remove_done_{status}@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 910 + (int)status[0], UserId = user.Id, User = user, Status = "ACTIVE" };
+        var member = new Patient { Id = 911 + (int)status[0], FullName = "NGƯỜI THÂN LỊCH HẸN ĐÃ XONG", Status = "ACTIVE" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "CHILD",
+            RevokedAt = null
+        };
+
+        var appt = new Appointment
+        {
+            Id = 500 + (int)status[0],
+            PatientId = member.Id,
+            Status = status,
+            BookedAt = DateTime.UtcNow
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        _db.Appointments.Add(appt);
+        await _db.SaveChangesAsync();
+
+        await _sut.RemoveFamilyMemberAsync(user.Id, member.Id.ToString());
+
+        var updatedLink = await _db.PatientFamilyLinks.FindAsync(owner.Id, member.Id);
+        Assert.NotNull(updatedLink);
+        Assert.NotNull(updatedLink!.RevokedAt);
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_NonExistentMember_ThrowsNotFoundException()
+    {
+        var user = new User { Id = 820, Email = "remove_missing@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 920, UserId = user.Id, User = user, Status = "ACTIVE" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.RemoveFamilyMemberAsync(user.Id, "99999"));
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_AlreadyRevokedMember_ThrowsNotFoundException()
+    {
+        var user = new User { Id = 821, Email = "remove_revoked@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 921, UserId = user.Id, User = user, Status = "ACTIVE" };
+        var member = new Patient { Id = 922, FullName = "ĐÃ BỊ GỠ TỪ TRƯỚC", Status = "ACTIVE" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "CHILD",
+            RevokedAt = DateTime.UtcNow
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.RemoveFamilyMemberAsync(user.Id, member.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_MemberOfAnotherOwner_ThrowsNotFoundException()
+    {
+        var user1 = new User { Id = 822, Email = "owner_a@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner1 = new Patient { Id = 923, UserId = user1.Id, User = user1, Status = "ACTIVE" };
+
+        var user2 = new User { Id = 823, Email = "owner_b@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner2 = new Patient { Id = 924, UserId = user2.Id, User = user2, Status = "ACTIVE" };
+
+        var memberOfOwner2 = new Patient { Id = 925, FullName = "CON CỦA OWNER 2", Status = "ACTIVE" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner2.Id,
+            MemberPatientId = memberOfOwner2.Id,
+            Relationship = "CHILD",
+            RevokedAt = null
+        };
+
+        _db.Users.AddRange(user1, user2);
+        _db.Patients.AddRange(owner1, owner2, memberOfOwner2);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        // user1 tries to remove owner2's family member
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.RemoveFamilyMemberAsync(user1.Id, memberOfOwner2.Id.ToString()));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task RemoveFamilyMember_EmptyIdentifier_ThrowsValidationException(string? identifier)
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.RemoveFamilyMemberAsync(1, identifier!));
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_InvalidUserId_ThrowsUnauthorizedAccessException()
+    {
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.RemoveFamilyMemberAsync(0, "FAM-001"));
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_OwnerNotFound_ThrowsNotFoundException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.RemoveFamilyMemberAsync(99999, "FAM-001"));
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_OwnerLocked_ThrowsUnauthorizedAccessException()
+    {
+        var user = new User { Id = 824, Email = "locked_remover@test.com", AccountStatus = AccountStatus.LOCKED };
+        var owner = new Patient { Id = 926, UserId = user.Id, User = user, Status = "ACTIVE" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.RemoveFamilyMemberAsync(user.Id, "FAM-001"));
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_OwnerInactive_ThrowsUnauthorizedAccessException()
+    {
+        var user = new User { Id = 825, Email = "inactive_patient_remover@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 927, UserId = user.Id, User = user, Status = "INACTIVE" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.RemoveFamilyMemberAsync(user.Id, "FAM-001"));
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_MemberInactiveStatus_ThrowsNotFoundException()
+    {
+        var user = new User { Id = 826, Email = "remove_inactive_mem@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 928, UserId = user.Id, User = user, Status = "ACTIVE" };
+        var member = new Patient { Id = 929, FullName = "NGƯỜI THÂN ĐÃ DEACTIVATE", Status = "INACTIVE" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "CHILD",
+            RevokedAt = null
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.RemoveFamilyMemberAsync(user.Id, member.Id.ToString()));
+    }
 }

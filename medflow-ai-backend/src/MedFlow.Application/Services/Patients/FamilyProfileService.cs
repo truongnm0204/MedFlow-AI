@@ -479,6 +479,64 @@ public sealed class FamilyProfileService : IFamilyProfileService
         return BuildMemberResponse(self, member, link, visitsCount, hasActiveAppointment, activeAppointmentDetails);
     }
 
+    public async Task RemoveFamilyMemberAsync(
+        long userId,
+        string identifier,
+        string? reason = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(identifier))
+            throw new ValidationException("Mã hồ sơ người thân không hợp lệ.");
+
+        var self = await LoadActiveSelfAsync(userId, ct);
+        var (parsedId, parsedCode, isSelf) = ParseMemberIdentifier(identifier);
+
+        if (isSelf ||
+            (parsedId.HasValue && parsedId.Value == self.Id) ||
+            (!string.IsNullOrEmpty(parsedCode) && (string.Equals(parsedCode, self.PatientCode, StringComparison.OrdinalIgnoreCase) || string.Equals(identifier.Trim(), self.PatientCode, StringComparison.OrdinalIgnoreCase))))
+        {
+            throw new ValidationException("Không thể gỡ liên kết hồ sơ của chính bản thân.");
+        }
+
+        var linksQuery = _db.PatientFamilyLinks
+            .Include(l => l.MemberPatient)
+            .Where(l => l.OwnerPatientId == self.Id && l.RevokedAt == null);
+
+        PatientFamilyLink? link;
+        if (parsedId.HasValue)
+        {
+            link = await linksQuery.FirstOrDefaultAsync(l => l.MemberPatientId == parsedId.Value, ct);
+        }
+        else
+        {
+            var trimmed = identifier.Trim();
+            link = await linksQuery.FirstOrDefaultAsync(l =>
+                l.MemberPatient != null &&
+                (l.MemberPatient.PatientCode == parsedCode || l.MemberPatient.PatientCode == trimmed), ct);
+        }
+
+        if (link is null || link.MemberPatient is null)
+            throw new NotFoundException("FamilyMember", identifier);
+
+        var member = link.MemberPatient;
+        if (!string.Equals(member.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+            throw new NotFoundException("FamilyMember", identifier);
+
+        var hasActiveAppointment = await _db.Appointments
+            .AsNoTracking()
+            .AnyAsync(a => a.PatientId == member.Id &&
+                           a.Status != "CANCELLED" && a.Status != "COMPLETED" && a.Status != "NO_SHOW", ct);
+
+        if (hasActiveAppointment)
+        {
+            throw new ValidationException("Không thể gỡ liên kết do người thân đang có lịch hẹn khám chưa hoàn tất. Vui lòng hoàn tất hoặc hủy lịch hẹn trước khi gỡ hồ sơ.");
+        }
+
+        link.RevokedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+
+        await _db.SaveChangesAsync(ct);
+    }
+
     private async Task<Patient> LoadActiveSelfAsync(long userId, CancellationToken ct)
     {
         if (userId <= 0)
