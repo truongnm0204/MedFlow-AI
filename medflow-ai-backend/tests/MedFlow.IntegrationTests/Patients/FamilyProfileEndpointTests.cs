@@ -507,13 +507,31 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
     {
         var (_, tokens) = await RegisterVerifyLoginAsync();
 
+        var createReq = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Minh Khang",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2019-08-10",
+            Address = "Số 100 Nguyễn Trãi, Hà Nội",
+            Phone = "0912345678"
+        };
+
+        using var postReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        postReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        postReq.Content = JsonContent.Create(createReq);
+        var postRes = await Client.SendAsync(postReq);
+        Assert.Equal(HttpStatusCode.Created, postRes.StatusCode);
+        var created = await postRes.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(created);
+
         var updateReq = new UpdateFamilyMemberRequest
         {
             Phone = "invalidphone",
             Address = "123" // Too short (< 5)
         };
 
-        using var putReq = new HttpRequestMessage(HttpMethod.Put, "/api/v1/patients/me/family-members/FAM-001");
+        using var putReq = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/patients/me/family-members/{created.MemberPatientId}");
         putReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
         putReq.Content = JsonContent.Create(updateReq);
         var putRes = await Client.SendAsync(putReq);
