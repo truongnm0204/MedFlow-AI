@@ -18,6 +18,7 @@ import { StaffAccountEditPage } from '@/features/admin-staff/pages/staff-account
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
+import { ServicePricingPage } from '@/features/admin-services/pages/service-pricing-page';
 import { StaffAccountCreatePage } from '@/features/admin-staff/pages/staff-account-create-page';
 import { ExaminationSlotCreatePage } from '@/features/admin-slots/pages/examination-slot-create-page';
 import { ExaminationSlotListPage } from '@/features/admin-slots/pages/examination-slot-list-page';
@@ -430,6 +431,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <OperationalReportsPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/pricing"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ServicePricingPage />
             </RequireAdmin>
           </RequireAuth>
         }
