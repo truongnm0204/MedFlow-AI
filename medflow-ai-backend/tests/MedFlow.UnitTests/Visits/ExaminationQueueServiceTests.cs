@@ -2059,4 +2059,487 @@ public sealed class ExaminationQueueServiceTests : IDisposable
         Assert.Equal("PRIORITY", res.SelectionReason);
         Assert.Equal("q-060", res.CalledEntry!.Id);
     }
+
+    [Fact]
+    public async Task CreateReturnToDoctorQueueEntryAsync_WhenDiagnosticResultsReadyAndPresent_ClosesExamEntryAllocatesQueueNumberAndFastTracksInTier1()
+    {
+        await PrepareCleanServicePointOneAsync();
+
+        _db.Visits.AddRange(
+            new Visit
+            {
+                Id = 70,
+                VisitCode = "VIS-202610-0070",
+                PatientId = 1,
+                AppointmentId = 1,
+                AssignedDoctorId = 1,
+                ExaminationRoomId = 1,
+                CheckedInByStaffId = 3,
+                Status = "IN_PROGRESS",
+                CheckedInAt = new DateTime(2026, 10, 22, 7, 50, 0),
+            },
+            new Visit
+            {
+                Id = 71,
+                VisitCode = "VIS-202610-0071",
+                PatientId = 4,
+                AssignedDoctorId = 1,
+                ExaminationRoomId = 1,
+                CheckedInByStaffId = 3,
+                Status = "WAITING",
+                CheckedInAt = new DateTime(2026, 10, 22, 8, 5, 0),
+            });
+
+        _db.QueueEntries.AddRange(
+            new QueueEntry
+            {
+                Id = 70,
+                VisitId = 70,
+                AppointmentId = 1,
+                ServicePointId = 1,
+                CurrentServicePointId = 1,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 1,
+                QueueType = "EXAMINATION",
+                Status = "IN_PROGRESS",
+                PresenceStatus = "PRESENT",
+                ManualPriority = "ELDERLY",
+                ArrivedAt = new DateTime(2026, 10, 22, 7, 50, 0),
+                ReadyAt = new DateTime(2026, 10, 22, 7, 50, 0),
+                CalledAt = new DateTime(2026, 10, 22, 7, 55, 0),
+                StartedAt = new DateTime(2026, 10, 22, 7, 56, 0),
+                StateVersion = 2,
+            },
+            new QueueEntry
+            {
+                Id = 71,
+                VisitId = 71,
+                ServicePointId = 1,
+                CurrentServicePointId = 1,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 2,
+                QueueType = "EXAMINATION",
+                Status = "READY",
+                PresenceStatus = "PRESENT",
+                ManualPriority = "NORMAL",
+                ArrivalClass = "WALK_IN",
+                ArrivedAt = new DateTime(2026, 10, 22, 8, 5, 0),
+                ReadyAt = new DateTime(2026, 10, 22, 8, 5, 0),
+                StateVersion = 1,
+            },
+            new QueueEntry
+            {
+                Id = 72,
+                VisitId = 70,
+                ServicePointId = 3,
+                CurrentServicePointId = 3,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 1,
+                QueueType = "DIAGNOSTIC",
+                Status = "COMPLETED",
+                CompletedAt = new DateTime(2026, 10, 22, 8, 25, 0),
+                StateVersion = 2,
+            });
+        await _db.SaveChangesAsync();
+
+        var res = await _service.CreateReturnToDoctorQueueEntryAsync(
+            actorUserId: 5,
+            idOrCode: "q-070",
+            request: new CreateReturnToDoctorQueueEntryRequest(
+                ServicePointId: "sp-1",
+                ConfirmPresent: true,
+                Reason: "Bệnh nhân đã hoàn tất xét nghiệm máu và X-quang, quay lại đọc kết quả",
+                Notes: "Đủ kết quả CLS bắt buộc",
+                ExpectedStateVersion: 2),
+            ipAddress: "127.0.0.1");
+
+        Assert.Equal("CREATED", res.ActionOutcome);
+        Assert.Equal("q-070", res.PreviousQueueEntryId);
+        Assert.Equal("IN_PROGRESS", res.PreviousStatus);
+        Assert.Equal("READY", res.CurrentStatus);
+        Assert.Equal("RETURN_CONSULTATION", res.QueueType);
+        Assert.Equal("ELDERLY", res.Priority);
+        Assert.Equal("PRESENT", res.PresenceStatus);
+        Assert.Equal("WALK_IN", res.ArrivalClass);
+        Assert.Equal(3, res.QueueNumber);
+        Assert.True(res.FinalResultRequired);
+        Assert.True(res.AllDiagnosticResultsReady);
+        Assert.Equal(0, res.OpenDiagnosticCount);
+        Assert.True(res.IsEligible);
+        Assert.Equal("ELIGIBLE", res.QueueGroup);
+        Assert.Null(res.IneligibleReason);
+        Assert.True(res.CanSafeBackfill);
+        Assert.False(res.IsAppointmentProtected);
+        Assert.Equal(1, res.ServingOrder);
+        Assert.Equal(2, res.PreviousStateVersion);
+        Assert.Equal(1, res.StateVersion);
+
+        var priorExamEntry = await _db.QueueEntries.SingleAsync(q => q.Id == 70);
+        Assert.Equal("COMPLETED", priorExamEntry.Status);
+        Assert.NotNull(priorExamEntry.CompletedAt);
+        Assert.Equal(3, priorExamEntry.StateVersion);
+
+        var updatedVisit = await _db.Visits.SingleAsync(v => v.Id == 70);
+        Assert.Equal("RETURN_CONSULTATION", updatedVisit.Status);
+
+        var audit = await _db.AuditLogs.SingleAsync(a => a.Action == ExaminationQueueService.ReturnToDoctorAction);
+        Assert.Equal(QueueStatusService.QueueEntryEntityType, audit.EntityType);
+
+        var callNext = await _service.CallNextPatientAsync(actorUserId: 5, servicePointId: "sp-1");
+        Assert.Equal("CALLED", callNext.Outcome);
+        Assert.Equal(res.QueueEntryId, callNext.CalledEntry!.Id);
+        Assert.Equal("RETURN_CONSULTATION", callNext.SelectionReason);
+    }
+
+    [Fact]
+    public async Task CreateReturnToDoctorQueueEntryAsync_WhileDiagnosticOpenCreatesWaitingAndBlocksActivationUntilDiagnosticCompleted()
+    {
+        await PrepareCleanServicePointOneAsync();
+
+        _db.Visits.Add(new Visit
+        {
+            Id = 75,
+            VisitCode = "VIS-202610-0075",
+            PatientId = 4,
+            AssignedDoctorId = 1,
+            ExaminationRoomId = 1,
+            CheckedInByStaffId = 3,
+            Status = "AWAITING_DIAGNOSTIC",
+            CheckedInAt = new DateTime(2026, 10, 22, 8, 0, 0),
+        });
+
+        _db.QueueEntries.AddRange(
+            new QueueEntry
+            {
+                Id = 75,
+                VisitId = 75,
+                ServicePointId = 1,
+                CurrentServicePointId = 1,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 1,
+                QueueType = "EXAMINATION",
+                Status = "COMPLETED",
+                CompletedAt = new DateTime(2026, 10, 22, 8, 15, 0),
+                PresenceStatus = "PRESENT",
+                ManualPriority = "NORMAL",
+                ArrivedAt = new DateTime(2026, 10, 22, 8, 0, 0),
+                StateVersion = 2,
+            },
+            new QueueEntry
+            {
+                Id = 76,
+                VisitId = 75,
+                ServicePointId = 3,
+                CurrentServicePointId = 3,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 1,
+                QueueType = "DIAGNOSTIC",
+                Status = "IN_PROGRESS",
+                PresenceStatus = "PRESENT",
+                StateVersion = 1,
+            });
+        await _db.SaveChangesAsync();
+
+        var created = await _service.CreateReturnToDoctorQueueEntryAsync(
+            actorUserId: 5,
+            idOrCode: "VIS-202610-0075",
+            request: new CreateReturnToDoctorQueueEntryRequest(
+                ServicePointId: "sp-1",
+                ConfirmPresent: true,
+                Reason: "Tiếp nhận bệnh nhân quay lại buồng khám chờ kết quả siêu âm",
+                Notes: "Đang chờ kết quả CLS"));
+
+        Assert.Equal("CREATED", created.ActionOutcome);
+        Assert.Equal("WAITING", created.CurrentStatus);
+        Assert.Equal("RETURN_CONSULTATION", created.QueueType);
+        Assert.Equal(2, created.QueueNumber);
+        Assert.True(created.FinalResultRequired);
+        Assert.False(created.AllDiagnosticResultsReady);
+        Assert.Equal(1, created.OpenDiagnosticCount);
+        Assert.False(created.IsEligible);
+        Assert.Equal("NOT_ELIGIBLE", created.QueueGroup);
+        Assert.Equal("AWAITING_RESULTS", created.IneligibleReason);
+        Assert.Equal(1, created.StateVersion);
+
+        // Re-activating while diagnostic is still open must throw ConflictException
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CreateReturnToDoctorQueueEntryAsync(
+                actorUserId: 5,
+                idOrCode: created.QueueEntryId,
+                request: new CreateReturnToDoctorQueueEntryRequest(
+                    ServicePointId: "sp-1",
+                    ConfirmPresent: true,
+                    Reason: "Thử kích hoạt khi CLS chưa xong",
+                    ExpectedStateVersion: 1)));
+
+        // Call-next cannot call the waiting return entry while diagnostic is open
+        var noCall = await _service.CallNextPatientAsync(actorUserId: 5, servicePointId: "sp-1");
+        Assert.Equal("NO_ELIGIBLE_PATIENT", noCall.Outcome);
+
+        // Complete the diagnostic entry
+        var diagEntry = await _db.QueueEntries.SingleAsync(q => q.Id == 76);
+        diagEntry.Status = "COMPLETED";
+        diagEntry.CompletedAt = new DateTime(2026, 10, 22, 8, 28, 0);
+        await _db.SaveChangesAsync();
+
+        // Activate the existing RETURN_CONSULTATION entry in place
+        var activated = await _service.CreateReturnToDoctorQueueEntryAsync(
+            actorUserId: 3, // Assigned doctor 1
+            idOrCode: created.QueueEntryId,
+            request: new CreateReturnToDoctorQueueEntryRequest(
+                ServicePointId: "sp-1",
+                ConfirmPresent: true,
+                Reason: "Kết quả siêu âm đã hoàn tất, kích hoạt lượt khám lại",
+                ExpectedStateVersion: 1));
+
+        Assert.Equal("ACTIVATED", activated.ActionOutcome);
+        Assert.Equal(created.QueueEntryId, activated.QueueEntryId);
+        Assert.Equal(2, activated.QueueNumber); // Preserved queueNumber
+        Assert.Equal("READY", activated.CurrentStatus);
+        Assert.True(activated.AllDiagnosticResultsReady);
+        Assert.Equal(0, activated.OpenDiagnosticCount);
+        Assert.True(activated.IsEligible);
+        Assert.Equal("ELIGIBLE", activated.QueueGroup);
+        Assert.Null(activated.IneligibleReason);
+        Assert.Equal(1, activated.PreviousStateVersion);
+        Assert.Equal(2, activated.StateVersion);
+
+        // Duplicate activation when already READY throws ConflictException
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CreateReturnToDoctorQueueEntryAsync(
+                actorUserId: 3,
+                idOrCode: created.QueueEntryId,
+                request: new CreateReturnToDoctorQueueEntryRequest(
+                    ServicePointId: "sp-1",
+                    ConfirmPresent: true,
+                    Reason: "Kích hoạt trùng khi đã READY",
+                    ExpectedStateVersion: 2)));
+    }
+
+    [Fact]
+    public async Task CreateReturnToDoctorQueueEntryAsync_ValidationOwnershipAndConcurrencyGuards()
+    {
+        await PrepareCleanServicePointOneAsync();
+
+        _db.Visits.Add(new Visit
+        {
+            Id = 80,
+            VisitCode = "VIS-202610-0080",
+            PatientId = 4,
+            AssignedDoctorId = 1,
+            ExaminationRoomId = 1,
+            CheckedInByStaffId = 3,
+            Status = "IN_PROGRESS",
+            CheckedInAt = new DateTime(2026, 10, 22, 8, 10, 0),
+        });
+        _db.QueueEntries.Add(new QueueEntry
+        {
+            Id = 80,
+            VisitId = 80,
+            ServicePointId = 1,
+            CurrentServicePointId = 1,
+            QueueDate = new DateOnly(2026, 10, 22),
+            QueueNumber = 1,
+            QueueType = "EXAMINATION",
+            Status = "IN_PROGRESS",
+            PresenceStatus = "PRESENT",
+            ManualPriority = "NORMAL",
+            ArrivedAt = new DateTime(2026, 10, 22, 8, 10, 0),
+            StateVersion = 2,
+        });
+        await _db.SaveChangesAsync();
+
+        // ExpectedStateVersion mismatch -> 409 Conflict
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CreateReturnToDoctorQueueEntryAsync(
+                actorUserId: 5,
+                idOrCode: "q-080",
+                request: new CreateReturnToDoctorQueueEntryRequest(
+                    ServicePointId: "sp-1",
+                    ConfirmPresent: true,
+                    Reason: "Kiểm tra sai state version",
+                    ExpectedStateVersion: 99)));
+
+        // Wrong service point filter -> 409 Conflict
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CreateReturnToDoctorQueueEntryAsync(
+                actorUserId: 5,
+                idOrCode: "q-080",
+                request: new CreateReturnToDoctorQueueEntryRequest(
+                    ServicePointId: "sp-2",
+                    ConfirmPresent: true,
+                    Reason: "Kiểm tra sai điểm phục vụ")));
+
+        // Doctor 1 (actorUserId: 3) attempting to operate on sp-2 (Doctor 2's entry Id=5) -> 403 Forbidden
+        var sp2Entry = await _db.QueueEntries.SingleAsync(q => q.Id == 5);
+        sp2Entry.Status = "WAITING";
+        var sp2Visit = await _db.Visits.SingleAsync(v => v.Id == 5);
+        sp2Visit.Status = "RETURN_CONSULTATION";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CreateReturnToDoctorQueueEntryAsync(
+                actorUserId: 3,
+                idOrCode: "q-005",
+                request: new CreateReturnToDoctorQueueEntryRequest(
+                    ServicePointId: "sp-2",
+                    ConfirmPresent: true,
+                    Reason: "Bác sĩ phòng 1 thao tác trên phòng 2")));
+
+        // Other hospital entry (Id=20 in hospital 2) -> 403 Forbidden
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CreateReturnToDoctorQueueEntryAsync(
+                actorUserId: 5,
+                idOrCode: "q-020",
+                request: new CreateReturnToDoctorQueueEntryRequest(
+                    ConfirmPresent: true,
+                    Reason: "Thao tác trên bệnh viện khác")));
+    }
+
+    [Fact]
+    public async Task CreateReturnToDoctorQueueEntryAsync_FairnessRotationAndAppointmentProtection_InterleavesWithNormalAndRespectsProtectedSlot()
+    {
+        await PrepareCleanServicePointOneAsync();
+
+        _db.HospitalPolicies.Add(new HospitalPolicy
+        {
+            Id = 250,
+            HospitalId = 1,
+            QueueServicePointId = 1,
+            PolicyType = "QUEUE",
+            PolicyKey = "walkin_priority_ratio",
+            PolicyValue = "{\"priority\":1,\"normal\":1}",
+            PolicyVersion = 2,
+            EffectiveFrom = new DateTime(2026, 10, 1, 0, 0, 0),
+        });
+
+        _db.Visits.AddRange(
+            new Visit
+            {
+                Id = 81,
+                VisitCode = "VIS-202610-0081",
+                PatientId = 1,
+                AppointmentId = 1,
+                AssignedDoctorId = 1,
+                ExaminationRoomId = 1,
+                CheckedInByStaffId = 3,
+                Status = "IN_PROGRESS",
+                CheckedInAt = new DateTime(2026, 10, 22, 7, 45, 0),
+            },
+            new Visit
+            {
+                Id = 82,
+                VisitCode = "VIS-202610-0082",
+                PatientId = 4,
+                AssignedDoctorId = 1,
+                ExaminationRoomId = 1,
+                CheckedInByStaffId = 3,
+                Status = "IN_PROGRESS",
+                CheckedInAt = new DateTime(2026, 10, 22, 7, 50, 0),
+            },
+            new Visit
+            {
+                Id = 83,
+                VisitCode = "VIS-202610-0083",
+                PatientId = 4,
+                AssignedDoctorId = 1,
+                ExaminationRoomId = 1,
+                CheckedInByStaffId = 3,
+                Status = "WAITING",
+                CheckedInAt = new DateTime(2026, 10, 22, 8, 0, 0),
+            });
+
+        _db.QueueEntries.AddRange(
+            new QueueEntry
+            {
+                Id = 81,
+                VisitId = 81,
+                AppointmentId = 1,
+                ServicePointId = 1,
+                CurrentServicePointId = 1,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 1,
+                QueueType = "EXAMINATION",
+                Status = "COMPLETED",
+                CompletedAt = new DateTime(2026, 10, 22, 8, 10, 0),
+                PresenceStatus = "PRESENT",
+                ManualPriority = "NORMAL",
+                ArrivedAt = new DateTime(2026, 10, 22, 7, 45, 0),
+                StateVersion = 2,
+            },
+            new QueueEntry
+            {
+                Id = 82,
+                VisitId = 82,
+                ServicePointId = 1,
+                CurrentServicePointId = 1,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 2,
+                QueueType = "EXAMINATION",
+                Status = "COMPLETED",
+                CompletedAt = new DateTime(2026, 10, 22, 8, 12, 0),
+                PresenceStatus = "PRESENT",
+                ManualPriority = "NORMAL",
+                ArrivedAt = new DateTime(2026, 10, 22, 7, 50, 0),
+                StateVersion = 2,
+            },
+            new QueueEntry
+            {
+                Id = 83,
+                VisitId = 83,
+                ServicePointId = 1,
+                CurrentServicePointId = 1,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 3,
+                QueueType = "EXAMINATION",
+                Status = "READY",
+                PresenceStatus = "PRESENT",
+                ManualPriority = "NORMAL",
+                ArrivalClass = "WALK_IN",
+                ArrivedAt = new DateTime(2026, 10, 22, 8, 0, 0),
+                ReadyAt = new DateTime(2026, 10, 22, 8, 0, 0),
+                StateVersion = 1,
+            });
+        await _db.SaveChangesAsync();
+
+        var return1 = await _service.CreateReturnToDoctorQueueEntryAsync(
+            actorUserId: 5,
+            idOrCode: "VIS-202610-0081",
+            request: new CreateReturnToDoctorQueueEntryRequest(
+                ServicePointId: "sp-1",
+                ConfirmPresent: true,
+                Reason: "Khám lại đọc kết quả CLS bệnh nhân 1"));
+
+        var return2 = await _service.CreateReturnToDoctorQueueEntryAsync(
+            actorUserId: 5,
+            idOrCode: "VIS-202610-0082",
+            request: new CreateReturnToDoctorQueueEntryRequest(
+                ServicePointId: "sp-1",
+                ConfirmPresent: true,
+                Reason: "Khám lại đọc kết quả CLS bệnh nhân 2"));
+
+        Assert.Equal("READY", return1.CurrentStatus);
+        Assert.False(return1.IsAppointmentProtected);
+        Assert.Equal("READY", return2.CurrentStatus);
+
+        // Call 1: return1 (RETURN_CONSULTATION) is called first (counter: 0 -> 1)
+        var call1 = await _service.CallNextPatientAsync(actorUserId: 5, servicePointId: "sp-1");
+        Assert.Equal("CALLED", call1.Outcome);
+        Assert.Equal(return1.QueueEntryId, call1.CalledEntry!.Id);
+        Assert.Equal("RETURN_CONSULTATION", call1.SelectionReason);
+
+        var return1Entity = await _db.QueueEntries.SingleAsync(q => q.VisitId == 81 && q.QueueType == "RETURN_CONSULTATION");
+        return1Entity.Status = "COMPLETED";
+        return1Entity.CompletedAt = new DateTime(2026, 10, 22, 8, 35, 0);
+        var visit81 = await _db.Visits.SingleAsync(v => v.Id == 81);
+        visit81.Status = "COMPLETED";
+        visit81.CompletedAt = new DateTime(2026, 10, 22, 8, 35, 0);
+        await _db.SaveChangesAsync();
+
+        // Call 2: with ratio 1:1 and counter=1, fairness rotation promotes NORMAL entry (q-083) ahead of return2
+        var call2 = await _service.CallNextPatientAsync(actorUserId: 5, servicePointId: "sp-1");
+        Assert.Equal("CALLED", call2.Outcome);
+        Assert.Equal("q-083", call2.CalledEntry!.Id);
+        Assert.Equal("FIFO", call2.SelectionReason);
+    }
 }

@@ -494,7 +494,9 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                 var presenceStatus = NormalizePresenceStatus(q, v);
                 var arrivalClass = NormalizeArrivalClass(q, visitType);
 
-                var scheduledDateTime = q?.ScheduledAt ?? slot?.StartsAt;
+                var scheduledDateTime = queueType == ClinicalQueueRules.QueueTypeReturnConsultation && q is not null && !q.ScheduledAt.HasValue
+                    ? null
+                    : (q?.ScheduledAt ?? slot?.StartsAt);
                 var checkedInDateTime = v?.CheckedInAt ?? q?.ArrivedAt ?? q?.ReadyAt ?? q?.ScheduledAt ?? slot?.StartsAt;
 
                 var scheduledAt = scheduledDateTime?.ToString("HH:mm", CultureInfo.InvariantCulture);
@@ -545,7 +547,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                     Status: status,
                     Priority: priority,
                     PresenceStatus: presenceStatus,
-                    IsScheduled: visitType == "SCHEDULED",
+                    IsScheduled: visitType == "SCHEDULED" && scheduledDateTime.HasValue,
                     StoredArrivalClass: arrivalClass,
                     ScheduledAt: scheduledDateTime,
                     ArrivedAt: q?.ArrivedAt ?? v?.CheckedInAt,
