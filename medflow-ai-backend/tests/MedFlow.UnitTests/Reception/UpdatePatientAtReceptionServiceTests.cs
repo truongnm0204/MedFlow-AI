@@ -105,16 +105,16 @@ public sealed class UpdatePatientAtReceptionServiceTests : IDisposable
         DateOnly? dob = null,
         string phone = "0912345678",
         string? identityCard = null) => new()
-    {
-        FullName = "Trần Thị Bình",
-        DateOfBirth = dob ?? new DateOnly(1990, 5, 20),
-        Gender = "FEMALE",
-        Phone = phone,
-        Address = "12 Lê Lợi, Hà Nội",
-        IdentityCard = identityCard,
-        Email = "binh@medflow.test",
-        BloodType = "A+",
-    };
+        {
+            FullName = "Trần Thị Bình",
+            DateOfBirth = dob ?? new DateOnly(1990, 5, 20),
+            Gender = "FEMALE",
+            Phone = phone,
+            Address = "12 Lê Lợi, Hà Nội",
+            IdentityCard = identityCard,
+            Email = "binh@medflow.test",
+            BloodType = "A+",
+        };
 
     private async Task<Patient> SeedPatientAsync(long id = 10, string code = "PAT-0010", string? hash = null)
     {
