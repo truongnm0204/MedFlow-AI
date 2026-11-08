@@ -41,4 +41,11 @@ public interface IExaminationQueueService
         CallNextPatientRequest? request = null,
         string? ipAddress = null,
         CancellationToken ct = default);
+
+    Task<CreateReturnToDoctorQueueEntryResponseDto> CreateReturnToDoctorQueueEntryAsync(
+        long actorUserId,
+        string idOrCode,
+        CreateReturnToDoctorQueueEntryRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
 }
