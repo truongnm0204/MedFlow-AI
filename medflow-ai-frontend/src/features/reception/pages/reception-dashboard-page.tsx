@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { useLogout } from '@/features/auth/hooks/use-auth';
+import { hasPermission } from '@/features/auth/utils/rbac';
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
@@ -56,6 +57,7 @@ export function ReceptionDashboardPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedPatientCode, setSelectedPatientCode] = useState<string | null>(null);
   const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
+  const canAssignVisit = hasPermission(user?.roles, 'VISIT_ASSIGN');
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
   const [appointments, setAppointments] = useState(TODAY_APPOINTMENTS_MOCK);
   const [selectedCheckIn, setSelectedCheckIn] = useState<ScheduledCheckInAppointment | null>(null);
@@ -168,28 +170,36 @@ export function ReceptionDashboardPage() {
                 <QueuePreviewTable
                   entries={queueEntries}
                   onSelectPatient={setSelectedPatientCode}
-                  onAssignRoom={(entry) => {
-                    setUpdateNotice(null);
-                    setAssigningVisitTarget({
-                      visitIdOrCode: entry.visitCode ?? 'VIS-202610-0001',
-                      patientCode: entry.patientCode,
-                      patientName: entry.patientName,
-                      currentRoomCode: entry.room,
-                      priority: entry.priority,
-                      assignedDoctorName: entry.doctorName,
-                      departmentName: entry.departmentName,
-                    });
-                  }}
-                  onTransferRoom={(entry) => {
-                    setUpdateNotice(null);
-                    setTransferringTarget({
-                      visitIdOrCode: entry.visitCode ?? 'VIS-202610-0002',
-                      patientCode: entry.patientCode,
-                      patientName: entry.patientName,
-                      currentRoomCode: entry.room,
-                      ticketNo: entry.ticketNo,
-                    });
-                  }}
+                  onAssignRoom={
+                    canAssignVisit
+                      ? (entry) => {
+                          setUpdateNotice(null);
+                          setAssigningVisitTarget({
+                            visitIdOrCode: entry.visitCode ?? 'VIS-202610-0001',
+                            patientCode: entry.patientCode,
+                            patientName: entry.patientName,
+                            currentRoomCode: entry.room,
+                            priority: entry.priority,
+                            assignedDoctorName: entry.doctorName,
+                            departmentName: entry.departmentName,
+                          });
+                        }
+                      : undefined
+                  }
+                  onTransferRoom={
+                    canAssignVisit
+                      ? (entry) => {
+                          setUpdateNotice(null);
+                          setTransferringTarget({
+                            visitIdOrCode: entry.visitCode ?? 'VIS-202610-0002',
+                            patientCode: entry.patientCode,
+                            patientName: entry.patientName,
+                            currentRoomCode: entry.room,
+                            ticketNo: entry.ticketNo,
+                          });
+                        }
+                      : undefined
+                  }
                   onPrintTicket={(entry) => setPrintingVisitCode(entry.visitCode ?? entry.ticketNo)}
                 />
               </CardContent>
@@ -203,7 +213,11 @@ export function ReceptionDashboardPage() {
                 </CardHeader>
                 <CardContent className="pt-0">
                   <QuickActionsPanel
-                    actions={QUICK_ACTIONS_MOCK}
+                    actions={QUICK_ACTIONS_MOCK.filter(
+                      (action) =>
+                        (action.id !== 'transfer-room' && action.id !== 'assign-room') ||
+                        canAssignVisit,
+                    )}
                     onAction={(id) => {
                       if (id === 'check-in') {
                         setSelectedCheckIn(SCHEDULED_CHECKIN_APPOINTMENTS_MOCK[0]);

@@ -123,6 +123,30 @@ describe('ReceptionDashboardPage', () => {
     expect(screen.getByDisplayValue('VIS-202610-0009')).toBeInTheDocument();
   });
 
+  it('an thao tac chuyen buong kham khi nguoi dung khong co quyen VISIT_ASSIGN', () => {
+    useAuthStore.setState({
+      user: {
+        id: 99,
+        email: 'staff@medflow.test',
+        fullName: 'Nhân viên không có quyền điều phối',
+        roles: ['PHARMACIST'],
+        patientCode: null,
+      },
+      accessToken: 'tok-pharmacist',
+      refreshToken: 'rtok-pharmacist',
+      isAuthenticated: true,
+    });
+
+    renderPage();
+
+    expect(
+      screen.queryByRole('button', { name: 'Chuyển phòng khám cho Trần Thị Bích' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Chuyển phòng khám tương thích/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it('bao ve route /reception bang RequireAuth va RequireReception', () => {
     useAuthStore.setState({
       user: null,
