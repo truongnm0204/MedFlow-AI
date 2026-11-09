@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Info } from 'lucide-react';
+import { DollarSign, Info } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -8,6 +8,8 @@ import { FormField, formControlClass } from '@/shared/components/form/form-primi
 import { Button } from '@/shared/ui/button';
 
 import { ServiceEditFooter, ServiceEditHeader } from '../components/service-edit-chrome';
+import { ServicePriceHistoryModal } from '../components/service-price-history-modal';
+import { ServicePriceUpdateModal } from '../components/service-price-update-modal';
 import { DEPARTMENTS } from '../data/examination-services-data';
 import {
   examinationServiceSchema,
@@ -27,6 +29,7 @@ export function ServiceEditModal() {
   const setPriceHistoryService = useExaminationServiceStore(
     (state) => state.setPriceHistoryService,
   );
+  const setUpdatePriceService = useExaminationServiceStore((state) => state.setUpdatePriceService);
 
   const [message, setMessage] = useState('');
 
@@ -191,6 +194,15 @@ export function ServiceEditModal() {
                 />
                 <button
                   type="button"
+                  className="mt-1.5 rounded border border-emerald-300 bg-emerald-50 px-2.5 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-100 transition-colors cursor-pointer inline-flex items-center gap-1"
+                  onClick={() => setUpdatePriceService(service)}
+                  title="Cập nhật giá dịch vụ theo UC52"
+                >
+                  <DollarSign className="h-3 w-3" aria-hidden="true" />
+                  Điều chỉnh giá
+                </button>
+                <button
+                  type="button"
                   className="mt-1.5 rounded border border-border px-2 text-[10px] text-sub hover:text-primary transition-colors cursor-pointer"
                   onClick={() => setPriceHistoryService(service)}
                   title="Xem lịch sử giá"
@@ -288,6 +300,8 @@ export function ServiceEditModal() {
           }}
         />
       </form>
+      <ServicePriceHistoryModal />
+      <ServicePriceUpdateModal />
     </div>
   );
 }

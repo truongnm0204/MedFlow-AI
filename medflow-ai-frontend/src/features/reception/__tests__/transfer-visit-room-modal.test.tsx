@@ -252,4 +252,59 @@ describe('TransferVisitRoomModal & visit-room-transfer API', () => {
       }),
     );
   });
+
+  it('hien thi thong bao khi khong co buong kham tuong thich va lich su dieu chuyen trong', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.mocked(apiClient.get).mockResolvedValueOnce({
+      data: {
+        visitId: 100,
+        visitCode: 'VIS-202610-0002',
+        patientId: 2,
+        patientCode: 'BN-2024-0042',
+        patientName: 'Trần Thị Bích',
+        visitStatus: 'WAITING',
+        currentRoomId: 1,
+        currentRoomCode: 'RM-001',
+        currentRoomName: 'Khám Tiêu hóa 101',
+        departmentId: 2,
+        departmentCode: 'GI',
+        departmentName: 'Khoa Tiêu hóa',
+        assignedDoctorId: 1,
+        assignedDoctorCode: 'DOC-001',
+        assignedDoctorName: 'BS Nguyễn Minh Đức',
+        queueNumber: 13,
+        queueStatus: 'WAITING',
+        compatibleRooms: [],
+        transferHistory: [],
+      },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TransferVisitRoomModal
+          open
+          target={{
+            visitIdOrCode: 'VIS-202610-0002',
+            patientCode: 'BN-2024-0042',
+            patientName: 'Trần Thị Bích',
+            currentRoomCode: 'RM-001',
+            ticketNo: 'A013',
+          }}
+          fallbackRooms={[]}
+          fallbackHistory={[]}
+          onClose={vi.fn()}
+          onTransferred={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      await screen.findByText(
+        'Không tìm thấy buồng khám lâm sàng tương thích nào cùng chuyên khoa cho lượt khám này.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Chưa có lịch sử điều chuyển phòng cho lượt khám này.'),
+    ).toBeInTheDocument();
+  });
 });

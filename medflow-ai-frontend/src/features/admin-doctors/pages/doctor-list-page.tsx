@@ -1,10 +1,11 @@
-import { Download, Search, SlidersHorizontal, UserPlus } from 'lucide-react';
+import { CheckCircle2, Download, Search, SlidersHorizontal, UserPlus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 
 import { Button } from '@/shared/ui/button';
 
 import { AdminDoctorShell } from '../components/admin-doctor-shell';
+import { DoctorDeactivateModal } from '../components/doctor-deactivate-modal';
 import { DoctorMetrics } from '../components/doctor-metrics';
 import { DoctorPagination } from '../components/doctor-pagination';
 import { DoctorTable } from '../components/doctor-table';
@@ -48,8 +49,9 @@ export function DoctorListPage() {
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [deactivatingDoctor, setDeactivatingDoctor] = useState<Doctor | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.ctrlKey && event.key.toLowerCase() === 'k') {
@@ -98,6 +100,28 @@ export function DoctorListPage() {
         ? ids.filter((id) => !visible.some((doctor) => doctor.id === id))
         : [...new Set([...ids, ...visible.map((doctor) => doctor.id)])],
     );
+
+  const handleConfirmDeactivate = (doctorId: string) => {
+    const doctor = doctors.find((item) => item.id === doctorId);
+    if (doctor) {
+      updateDoctor({ ...doctor, active: false });
+      setFeedbackMessage(`Đã chuyển trạng thái bác sĩ ${doctor.name} sang Ngừng hoạt động.`);
+      setTimeout(() => setFeedbackMessage(null), 4000);
+    }
+    setDeactivatingDoctor(null);
+  };
+
+  const handleToggleStatus = (id: string) => {
+    const doctor = doctors.find((item) => item.id === id);
+    if (!doctor) return;
+    if (doctor.active) {
+      setDeactivatingDoctor(doctor);
+    } else {
+      updateDoctor({ ...doctor, active: true });
+      setFeedbackMessage(`Đã kích hoạt lại hoạt động cho bác sĩ ${doctor.name}.`);
+      setTimeout(() => setFeedbackMessage(null), 4000);
+    }
+  };
 
   return (
     <AdminDoctorShell showTabs>
@@ -164,8 +188,8 @@ export function DoctorListPage() {
                 onChange={(event) => updateFilter(setStatus, event.target.value)}
               >
                 <option value="">Tất cả trạng thái</option>
-                <option value="true">Đang nhận lịch</option>
-                <option value="false">Tạm ngừng nhận lịch</option>
+                <option value="true">Đang hoạt động</option>
+                <option value="false">Ngừng hoạt động</option>
               </select>
             </div>
 
@@ -203,10 +227,8 @@ export function DoctorListPage() {
             selectedIds={selectedIds}
             onToggleSelection={toggleSelection}
             onToggleAll={toggleAll}
-            onToggleStatus={(id) => {
-              const doctor = doctors.find((item) => item.id === id);
-              if (doctor) updateDoctor({ ...doctor, active: !doctor.active });
-            }}
+            onToggleStatus={handleToggleStatus}
+            onRequestDeactivate={(doc) => setDeactivatingDoctor(doc)}
           />
           <DoctorPagination
             count={filtered.length}
@@ -217,6 +239,22 @@ export function DoctorListPage() {
           />
         </section>
       </main>
+      <DoctorDeactivateModal
+        doctor={deactivatingDoctor}
+        open={Boolean(deactivatingDoctor)}
+        onClose={() => setDeactivatingDoctor(null)}
+        onConfirm={handleConfirmDeactivate}
+      />
+      {feedbackMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800 shadow-lg animate-in fade-in"
+        >
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+          <span>{feedbackMessage}</span>
+        </div>
+      )}
       <Outlet />
     </AdminDoctorShell>
   );
