@@ -4,13 +4,14 @@ import { apiClient } from '@/shared/lib/axios';
 
 import {
   openMockConsultationWorkspace,
+  recordMockClinicalExamination,
   resolveMockConsultationWorkspace,
 } from '../data/consultation-workspace-mock';
 import type {
   ConsultationWorkspaceResponseDto,
   OpenConsultationWorkspaceRequest,
+  RecordClinicalExaminationRequest,
 } from '../types/consultation-workspace.types';
-
 /** Chỉ fallback về mock khi offline/network error (endpoint thực tế đã có và trả 4xx cho lỗi nghiệp vụ). */
 function shouldFallbackToMock(error: unknown): boolean {
   if (!axios.isAxiosError(error)) return false;
@@ -81,4 +82,31 @@ export async function openConsultationWorkspace(
   }
 
   return openMockConsultationWorkspace(idOrCode, payload);
+}
+
+/**
+ * Ghi nhận triệu chứng, sinh hiệu và khám lâm sàng (`POST /doctor/consultation/{idOrCode}/clinical-examination` — UC33 / #110).
+ * Tạo phiên bản mới trong `medical_record_revisions` (append-only) và trả về workspace cập nhật.
+ */
+export async function recordClinicalExamination(
+  idOrCode: string,
+  payload: RecordClinicalExaminationRequest,
+): Promise<ConsultationWorkspaceResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ConsultationWorkspaceResponseDto>(
+        `/doctor/consultation/${encoded}/clinical-examination`,
+        payload,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return recordMockClinicalExamination(idOrCode, payload);
 }

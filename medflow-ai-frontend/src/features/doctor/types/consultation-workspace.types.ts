@@ -6,7 +6,8 @@ import type {
 } from './doctor-assigned-queue.types';
 import type { AssignedQueueType, VisitPriority } from './doctor.types';
 
-export type ConsultationActionOutcome = 'VIEWED' | 'OPENED' | 'ALREADY_IN_PROGRESS';
+export type ConsultationActionOutcome =
+  'VIEWED' | 'OPENED' | 'ALREADY_IN_PROGRESS' | 'CLINICAL_EXAMINATION_RECORDED';
 
 export type ConsultationWorkspaceState =
   'WAITING' | 'CALLED' | 'IN_PROGRESS' | 'AWAITING_RESULTS' | 'RETURN_CONSULTATION' | 'COMPLETED';
@@ -190,4 +191,34 @@ export interface ConsultationWorkspaceResponseDto {
 export interface OpenConsultationWorkspaceRequest {
   expectedStateVersion?: number | null;
   notes?: string | null;
+}
+
+export interface RecordClinicalVitalSignsRequest {
+  bpSystolicMmhg?: number | null;
+  bpDiastolicMmhg?: number | null;
+  pulseBpm?: number | null;
+  temperatureC?: number | null;
+  spo2Percent?: number | null;
+  heightCm?: number | null;
+  weightKg?: number | null;
+}
+
+export interface RecordClinicalExaminationRequest {
+  presentingComplaint?: string | null;
+  symptomHistory?: string | null;
+  relevantHistoryAllergies?: string | null;
+  vitalSigns?: RecordClinicalVitalSignsRequest | null;
+  bpSystolicMmhg?: number | null;
+  bpDiastolicMmhg?: number | null;
+  pulseBpm?: number | null;
+  temperatureC?: number | null;
+  spo2Percent?: number | null;
+  heightCm?: number | null;
+  weightKg?: number | null;
+  clinicalFindings?: string | null;
+  clinicalConclusion?: string | null;
+  amendmentReason?: string | null;
+  isConfirmed?: boolean | null;
+  expectedStateVersion?: number | null;
+  expectedRevisionNo?: number | null;
 }

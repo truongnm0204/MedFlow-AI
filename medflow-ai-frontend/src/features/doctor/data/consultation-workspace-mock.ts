@@ -1,9 +1,14 @@
+import {
+  calculateClinicalBmi,
+  formatBloodPressureLabel,
+} from '../schemas/consultation-workspace.schema';
 import type {
   ConsultationDiagnosticSummaryDto,
   ConsultationWorkspaceActionDto,
   ConsultationWorkspaceResponseDto,
   ConsultationWorkspaceState,
   OpenConsultationWorkspaceRequest,
+  RecordClinicalExaminationRequest,
 } from '../types/consultation-workspace.types';
 import { DOCTOR_WORKBENCH_META } from './doctor-mock-data';
 
@@ -875,6 +880,109 @@ export function openMockConsultationWorkspace(
         base.clinicalContext.presentingComplaint ??
         base.visit.reasonForVisit ??
         (request?.notes ? request.notes.trim() : null),
+    },
+    allowedActions: buildAllowedActions(
+      'IN_PROGRESS',
+      true,
+      false,
+      base.clinicalContext.diagnosticSummary,
+    ),
+  };
+}
+
+export function recordMockClinicalExamination(
+  idOrCode: string,
+  request: RecordClinicalExaminationRequest,
+): ConsultationWorkspaceResponseDto {
+  const base = resolveMockConsultationWorkspace(idOrCode);
+  const currentRevisionNo = base.clinicalContext.currentRevisionNo ?? 1;
+  const nextRevisionNo = currentRevisionNo + 1;
+
+  const v = request.vitalSigns;
+  const bpSystolic =
+    v?.bpSystolicMmhg ?? request.bpSystolicMmhg ?? base.clinicalContext.vitalSigns.bpSystolicMmhg;
+  const bpDiastolic =
+    v?.bpDiastolicMmhg ??
+    request.bpDiastolicMmhg ??
+    base.clinicalContext.vitalSigns.bpDiastolicMmhg;
+  const pulseBpm = v?.pulseBpm ?? request.pulseBpm ?? base.clinicalContext.vitalSigns.pulseBpm;
+  const temperatureC =
+    v?.temperatureC ?? request.temperatureC ?? base.clinicalContext.vitalSigns.temperatureC;
+  const spo2Percent =
+    v?.spo2Percent ?? request.spo2Percent ?? base.clinicalContext.vitalSigns.spo2Percent;
+  const heightCm = v?.heightCm ?? request.heightCm ?? base.clinicalContext.vitalSigns.heightCm;
+  const weightKg = v?.weightKg ?? request.weightKg ?? base.clinicalContext.vitalSigns.weightKg;
+
+  const presentar =
+    request.presentingComplaint !== undefined && request.presentingComplaint !== null
+      ? request.presentingComplaint.trim() || base.clinicalContext.presentingComplaint
+      : base.clinicalContext.presentingComplaint;
+  const symptomHistory =
+    request.symptomHistory !== undefined && request.symptomHistory !== null
+      ? request.symptomHistory.trim() || base.clinicalContext.symptomHistory
+      : base.clinicalContext.symptomHistory;
+  const relevantHistoryAllergies =
+    request.relevantHistoryAllergies !== undefined && request.relevantHistoryAllergies !== null
+      ? request.relevantHistoryAllergies.trim() || base.clinicalContext.relevantHistoryAllergies
+      : base.clinicalContext.relevantHistoryAllergies;
+  const clinicalFindings =
+    request.clinicalFindings !== undefined && request.clinicalFindings !== null
+      ? request.clinicalFindings.trim() || base.clinicalContext.clinicalFindings
+      : base.clinicalContext.clinicalFindings;
+  const clinicalConclusion =
+    request.clinicalConclusion !== undefined && request.clinicalConclusion !== null
+      ? request.clinicalConclusion.trim() || base.clinicalContext.clinicalConclusion
+      : base.clinicalContext.clinicalConclusion;
+  const amendmentReason =
+    request.amendmentReason !== undefined && request.amendmentReason !== null
+      ? request.amendmentReason.trim() || null
+      : null;
+
+  return {
+    ...base,
+    actionOutcome: 'CLINICAL_EXAMINATION_RECORDED',
+    workspaceState: 'IN_PROGRESS',
+    canEditClinical: true,
+    readOnlyReason: null,
+    generatedAtUtc: '2026-11-07T02:35:00Z',
+    visit: {
+      ...base.visit,
+      status: 'IN_PROGRESS',
+      statusLabel: 'Đang khám lâm sàng',
+    },
+    patient: {
+      ...base.patient,
+      allergiesSummary: relevantHistoryAllergies ?? base.patient.allergiesSummary,
+    },
+    clinicalContext: {
+      ...base.clinicalContext,
+      medicalRecordId: base.clinicalContext.medicalRecordId ?? 801,
+      medicalRecordStatus: 'DRAFT',
+      currentRevisionNo: nextRevisionNo,
+      isConfirmed: request.isConfirmed ?? true,
+      lastRecordedAt: '2026-11-07T08:15:00',
+      presentingComplaint: presentar,
+      symptomHistory,
+      relevantHistoryAllergies,
+      vitalSigns: {
+        bpSystolicMmhg: bpSystolic,
+        bpDiastolicMmhg: bpDiastolic,
+        bloodPressureLabel: formatBloodPressureLabel(bpSystolic, bpDiastolic),
+        pulseBpm,
+        temperatureC:
+          temperatureC !== null && temperatureC !== undefined
+            ? Math.round(temperatureC * 10) / 10
+            : null,
+        spo2Percent,
+        heightCm:
+          heightCm !== null && heightCm !== undefined ? Math.round(heightCm * 10) / 10 : null,
+        weightKg:
+          weightKg !== null && weightKg !== undefined ? Math.round(weightKg * 10) / 10 : null,
+        bmi: calculateClinicalBmi(heightCm, weightKg),
+      },
+      clinicalFindings,
+      clinicalConclusion,
+      amendmentReason,
     },
     allowedActions: buildAllowedActions(
       'IN_PROGRESS',
