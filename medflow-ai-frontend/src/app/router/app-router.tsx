@@ -260,6 +260,16 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin/roles/new"
+        element={
+          <RequireAuth>
+            <RequireSystemAdmin>
+              <RoleListPage initialCreateOpen />
+            </RequireSystemAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/roles/permissions"
         element={
           <RequireAuth>

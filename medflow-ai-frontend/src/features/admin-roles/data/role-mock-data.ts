@@ -1,4 +1,5 @@
 import type {
+  CreateRoleRequest,
   PermissionGroup,
   RoleItem,
   RoleMetrics,
@@ -333,6 +334,47 @@ export function updateMockRolePermissions(roleId: string, permissionCodes: strin
 
   currentMockRoles[index] = updatedRole;
   return cloneRoleItem(updatedRole);
+}
+
+export function createMockRole(payload: CreateRoleRequest): RoleItem {
+  const code = payload.code.trim().toUpperCase();
+  const name = payload.name.trim();
+
+  if (currentMockRoles.some((role) => role.code.toUpperCase() === code)) {
+    throw new Error(`Mã vai trò '${code}' đã tồn tại trong hệ thống.`);
+  }
+
+  if (currentMockRoles.some((role) => role.name.trim().toLowerCase() === name.toLowerCase())) {
+    throw new Error(`Tên vai trò '${name}' đã tồn tại trong hệ thống.`);
+  }
+
+  const codeSet = new Set((payload.permissionCodes ?? []).map((item) => item.trim().toUpperCase()));
+  const nextPermissions = SYSTEM_PERMISSION_LIST.filter((perm) => codeSet.has(perm.code)).map(
+    (perm) => ({ ...perm }),
+  );
+
+  const nextNumericId = currentMockRoles.length + 1;
+  const createdRole: RoleItem = {
+    roleId: nextNumericId,
+    id: `ROL-${String(nextNumericId).padStart(2, '0')}`,
+    code,
+    name,
+    description: payload.description?.trim() || `Vai trò cấu hình mở rộng: ${name}.`,
+    scope: payload.scope || 'OPERATIONAL',
+    isSystemRole: false,
+    assignedUsersCount: 0,
+    activeUsersCount: 0,
+    permissionCount: nextPermissions.length,
+    permissions: nextPermissions,
+    status: payload.status || 'ACTIVE',
+    updatedAt: 'Hôm nay',
+    segregationNote:
+      payload.segregationNote?.trim() ||
+      'Tuân thủ nguyên tắc phân quyền tối thiểu (Least Privilege).',
+  };
+
+  currentMockRoles = [...currentMockRoles, createdRole];
+  return cloneRoleItem(createdRole);
 }
 
 export function resetMockRolesCatalog(): void {

@@ -98,6 +98,13 @@ export const ROUTE_ROLE_ACCESS_RULES: readonly RouteRoleAccessRule[] = [
     requiredPermission: 'USER_MANAGE',
   },
   {
+    prefix: '/admin/roles/new',
+    label: 'Tạo vai trò mới (UC58)',
+    guardName: 'RequireSystemAdmin',
+    allowedRoles: ['SYSTEM_ADMIN'],
+    requiredPermission: 'USER_MANAGE',
+  },
+  {
     prefix: '/admin/roles',
     label: 'Danh mục Vai trò & Phân quyền (UC58)',
     guardName: 'RequireAdmin',

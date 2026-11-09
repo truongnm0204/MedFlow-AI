@@ -118,3 +118,5 @@ export async function fetchRoleByIdApi(roleId: number): Promise<RoleItem> {
   const { data } = await apiClient.get<RoleListItemDto>(`/admin/roles/${roleId}`);
   return mapRoleItemDto(data);
 }
+
+export { createRoleApi } from './role-permissions.api';

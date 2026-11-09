@@ -7,6 +7,7 @@ import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert, Button, toast } from '@/shared/ui';
 
 import { RoleAccessCheckPanel } from '../components/role-access-check-panel';
+import { RoleCreateModal } from '../components/role-create-modal';
 import { RoleDetailModal } from '../components/role-detail-modal';
 import { RoleFilterBar } from '../components/role-filters';
 import { RoleMetricsCards } from '../components/role-metrics';
@@ -21,9 +22,11 @@ import {
 } from '../data/role-mock-data';
 import {
   useAssignRolePermissions,
+  useCreateRole,
   useRolesPermissionsCatalog,
 } from '../hooks/use-role-permissions';
 import type {
+  CreateRoleRequest,
   RoleFilters,
   RoleItem,
   RoleViewMode,
@@ -69,16 +72,21 @@ function downloadRolesCsv(items: RoleItem[]) {
 
 export interface RoleListPageProps {
   initialView?: RoleViewMode;
+  initialCreateOpen?: boolean;
 }
 
 /** SCR-ADM-ROLE-01 & SCR-ADM-ROLE-02 — RBAC system role list and permission assignment matrix. */
-export function RoleListPage({ initialView = 'list' }: RoleListPageProps = {}) {
+export function RoleListPage({
+  initialView = 'list',
+  initialCreateOpen = false,
+}: RoleListPageProps = {}) {
   const user = useAuthStore((state) => state.user);
   const canManageRoles = !user || user.roles.includes('SYSTEM_ADMIN');
   const isReadOnlyAdmin = Boolean(user) && !canManageRoles;
 
   const catalogQuery = useRolesPermissionsCatalog();
   const assignMutation = useAssignRolePermissions();
+  const createMutation = useCreateRole();
 
   const roles = catalogQuery.data?.roles ?? ROLES_MOCK_DATA;
   const metrics = catalogQuery.data?.metrics ?? ROLE_METRICS_MOCK;
@@ -92,10 +100,13 @@ export function RoleListPage({ initialView = 'list' }: RoleListPageProps = {}) {
   const [page, setPage] = useState(1);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [assigningRoleId, setAssigningRoleId] = useState<string | null>(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(
+    Boolean(initialCreateOpen && canManageRoles),
+  );
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [pageErrorMessage, setPageErrorMessage] = useState<string | null>(null);
   const [modalErrorMessage, setModalErrorMessage] = useState<string | null>(null);
-
+  const [createModalErrorMessage, setCreateModalErrorMessage] = useState<string | null>(null);
   const selectedRole = useMemo(
     () => roles.find((item) => item.id === selectedRoleId) ?? null,
     [roles, selectedRoleId],
@@ -137,6 +148,35 @@ export function RoleListPage({ initialView = 'list' }: RoleListPageProps = {}) {
     if (!canManageRoles) return;
     setModalErrorMessage(null);
     setAssigningRoleId(role.id);
+  };
+
+  const handleOpenCreateModal = () => {
+    if (!canManageRoles) return;
+    setCreateModalErrorMessage(null);
+    setIsCreateModalOpen(true);
+  };
+
+  const handleCreateRole = async (payload: CreateRoleRequest) => {
+    setStatusMessage(null);
+    setPageErrorMessage(null);
+    setCreateModalErrorMessage(null);
+    try {
+      const created = await createMutation.mutateAsync(payload);
+      setStatusMessage(
+        `Đã tạo vai trò ${created.name} (${created.code}) thành công với ${created.permissions.length} quyền hạn khởi tạo.`,
+      );
+      toast.success(
+        `Đã thêm vai trò ${created.name} (${created.code}) vào danh mục RBAC.`,
+        'Tạo vai trò thành công',
+      );
+      setPage(Math.max(1, Math.ceil((filtered.length + 1) / PAGE_SIZE)));
+      setIsCreateModalOpen(false);
+    } catch (err) {
+      const msg = getErrorMessage(err, 'Không thể tạo vai trò mới.');
+      setCreateModalErrorMessage(msg);
+      setPageErrorMessage(msg);
+      toast.error(msg, 'Lỗi tạo vai trò');
+    }
   };
 
   const handleSavePermissions = async (payload: UpdateRolePermissionsRequest) => {
@@ -286,7 +326,7 @@ export function RoleListPage({ initialView = 'list' }: RoleListPageProps = {}) {
           filters={filters}
           onChange={updateFilters}
           onExport={() => downloadRolesCsv(filtered)}
-          onAdd={canManageRoles ? () => undefined : undefined}
+          onAdd={canManageRoles ? handleOpenCreateModal : undefined}
         />
 
         {viewMode === 'list' ? (
@@ -331,6 +371,16 @@ export function RoleListPage({ initialView = 'list' }: RoleListPageProps = {}) {
           setAssigningRoleId(null);
         }}
         onSave={handleSavePermissions}
+      />
+      <RoleCreateModal
+        open={isCreateModalOpen && canManageRoles}
+        isSubmitting={createMutation.isPending}
+        serverError={createModalErrorMessage}
+        onClose={() => {
+          setCreateModalErrorMessage(null);
+          setIsCreateModalOpen(false);
+        }}
+        onCreate={handleCreateRole}
       />
     </AdminPortalShell>
   );

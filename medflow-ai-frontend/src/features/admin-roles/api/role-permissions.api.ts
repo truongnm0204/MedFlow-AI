@@ -4,12 +4,14 @@ import { apiClient } from '@/shared/lib/axios';
 
 import { mapRoleItemDto, mapRoleMetricsDto } from './role.api';
 import {
+  createMockRole,
   getMockRolesCatalog,
   SYSTEM_PERMISSION_LIST,
   updateMockRolePermissions,
 } from '../data/role-mock-data';
 import type {
   AssignRolePermissionsResponseDto,
+  CreateRoleRequest,
   GetRoleListParams,
   RoleItem,
   RoleListItemDto,
@@ -26,7 +28,7 @@ function shouldFallbackToMock(error: unknown): boolean {
 }
 
 function shouldUseHttpApi(): boolean {
-  if ('mock' in apiClient.get || 'mock' in apiClient.put) return true;
+  if ('mock' in apiClient.get || 'mock' in apiClient.put || 'mock' in apiClient.post) return true;
   if (import.meta.env.MODE === 'test') return false;
   return (
     typeof window !== 'undefined' && Boolean(window.localStorage?.getItem('medflow.access_token'))
@@ -138,4 +140,43 @@ export async function assignRolePermissionsApi(
   }
 
   return updateMockRolePermissions(payload.roleId, payload.permissionCodes);
+}
+
+export async function createRoleApi(payload: CreateRoleRequest): Promise<RoleItem> {
+  const trimmedDescription = payload.description?.trim();
+  const trimmedSegregationNote = payload.segregationNote?.trim();
+  const trimmedNote = payload.note?.trim();
+
+  const body: CreateRoleRequest = {
+    code: payload.code.trim().toUpperCase(),
+    name: payload.name.trim(),
+    scope: payload.scope ?? 'OPERATIONAL',
+    status: payload.status ?? 'ACTIVE',
+    ...(trimmedDescription ? { description: trimmedDescription } : {}),
+    ...(trimmedSegregationNote ? { segregationNote: trimmedSegregationNote } : {}),
+    ...(payload.permissionCodes ? { permissionCodes: payload.permissionCodes } : {}),
+    ...(trimmedNote ? { note: trimmedNote } : {}),
+  };
+
+  if (shouldUseHttpApi()) {
+    try {
+      const { data } = await apiClient.post<RoleItem | RoleListItemDto>('/admin/roles', body);
+      const createdRole =
+        'roleId' in data && typeof data.roleId === 'number'
+          ? mapRoleItemDto(data as RoleListItemDto)
+          : (data as RoleItem);
+      try {
+        createMockRole(body);
+      } catch {
+        // Role may already exist in mock catalog; ignore mock sync error
+      }
+      return createdRole;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return createMockRole(body);
 }
