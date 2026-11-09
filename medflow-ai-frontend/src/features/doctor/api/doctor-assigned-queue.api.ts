@@ -6,6 +6,8 @@ import { DOCTOR_ASSIGNED_QUEUE_MOCK } from '../data/doctor-assigned-queue-mock';
 import type {
   DoctorAssignedQueueQueryParams,
   DoctorAssignedQueueResponseDto,
+  DoctorCallNextRequestPayload,
+  DoctorCallNextResponseDto,
 } from '../types/doctor-assigned-queue.types';
 
 /** Chỉ fallback về mock khi offline/network error (endpoint thực tế đã có và trả 404 cho lỗi nghiệp vụ). */
@@ -40,4 +42,17 @@ export async function fetchDoctorAssignedQueue(
   }
 
   return DOCTOR_ASSIGNED_QUEUE_MOCK;
+}
+
+export async function callNextDoctorPatient(
+  servicePointId: string,
+  payload?: DoctorCallNextRequestPayload,
+): Promise<DoctorCallNextResponseDto> {
+  const encoded = encodeURIComponent(servicePointId.trim());
+  const body = payload?.notes !== undefined ? { notes: payload.notes } : {};
+  const { data } = await apiClient.post<DoctorCallNextResponseDto>(
+    `/queue/service-points/${encoded}/call-next`,
+    body,
+  );
+  return data;
 }

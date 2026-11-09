@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { Spinner } from '@/shared/ui/spinner';
 
 import { ApplyClinicalPriorityModal } from '../components/apply-clinical-priority-modal';
+import { CallNextResultBanner } from '../components/call-next-result-banner';
 import { CancelQueueEntryModal } from '../components/cancel-queue-entry-modal';
 import { EarlyArrivalBackfillModal } from '../components/early-arrival-backfill-modal';
 import { ExaminationQueueEmptyState } from '../components/examination-queue-empty-state';
@@ -29,12 +30,13 @@ import { ReceptionSidebar } from '../components/reception-sidebar';
 import { UpdateQueueStatusModal } from '../components/update-queue-status-modal';
 import { DEFAULT_QUEUE_DATE } from '../data/examination-queue-mock';
 import { findPatientDetailByCode } from '../data/patient-detail-mock';
-import { useExaminationQueue } from '../hooks/use-examination-queue';
+import { useCallNextEligiblePatient, useExaminationQueue } from '../hooks/use-examination-queue';
 import {
   examinationQueueFilterSchema,
   type ExaminationQueueFilterFormValues,
 } from '../schemas/examination-queue-filter.schema';
 import type {
+  CallNextPatientResponseDto,
   EarlyArrivalBackfillResponseDto,
   EarlyArrivalBackfillTarget,
   ExaminationQueueEntryDto,
@@ -103,6 +105,10 @@ export function ExaminationQueuePage() {
     Record<string, Partial<ExaminationQueueEntryDto>>
   >({});
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
+  const [callingServicePointId, setCallingServicePointId] = useState<string | null>(null);
+  const [callNextResult, setCallNextResult] = useState<CallNextPatientResponseDto | null>(null);
+  const [callNextError, setCallNextError] = useState<string | null>(null);
+  const callNextMutation = useCallNextEligiblePatient();
   const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
 
   const { data, isPending, isError, error, refetch } = useExaminationQueue({
@@ -133,6 +139,7 @@ export function ExaminationQueuePage() {
     const rawPoints = data?.servicePoints ?? [];
     return rawPoints.map((sp) => {
       const overrideKey = `${appliedFilters.queueDate}:${sp.servicePointId}`;
+      const hasEntryOverride = overrideKey in entryOverridesByServicePoint;
       const baseEntries = entryOverridesByServicePoint[overrideKey] ?? sp.entries;
       const entries = baseEntries.map((entry) => {
         const override = statusOverrides[entry.id];
@@ -159,7 +166,9 @@ export function ExaminationQueuePage() {
         inProgressCount,
         completedCount,
         skippedCount,
-        currentServingTicketNo: currentServingEntry?.ticketNo ?? sp.currentServingTicketNo,
+        currentServingTicketNo: hasEntryOverride
+          ? (currentServingEntry?.ticketNo ?? null)
+          : (currentServingEntry?.ticketNo ?? sp.currentServingTicketNo),
         nextTicketNo: nextWaitingEntry?.ticketNo ?? null,
       };
     });
@@ -330,6 +339,47 @@ export function ExaminationQueuePage() {
     setCancelTarget(null);
   };
 
+  const handleCallNext = async (servicePoint: ServicePointQueueDto) => {
+    setUpdateNotice(null);
+    setBackfillNotice(null);
+    setCallNextResult(null);
+    setCallNextError(null);
+    setCallingServicePointId(servicePoint.servicePointId);
+
+    try {
+      const result = await callNextMutation.mutateAsync({
+        servicePointId: servicePoint.servicePointId,
+      });
+      const requestedKey = `${appliedFilters.queueDate}:${servicePoint.servicePointId}`;
+      const responseKey = `${appliedFilters.queueDate}:${result.servicePointId}`;
+      setEntryOverridesByServicePoint((prev) => ({
+        ...prev,
+        [requestedKey]: result.entries,
+        [responseKey]: result.entries,
+      }));
+      setStatusOverrides((prev) => {
+        const entryIdsToClear = new Set([
+          ...servicePoint.entries.map((entry) => entry.id),
+          ...result.entries.map((entry) => entry.id),
+        ]);
+        const next = { ...prev };
+        let changed = false;
+        for (const id of entryIdsToClear) {
+          if (id in next) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+      setCallNextResult(result);
+    } catch (err) {
+      setCallNextError(getErrorMessage(err, 'Không thể gọi bệnh nhân tiếp theo.'));
+    } finally {
+      setCallingServicePointId(null);
+    }
+  };
+
   const servicePointOptions = useMemo(() => {
     const totalCount = servicePoints.reduce((acc, sp) => acc + sp.entries.length, 0);
     return [
@@ -391,52 +441,48 @@ export function ExaminationQueuePage() {
           sp.servicePointId === appliedFilters.servicePointId,
       )
       .map((sp) => {
-        const filteredEntries = sp.entries
-          .filter((entry) => {
-            if (appliedFilters.status !== 'ALL' && entry.status !== appliedFilters.status) {
-              return false;
-            }
-            if (appliedFilters.priority !== 'ALL' && entry.priority !== appliedFilters.priority) {
-              return false;
-            }
-            if (
-              appliedFilters.queueType !== 'ALL' &&
-              entry.queueType !== appliedFilters.queueType
-            ) {
-              return false;
-            }
-            if (
-              appliedFilters.visitType !== 'ALL' &&
-              entry.visitType !== appliedFilters.visitType
-            ) {
-              return false;
-            }
-            if (
-              appliedFilters.arrivalClass !== 'ALL' &&
-              entry.arrivalClass !== appliedFilters.arrivalClass
-            ) {
-              return false;
-            }
-            if (kw) {
-              const matchesKeyword =
-                entry.ticketNo.toLowerCase().includes(kw) ||
-                entry.patientName.toLowerCase().includes(kw) ||
-                entry.patientCode.toLowerCase().includes(kw) ||
-                entry.visitCode.toLowerCase().includes(kw) ||
-                entry.roomCode.toLowerCase().includes(kw);
-              if (!matchesKeyword) return false;
-            }
-            return true;
-          })
-          .sort((a, b) => a.servingOrder - b.servingOrder);
-
+        const overrideKey = `${appliedFilters.queueDate}:${sp.servicePointId}`;
+        const hasBackendOrderOverride = overrideKey in entryOverridesByServicePoint;
+        const matchingEntries = sp.entries.filter((entry) => {
+          if (appliedFilters.status !== 'ALL' && entry.status !== appliedFilters.status) {
+            return false;
+          }
+          if (appliedFilters.priority !== 'ALL' && entry.priority !== appliedFilters.priority) {
+            return false;
+          }
+          if (appliedFilters.queueType !== 'ALL' && entry.queueType !== appliedFilters.queueType) {
+            return false;
+          }
+          if (appliedFilters.visitType !== 'ALL' && entry.visitType !== appliedFilters.visitType) {
+            return false;
+          }
+          if (
+            appliedFilters.arrivalClass !== 'ALL' &&
+            entry.arrivalClass !== appliedFilters.arrivalClass
+          ) {
+            return false;
+          }
+          if (kw) {
+            const matchesKeyword =
+              entry.ticketNo.toLowerCase().includes(kw) ||
+              entry.patientName.toLowerCase().includes(kw) ||
+              entry.patientCode.toLowerCase().includes(kw) ||
+              entry.visitCode.toLowerCase().includes(kw) ||
+              entry.roomCode.toLowerCase().includes(kw);
+            if (!matchesKeyword) return false;
+          }
+          return true;
+        });
+        const filteredEntries = hasBackendOrderOverride
+          ? matchingEntries
+          : [...matchingEntries].sort((a, b) => a.servingOrder - b.servingOrder);
         return {
           ...sp,
           entries: filteredEntries,
         };
       })
       .filter((sp) => (hasEntryFilter ? sp.entries.length > 0 : true));
-  }, [servicePoints, appliedFilters]);
+  }, [servicePoints, appliedFilters, entryOverridesByServicePoint]);
 
   const totalMatchingEntries = useMemo(
     () => visibleServicePoints.reduce((acc, sp) => acc + sp.entries.length, 0),
@@ -562,6 +608,13 @@ export function ExaminationQueuePage() {
                   </div>
                 )}
 
+                <CallNextResultBanner
+                  result={callNextResult}
+                  error={callNextError}
+                  onDismissResult={() => setCallNextResult(null)}
+                  onDismissError={() => setCallNextError(null)}
+                />
+
                 {effectiveStats && <ExaminationQueueStatCards stats={effectiveStats} />}
 
                 <ExaminationQueueFilterBar
@@ -583,6 +636,8 @@ export function ExaminationQueuePage() {
                           servicePoint={servicePoint}
                           canManageQueue={canManageQueue}
                           onSelectPatient={setSelectedPatientCode}
+                          onCallNext={canManageQueue ? (sp) => void handleCallNext(sp) : undefined}
+                          isCallingNext={callingServicePointId === servicePoint.servicePointId}
                           onOpenEarlyArrivalBackfill={(entry, sp) =>
                             setBackfillTarget({ entry, servicePoint: sp })
                           }

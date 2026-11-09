@@ -8,6 +8,8 @@ import {
   buildMockUpdateExaminationQueueStatusResponse,
 } from '../data/examination-queue-mock';
 import type {
+  CallNextPatientRequestPayload,
+  CallNextPatientResponseDto,
   EarlyArrivalBackfillRequestPayload,
   EarlyArrivalBackfillResponseDto,
   ExaminationQueueQueryParams,
@@ -119,6 +121,19 @@ export async function restoreSkippedQueueTurn(
   const { data } = await apiClient.post<QueueTurnActionResponseDto>(
     `/reception/examination-queue/entries/${encoded}/restore-turn`,
     payload,
+  );
+  return data;
+}
+
+export async function callNextEligiblePatient(
+  servicePointId: string,
+  payload?: CallNextPatientRequestPayload,
+): Promise<CallNextPatientResponseDto> {
+  const encoded = encodeURIComponent(servicePointId.trim());
+  const body = payload?.notes !== undefined ? { notes: payload.notes } : {};
+  const { data } = await apiClient.post<CallNextPatientResponseDto>(
+    `/queue/service-points/${encoded}/call-next`,
+    body,
   );
   return data;
 }

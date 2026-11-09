@@ -83,6 +83,7 @@ export interface DoctorDashboardQueryParams {
 export interface DoctorDashboardSummary {
   facilityName: string;
   facilityCode: string;
+  servicePointId?: string;
   roomCode: string;
   roomName?: string;
   departmentName: string;

@@ -11,10 +11,20 @@ import { Spinner } from '@/shared/ui/spinner';
 
 import { DoctorAssignedQueueStatCards } from '../components/doctor-assigned-queue-stat-cards';
 import { DoctorAssignedServicePointCard } from '../components/doctor-assigned-service-point-card';
+import { DoctorCallNextBanner } from '../components/doctor-call-next-banner';
 import { DoctorSidebar } from '../components/doctor-sidebar';
 import { DOCTOR_WORKBENCH_META } from '../data/doctor-mock-data';
-import { useDoctorAssignedQueue } from '../hooks/use-doctor-assigned-queue';
-import type { DoctorQueueGroupFilter } from '../types/doctor-assigned-queue.types';
+import {
+  useCallNextDoctorPatient,
+  useDoctorAssignedQueue,
+} from '../hooks/use-doctor-assigned-queue';
+import type {
+  DoctorAssignedQueueEntryDto,
+  DoctorAssignedQueueStatsDto,
+  DoctorAssignedServicePointDto,
+  DoctorCallNextResponseDto,
+  DoctorQueueGroupFilter,
+} from '../types/doctor-assigned-queue.types';
 import { QUEUE_GROUP_FILTER_OPTIONS } from '../utils/doctor-assigned-queue-meta';
 
 const SERVING_ORDER_RULES = [
@@ -34,6 +44,13 @@ export function DoctorAssignedQueuePage() {
   const [queueDate, setQueueDate] = useState('');
   const [groupFilter, setGroupFilter] = useState<DoctorQueueGroupFilter>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
+  const [callingServicePointId, setCallingServicePointId] = useState<string | null>(null);
+  const [callNextResult, setCallNextResult] = useState<DoctorCallNextResponseDto | null>(null);
+  const [callNextError, setCallNextError] = useState<string | null>(null);
+  const [entryOverridesByServicePoint, setEntryOverridesByServicePoint] = useState<
+    Record<string, DoctorAssignedQueueEntryDto[]>
+  >({});
+  const callNextMutation = useCallNextDoctorPatient();
 
   const queryParams = useMemo(() => (queueDate ? { queueDate } : undefined), [queueDate]);
   const { data, isPending, isError, error, refetch } = useDoctorAssignedQueue(queryParams);
@@ -50,12 +67,116 @@ export function DoctorAssignedQueuePage() {
   const shiftLabel = data?.shiftLabel || DOCTOR_WORKBENCH_META.shiftLabel;
   const displayQueueDate = data?.queueDate || queueDate || 'Hôm nay';
 
+  const effectiveServicePoints = useMemo<DoctorAssignedServicePointDto[]>(() => {
+    if (!data) return [];
+    const dateKey = queueDate || data.queueDate;
+    return data.servicePoints.map((sp) => {
+      const overrideKey = `${dateKey}:${sp.servicePointId}`;
+      const entries = entryOverridesByServicePoint[overrideKey];
+      if (!entries) {
+        return sp;
+      }
+
+      const inProgressCount = entries.filter(
+        (e) => e.queueGroup === 'IN_PROGRESS' || e.status === 'IN_PROGRESS',
+      ).length;
+      const calledCount = entries.filter(
+        (e) =>
+          e.queueGroup === 'CALLED' || (e.status === 'CALLED' && e.queueGroup !== 'IN_PROGRESS'),
+      ).length;
+      const eligibleCount = entries.filter((e) => e.queueGroup === 'ELIGIBLE').length;
+      const notEligibleCount = entries.filter((e) => e.queueGroup === 'NOT_ELIGIBLE').length;
+      const skippedCount = entries.filter(
+        (e) => e.queueGroup === 'SKIPPED' || e.status === 'SKIPPED',
+      ).length;
+      const completedCount = entries.filter(
+        (e) => e.queueGroup === 'COMPLETED' || e.status === 'COMPLETED',
+      ).length;
+      const currentServingTicketNo =
+        (
+          entries.find((e) => e.status === 'IN_PROGRESS') ??
+          entries.find((e) => e.status === 'CALLED')
+        )?.ticketNo ?? null;
+      const nextEligibleTicketNo =
+        entries.find(
+          (e) =>
+            e.queueGroup === 'ELIGIBLE' ||
+            (e.isEligible && (e.status === 'WAITING' || e.status === 'READY')),
+        )?.ticketNo ?? null;
+
+      return {
+        ...sp,
+        currentServingTicketNo,
+        nextEligibleTicketNo,
+        stats: {
+          totalEntries: entries.length,
+          inProgressCount,
+          calledCount,
+          eligibleCount,
+          notEligibleCount,
+          skippedCount,
+          completedCount,
+        },
+        entries,
+      };
+    });
+  }, [data, queueDate, entryOverridesByServicePoint]);
+
+  const effectiveStats = useMemo<DoctorAssignedQueueStatsDto | null>(() => {
+    if (!data) return null;
+    return effectiveServicePoints.reduce<DoctorAssignedQueueStatsDto>(
+      (acc, sp) => ({
+        totalEntries: acc.totalEntries + sp.stats.totalEntries,
+        inProgressCount: acc.inProgressCount + sp.stats.inProgressCount,
+        calledCount: acc.calledCount + sp.stats.calledCount,
+        eligibleCount: acc.eligibleCount + sp.stats.eligibleCount,
+        notEligibleCount: acc.notEligibleCount + sp.stats.notEligibleCount,
+        skippedCount: acc.skippedCount + sp.stats.skippedCount,
+        completedCount: acc.completedCount + sp.stats.completedCount,
+      }),
+      {
+        totalEntries: 0,
+        inProgressCount: 0,
+        calledCount: 0,
+        eligibleCount: 0,
+        notEligibleCount: 0,
+        skippedCount: 0,
+        completedCount: 0,
+      },
+    );
+  }, [data, effectiveServicePoints]);
+
+  const handleCallNext = async (servicePoint: DoctorAssignedServicePointDto) => {
+    setCallNextResult(null);
+    setCallNextError(null);
+    setCallingServicePointId(servicePoint.servicePointId);
+
+    try {
+      const result = await callNextMutation.mutateAsync({
+        servicePointId: servicePoint.servicePointId,
+      });
+      const dateKey = queueDate || data?.queueDate || '';
+      const requestedKey = `${dateKey}:${servicePoint.servicePointId}`;
+      const responseKey = `${dateKey}:${result.servicePointId}`;
+      setEntryOverridesByServicePoint((prev) => ({
+        ...prev,
+        [requestedKey]: result.entries,
+        [responseKey]: result.entries,
+      }));
+      setCallNextResult(result);
+    } catch (err) {
+      setCallNextError(getErrorMessage(err, 'Không thể gọi bệnh nhân tiếp theo.'));
+    } finally {
+      setCallingServicePointId(null);
+    }
+  };
+
   const visibleServicePoints = useMemo(() => {
     if (!data) return [];
     const keyword = searchTerm.trim().toLowerCase();
     const hasActiveFilter = groupFilter !== 'ALL' || keyword.length > 0;
 
-    return data.servicePoints
+    return effectiveServicePoints
       .map((sp) => {
         const entries = sp.entries.filter((entry) => {
           const matchesGroup = groupFilter === 'ALL' || entry.queueGroup === groupFilter;
@@ -70,7 +191,7 @@ export function DoctorAssignedQueuePage() {
         return { ...sp, entries };
       })
       .filter((sp) => !hasActiveFilter || sp.entries.length > 0);
-  }, [data, groupFilter, searchTerm]);
+  }, [data, effectiveServicePoints, groupFilter, searchTerm]);
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
@@ -176,8 +297,14 @@ export function DoctorAssignedQueuePage() {
           ) : (
             data && (
               <>
-                <DoctorAssignedQueueStatCards stats={data.stats} />
+                <DoctorCallNextBanner
+                  result={callNextResult}
+                  error={callNextError}
+                  onDismissResult={() => setCallNextResult(null)}
+                  onDismissError={() => setCallNextError(null)}
+                />
 
+                {effectiveStats && <DoctorAssignedQueueStatCards stats={effectiveStats} />}
                 <Card>
                   <CardContent className="py-4 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex flex-wrap gap-1.5">
@@ -193,7 +320,7 @@ export function DoctorAssignedQueuePage() {
                               : 'bg-canvas text-sub hover:bg-border/60'
                           }`}
                         >
-                          {opt.label} ({data.stats[opt.statKey]})
+                          {opt.label} ({(effectiveStats ?? data.stats)[opt.statKey]})
                         </button>
                       ))}
                     </div>
@@ -224,7 +351,12 @@ export function DoctorAssignedQueuePage() {
                       </Card>
                     ) : (
                       visibleServicePoints.map((sp) => (
-                        <DoctorAssignedServicePointCard key={sp.servicePointId} servicePoint={sp} />
+                        <DoctorAssignedServicePointCard
+                          key={sp.servicePointId}
+                          servicePoint={sp}
+                          onCallNext={(servicePoint) => void handleCallNext(servicePoint)}
+                          isCallingNext={callingServicePointId === sp.servicePointId}
+                        />
                       ))
                     )}
                   </div>
