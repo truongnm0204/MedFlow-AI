@@ -46,6 +46,9 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<StockTransaction> StockTransactions => Set<StockTransaction>();
     public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
     public DbSet<QueueFairnessState> QueueFairnessStates => Set<QueueFairnessState>();
+    public DbSet<MedicalRecord> MedicalRecords => Set<MedicalRecord>();
+    public DbSet<MedicalRecordRevision> MedicalRecordRevisions => Set<MedicalRecordRevision>();
+    public DbSet<VisitDiagnosis> VisitDiagnoses => Set<VisitDiagnosis>();
 
     public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => Database.BeginTransactionAsync(ct);
