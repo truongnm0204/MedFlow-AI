@@ -6,4 +6,5 @@ public sealed record AssignExaminationRoomRequest(
     string? RoomCode = null,
     string? Priority = null,
     string? Reason = null,
-    string? Note = null);
+    string? Note = null,
+    bool? PriorityVerificationConfirmed = null);

@@ -40,7 +40,7 @@ public sealed class QueueStatusServiceTests : IDisposable
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => Set<Service>();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
-        public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
+        public DbSet<HospitalPolicy> HospitalPolicies => Set<HospitalPolicy>();
         public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
@@ -56,7 +56,6 @@ public sealed class QueueStatusServiceTests : IDisposable
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<ServicePrice>();
-            modelBuilder.Ignore<HospitalPolicy>();
             modelBuilder.Ignore<PatientFamilyLink>();
             modelBuilder.Ignore<Payment>();
             modelBuilder.Ignore<Medicine>();
@@ -78,6 +77,7 @@ public sealed class QueueStatusServiceTests : IDisposable
             modelBuilder.Entity<Patient>(b => b.HasKey(p => p.Id));
             modelBuilder.Entity<QueueServicePoint>(b => b.HasKey(sp => sp.Id));
 
+            modelBuilder.Entity<HospitalPolicy>(b => b.HasKey(p => p.Id));
             modelBuilder.Entity<HospitalRoom>(b =>
             {
                 b.HasKey(r => r.Id);
@@ -393,7 +393,7 @@ public sealed class QueueStatusServiceTests : IDisposable
                 Status = "CALLED",
                 PresenceStatus = "PRESENT",
                 ArrivalClass = "ON_TIME_OR_GRACE",
-                ManualPriority = "URGENT",
+                ManualPriority = "ELDERLY",
                 StateVersion = 2,
                 ArrivedAt = new DateTime(2026, 4, 18, 7, 35, 0),
                 ReadyAt = new DateTime(2026, 4, 18, 7, 36, 0),
@@ -430,6 +430,7 @@ public sealed class QueueStatusServiceTests : IDisposable
         Assert.Contains("READY", byQueueId.AllowedTargetStatuses);
         Assert.Contains("CALLED", byQueueId.AllowedTargetStatuses);
         Assert.Contains("SKIPPED", byQueueId.AllowedTargetStatuses);
+        Assert.DoesNotContain("CANCELLED", byQueueId.AllowedTargetStatuses);
 
         var byVisitCode = await _service.GetQueueEntryStatusAsync(5, "VIS-202604-1002");
         Assert.Equal(11, byVisitCode.QueueEntryId);
@@ -558,6 +559,13 @@ public sealed class QueueStatusServiceTests : IDisposable
                 "10",
                 new UpdateQueueStatusRequest(TargetStatus: "SKIPPED")));
 
+        // CANCELLED via generic status endpoint -> ValidationException
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateQueueEntryStatusAsync(
+                5,
+                "10",
+                new UpdateQueueStatusRequest(TargetStatus: "CANCELLED", Reason: "x")));
+
         // Conflicting TargetStatus and Status -> ValidationException
         await Assert.ThrowsAsync<ValidationException>(() =>
             _service.UpdateQueueEntryStatusAsync(
@@ -636,5 +644,578 @@ public sealed class QueueStatusServiceTests : IDisposable
             "20",
             new UpdateQueueStatusRequest(TargetStatus: "CALLED"));
         Assert.Equal("CALLED", sysAdminRes.CurrentStatus);
+    }
+
+    [Fact]
+    public async Task UpdateQueueEntryPriorityAsync_ValidReceptionRequest_UpdatesPriorityBumpsStateVersionPreservesQueueNumberAndWritesAudit()
+    {
+        var res = await _service.UpdateQueueEntryPriorityAsync(
+            5,
+            "10",
+            new UpdateQueuePriorityRequest(
+                Priority: "PREGNANT",
+                Reason: "Đã kiểm tra sổ khám thai định kỳ",
+                VerificationConfirmed: true,
+                ExpectedStateVersion: 1),
+            "127.0.0.1");
+
+        Assert.Equal(10L, res.QueueEntryId);
+        Assert.Equal(1001L, res.VisitId);
+        Assert.Equal("VIS-202604-1001", res.VisitCode);
+        Assert.Equal("A012", res.TicketNo);
+        Assert.Equal(12, res.QueueNumber);
+        Assert.Equal("EXAMINATION", res.QueueType);
+        Assert.Equal("WAITING", res.CurrentStatus);
+        Assert.Equal("NORMAL", res.PreviousPriority);
+        Assert.Equal("PREGNANT", res.Priority);
+        Assert.True(res.VerificationRequired);
+        Assert.True(res.VerificationConfirmed);
+        Assert.Equal("Đã kiểm tra sổ khám thai định kỳ", res.Reason);
+        Assert.Equal(1, res.PreviousStateVersion);
+        Assert.Equal(2, res.StateVersion);
+        Assert.Equal(5L, res.UpdatedByUserId);
+        Assert.Equal("REC-001", res.UpdatedByStaffCode);
+
+        var entryInDb = await _db.QueueEntries.AsNoTracking().FirstAsync(q => q.Id == 10);
+        Assert.Equal("PREGNANT", entryInDb.ManualPriority);
+        Assert.Equal(2, entryInDb.StateVersion);
+        Assert.Equal(12, entryInDb.QueueNumber);
+
+        var audit = await _db.AuditLogs.AsNoTracking()
+            .SingleAsync(a => a.Action == QueueStatusService.QueuePriorityUpdateAction && a.EntityId == "10");
+        Assert.Equal(5L, audit.ActorUserId);
+        Assert.Equal(1L, audit.HospitalId);
+        Assert.Equal("Đã kiểm tra sổ khám thai định kỳ", audit.Reason);
+        Assert.Contains("\"previousPriority\":\"NORMAL\"", audit.ChangeData);
+        Assert.Contains("\"updatedPriority\":\"PREGNANT\"", audit.ChangeData);
+    }
+
+    [Theory]
+    [InlineData("URGENT")]
+    [InlineData("RETURN_RESULT")]
+    [InlineData("EMERGENCY")]
+    [InlineData("")]
+    public async Task UpdateQueueEntryPriorityAsync_DisallowedOrBlankPriority_ThrowsValidationException(string rawPriority)
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(
+                5,
+                "10",
+                new UpdateQueuePriorityRequest(
+                    Priority: rawPriority,
+                    Reason: "Lý do hợp lệ",
+                    VerificationConfirmed: true,
+                    ExpectedStateVersion: 1)));
+    }
+
+    [Fact]
+    public async Task UpdateQueueEntryPriorityAsync_MissingReasonOrExpectedStateVersion_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(
+                5,
+                "10",
+                new UpdateQueuePriorityRequest(
+                    Priority: "PREGNANT",
+                    Reason: "   ",
+                    VerificationConfirmed: true,
+                    ExpectedStateVersion: 1)));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(
+                5,
+                "10",
+                new UpdateQueuePriorityRequest(
+                    Priority: "PREGNANT",
+                    Reason: "Có sổ khám thai",
+                    VerificationConfirmed: true,
+                    ExpectedStateVersion: null)));
+    }
+
+    [Fact]
+    public async Task UpdateQueueEntryPriorityAsync_VerificationPolicyEnforcement_HonorsHospitalPolicyAndDowngradeRule()
+    {
+        // 1. Default (no policy row -> fail-safe enabled=true): PREGNANT without confirmation fails
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(
+                5,
+                "10",
+                new UpdateQueuePriorityRequest(
+                    Priority: "PREGNANT",
+                    Reason: "Chưa xác minh giấy tờ",
+                    VerificationConfirmed: false,
+                    ExpectedStateVersion: 1)));
+
+        // 2. Explicit hospital policy enabled=true: PREGNANT without confirmation fails
+        var policy = new HospitalPolicy
+        {
+            Id = 1,
+            HospitalId = 1,
+            PolicyType = "QUEUE",
+            PolicyKey = "manual_priority_requires_verification",
+            PolicyValue = "{\"enabled\":true}",
+            PolicyVersion = 1,
+        };
+        _db.HospitalPolicies.Add(policy);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(
+                5,
+                "10",
+                new UpdateQueuePriorityRequest(
+                    Priority: "PREGNANT",
+                    Reason: "Chưa xác minh giấy tờ",
+                    VerificationConfirmed: null,
+                    ExpectedStateVersion: 1)));
+
+        // 3. Policy updated to enabled=false: PREGNANT succeeds without confirmation
+        policy.PolicyValue = "{\"enabled\":false}";
+        await _db.SaveChangesAsync();
+
+        var elevated = await _service.UpdateQueueEntryPriorityAsync(
+            5,
+            "10",
+            new UpdateQueuePriorityRequest(
+                Priority: "PREGNANT",
+                Reason: "Áp dụng theo chính sách không bắt buộc xác minh",
+                VerificationConfirmed: false,
+                ExpectedStateVersion: 1));
+
+        Assert.Equal("PREGNANT", elevated.Priority);
+        Assert.False(elevated.VerificationRequired);
+        Assert.False(elevated.VerificationConfirmed);
+
+        // 4. Re-enable policy: downgrade from PREGNANT -> NORMAL never requires verificationConfirmed
+        policy.PolicyValue = "{\"enabled\":true}";
+        await _db.SaveChangesAsync();
+
+        var downgraded = await _service.UpdateQueueEntryPriorityAsync(
+            5,
+            "10",
+            new UpdateQueuePriorityRequest(
+                Priority: "NORMAL",
+                Reason: "Hạ mức ưu tiên về thông thường",
+                VerificationConfirmed: false,
+                ExpectedStateVersion: 2));
+
+        Assert.Equal("NORMAL", downgraded.Priority);
+        Assert.False(downgraded.VerificationRequired);
+    }
+
+    [Fact]
+    public async Task UpdateQueueEntryPriorityAsync_PatientEligibility_EnforcesAge75ForElderlyAndRejectsMaleForPregnant()
+    {
+        var todayVn = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
+        var patient = await _db.Patients.FirstAsync(p => p.Id == 500);
+
+        // 1. Aged 74 -> rejected for ELDERLY
+        patient.DateOfBirth = todayVn.AddYears(-74);
+        patient.Gender = "FEMALE";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(
+                5,
+                "10",
+                new UpdateQueuePriorityRequest(
+                    Priority: "ELDERLY",
+                    Reason: "Kiểm tra CCCD 74 tuổi",
+                    VerificationConfirmed: true,
+                    ExpectedStateVersion: 1)));
+
+        // 2. Aged 75 -> eligible for ELDERLY
+        patient.DateOfBirth = todayVn.AddYears(-75);
+        await _db.SaveChangesAsync();
+
+        var elderlyRes = await _service.UpdateQueueEntryPriorityAsync(
+            5,
+            "10",
+            new UpdateQueuePriorityRequest(
+                Priority: "ELDERLY",
+                Reason: "Đã đối chiếu CCCD đủ 75 tuổi",
+                VerificationConfirmed: true,
+                ExpectedStateVersion: 1));
+        Assert.Equal("ELDERLY", elderlyRes.Priority);
+
+        // 3. Gender = MALE -> rejected for PREGNANT
+        patient.Gender = "MALE";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(
+                5,
+                "10",
+                new UpdateQueuePriorityRequest(
+                    Priority: "PREGNANT",
+                    Reason: "Nhập nhầm giới tính",
+                    VerificationConfirmed: true,
+                    ExpectedStateVersion: 2)));
+    }
+
+    [Fact]
+    public async Task UpdateQueueEntryPriorityAsync_StaleVersionSamePriorityInProgressCompletedOrDiagnostic_ThrowsConflictException()
+    {
+        // 1. Stale ExpectedStateVersion (entry 11 is at StateVersion 2)
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(
+                5,
+                "11",
+                new UpdateQueuePriorityRequest(
+                    Priority: "PREGNANT",
+                    Reason: "Lý do hợp lệ",
+                    VerificationConfirmed: true,
+                    ExpectedStateVersion: 1)));
+
+        // 2. Same priority as current (entry 10 is already NORMAL)
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(
+                5,
+                "10",
+                new UpdateQueuePriorityRequest(
+                    Priority: "NORMAL",
+                    Reason: "Lý do hợp lệ",
+                    VerificationConfirmed: false,
+                    ExpectedStateVersion: 1)));
+
+        // 3. IN_PROGRESS entry -> ConflictException
+        var entry11 = await _db.QueueEntries.FirstAsync(q => q.Id == 11);
+        entry11.Status = "IN_PROGRESS";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(
+                5,
+                "11",
+                new UpdateQueuePriorityRequest(
+                    Priority: "NORMAL",
+                    Reason: "Đang khám",
+                    ExpectedStateVersion: 2)));
+
+        // 4. COMPLETED entry -> ConflictException
+        entry11.Status = "COMPLETED";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(
+                5,
+                "11",
+                new UpdateQueuePriorityRequest(
+                    Priority: "NORMAL",
+                    Reason: "Đã hoàn tất",
+                    ExpectedStateVersion: 2)));
+
+        // 5. DIAGNOSTIC queue entry -> ConflictException
+        var diagEntry = new QueueEntry
+        {
+            Id = 30,
+            VisitId = 1001,
+            ServicePointId = 1,
+            CurrentServicePointId = 1,
+            QueueDate = new DateOnly(2026, 4, 18),
+            QueueNumber = 1,
+            QueueType = "DIAGNOSTIC",
+            Status = "WAITING",
+            ManualPriority = "NORMAL",
+            StateVersion = 1,
+        };
+        _db.QueueEntries.Add(diagEntry);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(
+                5,
+                "30",
+                new UpdateQueuePriorityRequest(
+                    Priority: "PREGNANT",
+                    Reason: "Hàng đợi cận lâm sàng",
+                    VerificationConfirmed: true,
+                    ExpectedStateVersion: 1)));
+    }
+
+    [Fact]
+    public async Task UpdateQueueEntryPriorityAsync_DoctorDiagnosticStaffOrOtherHospital_ThrowsForbiddenException()
+    {
+        _db.Users.Add(new User { Id = 7, Email = "diag@medflow.test", AccountStatus = AccountStatus.ACTIVE });
+        _db.UserRoles.Add(new UserRole { UserId = 7, RoleId = 4 }); // DIAGNOSTIC_STAFF
+        _db.Staff.Add(new Staff
+        {
+            Id = 40,
+            UserId = 7,
+            HospitalId = 1,
+            DepartmentId = 10,
+            StaffCode = "CLS-001",
+            FullName = "KTV Cận lâm sàng",
+            Status = "ACTIVE",
+        });
+        await _db.SaveChangesAsync();
+
+        var validRequest = new UpdateQueuePriorityRequest(
+            Priority: "PREGNANT",
+            Reason: "Kiểm tra phân quyền",
+            VerificationConfirmed: true,
+            ExpectedStateVersion: 1);
+
+        // DOCTOR (user 3) -> 403
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(3, "10", validRequest));
+
+        // DIAGNOSTIC_STAFF (user 7) -> 403
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(7, "10", validRequest));
+
+        // Reception Hospital 1 (user 5) on Hospital 2 entry ("20") -> 403
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.UpdateQueueEntryPriorityAsync(5, "20", validRequest));
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_WaitingEntry_CancelsEntryAndVisitPreservesQueueNumberAndWritesAudit()
+    {
+        var res = await _service.CancelQueueEntryAsync(
+            5,
+            "10",
+            new CancelQueueEntryRequest(
+                Reason: "Bệnh nhân xin về",
+                ExpectedStateVersion: 1),
+            "127.0.0.1");
+
+        Assert.Equal("WAITING", res.PreviousStatus);
+        Assert.Equal("CANCELLED", res.CurrentStatus);
+        Assert.Equal(1, res.PreviousStateVersion);
+        Assert.Equal(2, res.StateVersion);
+        Assert.Equal(12, res.QueueNumber);
+        Assert.Equal("A012", res.TicketNo);
+        Assert.Equal("Bệnh nhân xin về", res.BlockedReason);
+        Assert.Equal("Bệnh nhân xin về", res.Reason);
+        Assert.Equal("LEFT", res.PresenceStatus);
+        Assert.Equal("CANCELLED", res.VisitStatus);
+        Assert.Empty(res.AllowedTargetStatuses);
+        var historyItem = Assert.Single(res.StatusHistory);
+        Assert.Equal("CANCELLED", historyItem.TargetStatus);
+        Assert.Equal("WAITING", historyItem.PreviousStatus);
+        Assert.Equal("Bệnh nhân xin về", historyItem.Reason);
+
+        var entryInDb = await _db.QueueEntries.AsNoTracking().FirstAsync(q => q.Id == 10);
+        Assert.Equal("CANCELLED", entryInDb.Status);
+        Assert.NotNull(entryInDb.CompletedAt);
+        Assert.Equal(12, entryInDb.QueueNumber);
+        Assert.Equal(2, entryInDb.StateVersion);
+
+        var visitInDb = await _db.Visits.AsNoTracking().FirstAsync(v => v.Id == 1001);
+        Assert.Equal("CANCELLED", visitInDb.Status);
+        Assert.NotNull(visitInDb.CompletedAt);
+
+        var audit = await _db.AuditLogs.AsNoTracking()
+            .SingleAsync(a => a.Action == QueueStatusService.QueueEntryCancelAction && a.EntityId == "10");
+        Assert.Equal("Bệnh nhân xin về", audit.Reason);
+        Assert.Equal(1L, audit.HospitalId);
+        Assert.Equal(5L, audit.ActorUserId);
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_CalledEntryByVisitCode_Succeeds()
+    {
+        var res = await _service.CancelQueueEntryAsync(
+            5,
+            "VIS-202604-1002",
+            new CancelQueueEntryRequest(
+                Reason: "Bệnh nhân rời khỏi bệnh viện sau khi được gọi số",
+                ExpectedStateVersion: 2));
+
+        Assert.Equal(11L, res.QueueEntryId);
+        Assert.Equal("CALLED", res.PreviousStatus);
+        Assert.Equal("CANCELLED", res.CurrentStatus);
+        Assert.Equal(3, res.StateVersion);
+        Assert.Equal(13, res.QueueNumber);
+        Assert.Equal("CANCELLED", res.VisitStatus);
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_ReturnConsultationEntry_KeepsVisitOpen()
+    {
+        var entry10 = await _db.QueueEntries.FirstAsync(q => q.Id == 10);
+        entry10.QueueType = "RETURN_CONSULTATION";
+        await _db.SaveChangesAsync();
+
+        var res = await _service.CancelQueueEntryAsync(
+            5,
+            "10",
+            new CancelQueueEntryRequest(
+                Reason: "Bệnh nhân xin về chờ đọc kết quả sau",
+                ExpectedStateVersion: 1));
+
+        Assert.Equal("CANCELLED", res.CurrentStatus);
+        Assert.Equal("WAITING", res.VisitStatus);
+
+        var visitInDb = await _db.Visits.AsNoTracking().FirstAsync(v => v.Id == 1001);
+        Assert.Equal("WAITING", visitInDb.Status);
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_ReservedEntryWithoutVisit_KeepsNotArrivedPresence()
+    {
+        _db.QueueEntries.Add(new QueueEntry
+        {
+            Id = 30,
+            VisitId = null,
+            AppointmentId = null,
+            ServicePointId = 1,
+            CurrentServicePointId = 1,
+            QueueDate = new DateOnly(2026, 4, 18),
+            QueueNumber = 14,
+            QueueType = "EXAMINATION",
+            Status = "RESERVED",
+            PresenceStatus = "NOT_ARRIVED",
+            StateVersion = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        var res = await _service.CancelQueueEntryAsync(
+            5,
+            "30",
+            new CancelQueueEntryRequest(
+                Reason: "Hủy lượt đặt trước chưa đến",
+                ExpectedStateVersion: 1));
+
+        Assert.Equal("RESERVED", res.PreviousStatus);
+        Assert.Equal("CANCELLED", res.CurrentStatus);
+        Assert.Equal("NOT_ARRIVED", res.PresenceStatus);
+        Assert.Null(res.VisitId);
+        Assert.Equal(14, res.QueueNumber);
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_MissingReasonOrVersion_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "10",
+                new CancelQueueEntryRequest(
+                    Reason: "   ",
+                    ExpectedStateVersion: 1)));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "10",
+                new CancelQueueEntryRequest(
+                    Reason: "Bệnh nhân xin về",
+                    ExpectedStateVersion: null)));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "10",
+                new CancelQueueEntryRequest(
+                    Reason: "Bệnh nhân xin về",
+                    ExpectedStateVersion: 0)));
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_StaleVersionInProgressCompletedAlreadyCancelledOrDiagnostic_ThrowsConflictException()
+    {
+        // 1. Stale version (entry 11 is at StateVersion 2)
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "11",
+                new CancelQueueEntryRequest(
+                    Reason: "Bệnh nhân xin về",
+                    ExpectedStateVersion: 1)));
+
+        // 2. IN_PROGRESS -> conflict
+        var entry10 = await _db.QueueEntries.FirstAsync(q => q.Id == 10);
+        entry10.Status = "IN_PROGRESS";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "10",
+                new CancelQueueEntryRequest(
+                    Reason: "Đang khám",
+                    ExpectedStateVersion: 1)));
+
+        // 3. COMPLETED -> conflict
+        entry10.Status = "COMPLETED";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "10",
+                new CancelQueueEntryRequest(
+                    Reason: "Đã hoàn tất",
+                    ExpectedStateVersion: 1)));
+
+        // 4. Cancel entry 11 OK, then cancel again with v3 -> conflict "đã được hủy"
+        var cancelRes = await _service.CancelQueueEntryAsync(
+            5,
+            "11",
+            new CancelQueueEntryRequest(
+                Reason: "Bệnh nhân xin về",
+                ExpectedStateVersion: 2));
+        Assert.Equal("CANCELLED", cancelRes.CurrentStatus);
+        Assert.Equal(3, cancelRes.StateVersion);
+
+        var exAlreadyCancelled = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "11",
+                new CancelQueueEntryRequest(
+                    Reason: "Hủy lần 2",
+                    ExpectedStateVersion: 3)));
+        Assert.Contains("đã được hủy", exAlreadyCancelled.Message);
+
+        // 5. DIAGNOSTIC queue entry -> conflict
+        _db.QueueEntries.Add(new QueueEntry
+        {
+            Id = 31,
+            VisitId = 1001,
+            ServicePointId = 1,
+            CurrentServicePointId = 1,
+            QueueDate = new DateOnly(2026, 4, 18),
+            QueueNumber = 1,
+            QueueType = "DIAGNOSTIC",
+            Status = "WAITING",
+            ManualPriority = "NORMAL",
+            StateVersion = 1,
+        });
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CancelQueueEntryAsync(
+                5,
+                "31",
+                new CancelQueueEntryRequest(
+                    Reason: "Hàng đợi cận lâm sàng",
+                    ExpectedStateVersion: 1)));
+    }
+
+    [Fact]
+    public async Task CancelQueueEntryAsync_DoctorPharmacyOrOtherHospital_ThrowsForbiddenException()
+    {
+        var req = new CancelQueueEntryRequest(
+            Reason: "Bệnh nhân xin về",
+            ExpectedStateVersion: 1);
+
+        // Doctor (user 3) on "10" -> 403
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CancelQueueEntryAsync(3, "10", req));
+
+        // Pharmacy (user 9) on "10" -> 403
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CancelQueueEntryAsync(9, "10", req));
+
+        // Reception Hospital 1 (user 5) on Hospital 2 entry "20" -> 403
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CancelQueueEntryAsync(5, "20", req));
+
+        // Sysadmin (user 11) on Hospital 2 entry "20" with v1 succeeds
+        var sysRes = await _service.CancelQueueEntryAsync(11, "20", req);
+        Assert.Equal("CANCELLED", sysRes.CurrentStatus);
+        Assert.Equal(2, sysRes.StateVersion);
     }
 }

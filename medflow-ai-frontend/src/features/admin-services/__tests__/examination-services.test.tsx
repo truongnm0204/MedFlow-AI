@@ -20,6 +20,7 @@ describe('ExaminationServiceListPage (SCR-ADM-ESV-01)', () => {
       selectedIds: [],
       isColumnModalOpen: false,
       priceHistoryService: null,
+      updatePriceService: null,
     });
   });
 
@@ -142,6 +143,18 @@ describe('ExaminationServiceListPage (SCR-ADM-ESV-01)', () => {
 
     expect(screen.getByText('Lịch Sử Biểu Phí & Quy Tắc Cơ Sở UC52')).toBeInTheDocument();
     expect(screen.getByText(/Quy tắc liên kết UC52/i)).toBeInTheDocument();
+  });
+
+  it('opens update price modal when clicking Cập nhật giá action', () => {
+    renderPage();
+
+    const updatePriceBtn = screen.getByLabelText(
+      'Cập nhật giá Khám Nội Tổng quát & Tư vấn Sức khỏe',
+    );
+    fireEvent.click(updatePriceBtn);
+
+    expect(screen.getByText('Cập nhật Biểu phí Dịch vụ (UC52)')).toBeInTheDocument();
+    expect(useExaminationServiceStore.getState().updatePriceService?.id).toBe('EX-1-01');
   });
 
   it('links to the separate create service page from the Add button', () => {
