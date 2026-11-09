@@ -49,6 +49,11 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<MedicalRecord> MedicalRecords => Set<MedicalRecord>();
     public DbSet<MedicalRecordRevision> MedicalRecordRevisions => Set<MedicalRecordRevision>();
     public DbSet<VisitDiagnosis> VisitDiagnoses => Set<VisitDiagnosis>();
+    public DbSet<Icd10Code> Icd10Codes => Set<Icd10Code>();
+    public DbSet<ClinicalAddendum> ClinicalAddenda => Set<ClinicalAddendum>();
+    public DbSet<DiagnosticOrder> DiagnosticOrders => Set<DiagnosticOrder>();
+    public DbSet<DiagnosticResult> DiagnosticResults => Set<DiagnosticResult>();
+    public DbSet<DiagnosticResultVersion> DiagnosticResultVersions => Set<DiagnosticResultVersion>();
 
     public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => Database.BeginTransactionAsync(ct);
