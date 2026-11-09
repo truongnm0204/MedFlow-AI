@@ -15,4 +15,11 @@ public interface IConsultationWorkspaceService
         OpenConsultationWorkspaceRequest? request = null,
         string? ipAddress = null,
         CancellationToken ct = default);
+
+    Task<ConsultationWorkspaceResponseDto> RecordClinicalExaminationAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        RecordClinicalExaminationRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
 }

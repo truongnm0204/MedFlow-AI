@@ -1017,4 +1017,349 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
             Assert.False(string.IsNullOrWhiteSpace(a.DisabledReason));
         });
     }
+
+    // -------------------------------------------------------------------------
+    // 6. RecordClinicalExamination (UC33 / #110)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task RecordClinicalExamination_InProgressVisit_AppendsRevisionComputesVitalsUpdatesAllergiesAndWritesAudit()
+    {
+        var opened = await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        Assert.Equal("OPENED", opened.ActionOutcome);
+        Assert.Equal(1, opened.ClinicalContext.CurrentRevisionNo);
+
+        var recordId = opened.ClinicalContext.MedicalRecordId!.Value;
+
+        var result = await _service.RecordClinicalExaminationAsync(
+            actorUserId: 3,
+            visitIdOrCode: "VIS-202610-0011",
+            request: new RecordClinicalExaminationRequest(
+                PresentingComplaint: "Đau vùng thượng vị sau ăn cay",
+                SymptomHistory: "Đau âm ỉ vùng thượng vị sau ăn 3 ngày nay, kèm ợ chua",
+                RelevantHistoryAllergies: "Dị ứng hải sản và Ibuprofen",
+                VitalSigns: new RecordClinicalVitalSignsRequest(
+                    BpSystolicMmhg: 120,
+                    BpDiastolicMmhg: 80,
+                    PulseBpm: 76,
+                    TemperatureC: 36.8m,
+                    Spo2Percent: 98,
+                    HeightCm: 165m,
+                    WeightKg: 60m),
+                ClinicalFindings: "Bụng mềm, ấn đau vùng thượng vị, gan lách không sờ chạm",
+                ClinicalConclusion: "Theo dõi viêm dạ dày - tá tràng cấp",
+                AmendmentReason: "Ghi nhận khám lâm sàng lần đầu",
+                IsConfirmed: true,
+                ExpectedStateVersion: 3,
+                ExpectedRevisionNo: 1),
+            ipAddress: "127.0.0.1");
+
+        Assert.Equal("CLINICAL_EXAMINATION_RECORDED", result.ActionOutcome);
+        Assert.Equal("IN_PROGRESS", result.WorkspaceState);
+        Assert.True(result.CanEditClinical);
+        Assert.Null(result.ReadOnlyReason);
+
+        Assert.Equal(recordId, result.ClinicalContext.MedicalRecordId);
+        Assert.Equal("DRAFT", result.ClinicalContext.MedicalRecordStatus);
+        Assert.Equal(2, result.ClinicalContext.CurrentRevisionNo);
+        Assert.True(result.ClinicalContext.IsConfirmed);
+        Assert.Equal("Đau vùng thượng vị sau ăn cay", result.ClinicalContext.PresentingComplaint);
+        Assert.Equal("Đau âm ỉ vùng thượng vị sau ăn 3 ngày nay, kèm ợ chua", result.ClinicalContext.SymptomHistory);
+        Assert.Equal("Dị ứng hải sản và Ibuprofen", result.ClinicalContext.RelevantHistoryAllergies);
+        Assert.Equal("Dị ứng hải sản và Ibuprofen", result.Patient.AllergiesSummary);
+        Assert.Equal("Bụng mềm, ấn đau vùng thượng vị, gan lách không sờ chạm", result.ClinicalContext.ClinicalFindings);
+        Assert.Equal("Theo dõi viêm dạ dày - tá tràng cấp", result.ClinicalContext.ClinicalConclusion);
+        Assert.Equal("Ghi nhận khám lâm sàng lần đầu", result.ClinicalContext.AmendmentReason);
+
+        var vitals = result.ClinicalContext.VitalSigns;
+        Assert.Equal(120, vitals.BpSystolicMmhg);
+        Assert.Equal(80, vitals.BpDiastolicMmhg);
+        Assert.Equal("120/80 mmHg", vitals.BloodPressureLabel);
+        Assert.Equal(76, vitals.PulseBpm);
+        Assert.Equal(36.8m, vitals.TemperatureC);
+        Assert.Equal(98, vitals.Spo2Percent);
+        Assert.Equal(165m, vitals.HeightCm);
+        Assert.Equal(60m, vitals.WeightKg);
+        Assert.Equal(22.0m, vitals.Bmi);
+
+        var revisions = await _db.MedicalRecordRevisions
+            .Where(r => r.MedicalRecordId == recordId)
+            .OrderBy(r => r.RevisionNo)
+            .ToListAsync();
+        Assert.Equal(2, revisions.Count);
+        Assert.Equal(1, revisions[0].RevisionNo);
+        Assert.Equal(2, revisions[1].RevisionNo);
+        Assert.True(revisions[1].IsConfirmed);
+
+        var audit = await _db.AuditLogs.SingleOrDefaultAsync(a =>
+            a.Action == "CLINICAL_EXAMINATION_RECORDED" &&
+            a.EntityId == recordId.ToString());
+        Assert.NotNull(audit);
+        Assert.Equal(3, audit!.ActorUserId);
+        Assert.Equal(1, audit.HospitalId);
+        Assert.Equal("MEDICAL_RECORD", audit.EntityType);
+        Assert.Equal("Ghi nhận khám lâm sàng lần đầu", audit.Reason);
+    }
+
+    [Fact]
+    public async Task RecordClinicalExamination_SubsequentPartialUpdate_PreservesPriorFieldsAndIncrementsRevisionNo()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        var firstSave = await _service.RecordClinicalExaminationAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordClinicalExaminationRequest(
+                PresentingComplaint: "Đau thượng vị",
+                SymptomHistory: "Đau âm ỉ 3 ngày",
+                RelevantHistoryAllergies: "Dị ứng Penicillin",
+                BpSystolicMmhg: 120,
+                BpDiastolicMmhg: 80,
+                PulseBpm: 72,
+                HeightCm: 170m,
+                WeightKg: 68m,
+                ClinicalFindings: "Bụng mềm",
+                ClinicalConclusion: "Theo dõi viêm dạ dày"));
+
+        Assert.Equal(2, firstSave.ClinicalContext.CurrentRevisionNo);
+
+        var secondSave = await _service.RecordClinicalExaminationAsync(
+            3,
+            "q-011",
+            new RecordClinicalExaminationRequest(
+                TemperatureC: 37.2m,
+                Spo2Percent: 99,
+                ClinicalConclusion: "Viêm dạ dày cấp, chỉ định nội soi",
+                AmendmentReason: "Bổ sung nhiệt độ, SpO2 và kết luận",
+                ExpectedRevisionNo: 2));
+
+        Assert.Equal("CLINICAL_EXAMINATION_RECORDED", secondSave.ActionOutcome);
+        Assert.Equal(3, secondSave.ClinicalContext.CurrentRevisionNo);
+        Assert.Equal("Đau thượng vị", secondSave.ClinicalContext.PresentingComplaint);
+        Assert.Equal("Đau âm ỉ 3 ngày", secondSave.ClinicalContext.SymptomHistory);
+        Assert.Equal("Dị ứng Penicillin", secondSave.ClinicalContext.RelevantHistoryAllergies);
+        Assert.Equal("Bụng mềm", secondSave.ClinicalContext.ClinicalFindings);
+        Assert.Equal("Viêm dạ dày cấp, chỉ định nội soi", secondSave.ClinicalContext.ClinicalConclusion);
+        Assert.Equal("Bổ sung nhiệt độ, SpO2 và kết luận", secondSave.ClinicalContext.AmendmentReason);
+
+        var vitals = secondSave.ClinicalContext.VitalSigns;
+        Assert.Equal(120, vitals.BpSystolicMmhg);
+        Assert.Equal(80, vitals.BpDiastolicMmhg);
+        Assert.Equal("120/80 mmHg", vitals.BloodPressureLabel);
+        Assert.Equal(72, vitals.PulseBpm);
+        Assert.Equal(37.2m, vitals.TemperatureC);
+        Assert.Equal(99, vitals.Spo2Percent);
+        Assert.Equal(170m, vitals.HeightCm);
+        Assert.Equal(68m, vitals.WeightKg);
+        Assert.Equal(23.5m, vitals.Bmi);
+    }
+
+    [Fact]
+    public async Task RecordClinicalExamination_EmptyOrNullPayload_ThrowsValidationException()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordClinicalExaminationAsync(3, "VIS-202610-0011", null!));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(
+                    PresentingComplaint: "   ",
+                    AmendmentReason: "Chỉ có lý do cập nhật nhưng không có dữ liệu lâm sàng")));
+    }
+
+    [Theory]
+    [InlineData(120, null)]
+    [InlineData(null, 80)]
+    [InlineData(35, 80)]
+    [InlineData(305, 80)]
+    [InlineData(120, 15)]
+    [InlineData(120, 210)]
+    [InlineData(100, 100)]
+    [InlineData(90, 100)]
+    public async Task RecordClinicalExamination_InvalidBloodPressure_ThrowsValidationException(
+        int? systolic,
+        int? diastolic)
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(
+                    BpSystolicMmhg: systolic,
+                    BpDiastolicMmhg: diastolic)));
+    }
+
+    [Fact]
+    public async Task RecordClinicalExamination_OutOfRangeVitalsOrInvalidText_ThrowsValidationException()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(PulseBpm: 15)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(TemperatureC: 46.0m)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(Spo2Percent: 45)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(HeightCm: 20m)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(WeightKg: 0.5m)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(ClinicalFindings: "Bụng mềm <script>alert(1)</script>")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(PresentingComplaint: new string('a', 1001))));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(
+                    ClinicalFindings: "Bụng mềm",
+                    ExpectedStateVersion: 0)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(
+                    ClinicalFindings: "Bụng mềm",
+                    ExpectedRevisionNo: 0)));
+    }
+
+    [Fact]
+    public async Task RecordClinicalExamination_UnauthorizedOrForbiddenDoctor_ThrowsAndDoesNotPersistRevisionOrAudit()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        var baselineRevisions = await _db.MedicalRecordRevisions.CountAsync();
+        var baselineAudits = await _db.AuditLogs.CountAsync(a => a.Action == "CLINICAL_EXAMINATION_RECORDED");
+
+        var validRequest = new RecordClinicalExaminationRequest(ClinicalFindings: "Khám bụng mềm");
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => _service.RecordClinicalExaminationAsync(0, "VIS-202610-0011", validRequest));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.RecordClinicalExaminationAsync(6, "VIS-202610-0011", validRequest));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.RecordClinicalExaminationAsync(3, "VIS-202610-0021", validRequest));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.RecordClinicalExaminationAsync(3, "VIS-202610-0002", validRequest));
+
+        var writePerm = await _db.RolePermissions
+            .FirstAsync(rp => rp.RoleId == 3 && rp.PermissionId == 1);
+        _db.RolePermissions.Remove(writePerm);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.RecordClinicalExaminationAsync(3, "VIS-202610-0011", validRequest));
+
+        Assert.Equal(baselineRevisions, await _db.MedicalRecordRevisions.CountAsync());
+        Assert.Equal(baselineAudits, await _db.AuditLogs.CountAsync(a => a.Action == "CLINICAL_EXAMINATION_RECORDED"));
+    }
+
+    [Theory]
+    [InlineData("CALLED")]
+    [InlineData("WAITING")]
+    [InlineData("READY")]
+    [InlineData("SKIPPED")]
+    public async Task RecordClinicalExamination_WhenVisitNotInProgress_ThrowsConflictException(string queueStatus)
+    {
+        var entry = await _db.QueueEntries.FirstAsync(q => q.Id == 11);
+        entry.Status = queueStatus;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(ClinicalFindings: "Bụng mềm")));
+    }
+
+    [Theory]
+    [InlineData("COMPLETED")]
+    [InlineData("CANCELLED")]
+    [InlineData("NO_SHOW")]
+    [InlineData("AWAITING_RESULTS")]
+    public async Task RecordClinicalExamination_NonEditableVisitStatus_ThrowsConflictException(string visitStatus)
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        var visit = await _db.Visits.FirstAsync(v => v.Id == 11);
+        visit.Status = visitStatus;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(ClinicalFindings: "Bụng mềm")));
+    }
+
+    [Fact]
+    public async Task RecordClinicalExamination_FinalizedRecordOrConcurrencyMismatch_ThrowsConflictException()
+    {
+        var opened = await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        var recordId = opened.ClinicalContext.MedicalRecordId!.Value;
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(
+                    ClinicalFindings: "Bụng mềm",
+                    ExpectedStateVersion: 99)));
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(
+                    ClinicalFindings: "Bụng mềm",
+                    ExpectedRevisionNo: 99)));
+
+        var record = await _db.MedicalRecords.FirstAsync(m => m.Id == recordId);
+        record.Status = "FINALIZED";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(ClinicalFindings: "Bụng mềm")));
+    }
 }
