@@ -48,6 +48,7 @@ import { PatientProfilePage } from '@/features/patient/pages/patient-profile-pag
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
 import { AssignRoomPage } from '@/features/reception/pages/assign-room-page';
 import { PatientSearchPage } from '@/features/reception/pages/patient-search-page';
+import { VisitRoutingPage } from '@/features/reception/pages/visit-routing-page';
 import { ExaminationQueuePage } from '@/features/reception/pages/examination-queue-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
 import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
@@ -133,6 +134,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireReception>
               <ReceptionDashboardPage />
+            </RequireReception>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/reception/routing"
+        element={
+          <RequireAuth>
+            <RequireReception>
+              <VisitRoutingPage />
             </RequireReception>
           </RequireAuth>
         }
