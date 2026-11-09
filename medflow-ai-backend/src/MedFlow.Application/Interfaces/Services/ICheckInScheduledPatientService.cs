@@ -10,4 +10,14 @@ public interface ICheckInScheduledPatientService
         CheckInScheduledPatientRequest request,
         string? ipAddress = null,
         CancellationToken ct = default);
+
+    Task<CheckInScheduledPatientResponseDto> GetCheckInResultByAppointmentAsync(
+        long actorUserId,
+        string appointmentIdOrCode,
+        CancellationToken ct = default);
+
+    Task<CheckInScheduledPatientResponseDto> GetCheckInResultByVisitAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        CancellationToken ct = default);
 }

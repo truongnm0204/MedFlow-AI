@@ -1,4 +1,4 @@
-# 0024 — Check-in Scheduled Patient Contract (`UC24` / Issue `#72` / `M2-020`)
+# 0024 — Check-in Scheduled Patient & View Check-in Result Contract (`UC24` / Issues `#72` & `#74` / `M2-020` & `M2-022`)
 
 - Ngay: 2026-04-19
 - Trang thai: accepted
@@ -6,7 +6,7 @@
 
 ## Context
 
-Issue `#72` (`M2-020`, `UC24 — Check-in Patient with Appointment`) requires the backend API contract, two-layer authorization, transactional persistence, clinical queue activation, and audit logging for reception staff checking in a scheduled patient at the counter.
+Issue `#72` (`M2-020`, `UC24 — Check-in Patient with Appointment`) and Issue `#74` (`M2-022`, `UC24 — View Check-in Result`) require the backend API contract, two-layer authorization, transactional persistence, clinical queue activation, audit logging, and read-side check-in result reconstruction for reception staff checking in and viewing check-in results of a scheduled patient at the counter.
 
 Prior to this change:
 - `medflow-ai-backend` had no endpoint or service that created a `Visit` row from a scheduled `Appointment` (`BOOKED` / `CONFIRMED`) or transitioned a pre-reserved `RESERVED` `QueueEntry` into an active `WAITING` + `PRESENT` examination queue entry.
@@ -26,6 +26,24 @@ Prior to this change:
      - `POST /api/v1/reception/visits/check-in`
      - `POST /api/v1/visits/check-in`
 
+   - View Check-in Result endpoints (`#74` / `M2-022`, Read-only, returning `CheckInScheduledPatientResponseDto`):
+     - By appointment (`appointmentId` or `APT-...` `appointmentCode`):
+       - `GET /api/v1/reception/appointments/{idOrCode}/check-in-result` (canonical)
+       - `GET /api/v1/reception/appointments/{idOrCode}/checkin-result`
+       - `GET /api/v1/reception/appointments/{idOrCode}/check-in`
+       - `GET /api/v1/reception/appointments/{idOrCode}/checkin`
+       - `GET /api/v1/appointments/{idOrCode}/check-in-result`
+       - `GET /api/v1/appointments/{idOrCode}/check-in`
+       - `GET /api/v1/reception/check-in/appointments/{idOrCode}`
+     - By visit (`visitId` or `VIS-...` `visitCode`):
+       - `GET /api/v1/reception/visits/{idOrCode}/check-in-result` (canonical)
+       - `GET /api/v1/reception/visits/{idOrCode}/checkin-result`
+       - `GET /api/v1/reception/visits/{idOrCode}/check-in`
+       - `GET /api/v1/visits/{idOrCode}/check-in-result`
+       - `GET /api/v1/visits/{idOrCode}/check-in`
+       - `GET /api/v1/reception/check-in/visits/{idOrCode}`
+       - `GET /api/v1/reception/check-in/{idOrCode}/result`
+       - `GET /api/v1/reception/check-in-result/{idOrCode}`
 2. **Two-Layer Authorization (`401` / `403` / `404`)**:
    - **Layer 1**: `[Authorize(Roles = "RECEPTION,HOSPITAL_ADMIN,SYSTEM_ADMIN")]` on `ReceptionCheckInController`.
    - **Layer 2 (`CheckInScheduledPatientService.EnsureCheckInActorAccessAsync`)**:
@@ -44,6 +62,10 @@ Prior to this change:
      - Assigned `Doctor`, `HospitalRoom`, or `Department` is inactive/unavailable;
      - The patient already has another active (non-`COMPLETED`, non-`CANCELLED`) visit today.
 
+   - For View Check-in Result (`GET`, `#74`):
+     - Return `400 Bad Request` on invalid `idOrCode` format, `404 Not Found` when the `Appointment`/`Visit` does not exist, and `403 Forbidden` on hospital boundary mismatch (`appointmentHospitalId != actorHospitalId`).
+     - Return `409 Conflict` when the appointment has not been checked in yet (`BOOKED`/`CONFIRMED`/`PENDING` without a `Visit`), when the `Appointment` or `Visit` is `CANCELLED`/`NO_SHOW`, or when the linked `QueueEntry` is `CANCELLED`.
+     - Reconcile live `Visit.AssignedDoctorId` (`UC26`) and `Visit.ExaminationRoomId` (`UC27`), reconstruct counter vitals (`bloodPressure`, `heartRate`, `temperature`) and verification flags (`isIdentityVerified`, `isInsuranceVerified`) from the `PATIENT_CHECKED_IN` `AuditLog`, and compute live `WaitingCountBefore` (`0` when `CALLED`/`IN_PROGRESS`/`COMPLETED`) and `EstimatedWaitMinutes`.
 4. **Transactional State Transition, Queue Activation & Audit Logging**:
    - Within a database transaction (`BeginTransactionAsync`):
      - Transition `Appointment.Status` to `CHECKED_IN` and persist `Visit` (`Status = "WAITING"` when both doctor and room are assigned, else `"CHECKED_IN"`, `VisitCode = VIS-{yyyyMM}-{id:D4}`).

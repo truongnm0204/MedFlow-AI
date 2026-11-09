@@ -47,6 +47,18 @@ public sealed class CheckInScheduledPatientEndpointTests : AuthTestBase
         return request;
     }
 
+    private HttpRequestMessage AuthedGet(
+        string url,
+        long userId = 5,
+        string email = "reception01@medflow.test",
+        string role = "RECEPTION")
+    {
+        var token = GenerateToken(userId, email, role);
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return request;
+    }
+
     [Fact]
     public async Task CheckInScheduledPatient_NoToken_Returns401()
     {
@@ -55,6 +67,18 @@ public sealed class CheckInScheduledPatientEndpointTests : AuthTestBase
             JsonContent.Create(new CheckInScheduledPatientRequest(IsIdentityVerified: true)));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetCheckInResult_NoToken_Returns401()
+    {
+        var byApptRes = await Client.GetAsync(
+            "/api/v1/reception/appointments/APT-202610-0009/check-in-result");
+        Assert.Equal(HttpStatusCode.Unauthorized, byApptRes.StatusCode);
+
+        var byVisitRes = await Client.GetAsync(
+            "/api/v1/reception/visits/VIS-202610-0001/check-in-result");
+        Assert.Equal(HttpStatusCode.Unauthorized, byVisitRes.StatusCode);
     }
 
     [Theory]
@@ -76,6 +100,22 @@ public sealed class CheckInScheduledPatientEndpointTests : AuthTestBase
         var res = await Client.SendAsync(req);
 
         Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+
+        using var getApptReq = AuthedGet(
+            "/api/v1/reception/appointments/APT-202610-0009/check-in-result",
+            userId,
+            email,
+            role);
+        var getApptRes = await Client.SendAsync(getApptReq);
+        Assert.Equal(HttpStatusCode.Forbidden, getApptRes.StatusCode);
+
+        using var getVisitReq = AuthedGet(
+            "/api/v1/reception/visits/VIS-202610-0001/check-in-result",
+            userId,
+            email,
+            role);
+        var getVisitRes = await Client.SendAsync(getVisitReq);
+        Assert.Equal(HttpStatusCode.Forbidden, getVisitRes.StatusCode);
     }
 
     [Fact]
@@ -117,6 +157,16 @@ public sealed class CheckInScheduledPatientEndpointTests : AuthTestBase
         var problem = await res.Content.ReadFromJsonAsync<ProblemDetails>();
         Assert.NotNull(problem);
         Assert.Equal(400, problem.Status);
+
+        using var getApptReq = AuthedGet(
+            $"/api/v1/reception/appointments/{idOrCode}/check-in-result");
+        var getApptRes = await Client.SendAsync(getApptReq);
+        Assert.Equal(HttpStatusCode.BadRequest, getApptRes.StatusCode);
+
+        using var getVisitReq = AuthedGet(
+            $"/api/v1/reception/visits/{idOrCode}/check-in-result");
+        var getVisitRes = await Client.SendAsync(getVisitReq);
+        Assert.Equal(HttpStatusCode.BadRequest, getVisitRes.StatusCode);
     }
 
     [Fact]
@@ -299,6 +349,14 @@ public sealed class CheckInScheduledPatientEndpointTests : AuthTestBase
                 IsInsuranceVerified: true,
                 Priority: "NORMAL");
 
+            // Before check-in -> GET check-in-result returns 409 Conflict ProblemDetails
+            using (var preCheckInGetReq = AuthedGet(
+                       $"/api/v1/reception/appointments/{appointmentCode}/check-in-result"))
+            {
+                var preCheckInGetRes = await Client.SendAsync(preCheckInGetReq);
+                Assert.Equal(HttpStatusCode.Conflict, preCheckInGetRes.StatusCode);
+            }
+
             using var firstReq = AuthedPost(
                 $"/api/v1/reception/appointments/{appointmentCode}/check-in",
                 payload);
@@ -322,6 +380,37 @@ public sealed class CheckInScheduledPatientEndpointTests : AuthTestBase
             Assert.True(dto.IsIdentityVerified);
             Assert.True(dto.IsInsuranceVerified);
 
+
+            // View Check-in Result (#74) by appointment code and by visit code -> 200 OK
+            using (var getByApptReq = AuthedGet(
+                       $"/api/v1/reception/appointments/{appointmentCode}/check-in-result"))
+            {
+                var getByApptRes = await Client.SendAsync(getByApptReq);
+                Assert.Equal(HttpStatusCode.OK, getByApptRes.StatusCode);
+                var viewedByAppt = await getByApptRes.Content.ReadFromJsonAsync<CheckInScheduledPatientResponseDto>();
+                Assert.NotNull(viewedByAppt);
+                Assert.Equal(dto.VisitId, viewedByAppt.VisitId);
+                Assert.Equal(dto.VisitCode, viewedByAppt.VisitCode);
+                Assert.Equal("A001", viewedByAppt.TicketNo);
+                Assert.Equal("120/80", viewedByAppt.BloodPressure);
+                Assert.Equal(76, viewedByAppt.HeartRate);
+                Assert.Equal(36.6, viewedByAppt.Temperature);
+                Assert.True(viewedByAppt.IsIdentityVerified);
+                Assert.True(viewedByAppt.IsInsuranceVerified);
+                Assert.Equal(3, viewedByAppt.NextStepInstructions.Count);
+            }
+
+            using (var getByVisitReq = AuthedGet(
+                       $"/api/v1/reception/visits/{dto.VisitCode}/check-in-result"))
+            {
+                var getByVisitRes = await Client.SendAsync(getByVisitReq);
+                Assert.Equal(HttpStatusCode.OK, getByVisitRes.StatusCode);
+                var viewedByVisit = await getByVisitRes.Content.ReadFromJsonAsync<CheckInScheduledPatientResponseDto>();
+                Assert.NotNull(viewedByVisit);
+                Assert.Equal(dto.VisitId, viewedByVisit.VisitId);
+                Assert.Equal(appointmentCode, viewedByVisit.AppointmentCode);
+                Assert.Equal("120/80", viewedByVisit.BloodPressure);
+            }
             using (var verifyScope = Factory.Services.CreateScope())
             {
                 var db = verifyScope.ServiceProvider.GetRequiredService<IApplicationDbContext>();

@@ -553,6 +553,131 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
             NextStepInstructions: instructions);
     }
 
+    public async Task<CheckInScheduledPatientResponseDto> GetCheckInResultByAppointmentAsync(
+        long actorUserId,
+        string appointmentIdOrCode,
+        CancellationToken ct = default)
+    {
+        if (actorUserId <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        var (trimmedIdentifier, parsedId, parsedCode) = ParseAppointmentIdentifier(appointmentIdOrCode);
+
+        if (parsedCode is not null && parsedCode.StartsWith("VIS-", StringComparison.OrdinalIgnoreCase))
+        {
+            return await GetCheckInResultByVisitAsync(actorUserId, appointmentIdOrCode, ct);
+        }
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+
+        var actor = await EnsureCheckInActorAccessAsync(actorUserId, nowUtc, ct);
+
+        var appointment = await LoadAppointmentAsync(parsedId, parsedCode, ct)
+            ?? throw new NotFoundException("Appointment", trimmedIdentifier);
+
+        await EnsureAppointmentHospitalScopeAsync(actor, appointment, ct);
+
+        var normalizedApptStatus = AppointmentBookingRules.NormalizeStatusKey(appointment.Status);
+        if (normalizedApptStatus == AppointmentBookingRules.CancelledStatus)
+        {
+            throw new ConflictException("Lịch hẹn đã bị hủy, không có kết quả check-in.");
+        }
+
+        if (normalizedApptStatus == AppointmentBookingRules.NoShowStatus)
+        {
+            throw new ConflictException("Lịch hẹn đã được ghi nhận vắng mặt (NO_SHOW), không có kết quả check-in.");
+        }
+
+        var visit = await _db.Visits
+            .AsNoTracking()
+            .FirstOrDefaultAsync(v => v.AppointmentId == appointment.Id, ct);
+
+        if (visit is null)
+        {
+            throw new ConflictException("Lịch hẹn chưa được check-in, chưa có kết quả tiếp nhận.");
+        }
+
+        return await BuildCheckInResultAsync(actor, visit, appointment, nowUtc, nowLocal, ct);
+    }
+
+    public async Task<CheckInScheduledPatientResponseDto> GetCheckInResultByVisitAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        CancellationToken ct = default)
+    {
+        if (actorUserId <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        var (trimmedIdentifier, parsedId, parsedCode) = ParseVisitIdentifier(visitIdOrCode);
+
+        if (parsedCode is not null && parsedCode.StartsWith("APT-", StringComparison.OrdinalIgnoreCase))
+        {
+            return await GetCheckInResultByAppointmentAsync(actorUserId, visitIdOrCode, ct);
+        }
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+
+        var actor = await EnsureCheckInActorAccessAsync(actorUserId, nowUtc, ct);
+
+        Visit? visit;
+        if (parsedId.HasValue)
+        {
+            visit = await _db.Visits
+                .AsNoTracking()
+                .FirstOrDefaultAsync(v => v.Id == parsedId.Value, ct);
+
+            if (visit is null)
+            {
+                var fallbackAppointment = await LoadAppointmentAsync(parsedId, null, ct);
+                if (fallbackAppointment is not null)
+                {
+                    await EnsureAppointmentHospitalScopeAsync(actor, fallbackAppointment, ct);
+
+                    var apptStatus = AppointmentBookingRules.NormalizeStatusKey(fallbackAppointment.Status);
+                    if (apptStatus == AppointmentBookingRules.CancelledStatus)
+                    {
+                        throw new ConflictException("Lịch hẹn đã bị hủy, không có kết quả check-in.");
+                    }
+
+                    if (apptStatus == AppointmentBookingRules.NoShowStatus)
+                    {
+                        throw new ConflictException("Lịch hẹn đã được ghi nhận vắng mặt (NO_SHOW), không có kết quả check-in.");
+                    }
+
+                    visit = await _db.Visits
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(v => v.AppointmentId == fallbackAppointment.Id, ct)
+                        ?? throw new ConflictException("Lịch hẹn chưa được check-in, chưa có kết quả tiếp nhận.");
+
+                    return await BuildCheckInResultAsync(actor, visit, fallbackAppointment, nowUtc, nowLocal, ct);
+                }
+
+                throw new NotFoundException("Visit", trimmedIdentifier);
+            }
+        }
+        else
+        {
+            visit = await _db.Visits
+                .AsNoTracking()
+                .FirstOrDefaultAsync(
+                    v => v.VisitCode != null && v.VisitCode.ToUpper() == parsedCode,
+                    ct)
+                ?? throw new NotFoundException("Visit", trimmedIdentifier);
+        }
+
+        var appointment = visit.AppointmentId.HasValue
+            ? await LoadAppointmentAsync(visit.AppointmentId.Value, null, ct)
+            : null;
+
+        return await BuildCheckInResultAsync(actor, visit, appointment, nowUtc, nowLocal, ct);
+    }
+
     private static (string Trimmed, long? Id, string? Code) ParseAppointmentIdentifier(string? idOrCode)
     {
         if (string.IsNullOrWhiteSpace(idOrCode))
@@ -579,6 +704,40 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
             if (!long.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id <= 0)
             {
                 throw new ValidationException("Mã lịch hẹn không hợp lệ.");
+            }
+
+            return (trimmed, id, null);
+        }
+
+        return (trimmed, null, trimmed.ToUpperInvariant());
+    }
+
+    private static (string Trimmed, long? Id, string? Code) ParseVisitIdentifier(string? idOrCode)
+    {
+        if (string.IsNullOrWhiteSpace(idOrCode))
+        {
+            throw new ValidationException("Mã lượt khám không hợp lệ.");
+        }
+
+        var trimmed = idOrCode.Trim();
+        if (trimmed.StartsWith('#'))
+        {
+            trimmed = trimmed[1..].TrimStart();
+        }
+
+        if (string.IsNullOrEmpty(trimmed) ||
+            trimmed.Length > MaxAppointmentIdentifierLength ||
+            trimmed[0] is '-' or '_' ||
+            !trimmed.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_'))
+        {
+            throw new ValidationException("Mã lượt khám không hợp lệ.");
+        }
+
+        if (trimmed.All(char.IsAsciiDigit))
+        {
+            if (!long.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id <= 0)
+            {
+                throw new ValidationException("Mã lượt khám không hợp lệ.");
             }
 
             return (trimmed, id, null);
@@ -944,5 +1103,449 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
                  q.Status.ToUpper() == "CALLED" ||
                  q.Status.ToUpper() == "IN_PROGRESS"),
                 ct);
+    }
+
+    private async Task EnsureAppointmentHospitalScopeAsync(
+        CheckInActorContext actor,
+        Appointment appointment,
+        CancellationToken ct)
+    {
+        if (actor.IsSystemAdmin || !actor.ActorHospitalId.HasValue)
+        {
+            return;
+        }
+
+        var slot = appointment.Slot ?? (appointment.SlotId.HasValue
+            ? await _db.ExaminationSlots
+                .AsNoTracking()
+                .Include(s => s.Service)
+                .Include(s => s.Room)
+                    .ThenInclude(r => r!.Department)
+                .Include(s => s.Doctor)
+                    .ThenInclude(d => d!.Staff)
+                .FirstOrDefaultAsync(s => s.Id == appointment.SlotId.Value, ct)
+            : null);
+
+        var appointmentHospitalId = slot?.Service?.HospitalId
+            ?? slot?.Room?.HospitalId
+            ?? slot?.Room?.Department?.HospitalId
+            ?? slot?.Doctor?.HospitalId
+            ?? slot?.Doctor?.Staff?.HospitalId;
+
+        if (appointmentHospitalId.HasValue && appointmentHospitalId.Value != actor.ActorHospitalId.Value)
+        {
+            throw new ForbiddenException("Bạn không có quyền truy cập kết quả check-in của cơ sở y tế khác.");
+        }
+    }
+
+    private async Task<CheckInScheduledPatientResponseDto> BuildCheckInResultAsync(
+        CheckInActorContext actor,
+        Visit visit,
+        Appointment? appointment,
+        DateTime nowUtc,
+        DateTime nowLocal,
+        CancellationToken ct)
+    {
+        var slot = appointment?.Slot ?? (appointment?.SlotId.HasValue == true
+            ? await _db.ExaminationSlots
+                .AsNoTracking()
+                .Include(s => s.Service)
+                    .ThenInclude(sv => sv!.Department)
+                .Include(s => s.Service)
+                    .ThenInclude(sv => sv!.Specialty)
+                .Include(s => s.Room)
+                    .ThenInclude(r => r!.Department)
+                .Include(s => s.Doctor)
+                    .ThenInclude(d => d!.Staff)
+                .Include(s => s.Doctor)
+                    .ThenInclude(d => d!.Specialty)
+                .FirstOrDefaultAsync(s => s.Id == appointment.SlotId.Value, ct)
+            : null);
+
+        var targetDoctorId = visit.AssignedDoctorId ?? slot?.DoctorId;
+        Doctor? doctor = null;
+        if (targetDoctorId.HasValue)
+        {
+            doctor = (slot?.Doctor is not null && slot.Doctor.Id == targetDoctorId.Value)
+                ? slot.Doctor
+                : await _db.Doctors
+                    .AsNoTracking()
+                    .Include(d => d.Staff)
+                    .Include(d => d.Specialty)
+                    .FirstOrDefaultAsync(d => d.Id == targetDoctorId.Value, ct);
+        }
+
+        var targetRoomId = visit.ExaminationRoomId ?? slot?.RoomId;
+        HospitalRoom? room = null;
+        if (targetRoomId.HasValue)
+        {
+            room = (slot?.Room is not null && slot.Room.Id == targetRoomId.Value)
+                ? slot.Room
+                : await _db.HospitalRooms
+                    .AsNoTracking()
+                    .Include(r => r.Department)
+                    .FirstOrDefaultAsync(r => r.Id == targetRoomId.Value, ct);
+        }
+
+        Staff? checkedInStaff = null;
+        if (visit.CheckedInByStaffId.HasValue)
+        {
+            checkedInStaff = await _db.Staff
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == visit.CheckedInByStaffId.Value, ct);
+        }
+
+        var associatedHospitalIds = new long?[]
+        {
+            room?.HospitalId,
+            room?.Department?.HospitalId,
+            doctor?.HospitalId,
+            doctor?.Staff?.HospitalId,
+            checkedInStaff?.HospitalId,
+            slot?.Service?.HospitalId,
+            slot?.Room?.HospitalId,
+            slot?.Doctor?.HospitalId,
+        };
+
+        if (!actor.IsSystemAdmin &&
+            actor.ActorHospitalId.HasValue &&
+            associatedHospitalIds.Any(hId => hId.HasValue && hId.Value != actor.ActorHospitalId.Value))
+        {
+            throw new ForbiddenException("Bạn không có quyền truy cập kết quả check-in của cơ sở y tế khác.");
+        }
+
+        var effectiveHospitalId = associatedHospitalIds.FirstOrDefault(hId => hId.HasValue)
+            ?? actor.ActorHospitalId
+            ?? 1L;
+
+        if (appointment is not null)
+        {
+            var normalizedApptStatus = AppointmentBookingRules.NormalizeStatusKey(appointment.Status);
+            if (normalizedApptStatus == AppointmentBookingRules.CancelledStatus)
+            {
+                throw new ConflictException("Lịch hẹn đã bị hủy, không có kết quả check-in.");
+            }
+
+            if (normalizedApptStatus == AppointmentBookingRules.NoShowStatus)
+            {
+                throw new ConflictException("Lịch hẹn đã được ghi nhận vắng mặt (NO_SHOW), không có kết quả check-in.");
+            }
+        }
+
+        var normalizedVisitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
+        if (string.IsNullOrEmpty(normalizedVisitStatus))
+        {
+            normalizedVisitStatus = targetRoomId.HasValue && targetDoctorId.HasValue ? "WAITING" : "CHECKED_IN";
+        }
+
+        if (normalizedVisitStatus is "CANCELLED" or "NO_SHOW")
+        {
+            throw new ConflictException("Lượt khám đã bị hủy, không thể xem kết quả check-in.");
+        }
+
+        var patientId = visit.PatientId ?? appointment?.PatientId;
+        var patient = appointment?.Patient ?? (patientId.HasValue
+            ? await _db.Patients
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == patientId.Value, ct)
+            : null)
+            ?? throw new NotFoundException("Patient", patientId ?? 0);
+
+        var candidateQueues = await _db.QueueEntries
+            .AsNoTracking()
+            .Where(q =>
+                (q.VisitId == visit.Id ||
+                 (visit.AppointmentId.HasValue && q.AppointmentId == visit.AppointmentId.Value) ||
+                 (appointment != null && q.AppointmentId == appointment.Id)) &&
+                (q.QueueType == null ||
+                 q.QueueType.ToUpper() == "EXAMINATION" ||
+                 q.QueueType.ToUpper() == "RETURN_CONSULTATION"))
+            .OrderByDescending(q => q.VisitId == visit.Id)
+            .ThenByDescending(q => q.Id)
+            .ToListAsync(ct);
+
+        var queueEntry = candidateQueues.FirstOrDefault(q =>
+            !string.Equals(q.Status, "CANCELLED", StringComparison.OrdinalIgnoreCase))
+            ?? candidateQueues.FirstOrDefault();
+
+        if (queueEntry is not null &&
+            string.Equals(queueEntry.Status, "CANCELLED", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException("Hàng đợi khám của lượt khám đã bị hủy, không thể xem kết quả check-in.");
+        }
+
+        var visitDate = visit.CheckedInAt.HasValue
+            ? DateOnly.FromDateTime(visit.CheckedInAt.Value)
+            : (slot?.StartsAt.HasValue == true
+                ? DateOnly.FromDateTime(slot.StartsAt.Value)
+                : DateOnly.FromDateTime(nowLocal));
+
+        var queueDate = queueEntry?.QueueDate ?? visitDate;
+
+        var servicePoint = await ResolveQueueServicePointAsync(
+            targetRoomId,
+            targetDoctorId,
+            effectiveHospitalId,
+            ct);
+
+        var effectiveSpId = servicePoint?.Id
+            ?? queueEntry?.CurrentServicePointId
+            ?? queueEntry?.ServicePointId;
+
+        var queueNumber = queueEntry?.QueueNumber is > 0
+            ? queueEntry.QueueNumber.Value
+            : 1;
+
+        var ticketNo = $"A{queueNumber:D3}";
+
+        var queueStatus = !string.IsNullOrWhiteSpace(queueEntry?.Status)
+            ? queueEntry.Status.Trim().ToUpperInvariant()
+            : (normalizedVisitStatus == "COMPLETED" ? "COMPLETED" : "WAITING");
+
+        var presenceStatus = !string.IsNullOrWhiteSpace(queueEntry?.PresenceStatus)
+            ? queueEntry.PresenceStatus.Trim().ToUpperInvariant()
+            : "PRESENT";
+
+        var arrivalClass = !string.IsNullOrWhiteSpace(queueEntry?.ArrivalClass)
+            ? queueEntry.ArrivalClass.Trim().ToUpperInvariant()
+            : "ON_TIME_OR_GRACE";
+
+        var manualPriority = !string.IsNullOrWhiteSpace(queueEntry?.ManualPriority)
+            ? queueEntry.ManualPriority.Trim().ToUpperInvariant()
+            : ClinicalQueueRules.PriorityNormal;
+
+        var effectivePriority = ClinicalQueueRules.ResolveEffectivePriority(
+            manualPriority,
+            patient.DateOfBirth,
+            queueDate);
+
+        var waitingCountBefore = 0;
+        if (normalizedVisitStatus is not ("COMPLETED" or "IN_PROGRESS" or "IN_CONSULTATION") &&
+            queueStatus is not ("COMPLETED" or "IN_PROGRESS" or "IN_CONSULTATION" or "CALLED"))
+        {
+            waitingCountBefore = await CountWaitingBeforeAsync(
+                queueEntry?.Id ?? 0,
+                effectiveSpId,
+                queueDate,
+                queueNumber,
+                ct);
+        }
+
+        var policySet = await QueueOrderingPolicyLoader.LoadAsync(_db, effectiveHospitalId, nowUtc, ct);
+        var orderingPolicy = policySet.ForServicePoint(effectiveSpId);
+        var durationPerPatient = orderingPolicy.ExpectedDurationMinutes is > 0
+            ? orderingPolicy.ExpectedDurationMinutes.Value
+            : DefaultWaitMinutesPerPatient;
+        var estimatedWaitMinutes = waitingCountBefore * durationPerPatient;
+
+        var department = room?.Department ?? slot?.Service?.Department;
+        if (department is null)
+        {
+            var fallbackDeptId = room?.DepartmentId
+                ?? slot?.Service?.DepartmentId
+                ?? doctor?.Staff?.DepartmentId;
+            if (fallbackDeptId.HasValue)
+            {
+                department = await _db.Departments
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(d => d.Id == fallbackDeptId.Value, ct);
+            }
+        }
+
+        var departmentName = !string.IsNullOrWhiteSpace(department?.Name)
+            ? department.Name
+            : "Khoa Khám bệnh";
+
+        var roomName = !string.IsNullOrWhiteSpace(room?.Name)
+            ? room.Name
+            : "Phòng khám ngoại trú";
+
+        var roomDisplay = !string.IsNullOrWhiteSpace(room?.RoomCode)
+            ? $"{roomName} ({room.RoomCode})"
+            : roomName;
+
+        var locationSuffix = !string.IsNullOrWhiteSpace(room?.Location)
+            ? $" - {room.Location}"
+            : string.Empty;
+
+        var doctorName = !string.IsNullOrWhiteSpace(doctor?.Staff?.FullName)
+            ? doctor.Staff.FullName
+            : (!string.IsNullOrWhiteSpace(doctor?.DoctorCode) ? $"Bác sĩ {doctor.DoctorCode}" : "Bác sĩ phụ trách");
+
+        var servicePointName = servicePoint?.Name;
+        if (string.IsNullOrWhiteSpace(servicePointName) && effectiveSpId.HasValue)
+        {
+            servicePointName = await TryGetServicePointNameAsync(effectiveSpId.Value, ct);
+        }
+
+        servicePointName ??= roomName;
+
+        var instructions = new List<string>
+        {
+            $"Di chuyển đến trước {roomDisplay} ({departmentName}{locationSuffix}).",
+            "Theo dõi màn hình điện tử và lắng nghe loa gọi số thứ tự tiếp nhận.",
+            "Chuẩn bị sẵn thẻ CCCD/BHYT bản gốc trước khi vào phòng khám.",
+        };
+
+        var visitCode = !string.IsNullOrWhiteSpace(visit.VisitCode)
+            ? visit.VisitCode
+            : $"VIS-{queueDate:yyyyMM}-{visit.Id:D4}";
+
+        var ticketCode = $"TKT-{visitCode}";
+
+        var appointmentId = visit.AppointmentId ?? appointment?.Id ?? 0L;
+        var appointmentCode = !string.IsNullOrWhiteSpace(appointment?.AppointmentCode)
+            ? appointment.AppointmentCode
+            : (appointmentId > 0 ? $"APT-{queueDate:yyyyMM}-{appointmentId:D4}" : string.Empty);
+
+        var appointmentStatus = !string.IsNullOrWhiteSpace(appointment?.Status)
+            ? appointment.Status.Trim().ToUpperInvariant()
+            : AppointmentBookingRules.CheckedInStatus;
+
+        var visitType = (visit.AppointmentId.HasValue || appointment is not null)
+            ? "SCHEDULED"
+            : "WALK_IN";
+
+        var patientCode = !string.IsNullOrWhiteSpace(patient.PatientCode)
+            ? patient.PatientCode
+            : $"PAT-{patient.Id:D4}";
+
+        var resolvedReason = !string.IsNullOrWhiteSpace(visit.ReasonForVisit)
+            ? visit.ReasonForVisit.Trim()
+            : (!string.IsNullOrWhiteSpace(appointment?.ReasonForVisit)
+                ? appointment.ReasonForVisit.Trim()
+                : (!string.IsNullOrWhiteSpace(appointment?.ReceptionNote)
+                    ? appointment.ReceptionNote.Trim()
+                    : "Khám bệnh ngoại trú"));
+
+        var (bloodPressure, heartRate, temperature, isIdentityVerified, isInsuranceVerified) =
+            await LoadCheckInAuditMetadataAsync(visit.Id, ct);
+
+        var checkedInAtValue = visit.CheckedInAt ?? nowLocal;
+        var checkedInByStaffId = visit.CheckedInByStaffId ?? checkedInStaff?.Id ?? actor.ActorStaffId;
+        var checkedInByStaffName = checkedInStaff?.FullName ?? actor.ActorStaffName;
+
+        return new CheckInScheduledPatientResponseDto(
+            VisitId: visit.Id,
+            VisitCode: visitCode,
+            TicketCode: ticketCode,
+            TicketNo: ticketNo,
+            QueueEntryId: queueEntry?.Id ?? 0L,
+            QueueNumber: queueNumber,
+            QueueNumberFormatted: queueNumber.ToString("D3", CultureInfo.InvariantCulture),
+            QueueStatus: queueStatus,
+            PresenceStatus: presenceStatus,
+            ArrivalClass: arrivalClass,
+            Priority: effectivePriority,
+            ManualPriority: manualPriority,
+            AppointmentId: appointmentId,
+            AppointmentCode: appointmentCode,
+            AppointmentStatus: appointmentStatus,
+            VisitStatus: normalizedVisitStatus,
+            VisitType: visitType,
+            PatientId: patient.Id,
+            PatientCode: patientCode,
+            PatientName: patient.FullName,
+            HospitalId: effectiveHospitalId,
+            DepartmentId: department?.Id ?? room?.DepartmentId,
+            DepartmentName: departmentName,
+            RoomId: targetRoomId,
+            RoomCode: room?.RoomCode,
+            RoomName: roomName,
+            RoomLocation: room?.Location,
+            DoctorId: targetDoctorId,
+            DoctorCode: doctor?.DoctorCode,
+            DoctorName: doctorName,
+            ServicePointId: effectiveSpId,
+            ServicePointName: servicePointName,
+            ReasonForVisit: resolvedReason,
+            BloodPressure: bloodPressure,
+            HeartRate: heartRate,
+            Temperature: temperature,
+            IsIdentityVerified: isIdentityVerified,
+            IsInsuranceVerified: isInsuranceVerified,
+            WaitingCountBefore: waitingCountBefore,
+            WaitingAheadCount: waitingCountBefore,
+            EstimatedWaitMinutes: estimatedWaitMinutes,
+            CheckedInAt: checkedInAtValue.ToString("HH:mm", CultureInfo.InvariantCulture),
+            CheckedInAtIso: checkedInAtValue,
+            CheckedInByStaffId: checkedInByStaffId,
+            CheckedInByStaffName: checkedInByStaffName,
+            NextStepInstructions: instructions);
+    }
+
+    private async Task<(string? BloodPressure, int? HeartRate, double? Temperature, bool IsIdentityVerified, bool IsInsuranceVerified)> LoadCheckInAuditMetadataAsync(
+        long visitId,
+        CancellationToken ct)
+    {
+        var visitIdText = visitId.ToString(CultureInfo.InvariantCulture);
+        var auditLog = await _db.AuditLogs
+            .AsNoTracking()
+            .Where(a =>
+                a.EntityType != null &&
+                a.EntityType.ToUpper() == VisitEntityType &&
+                a.EntityId == visitIdText &&
+                a.Action != null &&
+                a.Action.ToUpper() == PatientCheckedInAction)
+            .OrderByDescending(a => a.OccurredAt)
+            .ThenByDescending(a => a.Id)
+            .FirstOrDefaultAsync(ct);
+
+        if (string.IsNullOrWhiteSpace(auditLog?.ChangeData))
+        {
+            return (null, null, null, true, false);
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(auditLog.ChangeData);
+            var root = doc.RootElement;
+
+            string? bloodPressure = null;
+            int? heartRate = null;
+            double? temperature = null;
+
+            if (root.TryGetProperty("vitals", out var vitalsEl) && vitalsEl.ValueKind == JsonValueKind.Object)
+            {
+                if (vitalsEl.TryGetProperty("bloodPressure", out var bpEl) && bpEl.ValueKind == JsonValueKind.String)
+                {
+                    bloodPressure = bpEl.GetString();
+                }
+
+                if (vitalsEl.TryGetProperty("heartRate", out var hrEl) &&
+                    hrEl.ValueKind == JsonValueKind.Number &&
+                    hrEl.TryGetInt32(out var hrValue))
+                {
+                    heartRate = hrValue;
+                }
+
+                if (vitalsEl.TryGetProperty("temperature", out var tempEl) &&
+                    tempEl.ValueKind == JsonValueKind.Number &&
+                    tempEl.TryGetDouble(out var tempValue))
+                {
+                    temperature = tempValue;
+                }
+            }
+
+            var isIdentityVerified = true;
+            if (root.TryGetProperty("isIdentityVerified", out var idVerEl) &&
+                idVerEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                isIdentityVerified = idVerEl.GetBoolean();
+            }
+
+            var isInsuranceVerified = false;
+            if (root.TryGetProperty("isInsuranceVerified", out var insVerEl) &&
+                insVerEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                isInsuranceVerified = insVerEl.GetBoolean();
+            }
+
+            return (bloodPressure, heartRate, temperature, isIdentityVerified, isInsuranceVerified);
+        }
+        catch (JsonException)
+        {
+            return (null, null, null, true, false);
+        }
     }
 }
