@@ -278,4 +278,84 @@ describe('DoctorDashboardPage', () => {
     expect(screen.queryByText('Tổng quan bàn khám bác sĩ')).not.toBeInTheDocument();
     expect(screen.getByTestId('location-probe')).toHaveTextContent('/');
   });
+
+  it('triggers Call Next Eligible Patient when clicking "Gọi bệnh nhân tiếp theo" quick action and updates queue row status (Issue #93 / UC31)', async () => {
+    useAuthStore.setState({
+      user: {
+        id: 12,
+        email: 'bacsi.hung@medflow.test',
+        fullName: 'BS. Nguyễn Văn Hùng',
+        roles: ['DOCTOR'],
+        patientCode: null,
+      },
+      accessToken: 'tok',
+      refreshToken: 'rtok',
+      isAuthenticated: true,
+    });
+
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: {
+        servicePointId: 'sp-room-102',
+        outcome: 'CALLED',
+        message: 'Đã gọi bệnh nhân Lê Hoàng Nam (phiếu B005) vào phòng P.102.',
+        selectionReason: 'RETURN_CONSULTATION',
+        calledEntry: {
+          id: 'dq-3',
+          queueNumber: 5,
+          ticketNo: 'B005',
+          servingOrder: 1,
+          visitCode: 'VIS-2026-0089',
+          patientName: 'Lê Hoàng Nam',
+          patientCode: 'BN-2026-0089',
+          visitType: 'WALK_IN',
+          servicePointId: 'sp-room-102',
+          roomCode: 'P.102',
+          roomName: 'Phòng khám Nội tổng quát 102',
+          departmentName: 'Khoa Nội Tổng Quát',
+          doctorName: 'BS. CKII Nguyễn Văn Hùng',
+          status: 'CALLED',
+          priority: 'NORMAL',
+          queueType: 'RETURN_CONSULTATION',
+          presenceStatus: 'PRESENT',
+          arrivalClass: 'WALK_IN',
+          scheduledAt: null,
+          checkedInAt: '08:25',
+          calledAt: '08:35',
+          startedAt: null,
+          blockedReason: null,
+          isEligible: false,
+          isAppointmentProtected: false,
+          isBackfilled: false,
+          backfillReason: null,
+          queueGroup: 'CALLED',
+          ineligibleReason: null,
+        },
+        previousStateVersion: 1,
+        stateVersion: 2,
+        updatedAtUtc: '2026-11-07T01:35:00Z',
+        entries: [],
+      },
+    });
+
+    renderPage();
+
+    fireEvent.click(screen.getByText('Gọi bệnh nhân tiếp theo'));
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith('/queue/service-points/sp-room-102/call-next', {});
+    });
+
+    const statusBanner = await screen.findByRole('status');
+    expect(statusBanner).toHaveTextContent(
+      'Đã gọi bệnh nhân Lê Hoàng Nam (phiếu B005) vào phòng P.102.',
+    );
+    expect(statusBanner).toHaveTextContent('Lý do chọn: Đọc KQ CLS');
+
+    const patientRow = screen
+      .getAllByText('B005')
+      .map((el) => el.closest('tr'))
+      .find((row) => row !== null);
+    expect(patientRow).toBeDefined();
+    expect(patientRow).toHaveTextContent('Đã gọi vào');
+  });
 });

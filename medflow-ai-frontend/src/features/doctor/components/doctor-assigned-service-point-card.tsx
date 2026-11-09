@@ -1,6 +1,7 @@
-import { Stethoscope } from 'lucide-react';
+import { Megaphone, Stethoscope } from 'lucide-react';
 
 import { Badge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import type { DoctorAssignedServicePointDto } from '../types/doctor-assigned-queue.types';
@@ -14,10 +15,14 @@ import {
 
 interface DoctorAssignedServicePointCardProps {
   servicePoint: DoctorAssignedServicePointDto;
+  onCallNext?: (servicePoint: DoctorAssignedServicePointDto) => void;
+  isCallingNext?: boolean;
 }
 
 export function DoctorAssignedServicePointCard({
   servicePoint,
+  onCallNext,
+  isCallingNext,
 }: DoctorAssignedServicePointCardProps) {
   return (
     <Card>
@@ -58,6 +63,20 @@ export function DoctorAssignedServicePointCard({
             {servicePoint.stats.eligibleCount} đủ điều kiện • {servicePoint.stats.notEligibleCount}{' '}
             chưa đủ • {servicePoint.stats.completedCount} xong
           </div>
+          {onCallNext && (
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              loading={Boolean(isCallingNext)}
+              disabled={!servicePoint.isActive || Boolean(isCallingNext)}
+              onClick={() => onCallNext(servicePoint)}
+              aria-label={`Gọi bệnh nhân tiếp theo tại ${servicePoint.roomCode}`}
+            >
+              <Megaphone className="w-3.5 h-3.5" aria-hidden="true" />
+              Gọi bệnh nhân tiếp theo
+            </Button>
+          )}
         </div>
       </CardHeader>
 

@@ -49,6 +49,9 @@ export interface ExaminationQueueEntryDto {
   isBackfilled?: boolean;
   backfillReason?: string | null;
   backfillUpdatedAt?: string | null;
+  queueGroup?:
+    'IN_PROGRESS' | 'CALLED' | 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'SKIPPED' | 'COMPLETED' | null;
+  ineligibleReason?: 'NOT_ARRIVED' | 'LEFT' | 'BLOCKED' | 'AWAITING_RESULTS' | null;
 }
 
 export interface ServicePointQueueDto {
@@ -223,4 +226,25 @@ export interface UpdateExaminationQueueStatusResponseDto {
   entry: ExaminationQueueEntryDto;
   previousStatus: ExaminationQueueStatus;
   updatedAtUtc: string;
+}
+
+export type CallNextOutcome = 'CALLED' | 'NO_ELIGIBLE_PATIENT' | 'HOLD_FOR_SLOT';
+
+export type CallNextSelectionReason =
+  'APPOINTMENT_DUE' | 'RETURN_CONSULTATION' | 'PRIORITY' | 'SAFE_BACKFILL' | 'FIFO';
+
+export interface CallNextPatientRequestPayload {
+  notes?: string | null;
+}
+
+export interface CallNextPatientResponseDto {
+  servicePointId: string;
+  outcome: CallNextOutcome;
+  message: string;
+  selectionReason: CallNextSelectionReason | null;
+  calledEntry: ExaminationQueueEntryDto | null;
+  previousStateVersion: number | null;
+  stateVersion: number | null;
+  updatedAtUtc: string;
+  entries: ExaminationQueueEntryDto[];
 }
