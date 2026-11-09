@@ -1,5 +1,6 @@
-import { FileText, Megaphone, Stethoscope } from 'lucide-react';
+import { FileText, History, Megaphone, Stethoscope } from 'lucide-react';
 
+import { CanAccess } from '@/features/auth/hooks/use-role-access';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
@@ -21,6 +22,7 @@ interface DoctorAssignedServicePointCardProps {
   onCallNext?: (servicePoint: DoctorAssignedServicePointDto) => void;
   isCallingNext?: boolean;
   onOpenConsultation?: (entry: DoctorAssignedQueueEntryDto) => void;
+  onViewMedicalHistory?: (entry: DoctorAssignedQueueEntryDto) => void;
 }
 
 export function DoctorAssignedServicePointCard({
@@ -28,6 +30,7 @@ export function DoctorAssignedServicePointCard({
   onCallNext,
   isCallingNext,
   onOpenConsultation,
+  onViewMedicalHistory,
 }: DoctorAssignedServicePointCardProps) {
   return (
     <Card>
@@ -97,7 +100,7 @@ export function DoctorAssignedServicePointCard({
                 <th className="py-2.5 font-semibold">Thời gian</th>
                 <th className="py-2.5 font-semibold">Ưu tiên</th>
                 <th className="py-2.5 font-semibold">Nhóm hàng đợi</th>
-                {onOpenConsultation && (
+                {(onOpenConsultation || onViewMedicalHistory) && (
                   <th className="py-2.5 font-semibold text-right">Thao tác</th>
                 )}
               </tr>
@@ -176,29 +179,49 @@ export function DoctorAssignedServicePointCard({
                         )}
                       </div>
                     </td>
-                    {onOpenConsultation && (
+                    {(onOpenConsultation || onViewMedicalHistory) && (
                       <td className="py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => onOpenConsultation(entry)}
-                          aria-label={`Mở bàn khám ${entry.ticketNo}`}
-                          className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
-                            entry.status === 'CALLED'
-                              ? 'bg-primary text-white hover:bg-primary-dark'
-                              : entry.status === 'IN_PROGRESS'
-                                ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                                : 'border border-border bg-white text-navy hover:bg-canvas'
-                          }`}
-                        >
-                          <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-                          <span>
-                            {entry.status === 'CALLED'
-                              ? 'Bắt đầu khám'
-                              : entry.status === 'IN_PROGRESS'
-                                ? 'Tiếp tục khám'
-                                : 'Xem hồ sơ'}
-                          </span>
-                        </button>
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                          {onOpenConsultation && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenConsultation(entry)}
+                              aria-label={`Mở bàn khám ${entry.ticketNo}`}
+                              className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+                                entry.status === 'CALLED'
+                                  ? 'bg-primary text-white hover:bg-primary-dark'
+                                  : entry.status === 'IN_PROGRESS'
+                                    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                    : 'border border-border bg-white text-navy hover:bg-canvas'
+                              }`}
+                            >
+                              <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                              <span>
+                                {entry.status === 'CALLED'
+                                  ? 'Bắt đầu khám'
+                                  : entry.status === 'IN_PROGRESS'
+                                    ? 'Tiếp tục khám'
+                                    : 'Xem hồ sơ'}
+                              </span>
+                            </button>
+                          )}
+                          {onViewMedicalHistory && (
+                            <CanAccess
+                              allowedRoles={['DOCTOR']}
+                              requiredPermissions={['MEDICAL_RECORD_WRITE', 'PATIENT_PROFILE_READ']}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => onViewMedicalHistory(entry)}
+                                aria-label={`Xem lịch sử khám của ${entry.patientName} (${entry.visitCode})`}
+                                className="inline-flex items-center gap-1 rounded-lg border border-border bg-white px-2.5 py-1 text-xs font-semibold text-navy transition-colors hover:bg-canvas"
+                              >
+                                <History className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+                                <span>Lịch sử khám</span>
+                              </button>
+                            </CanAccess>
+                          )}
+                        </div>
                       </td>
                     )}
                   </tr>

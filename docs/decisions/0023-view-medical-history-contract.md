@@ -1,4 +1,4 @@
-# 0023 — View Medical History Contract & Two-Layer Clinical Scope Authorization (`#108` / `M2-054` / UC32)
+# 0023 — View Medical History Contract & Two-Layer Clinical Scope Authorization (`#107` / `M2-053` & `#108` / `M2-054` / UC32)
 
 - Ngay: 2026-04-20
 - Trang thai: accepted
@@ -23,6 +23,9 @@ Issue `#108` (`M2-054 — [M2][BE] View Medical History`, UC32) requires a backe
    - `MedicalHistoryPatientSummaryDto` exposes only clinical demographics (`patientId`, `patientCode`, `fullName`, `gender`, `dateOfBirth`, `age`, `bloodType`, `allergiesSummary`, `chronicConditions`) and never leaks raw contact/identity PII (`phone`, `email`, `address`, `identificationHash`).
    - Every successful read writes an `AuditLog` entry with `Action = "MEDICAL_HISTORY_VIEWED"`, `EntityType = "PATIENT"`, `EntityId = patient.Id`, `HospitalId`, `ActorUserId`, `IpAddress`, and structured `ChangeData`.
 
+4. **Frontend Workbench (`medflow-ai-frontend/src/features/doctor`, `#107` / `M2-053`)**:
+   - Routes protected by `<RequireAuth><RequireDoctor>`: `/doctor/medical-history`, `/doctor/patients/:patientIdOrCode/medical-history`, `/doctor/visits/:visitIdOrCode/medical-history`, and `/doctor/consultation/:visitIdOrCode/medical-history`.
+   - Enforces second-layer UI permission check (`MEDICAL_RECORD_WRITE` or `PATIENT_PROFILE_READ`) via `useRoleAccess()` and `<CanAccess>`, validates filter queries client-side before sending requests, and surfaces `400`/`403`/`404`/`409` `ProblemDetails.detail` messages in `role="alert"` without masking HTTP errors with mock data.
 ## Consequences
 
 - **Duoc**: Complete longitudinal clinical timeline for UC32 consultation workbench; strict two-layer doctor & hospital isolation; deterministic unit and integration test coverage; full PHI audit trail.

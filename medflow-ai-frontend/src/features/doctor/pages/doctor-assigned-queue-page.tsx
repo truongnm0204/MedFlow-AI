@@ -309,6 +309,11 @@ export function DoctorAssignedQueuePage() {
                   onOpenConsultation={(visitCode) =>
                     navigate(`/doctor/consultation/${encodeURIComponent(visitCode)}`)
                   }
+                  onViewMedicalHistory={(entry) =>
+                    navigate(
+                      `/doctor/visits/${encodeURIComponent(entry.visitCode)}/medical-history`,
+                    )
+                  }
                 />
 
                 {effectiveStats && <DoctorAssignedQueueStatCards stats={effectiveStats} />}
@@ -365,6 +370,11 @@ export function DoctorAssignedQueuePage() {
                           isCallingNext={callingServicePointId === sp.servicePointId}
                           onOpenConsultation={(entry) =>
                             navigate(`/doctor/consultation/${encodeURIComponent(entry.visitCode)}`)
+                          }
+                          onViewMedicalHistory={(entry) =>
+                            navigate(
+                              `/doctor/visits/${encodeURIComponent(entry.visitCode)}/medical-history`,
+                            )
                           }
                         />
                       ))

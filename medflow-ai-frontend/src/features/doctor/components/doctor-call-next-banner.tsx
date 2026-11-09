@@ -1,7 +1,10 @@
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 
-import type { DoctorCallNextResponseDto } from '../types/doctor-assigned-queue.types';
+import type {
+  DoctorAssignedQueueEntryDto,
+  DoctorCallNextResponseDto,
+} from '../types/doctor-assigned-queue.types';
 import { CALL_NEXT_SELECTION_REASON_META } from '../utils/doctor-assigned-queue-meta';
 
 export interface DoctorCallNextBannerProps {
@@ -10,6 +13,7 @@ export interface DoctorCallNextBannerProps {
   onDismissResult: () => void;
   onDismissError: () => void;
   onOpenConsultation?: (visitCode: string) => void;
+  onViewMedicalHistory?: (entry: DoctorAssignedQueueEntryDto) => void;
 }
 
 export function DoctorCallNextBanner({
@@ -18,6 +22,7 @@ export function DoctorCallNextBanner({
   onDismissResult,
   onDismissError,
   onOpenConsultation,
+  onViewMedicalHistory,
 }: DoctorCallNextBannerProps) {
   if (!error && !result) {
     return null;
@@ -84,6 +89,15 @@ export function DoctorCallNextBanner({
                       className="rounded-lg bg-emerald-700 px-2.5 py-1 text-[11px] font-bold text-white transition-colors hover:bg-emerald-800"
                     >
                       Mở bàn khám lâm sàng
+                    </button>
+                  )}
+                  {result.calledEntry && onViewMedicalHistory && (
+                    <button
+                      type="button"
+                      onClick={() => onViewMedicalHistory(result.calledEntry!)}
+                      className="rounded-lg border border-emerald-700 bg-white px-2.5 py-1 text-[11px] font-bold text-emerald-800 transition-colors hover:bg-emerald-100"
+                    >
+                      Xem lịch sử khám (UC32)
                     </button>
                   )}
                   <button
