@@ -1,10 +1,11 @@
-import { Stethoscope } from 'lucide-react';
+import { Megaphone, Stethoscope, XCircle } from 'lucide-react';
 
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import type {
+  CallNextSelectionReason,
   ExaminationQueueEntryDto,
   ExaminationQueuePriority,
   ExaminationQueueStatus,
@@ -12,6 +13,7 @@ import type {
   QueuePresenceStatus,
   ServicePointQueueDto,
 } from '../types/examination-queue.types';
+import { CANCELLABLE_QUEUE_STATUSES } from '../types/queue-status-update.types';
 
 export interface ExaminationQueueServicePointCardProps {
   servicePoint: ServicePointQueueDto;
@@ -28,6 +30,9 @@ export interface ExaminationQueueServicePointCardProps {
   onApplyPriority?: (entry: ExaminationQueueEntryDto) => void;
   onOpenMissedTurn?: (entry: ExaminationQueueEntryDto, servicePoint: ServicePointQueueDto) => void;
   onOpenRestoreTurn?: (entry: ExaminationQueueEntryDto, servicePoint: ServicePointQueueDto) => void;
+  onOpenCancelEntry?: (entry: ExaminationQueueEntryDto, servicePoint: ServicePointQueueDto) => void;
+  onCallNext?: (servicePoint: ServicePointQueueDto) => void;
+  isCallingNext?: boolean;
 }
 
 // oxlint-disable-next-line react/only-export-components
@@ -74,6 +79,38 @@ export const ARRIVAL_CLASS_META: Record<
   WALK_IN: { label: 'Vãng lai', tone: 'slate' },
 };
 
+// oxlint-disable-next-line react/only-export-components
+export const CALL_NEXT_SELECTION_REASON_META: Record<
+  CallNextSelectionReason,
+  { label: string; description: string; tone: 'emerald' | 'amber' | 'sky' | 'slate' }
+> = {
+  APPOINTMENT_DUE: {
+    label: 'Đúng giờ hẹn',
+    description: 'Lịch hẹn được bảo vệ đã đến giờ khám',
+    tone: 'emerald',
+  },
+  RETURN_CONSULTATION: {
+    label: 'Đọc KQ CLS',
+    description: 'Bệnh nhân quay lại đọc kết quả cận lâm sàng đã sẵn sàng',
+    tone: 'emerald',
+  },
+  PRIORITY: {
+    label: 'Ưu tiên',
+    description: 'Nhóm ưu tiên (Người cao tuổi / Thai phụ) theo tỷ lệ luân phiên công bằng',
+    tone: 'amber',
+  },
+  SAFE_BACKFILL: {
+    label: 'Safe Backfill',
+    description: 'Khám sớm an toàn trong khoảng trống trước lịch hẹn được bảo vệ kế tiếp',
+    tone: 'sky',
+  },
+  FIFO: {
+    label: 'FIFO',
+    description: 'Thứ tự sẵn sàng khám theo quy tắc công bằng (FIFO)',
+    tone: 'slate',
+  },
+};
+
 export function ExaminationQueueServicePointCard({
   servicePoint,
   canManageQueue,
@@ -83,6 +120,9 @@ export function ExaminationQueueServicePointCard({
   onApplyPriority,
   onOpenMissedTurn,
   onOpenRestoreTurn,
+  onOpenCancelEntry,
+  onCallNext,
+  isCallingNext,
 }: ExaminationQueueServicePointCardProps) {
   return (
     <Card>
@@ -92,9 +132,10 @@ export function ExaminationQueueServicePointCard({
             {servicePoint.roomCode}
           </div>
           <div>
-            <div className="text-sm font-bold text-navy flex items-center gap-2">
+            <div className="text-sm font-bold text-navy flex flex-wrap items-center gap-2">
               <span>{servicePoint.roomName}</span>
               <Badge tone="slate">{servicePoint.departmentName}</Badge>
+              {!servicePoint.isActive && <Badge tone="rose">Tạm ngừng</Badge>}
             </div>
             <div className="text-[11px] text-sub mt-0.5 flex items-center gap-1.5">
               <Stethoscope className="w-3.5 h-3.5 text-primary" aria-hidden="true" />
@@ -122,6 +163,20 @@ export function ExaminationQueueServicePointCard({
             {servicePoint.waitingCount} chờ • {servicePoint.inProgressCount} đang khám •{' '}
             {servicePoint.completedCount} xong
           </div>
+          {canManageQueue && onCallNext && (
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              loading={Boolean(isCallingNext)}
+              disabled={!servicePoint.isActive || Boolean(isCallingNext)}
+              onClick={() => onCallNext(servicePoint)}
+              aria-label={`Gọi bệnh nhân tiếp theo tại ${servicePoint.roomCode}`}
+            >
+              <Megaphone className="w-3.5 h-3.5" aria-hidden="true" />
+              Gọi bệnh nhân tiếp theo
+            </Button>
+          )}
         </div>
       </CardHeader>
 
@@ -279,6 +334,18 @@ export function ExaminationQueueServicePointCard({
                               Cập nhật TT
                             </Button>
                           )}
+                          {onOpenCancelEntry &&
+                            CANCELLABLE_QUEUE_STATUSES.includes(entry.status) && (
+                              <Button
+                                variant="danger"
+                                size="sm"
+                                onClick={() => onOpenCancelEntry(entry, servicePoint)}
+                                aria-label={`Hủy lượt khám cho ${entry.patientName}`}
+                              >
+                                <XCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                                Hủy lượt
+                              </Button>
+                            )}
                           <Button
                             variant="secondary"
                             size="sm"
