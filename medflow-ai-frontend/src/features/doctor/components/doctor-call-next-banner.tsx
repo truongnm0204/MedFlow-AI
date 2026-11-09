@@ -9,6 +9,7 @@ export interface DoctorCallNextBannerProps {
   error: string | null;
   onDismissResult: () => void;
   onDismissError: () => void;
+  onOpenConsultation?: (visitCode: string) => void;
 }
 
 export function DoctorCallNextBanner({
@@ -16,6 +17,7 @@ export function DoctorCallNextBanner({
   error,
   onDismissResult,
   onDismissError,
+  onOpenConsultation,
 }: DoctorCallNextBannerProps) {
   if (!error && !result) {
     return null;
@@ -74,13 +76,24 @@ export function DoctorCallNextBanner({
                     </div>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={onDismissResult}
-                  className="text-[11px] font-bold text-emerald-800 hover:underline shrink-0"
-                >
-                  Đóng
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  {result.calledEntry && onOpenConsultation && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenConsultation(result.calledEntry!.visitCode)}
+                      className="rounded-lg bg-emerald-700 px-2.5 py-1 text-[11px] font-bold text-white transition-colors hover:bg-emerald-800"
+                    >
+                      Mở bàn khám lâm sàng
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={onDismissResult}
+                    className="text-[11px] font-bold text-emerald-800 hover:underline"
+                  >
+                    Đóng
+                  </button>
+                </div>
               </div>
             </Alert>
           )}

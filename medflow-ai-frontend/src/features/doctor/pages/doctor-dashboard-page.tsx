@@ -123,6 +123,14 @@ export function DoctorDashboardPage() {
   const handleQuickAction = (actionId: string) => {
     if (actionId === 'call-next') {
       void handleCallNextFromDashboard();
+      return;
+    }
+    if (actionId === 'open-consultation') {
+      const activeOrCalled =
+        calledEntryOverride?.visitCode ??
+        assignedQueue.find((e) => e.status === 'IN_CONSULTATION' || e.status === 'CALLED')?.id ??
+        'VIS-2026-0212';
+      navigate(`/doctor/consultation/${encodeURIComponent(activeOrCalled)}`);
     }
   };
   const filteredQueue = useMemo(() => {
@@ -147,6 +155,10 @@ export function DoctorDashboardPage() {
         onItemSelect={(item) => {
           if (item === 'assigned-queue') {
             navigate('/doctor/assigned-queue');
+            return;
+          }
+          if (item === 'consultation') {
+            navigate('/doctor/consultation');
             return;
           }
           setActiveNav(item);
@@ -218,6 +230,9 @@ export function DoctorDashboardPage() {
             error={callNextError}
             onDismissResult={() => setCallNextResult(null)}
             onDismissError={() => setCallNextError(null)}
+            onOpenConsultation={(visitCode) =>
+              navigate(`/doctor/consultation/${encodeURIComponent(visitCode)}`)
+            }
           />
           <DoctorStatCards stats={stats} />
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -263,7 +278,12 @@ export function DoctorDashboardPage() {
                 </div>
               </CardHeader>
               <CardContent className="p-0 px-6 pb-4">
-                <AssignedQueueTable entries={filteredQueue} />
+                <AssignedQueueTable
+                  entries={filteredQueue}
+                  onSelectPatient={(entry) =>
+                    navigate(`/doctor/consultation/${encodeURIComponent(entry.id)}`)
+                  }
+                />
               </CardContent>
             </Card>
             <div className="space-y-6">

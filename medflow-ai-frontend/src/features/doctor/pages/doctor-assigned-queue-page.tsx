@@ -202,6 +202,10 @@ export function DoctorAssignedQueuePage() {
         onItemSelect={(item) => {
           if (item === 'dashboard') {
             navigate('/doctor');
+            return;
+          }
+          if (item === 'consultation') {
+            navigate('/doctor/consultation');
           }
         }}
       />
@@ -302,6 +306,9 @@ export function DoctorAssignedQueuePage() {
                   error={callNextError}
                   onDismissResult={() => setCallNextResult(null)}
                   onDismissError={() => setCallNextError(null)}
+                  onOpenConsultation={(visitCode) =>
+                    navigate(`/doctor/consultation/${encodeURIComponent(visitCode)}`)
+                  }
                 />
 
                 {effectiveStats && <DoctorAssignedQueueStatCards stats={effectiveStats} />}
@@ -356,6 +363,9 @@ export function DoctorAssignedQueuePage() {
                           servicePoint={sp}
                           onCallNext={(servicePoint) => void handleCallNext(servicePoint)}
                           isCallingNext={callingServicePointId === sp.servicePointId}
+                          onOpenConsultation={(entry) =>
+                            navigate(`/doctor/consultation/${encodeURIComponent(entry.visitCode)}`)
+                          }
                         />
                       ))
                     )}
