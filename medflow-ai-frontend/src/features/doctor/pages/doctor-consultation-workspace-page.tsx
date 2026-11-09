@@ -1,8 +1,9 @@
 import { ArrowLeft, RefreshCw, Search } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
+import { useRoleAccess } from '@/features/auth/hooks/use-role-access';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert } from '@/shared/ui/alert';
@@ -20,33 +21,55 @@ import { DOCTOR_WORKBENCH_META } from '../data/doctor-mock-data';
 import {
   useConsultationWorkspace,
   useOpenConsultationWorkspace,
+  useRecordClinicalExamination,
 } from '../hooks/use-consultation-workspace';
 import { consultationIdentifierSchema } from '../schemas/consultation-workspace.schema';
-import type { ConsultationWorkspaceActionDto } from '../types/consultation-workspace.types';
+import type {
+  ConsultationWorkspaceActionDto,
+  RecordClinicalExaminationRequest,
+} from '../types/consultation-workspace.types';
 
 const DEFAULT_VISIT_CODE = 'VIS-2026-0212';
 
-export function DoctorConsultationWorkspacePage() {
+export interface DoctorConsultationWorkspacePageProps {
+  explicitPermissions?: readonly string[] | null;
+}
+
+export function DoctorConsultationWorkspacePage({
+  explicitPermissions,
+}: DoctorConsultationWorkspacePageProps = {}) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { visitIdOrCode: routeVisitIdOrCode } = useParams<{ visitIdOrCode?: string }>();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
+  const { hasPermission } = useRoleAccess(explicitPermissions);
+
+  const canWriteMedicalRecord =
+    user === null && explicitPermissions === undefined
+      ? true
+      : hasPermission('MEDICAL_RECORD_WRITE');
 
   const activeIdentifier = routeVisitIdOrCode?.trim() || DEFAULT_VISIT_CODE;
+  const isClinicalRoute = location.pathname.endsWith('/clinical-examination');
   const [lookupInput, setLookupInput] = useState(activeIdentifier);
   const [lookupValidationError, setLookupValidationError] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [recordError, setRecordError] = useState<string | null>(null);
+  const [isClinicalFormOpen, setIsClinicalFormOpen] = useState<boolean>(isClinicalRoute);
   const [selectedActionNotice, setSelectedActionNotice] = useState<string | null>(null);
 
   const resetTransientState = (nextIdentifier: string) => {
     setLookupInput(nextIdentifier);
     setLookupValidationError(null);
     setOpenError(null);
+    setRecordError(null);
     setSelectedActionNotice(null);
   };
 
   const { data, isPending, isError, error, refetch } = useConsultationWorkspace(activeIdentifier);
   const openMutation = useOpenConsultationWorkspace();
+  const recordMutation = useRecordClinicalExamination();
 
   const doctorDisplayName =
     data?.visit.assignedDoctorName?.trim() ||
@@ -75,6 +98,7 @@ export function DoctorConsultationWorkspacePage() {
 
   const handleOpenSession = async (notes?: string) => {
     setOpenError(null);
+    setRecordError(null);
     setSelectedActionNotice(null);
 
     try {
@@ -87,6 +111,23 @@ export function DoctorConsultationWorkspacePage() {
       });
     } catch (err) {
       setOpenError(getErrorMessage(err, 'Không thể mở phiên khám lâm sàng cho lượt khám này.'));
+    }
+  };
+
+  const handleRecordClinicalExamination = async (payload: RecordClinicalExaminationRequest) => {
+    setRecordError(null);
+    setOpenError(null);
+    setSelectedActionNotice(null);
+
+    try {
+      await recordMutation.mutateAsync({
+        idOrCode: activeIdentifier,
+        payload,
+      });
+    } catch (err) {
+      setRecordError(
+        getErrorMessage(err, 'Không thể lưu thông tin khám lâm sàng cho lượt khám này.'),
+      );
     }
   };
 
@@ -103,13 +144,25 @@ export function DoctorConsultationWorkspacePage() {
       navigate(`/doctor/visits/${encodeURIComponent(targetVisit)}/medical-history`);
       return;
     }
+
+    if (action.id === 'record-clinical-examination' || action.ucCode === 'UC33') {
+      if (!canWriteMedicalRecord || !data?.canEditClinical) {
+        return;
+      }
+      setRecordError(null);
+      setIsClinicalFormOpen(true);
+      setSelectedActionNotice(
+        `Đang mở biểu mẫu "${action.label}" (${action.ucCode}) cho bệnh nhân ${data.patient.fullName} (${data.visit.visitCode}).`,
+      );
+      return;
+    }
+
     setSelectedActionNotice(
       `Đã chọn thao tác "${action.label}" (${action.ucCode}) cho bệnh nhân ${data?.patient.fullName ?? ''} (${data?.visit.visitCode ?? activeIdentifier}).`,
     );
   };
 
   const openAction = data?.allowedActions.find((a) => a.id === 'open-consultation');
-
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
       <DoctorSidebar
@@ -313,6 +366,15 @@ export function DoctorConsultationWorkspacePage() {
                     <ConsultationVitalsAndClinicalCard
                       clinicalContext={data.clinicalContext}
                       canEditClinical={data.canEditClinical}
+                      hasWritePermission={canWriteMedicalRecord}
+                      readOnlyReason={data.readOnlyReason}
+                      expectedStateVersion={data.queue?.stateVersion ?? null}
+                      isSubmitting={recordMutation.isPending}
+                      submitError={recordError}
+                      isFormOpen={isClinicalFormOpen}
+                      onToggleForm={setIsClinicalFormOpen}
+                      onSubmitExamination={handleRecordClinicalExamination}
+                      onClearSubmitError={() => setRecordError(null)}
                     />
                     <ConsultationDiagnosisAndOrdersCard
                       diagnoses={data.clinicalContext.diagnoses}
@@ -327,6 +389,8 @@ export function DoctorConsultationWorkspacePage() {
                       actions={data.allowedActions}
                       selectedActionNotice={selectedActionNotice}
                       isOpening={openMutation.isPending}
+                      isRecordingClinical={recordMutation.isPending}
+                      hasWritePermission={canWriteMedicalRecord}
                       onTriggerAction={handleTriggerAction}
                     />
                   </div>

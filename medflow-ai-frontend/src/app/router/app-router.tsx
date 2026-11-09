@@ -232,6 +232,26 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/doctor/consultation/:visitIdOrCode/clinical-examination"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/clinical-examination"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/doctor/medical-history"
         element={
           <RequireAuth>

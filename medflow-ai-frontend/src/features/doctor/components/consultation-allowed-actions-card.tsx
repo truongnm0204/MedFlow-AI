@@ -9,6 +9,8 @@ export interface ConsultationAllowedActionsCardProps {
   actions: ConsultationWorkspaceActionDto[];
   selectedActionNotice: string | null;
   isOpening: boolean;
+  isRecordingClinical?: boolean;
+  hasWritePermission?: boolean;
   onTriggerAction: (action: ConsultationWorkspaceActionDto) => void;
 }
 
@@ -16,6 +18,8 @@ export function ConsultationAllowedActionsCard({
   actions,
   selectedActionNotice,
   isOpening,
+  isRecordingClinical = false,
+  hasWritePermission = true,
   onTriggerAction,
 }: ConsultationAllowedActionsCardProps) {
   return (
@@ -42,14 +46,25 @@ export function ConsultationAllowedActionsCard({
 
         <div className="space-y-2">
           {actions.map((action) => {
+            const isWriteAction =
+              action.id === 'open-consultation' ||
+              action.id === 'record-clinical-examination' ||
+              action.ucCode === 'UC33';
+            const lacksWritePermission = isWriteAction && !hasWritePermission;
+            const isEffectiveEnabled = action.enabled && !lacksWritePermission;
             const isActionDisabled =
-              !action.enabled || (action.id === 'open-consultation' && isOpening);
+              !isEffectiveEnabled ||
+              (action.id === 'open-consultation' && isOpening) ||
+              (action.id === 'record-clinical-examination' && isRecordingClinical);
+            const effectiveDisabledReason = lacksWritePermission
+              ? 'Tài khoản chưa được cấp quyền ghi nhận hồ sơ bệnh án (MEDICAL_RECORD_WRITE).'
+              : action.disabledReason;
 
             return (
               <div
                 key={action.id}
                 className={`rounded-xl border p-3 transition-colors ${
-                  action.enabled
+                  isEffectiveEnabled
                     ? 'border-border bg-white hover:border-primary/40'
                     : 'border-border bg-canvas/70 opacity-75'
                 }`}
@@ -62,10 +77,10 @@ export function ConsultationAllowedActionsCard({
                       </span>
                       <span className="text-xs font-bold text-navy truncate">{action.label}</span>
                     </div>
-                    {action.disabledReason && (
+                    {effectiveDisabledReason && (
                       <div className="mt-1 text-[11px] text-sub flex items-center gap-1">
                         <Lock className="h-3 w-3 shrink-0 text-amber-600" aria-hidden="true" />
-                        <span>{action.disabledReason}</span>
+                        <span>{effectiveDisabledReason}</span>
                       </div>
                     )}
                   </div>
@@ -75,13 +90,15 @@ export function ConsultationAllowedActionsCard({
                     disabled={isActionDisabled}
                     onClick={() => onTriggerAction(action)}
                     className={`shrink-0 inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                      action.enabled
+                      isEffectiveEnabled
                         ? 'bg-primary text-white hover:bg-primary-dark'
                         : 'bg-canvas text-sub border border-border'
                     }`}
                   >
-                    {action.enabled && <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />}
-                    <span>{action.enabled ? 'Thực hiện' : 'Đang khóa'}</span>
+                    {isEffectiveEnabled && (
+                      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    )}
+                    <span>{isEffectiveEnabled ? 'Thực hiện' : 'Đang khóa'}</span>
                   </button>
                 </div>
               </div>
