@@ -376,7 +376,6 @@ export function ReceptionDashboardPage() {
         onClose={() => setSelectedCheckInResult(null)}
         result={selectedCheckInResult}
       />
-
       <CreatePatientModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
