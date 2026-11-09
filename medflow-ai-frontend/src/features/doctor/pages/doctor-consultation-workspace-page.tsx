@@ -98,6 +98,11 @@ export function DoctorConsultationWorkspacePage() {
       return;
     }
 
+    if (action.id === 'view-medical-history' || action.ucCode === 'UC32') {
+      const targetVisit = data?.visit.visitCode ?? activeIdentifier;
+      navigate(`/doctor/visits/${encodeURIComponent(targetVisit)}/medical-history`);
+      return;
+    }
     setSelectedActionNotice(
       `Đã chọn thao tác "${action.label}" (${action.ucCode}) cho bệnh nhân ${data?.patient.fullName ?? ''} (${data?.visit.visitCode ?? activeIdentifier}).`,
     );
