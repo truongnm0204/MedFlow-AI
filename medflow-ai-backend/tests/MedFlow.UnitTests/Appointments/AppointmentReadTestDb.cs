@@ -41,7 +41,9 @@ internal static class AppointmentReadTestDb
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
-        public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
+        public DbSet<HospitalPolicy> HospitalPolicies => Set<HospitalPolicy>();
+        public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
+        public DbSet<QueueFairnessState> QueueFairnessStates => Set<QueueFairnessState>();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
             => Database.BeginTransactionAsync(ct);
@@ -62,7 +64,9 @@ internal static class AppointmentReadTestDb
                 b.Ignore(a => a.ActorUser);
                 b.Ignore(a => a.IpAddress);
             });
-            modelBuilder.Ignore<HospitalPolicy>();
+            modelBuilder.Entity<HospitalPolicy>().HasKey(p => p.Id);
+            modelBuilder.Entity<QueueServicePoint>().HasKey(sp => sp.Id);
+            modelBuilder.Entity<QueueFairnessState>().HasKey(s => new { s.ServicePointId, s.QueueDate });
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Patient>(b =>

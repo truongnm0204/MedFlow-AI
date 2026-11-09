@@ -18,6 +18,7 @@ public sealed class AppointmentsController : ControllerBase
     private readonly IAppointmentCancelService _cancelService;
     private readonly IAppointmentRescheduleService _rescheduleService;
     private readonly IAppointmentStatusTrackingService _statusTrackingService;
+    private readonly IAppointmentQueueTrackingService _queueTrackingService;
 
     public AppointmentsController(
         IAppointmentSlotService slotService,
@@ -26,7 +27,8 @@ public sealed class AppointmentsController : ControllerBase
         IAppointmentDetailService detailService,
         IAppointmentCancelService cancelService,
         IAppointmentRescheduleService rescheduleService,
-        IAppointmentStatusTrackingService statusTrackingService)
+        IAppointmentStatusTrackingService statusTrackingService,
+        IAppointmentQueueTrackingService queueTrackingService)
     {
         _slotService = slotService;
         _bookingService = bookingService;
@@ -35,6 +37,7 @@ public sealed class AppointmentsController : ControllerBase
         _cancelService = cancelService;
         _rescheduleService = rescheduleService;
         _statusTrackingService = statusTrackingService;
+        _queueTrackingService = queueTrackingService;
     }
 
     /// <summary>GET /api/v1/appointments/available-slots — Xem ngày/ca/slot còn khả dụng theo bác sĩ và dịch vụ khám.</summary>
@@ -122,6 +125,17 @@ public sealed class AppointmentsController : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<AppointmentStatusTrackingDto>> GetStatusTracking(string idOrCode, CancellationToken ct)
         => Ok(await _statusTrackingService.GetMyAppointmentStatusAsync(GetUserId(), idOrCode, ct));
+
+    /// <summary>GET /api/v1/appointments/{idOrCode}/queue-status — Theo dõi số thứ tự, điểm phục vụ, trạng thái chờ và tiến trình khám của lịch hẹn (UC16 / M2-034).</summary>
+    [HttpGet("{idOrCode}/queue-status")]
+    [ProducesResponseType<AppointmentQueueStatusDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<AppointmentQueueStatusDto>> GetQueueStatus(string idOrCode, CancellationToken ct)
+        => Ok(await _queueTrackingService.GetMyAppointmentQueueStatusAsync(GetUserId(), idOrCode, ct));
 
     /// <summary>POST /api/v1/appointments/{idOrCode}/cancel — Hủy lịch hẹn còn đủ điều kiện kèm lý do (UC14).</summary>
     [HttpPost("{idOrCode}/cancel")]
