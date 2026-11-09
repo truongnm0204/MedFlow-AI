@@ -1318,4 +1318,371 @@ public sealed class FamilyProfileServiceTests : IDisposable
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             _sut.CreateFamilyMemberAsync(user.Id, request));
     }
+
+    [Fact]
+    public async Task UpdateFamilyMember_ValidContactUpdate_ReturnsUpdatedMember()
+    {
+        var user = new User { Id = 601, Email = "updater@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 611, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-611" };
+        var child = new Patient
+        {
+            Id = 612,
+            FullName = "Nguyễn Minh Khang",
+            PatientCode = "PAT-2026-612",
+            Gender = "MALE",
+            DateOfBirth = new DateOnly(2018, 8, 10),
+            Status = "ACTIVE",
+            Phone = "0901111111",
+            Email = "old@test.com",
+            Address = "Số 1 Cũ, Hà Nội"
+        };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = child.Id,
+            Relationship = "CHILD",
+            VerificationStatus = "ACTIVE"
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, child);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest
+        {
+            Phone = "0912 345 678",
+            Email = "new_child@medflow.vn",
+            Address = "Số 45 Tràng Tiền, Quận Hoàn Kiếm, Hà Nội",
+            EmergencyContactName = "Nguyễn Văn An",
+            EmergencyPhone = "0988 765 432"
+        };
+
+        var result = await _sut.UpdateFamilyMemberAsync(user.Id, "FAM-612", request);
+
+        Assert.NotNull(result);
+        Assert.Equal("Nguyễn Minh Khang", result.FullName);
+        Assert.Equal("0912345678", result.Phone);
+        Assert.Equal("new_child@medflow.vn", result.Email);
+        Assert.Equal("Số 45 Tràng Tiền, Quận Hoàn Kiếm, Hà Nội", result.Address);
+
+        var updatedChild = await _db.Patients.FindAsync(child.Id);
+        Assert.NotNull(updatedChild);
+        Assert.Equal("0912345678", updatedChild.Phone);
+        Assert.Equal("new_child@medflow.vn", updatedChild.Email);
+        Assert.Equal("Số 45 Tràng Tiền, Quận Hoàn Kiếm, Hà Nội", updatedChild.Address);
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_ValidRelationshipAndGenderUpdate_UpdatesLinkAndGender()
+    {
+        var user = new User { Id = 602, Email = "updater2@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 621, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-621" };
+        var member = new Patient
+        {
+            Id = 622,
+            FullName = "Nguyễn Bảo Châu",
+            PatientCode = "PAT-2026-622",
+            Gender = "MALE",
+            DateOfBirth = new DateOnly(2020, 5, 20),
+            Status = "ACTIVE",
+            Address = "Hà Nội số 123"
+        };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "CHILD",
+            VerificationStatus = "ACTIVE"
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest
+        {
+            Relationship = "Con gái",
+            Gender = "Nữ"
+        };
+
+        var result = await _sut.UpdateFamilyMemberAsync(user.Id, member.Id.ToString(), request);
+
+        Assert.NotNull(result);
+        Assert.Equal("Con gái", result.Relationship);
+        Assert.Equal("Nữ", result.Gender);
+        Assert.Equal("blue", result.RelationshipBadgeColor);
+
+        var updatedMember = await _db.Patients.FindAsync(member.Id);
+        Assert.Equal("FEMALE", updatedMember!.Gender);
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_ValidBirthDateUpdate_UpdatesDateOfBirth()
+    {
+        var user = new User { Id = 603, Email = "updater3@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 631, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-631" };
+        var member = new Patient
+        {
+            Id = 632,
+            FullName = "Nguyễn Văn Bé",
+            PatientCode = "PAT-2026-632",
+            Gender = "MALE",
+            DateOfBirth = new DateOnly(2015, 1, 1),
+            Status = "ACTIVE",
+            Address = "Hà Nội số 123"
+        };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "CHILD",
+            VerificationStatus = "ACTIVE"
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest
+        {
+            BirthDate = "15/08/2019"
+        };
+
+        var result = await _sut.UpdateFamilyMemberAsync(user.Id, member.PatientCode, request);
+
+        Assert.NotNull(result);
+        Assert.Equal("15/08/2019", result.BirthDate);
+
+        var updatedMember = await _db.Patients.FindAsync(member.Id);
+        Assert.Equal(new DateOnly(2019, 8, 15), updatedMember!.DateOfBirth);
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_CannotUpdateSelf_ThrowsValidationException()
+    {
+        var user = new User { Id = 604, Email = "updater4@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 641, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-641" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest { Phone = "0912345678" };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, "self", request));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, owner.Id.ToString(), request));
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_RelationshipSelf_ThrowsValidationException()
+    {
+        var user = new User { Id = 605, Email = "updater5@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 651, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-651" };
+        var member = new Patient { Id = 652, FullName = "Nguyễn A", PatientCode = "PAT-2026-652", Status = "ACTIVE", Address = "Hà Nội" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD" };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest { Relationship = "Bản thân" };
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, member.Id.ToString(), request));
+
+        Assert.Contains("Bản thân", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("123")]
+    [InlineData("abcd")]
+    public async Task UpdateFamilyMember_ShortAddress_ThrowsValidationException(string address)
+    {
+        var user = new User { Id = 606, Email = "updater6@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 661, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-661" };
+        var member = new Patient { Id = 662, FullName = "Nguyễn A", PatientCode = "PAT-2026-662", Status = "ACTIVE", Address = "Hà Nội" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD" };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest { Address = address };
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, member.Id.ToString(), request));
+
+        Assert.Contains("5 ký tự", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("12345678")]
+    [InlineData("0912abc")]
+    [InlineData("1912345678")]
+    public async Task UpdateFamilyMember_InvalidPhone_ThrowsValidationException(string phone)
+    {
+        var user = new User { Id = 607, Email = "updater7@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 671, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-671" };
+        var member = new Patient { Id = 672, FullName = "Nguyễn A", PatientCode = "PAT-2026-672", Status = "ACTIVE", Address = "Hà Nội" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD" };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest { Phone = phone };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, member.Id.ToString(), request));
+    }
+
+    [Theory]
+    [InlineData("plainaddress")]
+    [InlineData("@missingusername.com")]
+    public async Task UpdateFamilyMember_InvalidEmail_ThrowsValidationException(string email)
+    {
+        var user = new User { Id = 608, Email = "updater8@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 681, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-681" };
+        var member = new Patient { Id = 682, FullName = "Nguyễn A", PatientCode = "PAT-2026-682", Status = "ACTIVE", Address = "Hà Nội" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD" };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest { Email = email };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, member.Id.ToString(), request));
+    }
+
+    [Theory]
+    [InlineData("10/08/201")]
+    [InlineData("201-08-10")]
+    [InlineData("31/02/2020")]
+    [InlineData("2099-01-01")]
+    public async Task UpdateFamilyMember_InvalidBirthDate_ThrowsValidationException(string birthDate)
+    {
+        var user = new User { Id = 609, Email = "updater9@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 691, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-691" };
+        var member = new Patient { Id = 692, FullName = "Nguyễn A", PatientCode = "PAT-2026-692", Status = "ACTIVE", Address = "Hà Nội" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD" };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest { BirthDate = birthDate };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, member.Id.ToString(), request));
+    }
+
+    [Theory]
+    [InlineData("Nguyễn 123")]
+    [InlineData("Bé @#$%")]
+    public async Task UpdateFamilyMember_FullNameWithDigitsOrSymbols_ThrowsValidationException(string name)
+    {
+        var user = new User { Id = 610, Email = "updater10@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 701, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-701" };
+        var member = new Patient { Id = 702, FullName = "Nguyễn A", PatientCode = "PAT-2026-702", Status = "ACTIVE", Address = "Hà Nội" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD" };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest { FullName = name };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, member.Id.ToString(), request));
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_UnlinkedPatient_ThrowsNotFoundException()
+    {
+        var user = new User { Id = 613, Email = "updater13@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 711, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-711" };
+        var otherPatient = new Patient { Id = 712, FullName = "Người Khác", PatientCode = "PAT-2026-712", Status = "ACTIVE", Address = "Hà Nội" };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, otherPatient);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest { Address = "Hà Nội số 456" };
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, otherPatient.Id.ToString(), request));
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_RevokedLink_ThrowsNotFoundException()
+    {
+        var user = new User { Id = 614, Email = "updater14@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 721, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-721" };
+        var member = new Patient { Id = 722, FullName = "Nguyễn B", PatientCode = "PAT-2026-722", Status = "ACTIVE", Address = "Hà Nội" };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "CHILD",
+            RevokedAt = DateTime.UtcNow
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest { Address = "Hà Nội số 789" };
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, member.Id.ToString(), request));
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_InvalidUserId_ThrowsUnauthorizedAccessException()
+    {
+        var request = new UpdateFamilyMemberRequest { Address = "Hà Nội số 123" };
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.UpdateFamilyMemberAsync(0, "FAM-001", request));
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_OwnerNotFound_ThrowsNotFoundException()
+    {
+        var request = new UpdateFamilyMemberRequest { Address = "Hà Nội số 123" };
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.UpdateFamilyMemberAsync(99999, "FAM-001", request));
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_OwnerLocked_ThrowsUnauthorizedAccessException()
+    {
+        var user = new User { Id = 615, Email = "locked_updater@test.com", AccountStatus = AccountStatus.LOCKED };
+        var owner = new Patient { Id = 731, UserId = user.Id, User = user, Status = "ACTIVE" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        var request = new UpdateFamilyMemberRequest { Address = "Hà Nội số 123" };
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, "FAM-001", request));
+    }
 }

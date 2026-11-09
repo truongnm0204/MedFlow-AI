@@ -421,4 +421,172 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
         Assert.Equal("Vợ", member.Relationship);
         Assert.Equal("rose", member.RelationshipBadgeColor);
     }
+
+    [Fact]
+    public async Task UpdateFamilyMember_ValidContactUpdate_Returns200OK()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        var createReq = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Minh Khang",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2019-08-10",
+            Address = "Số 100 Nguyễn Trãi, Hà Nội",
+            Phone = "0912345678"
+        };
+
+        using var postReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        postReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        postReq.Content = JsonContent.Create(createReq);
+        var postRes = await Client.SendAsync(postReq);
+        Assert.Equal(HttpStatusCode.Created, postRes.StatusCode);
+        var created = await postRes.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(created);
+
+        var updateReq = new UpdateFamilyMemberRequest
+        {
+            Phone = "0988765432",
+            Email = "khang.new@medflow.vn",
+            Address = "Số 45 Tràng Tiền, Quận Hoàn Kiếm, Hà Nội"
+        };
+
+        using var putReq = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/patients/me/family-members/{created.MemberPatientId}");
+        putReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        putReq.Content = JsonContent.Create(updateReq);
+        var putRes = await Client.SendAsync(putReq);
+
+        Assert.Equal(HttpStatusCode.OK, putRes.StatusCode);
+        var updated = await putRes.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(updated);
+        Assert.Equal("0988765432", updated.Phone);
+        Assert.Equal("khang.new@medflow.vn", updated.Email);
+        Assert.Equal("Số 45 Tràng Tiền, Quận Hoàn Kiếm, Hà Nội", updated.Address);
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_AliasRoute_Returns200OK()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        var createReq = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Bảo Châu",
+            Relationship = "Con gái",
+            Gender = "Nữ",
+            BirthDate = "2020-05-20",
+            Address = "Số 100 Nguyễn Trãi, Hà Nội"
+        };
+
+        using var postReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        postReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        postReq.Content = JsonContent.Create(createReq);
+        var postRes = await Client.SendAsync(postReq);
+        var created = await postRes.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(created);
+
+        var updateReq = new UpdateFamilyMemberRequest
+        {
+            Address = "Số 200 Cầu Giấy, Hà Nội"
+        };
+
+        using var putReq = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/patients/me/family-profiles/{created.MemberPatientId}");
+        putReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        putReq.Content = JsonContent.Create(updateReq);
+        var putRes = await Client.SendAsync(putReq);
+
+        Assert.Equal(HttpStatusCode.OK, putRes.StatusCode);
+        var updated = await putRes.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(updated);
+        Assert.Equal("Số 200 Cầu Giấy, Hà Nội", updated.Address);
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_InvalidInput_Returns400BadRequest()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        var createReq = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Minh Khang",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2019-08-10",
+            Address = "Số 100 Nguyễn Trãi, Hà Nội",
+            Phone = "0912345678"
+        };
+
+        using var postReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        postReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        postReq.Content = JsonContent.Create(createReq);
+        var postRes = await Client.SendAsync(postReq);
+        Assert.Equal(HttpStatusCode.Created, postRes.StatusCode);
+        var created = await postRes.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(created);
+
+        var updateReq = new UpdateFamilyMemberRequest
+        {
+            Phone = "invalidphone",
+            Address = "123" // Too short (< 5)
+        };
+
+        using var putReq = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/patients/me/family-members/{created.MemberPatientId}");
+        putReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        putReq.Content = JsonContent.Create(updateReq);
+        var putRes = await Client.SendAsync(putReq);
+
+        Assert.Equal(HttpStatusCode.BadRequest, putRes.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_CannotUpdateSelf_Returns400BadRequest()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        var updateReq = new UpdateFamilyMemberRequest
+        {
+            Phone = "0912345678"
+        };
+
+        using var putReq = new HttpRequestMessage(HttpMethod.Put, "/api/v1/patients/me/family-members/self");
+        putReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        putReq.Content = JsonContent.Create(updateReq);
+        var putRes = await Client.SendAsync(putReq);
+
+        Assert.Equal(HttpStatusCode.BadRequest, putRes.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_UnlinkedPatient_Returns404NotFound()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        var updateReq = new UpdateFamilyMemberRequest
+        {
+            Address = "Số 123 Đường Láng, Hà Nội"
+        };
+
+        using var putReq = new HttpRequestMessage(HttpMethod.Put, "/api/v1/patients/me/family-members/99999");
+        putReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        putReq.Content = JsonContent.Create(updateReq);
+        var putRes = await Client.SendAsync(putReq);
+
+        Assert.Equal(HttpStatusCode.NotFound, putRes.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_Unauthorized_Returns401Unauthorized()
+    {
+        var updateReq = new UpdateFamilyMemberRequest
+        {
+            Address = "Số 123 Đường Láng, Hà Nội"
+        };
+
+        using var putReq = new HttpRequestMessage(HttpMethod.Put, "/api/v1/patients/me/family-members/FAM-001");
+        putReq.Content = JsonContent.Create(updateReq);
+        var putRes = await Client.SendAsync(putReq);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, putRes.StatusCode);
+    }
 }

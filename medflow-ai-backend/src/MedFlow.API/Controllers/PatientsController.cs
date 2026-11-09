@@ -73,6 +73,23 @@ public sealed class PatientsController : ControllerBase
         return StatusCode(StatusCodes.Status201Created, result);
     }
 
+    /// <summary>PUT /api/v1/patients/me/family-members/{identifier} — Cập nhật thông tin hồ sơ người thân đã liên kết.</summary>
+    [HttpPut("me/family-members/{identifier}")]
+    [HttpPut("me/family-profiles/{identifier}")]
+    [ProducesResponseType<FamilyMemberResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<FamilyMemberResponse>> UpdateFamilyMember(
+        [FromRoute] string identifier,
+        [FromBody] UpdateFamilyMemberRequest request,
+        CancellationToken ct = default)
+    {
+        var result = await _familyProfileService.UpdateFamilyMemberAsync(GetUserId(), identifier, request, ct);
+        return Ok(result);
+    }
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)

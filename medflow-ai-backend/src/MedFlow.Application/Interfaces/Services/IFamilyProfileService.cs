@@ -18,4 +18,10 @@ public interface IFamilyProfileService
         long userId,
         CreateFamilyMemberRequest request,
         CancellationToken ct = default);
+
+    Task<FamilyMemberResponse> UpdateFamilyMemberAsync(
+        long userId,
+        string identifier,
+        UpdateFamilyMemberRequest request,
+        CancellationToken ct = default);
 }
