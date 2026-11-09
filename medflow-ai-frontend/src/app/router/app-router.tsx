@@ -46,6 +46,7 @@ import { FamilyProfileDetailPage } from '@/features/family/pages/family-profile-
 import { FamilyProfileListPage } from '@/features/family/pages/family-profile-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
 import { HospitalAdminDashboardPage } from '@/features/hospital-admin/pages/hospital-admin-dashboard-page';
+import { PatientDiagnosticResultPage } from '@/features/patient/pages/patient-diagnostic-result-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
 import { AssignRoomPage } from '@/features/reception/pages/assign-room-page';
@@ -651,6 +652,22 @@ export function AppRouter() {
       />
       <Route path="/profile" element={<PatientProfilePage />} />
       <Route path="/patient/profile" element={<PatientProfilePage />} />
+      <Route
+        path="/patient/emr/diagnostic-result"
+        element={
+          <RequireAuth>
+            <PatientDiagnosticResultPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/emr/diagnostic-result/:orderCode"
+        element={
+          <RequireAuth>
+            <PatientDiagnosticResultPage />
+          </RequireAuth>
+        }
+      />
       <Route path="/family" element={<FamilyProfileListPage />} />
       <Route path="/patient/family" element={<FamilyProfileListPage />} />
       <Route path="/family/:memberId" element={<FamilyProfileDetailPage />} />
