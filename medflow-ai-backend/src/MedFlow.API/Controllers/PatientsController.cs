@@ -56,6 +56,23 @@ public sealed class PatientsController : ControllerBase
         CancellationToken ct = default)
         => Ok(await _familyProfileService.GetFamilyMemberDetailAsync(GetUserId(), identifier, ct));
 
+    /// <summary>POST /api/v1/patients/me/family-members — Tạo hồ sơ người thân mới liên kết với bệnh nhân.</summary>
+    [HttpPost("me/family-members")]
+    [HttpPost("me/family-profiles")]
+    [ProducesResponseType<FamilyMemberResponse>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<FamilyMemberResponse>> CreateFamilyMember(
+        [FromBody] CreateFamilyMemberRequest request,
+        CancellationToken ct = default)
+    {
+        var result = await _familyProfileService.CreateFamilyMemberAsync(GetUserId(), request, ct);
+        return StatusCode(StatusCodes.Status201Created, result);
+    }
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)

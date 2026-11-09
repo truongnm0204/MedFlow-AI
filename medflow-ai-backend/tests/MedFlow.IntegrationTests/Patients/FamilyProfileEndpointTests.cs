@@ -271,4 +271,154 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
         Assert.NotNull(member);
         Assert.Equal("PAT-0003", member.PatientCode);
     }
+
+    // ── CreateFamilyMember Tests ──────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateFamilyMember_Unauthenticated_Returns401()
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Bé Con",
+            Relationship = "Con gái",
+            Gender = "Nữ",
+            BirthDate = "2020-01-01",
+            Address = "Số 123 Đường Láng, Hà Nội"
+        };
+
+        var response = await Client.PostAsJsonAsync("/api/v1/patients/me/family-members", request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_NonPatientRole_Returns403Forbidden()
+    {
+        var doctorTokens = await LoginAsync("doctor01@medflow.test", "Demo@12345");
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Bé Con",
+            Relationship = "Con gái",
+            Gender = "Nữ",
+            BirthDate = "2020-01-01",
+            Address = "Số 123 Đường Láng, Hà Nội"
+        };
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", doctorTokens.AccessToken);
+        httpRequest.Content = JsonContent.Create(request);
+
+        var response = await Client.SendAsync(httpRequest);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_InvalidInput_Returns400BadRequest()
+    {
+        var tokens = await LoginAsync("patient01@medflow.test", "Demo@12345");
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "", // Invalid
+            Relationship = "Con gái",
+            Gender = "Nữ",
+            BirthDate = "2020-01-01",
+            Address = "Số 123 Đường Láng, Hà Nội"
+        };
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        httpRequest.Content = JsonContent.Create(request);
+
+        var response = await Client.SendAsync(httpRequest);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal(400, problem.Status);
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_SelfRelationship_Returns400BadRequest()
+    {
+        var tokens = await LoginAsync("patient01@medflow.test", "Demo@12345");
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn An",
+            Relationship = "Bản thân", // Invalid for family member
+            Gender = "Nam",
+            BirthDate = "1990-01-01",
+            Address = "Số 123 Đường Láng, Hà Nội"
+        };
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        httpRequest.Content = JsonContent.Create(request);
+
+        var response = await Client.SendAsync(httpRequest);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_ValidNewChild_Returns201Created()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Minh Khang",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2019-08-10",
+            Address = "Số 100 Nguyễn Trãi, Hà Nội",
+            Phone = "0912345678"
+        };
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        httpRequest.Content = JsonContent.Create(request);
+
+        var response = await Client.SendAsync(httpRequest);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var member = await response.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(member);
+        Assert.Equal("Nguyễn Minh Khang", member.FullName);
+        Assert.Equal("Con trai", member.Relationship);
+        Assert.Equal("blue", member.RelationshipBadgeColor);
+        Assert.NotNull(member.Permissions);
+        Assert.True(member.Permissions.CanBookAppointments);
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_AliasRoute_Returns201Created()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Trần Thị Ánh",
+            Relationship = "Vợ",
+            Gender = "Nữ",
+            BirthDate = "1985-05-12",
+            Address = "Số 100 Nguyễn Trãi, Hà Nội"
+        };
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-profiles");
+        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        httpRequest.Content = JsonContent.Create(request);
+
+        var response = await Client.SendAsync(httpRequest);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var member = await response.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(member);
+        Assert.Equal("Trần Thị Ánh", member.FullName);
+        Assert.Equal("Vợ", member.Relationship);
+        Assert.Equal("rose", member.RelationshipBadgeColor);
+    }
 }

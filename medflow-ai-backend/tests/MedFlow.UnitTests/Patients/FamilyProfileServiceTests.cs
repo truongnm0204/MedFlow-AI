@@ -1,3 +1,4 @@
+using MedFlow.Application.DTOs.Patients;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Domain.Entities;
@@ -743,5 +744,578 @@ public sealed class FamilyProfileServiceTests : IDisposable
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             _sut.GetFamilyMemberDetailAsync(user.Id, "FAM-001"));
+    }
+
+    // ── CreateFamilyMemberAsync Tests ──────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateFamilyMember_ValidNewChild_ReturnsCreatedMemberWithCorrectDetails()
+    {
+        var user = new User { Id = 501, Email = "create_child_user@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 511, UserId = user.Id, User = user, FullName = "Bố Chủ Hộ", Phone = "0901234567", Status = "ACTIVE" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Bé Con",
+            Relationship = "Con gái",
+            Gender = "Nữ",
+            BirthDate = "2018-06-15",
+            Address = "Số 123 Đường Láng, Hà Nội",
+            Phone = "0987654321",
+            Email = "becon@test.com"
+        };
+
+        var result = await _sut.CreateFamilyMemberAsync(user.Id, request);
+
+        Assert.NotNull(result);
+        Assert.Equal("Nguyễn Bé Con", result.FullName);
+        Assert.Equal("Con gái", result.Relationship);
+        Assert.Equal("blue", result.RelationshipBadgeColor);
+        Assert.Equal("Nữ", result.Gender);
+        Assert.Equal("15/06/2018", result.BirthDate);
+        Assert.False(result.IsPrimaryAccount);
+        Assert.StartsWith("PAT-", result.PatientCode);
+        Assert.NotNull(result.Permissions);
+        Assert.True(result.Permissions.CanManage);
+        Assert.True(result.Permissions.CanBookAppointments);
+        Assert.Equal("Hồ sơ nhi khoa ngoại trú", result.SubStatus);
+        Assert.Equal("Bố Chủ Hộ", result.Guardian);
+
+        // Verify persisted in DB
+        var savedPatient = await _db.Patients.FirstOrDefaultAsync(p => p.Id == result.MemberPatientId);
+        Assert.NotNull(savedPatient);
+        Assert.Equal("Nguyễn Bé Con", savedPatient.FullName);
+        Assert.Equal("FEMALE", savedPatient.Gender);
+
+        var savedLink = await _db.PatientFamilyLinks
+            .FirstOrDefaultAsync(l => l.OwnerPatientId == owner.Id && l.MemberPatientId == savedPatient.Id);
+        Assert.NotNull(savedLink);
+        Assert.Equal("CHILD", savedLink.Relationship);
+        Assert.Null(savedLink.RevokedAt);
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_ValidNewParent_WithCCCD_ReturnsVerifiedMember()
+    {
+        var user = new User { Id = 502, Email = "create_parent_user@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 512, UserId = user.Id, User = user, Status = "ACTIVE" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Trần Thị Mẹ",
+            Relationship = "Mẹ ruột",
+            Gender = "Nữ",
+            BirthDate = "1960-03-20",
+            Address = "Số 456 Giải Phóng, Hà Nội",
+            IdentificationNo = "001160123456",
+            BloodType = "O+"
+        };
+
+        var result = await _sut.CreateFamilyMemberAsync(user.Id, request);
+
+        Assert.NotNull(result);
+        Assert.Equal("Trần Thị Mẹ", result.FullName);
+        Assert.Equal("Mẹ ruột", result.Relationship);
+        Assert.Equal("amber", result.RelationshipBadgeColor);
+        Assert.True(result.IsIdentityVerified);
+        Assert.Contains("Đã xác thực CCCD", result.IdentificationNo);
+        Assert.Equal("Hồ sơ người cao tuổi", result.SubStatus);
+        Assert.Equal("O+", result.Vitals?.BloodType);
+
+        var link = await _db.PatientFamilyLinks.FirstAsync(l => l.OwnerPatientId == owner.Id && l.MemberPatientId == result.MemberPatientId);
+        Assert.Equal("VERIFIED", link.VerificationStatus);
+        Assert.Equal("PARENT", link.Relationship);
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_ExistingPatientInSystem_LinksExistingPatient()
+    {
+        var user = new User { Id = 503, Email = "link_existing_user@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 513, UserId = user.Id, User = user, Status = "ACTIVE" };
+
+        // An existing patient in DB who is not yet linked to owner
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        var cccd = "001188000999";
+        var cccdHash = Convert.ToHexString(sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(cccd))).ToLowerInvariant();
+
+        var existingMember = new Patient
+        {
+            Id = 555,
+            PatientCode = "PAT-0555",
+            FullName = "Đặng Văn Chồng",
+            DateOfBirth = new DateOnly(1985, 1, 1),
+            Gender = "MALE",
+            Address = "Hà Nội",
+            IdentificationHash = cccdHash,
+            Status = "ACTIVE"
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, existingMember);
+        await _db.SaveChangesAsync();
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Đặng Văn Chồng",
+            Relationship = "Chồng",
+            Gender = "Nam",
+            BirthDate = "1985-01-01",
+            Address = "Hà Nội",
+            IdentificationNo = cccd
+        };
+
+        var result = await _sut.CreateFamilyMemberAsync(user.Id, request);
+
+        Assert.NotNull(result);
+        Assert.Equal(555, result.MemberPatientId);
+        Assert.Equal("PAT-0555", result.PatientCode);
+        Assert.Equal("Chồng", result.Relationship);
+        Assert.Equal("rose", result.RelationshipBadgeColor);
+
+        var link = await _db.PatientFamilyLinks
+            .FirstOrDefaultAsync(l => l.OwnerPatientId == owner.Id && l.MemberPatientId == 555);
+        Assert.NotNull(link);
+        Assert.Equal("SPOUSE", link.Relationship);
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_ExistingPatientAlreadyLinked_ThrowsConflictException()
+    {
+        var user = new User { Id = 504, Email = "conflict_user@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 514, UserId = user.Id, User = user, Status = "ACTIVE" };
+
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        var cccd = "001188111222";
+        var cccdHash = Convert.ToHexString(sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(cccd))).ToLowerInvariant();
+
+        var member = new Patient { Id = 556, PatientCode = "PAT-0556", FullName = "Đã Liên Kết", IdentificationHash = cccdHash, Status = "ACTIVE" };
+        var activeLink = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "CHILD",
+            VerificationStatus = "VERIFIED",
+            RevokedAt = null
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(activeLink);
+        await _db.SaveChangesAsync();
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Đã Liên Kết",
+            Relationship = "Con gái",
+            Gender = "Nữ",
+            BirthDate = "2010-01-01",
+            Address = "Hà Nội",
+            IdentificationNo = cccd
+        };
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _sut.CreateFamilyMemberAsync(user.Id, request));
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_ExistingPatientRevokedLink_ReactivatesLink()
+    {
+        var user = new User { Id = 505, Email = "reactivate_user@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 515, UserId = user.Id, User = user, Status = "ACTIVE" };
+
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        var cccd = "001188333444";
+        var cccdHash = Convert.ToHexString(sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(cccd))).ToLowerInvariant();
+
+        var member = new Patient { Id = 557, PatientCode = "PAT-0557", FullName = "Cũ Đã Thu Hồi", Gender = "FEMALE", IdentificationHash = cccdHash, Status = "ACTIVE" };
+        var revokedLink = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "OTHER",
+            VerificationStatus = "REVOKED",
+            RevokedAt = DateTime.UtcNow.AddDays(-10)
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(revokedLink);
+        await _db.SaveChangesAsync();
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Cũ Đã Thu Hồi",
+            Relationship = "Vợ",
+            Gender = "Nữ",
+            BirthDate = "1990-02-02",
+            Address = "Hà Nội",
+            IdentificationNo = cccd
+        };
+
+        var result = await _sut.CreateFamilyMemberAsync(user.Id, request);
+
+        Assert.NotNull(result);
+        Assert.Equal("Vợ", result.Relationship);
+
+        var updatedLink = await _db.PatientFamilyLinks.FirstAsync(l => l.OwnerPatientId == owner.Id && l.MemberPatientId == member.Id);
+        Assert.Null(updatedLink.RevokedAt);
+        Assert.Equal("SPOUSE", updatedLink.Relationship);
+        Assert.Equal("VERIFIED", updatedLink.VerificationStatus);
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_CannotAddSelf_ThrowsValidationException()
+    {
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        var cccd = "001199999999";
+        var cccdHash = Convert.ToHexString(sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(cccd))).ToLowerInvariant();
+
+        var user = new User { Id = 506, Email = "self_cccd@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 516, UserId = user.Id, User = user, IdentificationHash = cccdHash, Status = "ACTIVE" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Chính Tôi",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "1990-01-01",
+            Address = "Hà Nội",
+            IdentificationNo = cccd
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(user.Id, request));
+    }
+
+    [Theory]
+    [InlineData("Bản thân")]
+    [InlineData("SELF")]
+    [InlineData("self")]
+    public async Task CreateFamilyMember_RelationshipSelf_ThrowsValidationException(string rel)
+    {
+        var user = new User { Id = 507, Email = "self_rel@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 517, UserId = user.Id, User = user, Status = "ACTIVE" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn Test",
+            Relationship = rel,
+            Gender = "Nam",
+            BirthDate = "1995-01-01",
+            Address = "Hà Nội"
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(user.Id, request));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("A")]
+    public async Task CreateFamilyMember_MissingOrShortFullName_ThrowsValidationException(string name)
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = name,
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
+            Address = "Hà Nội"
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_FullNameTooLong_ThrowsValidationException()
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = new string('A', 101),
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
+            Address = "Hà Nội"
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CreateFamilyMember_MissingRelationship_ThrowsValidationException(string rel)
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn Test",
+            Relationship = rel,
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
+            Address = "Hà Nội"
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("UnknownGender")]
+    public async Task CreateFamilyMember_MissingOrInvalidGender_ThrowsValidationException(string gender)
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn Test",
+            Relationship = "Con trai",
+            Gender = gender,
+            BirthDate = "2020-01-01",
+            Address = "Hà Nội"
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_FutureBirthDate_ThrowsValidationException()
+    {
+        var futureDate = DateTime.UtcNow.AddDays(5).ToString("yyyy-MM-dd");
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Bé Tương Lai",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = futureDate,
+            Address = "Hà Nội"
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Theory]
+    [InlineData("10/08/201")] // 3-digit year
+    [InlineData("201-08-10")] // 3-digit year
+    [InlineData("not-a-date")]
+    [InlineData("31/02/2020")] // Invalid calendar date
+    public async Task CreateFamilyMember_InvalidBirthDateFormatOrDigits_ThrowsValidationException(string birthDate)
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Bé Sai Ngày",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = birthDate,
+            Address = "Hà Nội"
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_BirthYearBefore1900_ThrowsValidationException()
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Cụ Quá Xưa",
+            Relationship = "Bố ruột",
+            Gender = "Nam",
+            BirthDate = "15/08/1880",
+            Address = "Hà Nội"
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Theory]
+    [InlineData("Nguyen 123")]
+    [InlineData("Bé @#$%")]
+    public async Task CreateFamilyMember_FullNameWithDigitsOrSpecialChars_ThrowsValidationException(string name)
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = name,
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
+            Address = "Hà Nội"
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("1234")]
+    public async Task CreateFamilyMember_ShortAddress_ThrowsValidationException(string address)
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn Test",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
+            Address = address
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Theory]
+    [InlineData("12345")]
+    [InlineData("012345678")]
+    [InlineData("abcdefghij")]
+    public async Task CreateFamilyMember_InvalidPhone_ThrowsValidationException(string phone)
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn Test",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
+            Address = "Hà Nội số 123",
+            Phone = phone
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Theory]
+    [InlineData("plainaddress")]
+    [InlineData("missing@domain")]
+    public async Task CreateFamilyMember_InvalidEmail_ThrowsValidationException(string email)
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn Test",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
+            Address = "Hà Nội số 123",
+            Email = email
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Theory]
+    [InlineData("123456")]
+    [InlineData("12345678901")]
+    [InlineData("not-a-number")]
+    public async Task CreateFamilyMember_InvalidCCCD_ThrowsValidationException(string cccd)
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn Test",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
+            Address = "Hà Nội số 123",
+            IdentificationNo = cccd
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Theory]
+    [InlineData("X+")]
+    [InlineData("C-")]
+    public async Task CreateFamilyMember_InvalidBloodType_ThrowsValidationException(string bt)
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn Test",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
+            Address = "Hà Nội số 123",
+            BloodType = bt
+        };
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.CreateFamilyMemberAsync(1, request));
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_InvalidUserId_ThrowsUnauthorizedAccessException()
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn Test",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
+            Address = "Hà Nội số 123"
+        };
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.CreateFamilyMemberAsync(0, request));
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_OwnerNotFound_ThrowsNotFoundException()
+    {
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn Test",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
+            Address = "Hà Nội số 123"
+        };
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.CreateFamilyMemberAsync(99999, request));
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_OwnerLocked_ThrowsUnauthorizedAccessException()
+    {
+        var user = new User { Id = 508, Email = "locked_creator@test.com", AccountStatus = AccountStatus.LOCKED };
+        var owner = new Patient { Id = 518, UserId = user.Id, User = user, Status = "ACTIVE" };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        var request = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn Test",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2020-01-01",
+            Address = "Hà Nội số 123"
+        };
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.CreateFamilyMemberAsync(user.Id, request));
     }
 }
