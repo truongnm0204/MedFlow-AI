@@ -589,4 +589,140 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
 
         Assert.Equal(HttpStatusCode.Unauthorized, putRes.StatusCode);
     }
+
+    [Fact]
+    public async Task RemoveFamilyMember_ValidMember_Returns204NoContent()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        var createReq = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Hải Đăng",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2018-01-01",
+            Address = "Số 50 Tràng Tiền, Hà Nội"
+        };
+
+        using var postReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        postReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        postReq.Content = JsonContent.Create(createReq);
+        var postRes = await Client.SendAsync(postReq);
+        var created = await postRes.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(created);
+
+        using var delReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/patients/me/family-members/{created.MemberPatientId}");
+        delReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        delReq.Content = JsonContent.Create(new RemoveFamilyMemberRequest { Reason = "Người thân tự lập tài khoản riêng" });
+        var delRes = await Client.SendAsync(delReq);
+
+        Assert.Equal(HttpStatusCode.NoContent, delRes.StatusCode);
+
+        // Verify member is not in active family list
+        using var getReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/patients/me/family-members?includeSelf=false");
+        getReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        var getRes = await Client.SendAsync(getReq);
+        var list = await getRes.Content.ReadFromJsonAsync<List<FamilyMemberResponse>>();
+        Assert.NotNull(list);
+        Assert.DoesNotContain(list, m => m.MemberPatientId == created.MemberPatientId);
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_AliasRoute_Returns204NoContent()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        var createReq = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Phương Nhi",
+            Relationship = "Con gái",
+            Gender = "Nữ",
+            BirthDate = "2021-02-02",
+            Address = "Số 60 Tràng Tiền, Hà Nội"
+        };
+
+        using var postReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        postReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        postReq.Content = JsonContent.Create(createReq);
+        var postRes = await Client.SendAsync(postReq);
+        var created = await postRes.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(created);
+
+        using var delReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/patients/me/family-profiles/{created.MemberPatientId}");
+        delReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        var delRes = await Client.SendAsync(delReq);
+
+        Assert.Equal(HttpStatusCode.NoContent, delRes.StatusCode);
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_CannotRemoveSelf_Returns400BadRequest()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        using var delReq = new HttpRequestMessage(HttpMethod.Delete, "/api/v1/patients/me/family-members/self");
+        delReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        var delRes = await Client.SendAsync(delReq);
+
+        Assert.Equal(HttpStatusCode.BadRequest, delRes.StatusCode);
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_UnlinkedPatient_Returns404NotFound()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        using var delReq = new HttpRequestMessage(HttpMethod.Delete, "/api/v1/patients/me/family-members/99999");
+        delReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        var delRes = await Client.SendAsync(delReq);
+
+        Assert.Equal(HttpStatusCode.NotFound, delRes.StatusCode);
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_Unauthorized_Returns401Unauthorized()
+    {
+        using var delReq = new HttpRequestMessage(HttpMethod.Delete, "/api/v1/patients/me/family-members/FAM-001");
+        var delRes = await Client.SendAsync(delReq);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, delRes.StatusCode);
+    }
+
+    [Fact]
+    public async Task RemoveFamilyMember_WithActiveAppointment_Returns400BadRequest()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        var createReq = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Hải Đăng",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2018-01-01",
+            Address = "Số 70 Tràng Tiền, Hà Nội"
+        };
+
+        using var postReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        postReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        postReq.Content = JsonContent.Create(createReq);
+        var postRes = await Client.SendAsync(postReq);
+        var created = await postRes.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(created);
+        var memberId = created.MemberPatientId;
+
+        var appt = new Appointment
+        {
+            PatientId = memberId,
+            Status = "CONFIRMED",
+            BookedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified)
+        };
+        Db.Appointments.Add(appt);
+        await Db.SaveChangesAsync();
+
+        using var delReq = new HttpRequestMessage(HttpMethod.Delete, $"/api/v1/patients/me/family-members/{created.MemberPatientId}");
+        delReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        var delRes = await Client.SendAsync(delReq);
+
+        Assert.Equal(HttpStatusCode.BadRequest, delRes.StatusCode);
+    }
 }

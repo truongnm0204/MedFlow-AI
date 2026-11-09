@@ -24,4 +24,10 @@ public interface IFamilyProfileService
         string identifier,
         UpdateFamilyMemberRequest request,
         CancellationToken ct = default);
+
+    Task RemoveFamilyMemberAsync(
+        long userId,
+        string identifier,
+        string? reason = null,
+        CancellationToken ct = default);
 }

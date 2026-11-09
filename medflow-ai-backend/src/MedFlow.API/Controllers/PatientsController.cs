@@ -90,6 +90,25 @@ public sealed class PatientsController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>DELETE /api/v1/patients/me/family-members/{identifier} — Gỡ liên kết hồ sơ người thân.</summary>
+    [HttpDelete("me/family-members/{identifier}")]
+    [HttpDelete("me/family-profiles/{identifier}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RemoveFamilyMember(
+        [FromRoute] string identifier,
+        [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] RemoveFamilyMemberRequest? request = null,
+        [FromQuery] string? reason = null,
+        CancellationToken ct = default)
+    {
+        var finalReason = request?.Reason ?? reason;
+        await _familyProfileService.RemoveFamilyMemberAsync(GetUserId(), identifier, finalReason, ct);
+        return NoContent();
+    }
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
