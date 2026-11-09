@@ -38,6 +38,28 @@ public sealed class AdminRolesController : ControllerBase
     }
 
     /// <summary>
+    /// POST /api/v1/admin/roles — Tạo mới vai trò tùy chỉnh trong hệ thống RBAC.
+    /// </summary>
+    [HttpPost]
+    [ProducesResponseType<RoleListItemDto>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<RoleListItemDto>> CreateRole(
+        [FromBody] CreateRoleRequest request,
+        CancellationToken ct)
+    {
+        var result = await _roleCatalogService.CreateRoleAsync(
+            GetUserId(),
+            request,
+            GetIp(),
+            ct);
+        return CreatedAtAction(nameof(GetRoleById), new { id = result.RoleId }, result);
+    }
+
+    /// <summary>
     /// GET /api/v1/admin/roles/permissions — Lấy ma trận vai trò, danh mục quyền hạn hệ thống và thống kê RBAC.
     /// </summary>
     [HttpGet("permissions")]

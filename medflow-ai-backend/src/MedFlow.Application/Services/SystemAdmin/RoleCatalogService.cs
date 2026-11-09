@@ -17,8 +17,17 @@ public sealed class RoleCatalogService : IRoleCatalogService
     private const string UserManagePermissionCode = "USER_MANAGE";
     private const string PrescriptionIssuePermissionCode = "PRESCRIPTION_ISSUE";
     private const string MedicineDispensePermissionCode = "MEDICINE_DISPENSE";
+    private const string RoleCreatedAction = "ROLE_CREATED";
     private const string RolePermissionsUpdatedAction = "ROLE_PERMISSIONS_UPDATED";
+    private const int MaxRoleNameLength = 120;
+    private const int MaxRoleDescriptionLength = 500;
+    private const int MaxSegregationNoteLength = 500;
     private const int MaxAuditNoteLength = 250;
+
+    private static readonly JsonSerializerOptions AuditJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
 
     private static readonly string[] CanonicalPermissionOrder =
     [
@@ -60,6 +69,12 @@ public sealed class RoleCatalogService : IRoleCatalogService
         string Description,
         string SegregationNote,
         string DefaultUpdatedAt);
+
+    private sealed record RoleAuditMetadataPayload(
+        string? Scope = null,
+        string? Status = null,
+        string? Description = null,
+        string? SegregationNote = null);
 
     private static readonly Dictionary<string, PermissionMetadata> PermissionCatalog =
         new(StringComparer.OrdinalIgnoreCase)
@@ -563,6 +578,253 @@ public sealed class RoleCatalogService : IRoleCatalogService
         return allRoleItems.First(r => r.RoleId == targetRole.Id);
     }
 
+    public async Task<RoleListItemDto> CreateRoleAsync(
+        long actorUserId,
+        CreateRoleRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (!string.IsNullOrWhiteSpace(request.Code) &&
+            !string.IsNullOrWhiteSpace(request.RoleCode) &&
+            !string.Equals(request.Code.Trim(), request.RoleCode.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ValidationException("Mã vai trò (code và roleCode) không đồng nhất.");
+        }
+
+        var rawCode = !string.IsNullOrWhiteSpace(request.Code)
+            ? request.Code
+            : request.RoleCode;
+
+        if (string.IsNullOrWhiteSpace(rawCode))
+        {
+            throw new ValidationException("Mã vai trò không được để trống.");
+        }
+
+        var normalizedCode = rawCode.Trim().ToUpperInvariant();
+        if (!IsValidRoleCodeToken(normalizedCode))
+        {
+            throw new ValidationException(
+                "Mã vai trò không hợp lệ. Mã phải từ 2 đến 50 ký tự, bắt đầu bằng chữ cái và chỉ chứa chữ cái không dấu, chữ số hoặc dấu gạch dưới (_).");
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Name) &&
+            !string.IsNullOrWhiteSpace(request.RoleName) &&
+            !string.Equals(request.Name.Trim(), request.RoleName.Trim(), StringComparison.Ordinal))
+        {
+            throw new ValidationException("Tên vai trò (name và roleName) không đồng nhất.");
+        }
+
+        var rawName = !string.IsNullOrWhiteSpace(request.Name)
+            ? request.Name
+            : request.RoleName;
+
+        if (string.IsNullOrWhiteSpace(rawName))
+        {
+            throw new ValidationException("Tên vai trò không được để trống.");
+        }
+
+        var normalizedName = rawName.Trim();
+        if (normalizedName.Length is < 2 or > MaxRoleNameLength)
+        {
+            throw new ValidationException("Tên vai trò phải từ 2 đến 120 ký tự.");
+        }
+
+        string? requestedScope = null;
+        if (!string.IsNullOrWhiteSpace(request.Scope))
+        {
+            requestedScope = request.Scope.Trim().ToUpperInvariant();
+            if (!ValidScopes.Contains(requestedScope))
+            {
+                throw new ValidationException(
+                    "Nhóm phân hệ vai trò (scope) không hợp lệ. Chỉ chấp nhận SYSTEM, CLINICAL, OPERATIONAL hoặc PORTAL.");
+            }
+        }
+
+        string? requestedStatus = null;
+        if (!string.IsNullOrWhiteSpace(request.Status))
+        {
+            requestedStatus = request.Status.Trim().ToUpperInvariant();
+            if (!ValidStatuses.Contains(requestedStatus))
+            {
+                throw new ValidationException(
+                    "Trạng thái vai trò (status) không hợp lệ. Chỉ chấp nhận ACTIVE hoặc INACTIVE.");
+            }
+        }
+
+        var trimmedDescription = string.IsNullOrWhiteSpace(request.Description)
+            ? null
+            : request.Description.Trim();
+
+        if (trimmedDescription is { Length: > MaxRoleDescriptionLength })
+        {
+            throw new ValidationException("Mô tả vai trò không được vượt quá 500 ký tự.");
+        }
+
+        var trimmedSegregationNote = string.IsNullOrWhiteSpace(request.SegregationNote)
+            ? null
+            : request.SegregationNote.Trim();
+
+        if (trimmedSegregationNote is { Length: > MaxSegregationNoteLength })
+        {
+            throw new ValidationException("Ghi chú phân tách nhiệm vụ (SoD) không được vượt quá 500 ký tự.");
+        }
+
+        var trimmedNote = string.IsNullOrWhiteSpace(request.Note)
+            ? null
+            : request.Note.Trim();
+
+        if (trimmedNote is { Length: > MaxAuditNoteLength })
+        {
+            throw new ValidationException("Ghi chú kiểm toán không được vượt quá 250 ký tự.");
+        }
+
+        List<string> normalizedPermissionCodes = [];
+        if (request.PermissionCodes is { Count: > 0 })
+        {
+            var codeSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rawPermissionCode in request.PermissionCodes)
+            {
+                if (string.IsNullOrWhiteSpace(rawPermissionCode))
+                {
+                    throw new ValidationException("Mã quyền hạn không nằm trong danh mục hệ thống.");
+                }
+
+                var candidate = rawPermissionCode.Trim().ToUpperInvariant();
+                if (!PermissionCatalog.ContainsKey(candidate))
+                {
+                    throw new ValidationException("Mã quyền hạn không nằm trong danh mục hệ thống.");
+                }
+
+                codeSet.Add(candidate);
+            }
+
+            if (codeSet.Contains(PrescriptionIssuePermissionCode) &&
+                codeSet.Contains(MedicineDispensePermissionCode))
+            {
+                throw new ValidationException(
+                    "Vi phạm nguyên tắc phân tách nhiệm vụ (SoD): Không thể gán đồng thời quyền Kê đơn thuốc (PRESCRIPTION_ISSUE) và Cấp phát thuốc (MEDICINE_DISPENSE) cho cùng một vai trò.");
+            }
+
+            normalizedPermissionCodes = codeSet
+                .OrderBy(GetCanonicalPermissionSortOrder)
+                .ThenBy(c => c, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+
+        var actorHospitalId = await EnsureSystemAdminAccessAsync(actorUserId, nowUtc, ct);
+
+        var codeExists = await _db.Roles
+            .AsNoTracking()
+            .AnyAsync(r => r.Code.ToUpper() == normalizedCode, ct);
+
+        RoleMetadataCatalog.TryGetValue(normalizedCode, out var presetMeta);
+        if (codeExists || (presetMeta is not null && presetMeta.IsSystemRole))
+        {
+            throw new ConflictException($"Mã vai trò '{normalizedCode}' đã tồn tại trong hệ thống.");
+        }
+
+        var normalizedNameLower = normalizedName.ToLowerInvariant();
+        var nameExists = await _db.Roles
+            .AsNoTracking()
+            .AnyAsync(r => r.Name.ToLower() == normalizedNameLower, ct);
+
+        if (nameExists)
+        {
+            throw new ConflictException($"Tên vai trò '{normalizedName}' đã tồn tại trong hệ thống.");
+        }
+
+        var targetPermissions = new List<Permission>(normalizedPermissionCodes.Count);
+        if (normalizedPermissionCodes.Count > 0)
+        {
+            var allPermissions = await _db.Permissions
+                .AsNoTracking()
+                .ToListAsync(ct);
+
+            var permissionsByCode = allPermissions
+                .GroupBy(p => p.Code, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var code in normalizedPermissionCodes)
+            {
+                if (!permissionsByCode.TryGetValue(code, out var permEntity))
+                {
+                    throw new ValidationException("Mã quyền hạn không nằm trong danh mục hệ thống.");
+                }
+
+                targetPermissions.Add(permEntity);
+            }
+        }
+
+        var effectiveScope = requestedScope ?? presetMeta?.Scope ?? "OPERATIONAL";
+        var effectiveStatus = requestedStatus ?? presetMeta?.Status ?? "ACTIVE";
+        var effectiveDescription = trimmedDescription ?? presetMeta?.Description ?? $"Vai trò cấu hình mở rộng: {normalizedName}.";
+        var effectiveSegregationNote = trimmedSegregationNote ?? presetMeta?.SegregationNote ?? "Tuân thủ nguyên tắc phân quyền tối thiểu (Least Privilege).";
+
+        var newRole = new Role
+        {
+            Code = normalizedCode,
+            Name = normalizedName,
+        };
+
+        _db.Roles.Add(newRole);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            throw new ConflictException($"Mã vai trò '{normalizedCode}' đã tồn tại trong hệ thống.");
+        }
+
+        foreach (var perm in targetPermissions)
+        {
+            _db.RolePermissions.Add(new RolePermission
+            {
+                RoleId = newRole.Id,
+                PermissionId = perm.Id,
+            });
+        }
+
+        var changePayload = JsonSerializer.Serialize(new
+        {
+            roleId = newRole.Id,
+            roleCode = newRole.Code,
+            name = newRole.Name,
+            scope = effectiveScope,
+            status = effectiveStatus,
+            description = effectiveDescription,
+            segregationNote = effectiveSegregationNote,
+            isSystemRole = false,
+            assignedPermissions = normalizedPermissionCodes,
+            note = trimmedNote,
+        });
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actorUserId,
+            HospitalId = actorHospitalId,
+            Action = RoleCreatedAction,
+            EntityType = "Role",
+            EntityId = newRole.Id.ToString(CultureInfo.InvariantCulture),
+            Reason = trimmedNote ?? $"Tạo mới vai trò {newRole.Code}",
+            ChangeData = changePayload,
+            IpAddress = !string.IsNullOrWhiteSpace(ipAddress) && IPAddress.TryParse(ipAddress, out var parsedIp)
+                ? parsedIp
+                : null,
+            OccurredAt = nowUtc,
+        });
+
+        await _db.SaveChangesAsync(ct);
+
+        var (allRoleItems, _) = await LoadCatalogItemsAsync(nowUtc, ct);
+        return allRoleItems.First(r => r.RoleId == newRole.Id);
+    }
+
     private async Task<long?> EnsureSystemAdminAccessAsync(
         long actorUserId,
         DateTime nowUtc,
@@ -651,7 +913,16 @@ public sealed class RoleCatalogService : IRoleCatalogService
 
         foreach (var role in roles)
         {
-            var metadata = GetRoleMetadata(role);
+            var roleIdString = role.Id.ToString(CultureInfo.InvariantCulture);
+            var matchingAudits = roleAuditLogs
+                .Where(a =>
+                    string.Equals(a.EntityId, roleIdString, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(a.EntityId, role.Code, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(a => a.OccurredAt)
+                .ThenByDescending(a => a.Id)
+                .ToList();
+
+            var metadata = ResolveRoleMetadata(role, matchingAudits);
 
             var assignedUserIds = userRoles
                 .Where(ur => ur.RoleId == role.Id)
@@ -671,13 +942,7 @@ public sealed class RoleCatalogService : IRoleCatalogService
                 .Select(MapPermissionItem)
                 .ToList();
 
-            var roleIdString = role.Id.ToString(CultureInfo.InvariantCulture);
-            var latestAudit = roleAuditLogs
-                .Where(a =>
-                    string.Equals(a.EntityId, roleIdString, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(a.EntityId, role.Code, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(a => a.OccurredAt)
-                .FirstOrDefault();
+            var latestAudit = matchingAudits.FirstOrDefault();
 
             var updatedAt = latestAudit is not null
                 ? latestAudit.OccurredAt.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
@@ -717,6 +982,90 @@ public sealed class RoleCatalogService : IRoleCatalogService
             Description: $"Vai trò cấu hình mở rộng: {role.Name}.",
             SegregationNote: "Tuân thủ nguyên tắc phân quyền tối thiểu (Least Privilege).",
             DefaultUpdatedAt: "01/03/2026");
+    }
+
+    private static RoleCatalogMetadata ResolveRoleMetadata(
+        Role role,
+        IReadOnlyList<AuditLog> matchingAudits)
+    {
+        var baseMeta = GetRoleMetadata(role);
+        if (matchingAudits.Count == 0)
+        {
+            return baseMeta;
+        }
+
+        string? resolvedScope = null;
+        string? resolvedStatus = null;
+        string? resolvedDescription = null;
+        string? resolvedSegregationNote = null;
+
+        foreach (var audit in matchingAudits)
+        {
+            if (string.IsNullOrWhiteSpace(audit.ChangeData))
+            {
+                continue;
+            }
+
+            try
+            {
+                var payload = JsonSerializer.Deserialize<RoleAuditMetadataPayload>(
+                    audit.ChangeData,
+                    AuditJsonOptions);
+
+                if (payload is null)
+                {
+                    continue;
+                }
+
+                if (resolvedScope is null && !string.IsNullOrWhiteSpace(payload.Scope))
+                {
+                    var candidateScope = payload.Scope.Trim().ToUpperInvariant();
+                    if (ValidScopes.Contains(candidateScope))
+                    {
+                        resolvedScope = candidateScope;
+                    }
+                }
+
+                if (resolvedStatus is null && !string.IsNullOrWhiteSpace(payload.Status))
+                {
+                    var candidateStatus = payload.Status.Trim().ToUpperInvariant();
+                    if (ValidStatuses.Contains(candidateStatus))
+                    {
+                        resolvedStatus = candidateStatus;
+                    }
+                }
+
+                if (resolvedDescription is null && !string.IsNullOrWhiteSpace(payload.Description))
+                {
+                    resolvedDescription = payload.Description.Trim();
+                }
+
+                if (resolvedSegregationNote is null && !string.IsNullOrWhiteSpace(payload.SegregationNote))
+                {
+                    resolvedSegregationNote = payload.SegregationNote.Trim();
+                }
+
+                if (resolvedScope is not null &&
+                    resolvedStatus is not null &&
+                    resolvedDescription is not null &&
+                    resolvedSegregationNote is not null)
+                {
+                    break;
+                }
+            }
+            catch (JsonException)
+            {
+                // Ignore audit entries with non-JSON or unrelated ChangeData payloads.
+            }
+        }
+
+        return baseMeta with
+        {
+            Scope = resolvedScope ?? baseMeta.Scope,
+            Status = resolvedStatus ?? baseMeta.Status,
+            Description = resolvedDescription ?? baseMeta.Description,
+            SegregationNote = resolvedSegregationNote ?? baseMeta.SegregationNote,
+        };
     }
 
     private static RolePermissionItemDto MapPermissionItem(Permission permission)

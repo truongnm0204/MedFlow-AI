@@ -2,9 +2,11 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using MedFlow.Application.DTOs.SystemAdmin;
+using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Domain.Entities;
 using MedFlow.IntegrationTests.Auth;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace MedFlow.IntegrationTests.SystemAdmin;
@@ -532,6 +534,282 @@ public sealed class AdminRolesEndpointTests : AuthTestBase
                 };
                 restoreRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 await Client.SendAsync(restoreRequest);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("/api/v1/admin/roles")]
+    [InlineData("/api/v1/system-admin/roles")]
+    [InlineData("/api/v1/roles")]
+    public async Task CreateRole_Unauthenticated_Returns401(string route)
+    {
+        var response = await Client.PostAsJsonAsync(
+            route,
+            new CreateRoleRequest(
+                Code: "CUSTOM_COORDINATOR",
+                Name: "Điều phối viên"));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("PATIENT")]
+    [InlineData("DOCTOR")]
+    [InlineData("RECEPTION")]
+    [InlineData("DIAGNOSTIC_STAFF")]
+    [InlineData("PHARMACY_STAFF")]
+    [InlineData("HOSPITAL_ADMIN")]
+    public async Task CreateRole_ForbiddenRoles_Returns403(string role)
+    {
+        var token = GenerateToken(11, $"{role.ToLowerInvariant()}@medflow.test", role);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/roles")
+        {
+            Content = JsonContent.Create(new CreateRoleRequest(
+                Code: "CUSTOM_COORDINATOR",
+                Name: "Điều phối viên")),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("", "Điều phối viên")]
+    [InlineData("123_INVALID", "Điều phối viên")]
+    [InlineData("ROLE-INVALID", "Điều phối viên")]
+    [InlineData("CUSTOM_COORDINATOR", "")]
+    [InlineData("CUSTOM_COORDINATOR", "A")]
+    public async Task CreateRole_InvalidCodeOrName_Returns400(string code, string name)
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/roles")
+        {
+            Content = JsonContent.Create(new CreateRoleRequest(
+                Code: code,
+                Name: name)),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("INVALID_SCOPE", "ACTIVE")]
+    [InlineData("CLINICAL", "DELETED")]
+    public async Task CreateRole_InvalidScopeOrStatus_Returns400(string scope, string status)
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/roles")
+        {
+            Content = JsonContent.Create(new CreateRoleRequest(
+                Code: "CUSTOM_COORDINATOR",
+                Name: "Điều phối viên",
+                Scope: scope,
+                Status: status)),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateRole_UnknownPermissionCode_Returns400()
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/roles")
+        {
+            Content = JsonContent.Create(new CreateRoleRequest(
+                Code: "CUSTOM_COORDINATOR",
+                Name: "Điều phối viên",
+                PermissionCodes: ["PATIENT_PROFILE_READ", "NON_EXISTENT_PERM"])),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateRole_SegregationOfDutiesConflict_Returns400()
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/roles")
+        {
+            Content = JsonContent.Create(new CreateRoleRequest(
+                Code: "CUSTOM_COORDINATOR",
+                Name: "Điều phối viên",
+                PermissionCodes: ["PRESCRIPTION_ISSUE", "MEDICINE_DISPENSE"])),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateRole_NoteTooLong_Returns400()
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/roles")
+        {
+            Content = JsonContent.Create(new CreateRoleRequest(
+                Code: "CUSTOM_COORDINATOR",
+                Name: "Điều phối viên",
+                Note: new string('A', 251))),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateRole_ForgedTokenWithNonAdminDatabaseUser_Returns403_WhenDatabaseAvailable()
+    {
+        var forgedToken = GenerateToken(1, "patient01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/roles")
+        {
+            Content = JsonContent.Create(new CreateRoleRequest(
+                Code: "CUSTOM_COORDINATOR",
+                Name: "Điều phối viên")),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", forgedToken);
+
+        var response = await Client.SendAsync(request);
+
+        if (response.StatusCode == HttpStatusCode.Forbidden)
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+        else
+        {
+            Assert.True(
+                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {response.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task CreateRole_DuplicateRoleCode_Returns409_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/roles")
+        {
+            Content = JsonContent.Create(new CreateRoleRequest(
+                Code: "DOCTOR",
+                Name: "Bác sĩ bản sao")),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        }
+        else
+        {
+            Assert.True(
+                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {response.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task CreateRole_ValidSystemAdmin_Returns201AndPersistsRole_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+        var uniqueSuffix = Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        var testRoleCode = $"TEST_ROLE_{uniqueSuffix}";
+        var testRoleName = $"Vai trò kiểm thử {uniqueSuffix}";
+        long? createdRoleId = null;
+
+        try
+        {
+            using var postRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/roles")
+            {
+                Content = JsonContent.Create(new CreateRoleRequest(
+                    Code: testRoleCode,
+                    Name: testRoleName,
+                    Description: "Mô tả vai trò kiểm thử tích hợp.",
+                    Scope: "CLINICAL",
+                    Status: "ACTIVE",
+                    SegregationNote: "Ghi chú SoD kiểm thử.",
+                    PermissionCodes: ["PATIENT_PROFILE_READ", "PATIENT_CHECKIN"],
+                    Note: "Kiểm thử tích hợp tạo mới vai trò")),
+            };
+            postRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var postResponse = await Client.SendAsync(postRequest);
+            if (postResponse.StatusCode != HttpStatusCode.Created)
+            {
+                Assert.True(
+                    postResponse.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                    $"Unexpected status code: {postResponse.StatusCode}");
+                return;
+            }
+
+            var createdDto = await postResponse.Content.ReadFromJsonAsync<RoleListItemDto>();
+            Assert.NotNull(createdDto);
+            createdRoleId = createdDto.RoleId;
+            Assert.Equal(testRoleCode, createdDto.Code);
+            Assert.Equal(testRoleName, createdDto.Name);
+            Assert.Equal("CLINICAL", createdDto.Scope);
+            Assert.Equal("ACTIVE", createdDto.Status);
+            Assert.False(createdDto.IsSystemRole);
+            Assert.Equal(2, createdDto.PermissionCount);
+        }
+        finally
+        {
+            if (createdRoleId.HasValue)
+            {
+                using var scope = _factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+                var roleIdVal = createdRoleId.Value;
+                var roleIdStr = roleIdVal.ToString();
+
+                var rolePerms = await db.RolePermissions
+                    .Where(rp => rp.RoleId == roleIdVal)
+                    .ToListAsync();
+                if (rolePerms.Count > 0)
+                {
+                    db.RolePermissions.RemoveRange(rolePerms);
+                }
+
+                var audits = await db.AuditLogs
+                    .Where(a => a.EntityType == "Role" && (a.EntityId == roleIdStr || a.EntityId == testRoleCode))
+                    .ToListAsync();
+                if (audits.Count > 0)
+                {
+                    db.AuditLogs.RemoveRange(audits);
+                }
+
+                var roleEntity = await db.Roles
+                    .FirstOrDefaultAsync(r => r.Id == roleIdVal);
+                if (roleEntity is not null)
+                {
+                    db.Roles.Remove(roleEntity);
+                }
+
+                await db.SaveChangesAsync();
             }
         }
     }

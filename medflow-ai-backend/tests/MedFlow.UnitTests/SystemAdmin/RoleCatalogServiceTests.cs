@@ -666,6 +666,294 @@ public sealed class RoleCatalogServiceTests : IDisposable
                 new AssignRolePermissionsRequest(PermissionCodes: ["PATIENT_PROFILE_READ"])));
     }
 
+    [Fact]
+    public async Task CreateRoleAsync_ValidCustomRoleWithPermissions_PersistsRolePermissionsAuditLogAndMetadata()
+    {
+        var created = await _service.CreateRoleAsync(
+            13,
+            new CreateRoleRequest(
+                Code: "  clinical_coordinator  ",
+                Name: "  Điều phối viên lâm sàng  ",
+                Description: "  Điều phối lịch và hàng đợi khám.  ",
+                Scope: "clinical",
+                Status: "active",
+                SegregationNote: "  Không trực tiếp kê đơn thuốc.  ",
+                PermissionCodes: ["PATIENT_CHECKIN", "patient_profile_read", "PATIENT_CHECKIN"],
+                Note: "Tạo vai trò điều phối M2"),
+            "10.0.0.25");
+
+        Assert.Equal(9, created.RoleId);
+        Assert.Equal("ROL-09", created.Id);
+        Assert.Equal("CLINICAL_COORDINATOR", created.Code);
+        Assert.Equal("Điều phối viên lâm sàng", created.Name);
+        Assert.Equal("Điều phối lịch và hàng đợi khám.", created.Description);
+        Assert.Equal("CLINICAL", created.Scope);
+        Assert.False(created.IsSystemRole);
+        Assert.Equal("ACTIVE", created.Status);
+        Assert.Equal("Không trực tiếp kê đơn thuốc.", created.SegregationNote);
+        Assert.Equal("20/04/2026", created.UpdatedAt);
+        Assert.Equal(0, created.AssignedUsersCount);
+        Assert.Equal(0, created.ActiveUsersCount);
+        Assert.Equal(2, created.PermissionCount);
+        Assert.Contains(created.Permissions, p => p.Code == "PATIENT_PROFILE_READ");
+        Assert.Contains(created.Permissions, p => p.Code == "PATIENT_CHECKIN");
+
+        var dbRole = await _dbContext.Roles.SingleAsync(r => r.Id == 9);
+        Assert.Equal("CLINICAL_COORDINATOR", dbRole.Code);
+        Assert.Equal("Điều phối viên lâm sàng", dbRole.Name);
+
+        var dbPermIds = await _dbContext.RolePermissions
+            .Where(rp => rp.RoleId == 9)
+            .Select(rp => rp.PermissionId)
+            .OrderBy(id => id)
+            .ToListAsync();
+        Assert.Equal(new long[] { 7, 10 }, dbPermIds);
+
+        var auditLog = await _dbContext.AuditLogs
+            .SingleAsync(a => a.Action == "ROLE_CREATED");
+        Assert.Equal(13, auditLog.ActorUserId);
+        Assert.Equal(1, auditLog.HospitalId);
+        Assert.Equal("Role", auditLog.EntityType);
+        Assert.Equal("9", auditLog.EntityId);
+        Assert.Equal("Tạo vai trò điều phối M2", auditLog.Reason);
+        Assert.Equal(FixedNowUtc, auditLog.OccurredAt);
+        Assert.NotNull(auditLog.ChangeData);
+        Assert.Contains("CLINICAL_COORDINATOR", auditLog.ChangeData);
+
+        var byId = await _service.GetRoleByIdAsync(13, 9);
+        Assert.Equal("CLINICAL", byId.Scope);
+        Assert.Equal("Điều phối lịch và hàng đợi khám.", byId.Description);
+        Assert.Equal("Không trực tiếp kê đơn thuốc.", byId.SegregationNote);
+
+        var afterPermissionUpdate = await _service.AssignRolePermissionsAsync(
+            13,
+            "ROL-09",
+            new AssignRolePermissionsRequest(
+                RoleCode: "CLINICAL_COORDINATOR",
+                PermissionCodes: ["PATIENT_PROFILE_READ"],
+                Note: "Thu hẹp quyền điều phối"));
+        Assert.Equal("CLINICAL", afterPermissionUpdate.Scope);
+        Assert.Equal("Điều phối lịch và hàng đợi khám.", afterPermissionUpdate.Description);
+        Assert.Equal("Không trực tiếp kê đơn thuốc.", afterPermissionUpdate.SegregationNote);
+        Assert.Equal(1, afterPermissionUpdate.PermissionCount);
+    }
+
+    [Fact]
+    public async Task CreateRoleAsync_WithoutPermissionsAndOptionalFields_UsesDefaultCustomRoleMetadata()
+    {
+        var created = await _service.CreateRoleAsync(
+            13,
+            new CreateRoleRequest(
+                Code: "BILLING_REVIEWER",
+                Name: "Chuyên viên đối soát viện phí"));
+
+        Assert.Equal("BILLING_REVIEWER", created.Code);
+        Assert.Equal("Chuyên viên đối soát viện phí", created.Name);
+        Assert.Equal("OPERATIONAL", created.Scope);
+        Assert.Equal("ACTIVE", created.Status);
+        Assert.False(created.IsSystemRole);
+        Assert.Equal(0, created.PermissionCount);
+        Assert.Empty(created.Permissions);
+        Assert.Equal("Vai trò cấu hình mở rộng: Chuyên viên đối soát viện phí.", created.Description);
+        Assert.Equal("Tuân thủ nguyên tắc phân quyền tối thiểu (Least Privilege).", created.SegregationNote);
+    }
+
+    [Fact]
+    public async Task CreateRoleAsync_RoleCodeAndRoleNameAliases_CreatesRoleSuccessfully()
+    {
+        var created = await _service.CreateRoleAsync(
+            13,
+            new CreateRoleRequest(
+                RoleCode: "quality_inspector",
+                RoleName: "Giám sát chất lượng",
+                Scope: "SYSTEM",
+                Status: "INACTIVE"));
+
+        Assert.Equal("QUALITY_INSPECTOR", created.Code);
+        Assert.Equal("Giám sát chất lượng", created.Name);
+        Assert.Equal("SYSTEM", created.Scope);
+        Assert.Equal("INACTIVE", created.Status);
+        Assert.False(created.IsSystemRole);
+    }
+
+    [Theory]
+    [InlineData("DOCTOR")]
+    [InlineData("doctor")]
+    [InlineData("SECURITY_AUDITOR")]
+    public async Task CreateRoleAsync_DuplicateCodeOrReservedSystemRoleCode_ThrowsConflictException(string duplicateCode)
+    {
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: duplicateCode,
+                    Name: "Vai trò trùng mã")));
+    }
+
+    [Theory]
+    [InlineData("Bác sĩ lâm sàng")]
+    [InlineData("bác sĩ lâm sàng")]
+    public async Task CreateRoleAsync_DuplicateRoleName_ThrowsConflictException(string duplicateName)
+    {
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: "UNIQUE_CUSTOM_ROLE",
+                    Name: duplicateName)));
+    }
+
+    [Theory]
+    [InlineData(null, "Tên hợp lệ")]
+    [InlineData("", "Tên hợp lệ")]
+    [InlineData("   ", "Tên hợp lệ")]
+    [InlineData("A", "Tên hợp lệ")]
+    [InlineData("123_INVALID", "Tên hợp lệ")]
+    [InlineData("ROLE-WITH-DASH", "Tên hợp lệ")]
+    [InlineData("VALID_CODE", null)]
+    [InlineData("VALID_CODE", "")]
+    [InlineData("VALID_CODE", "   ")]
+    [InlineData("VALID_CODE", "A")]
+    public async Task CreateRoleAsync_InvalidCodeOrName_ThrowsValidationException(
+        string? code,
+        string? name)
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(Code: code, Name: name)));
+    }
+
+    [Fact]
+    public async Task CreateRoleAsync_MismatchedOrTooLongCodeAndName_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: "ROLE_ONE",
+                    RoleCode: "ROLE_TWO",
+                    Name: "Tên vai trò")));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: "ROLE_ONE",
+                    Name: "Tên A",
+                    RoleName: "Tên B")));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: new string('R', 51),
+                    Name: "Tên vai trò")));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: "ROLE_ONE",
+                    Name: new string('N', 121))));
+    }
+
+    [Fact]
+    public async Task CreateRoleAsync_InvalidScopeStatusOrLengths_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: "CUSTOM_ROLE_A",
+                    Name: "Vai trò A",
+                    Scope: "INVALID_SCOPE")));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: "CUSTOM_ROLE_A",
+                    Name: "Vai trò A",
+                    Status: "ARCHIVED")));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: "CUSTOM_ROLE_A",
+                    Name: "Vai trò A",
+                    Description: new string('D', 501))));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: "CUSTOM_ROLE_A",
+                    Name: "Vai trò A",
+                    SegregationNote: new string('S', 501))));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: "CUSTOM_ROLE_A",
+                    Name: "Vai trò A",
+                    Note: new string('N', 251))));
+    }
+
+    [Fact]
+    public async Task CreateRoleAsync_UnknownPermissionOrSoDConflict_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: "CUSTOM_ROLE_B",
+                    Name: "Vai trò B",
+                    PermissionCodes: ["UNKNOWN_PERM"])));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: "CUSTOM_ROLE_B",
+                    Name: "Vai trò B",
+                    PermissionCodes: [""])));
+
+        var sodEx = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateRoleAsync(
+                13,
+                new CreateRoleRequest(
+                    Code: "CUSTOM_ROLE_B",
+                    Name: "Vai trò B",
+                    PermissionCodes: ["PRESCRIPTION_ISSUE", "MEDICINE_DISPENSE"])));
+
+        Assert.Contains("SoD", sodEx.Message);
+    }
+
+    [Fact]
+    public async Task CreateRoleAsync_ActorUserNotFound_ThrowsNotFoundException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.CreateRoleAsync(
+                999,
+                new CreateRoleRequest(Code: "CUSTOM_ROLE_C", Name: "Vai trò C")));
+    }
+
+    [Theory]
+    [InlineData(11)]
+    [InlineData(14)]
+    [InlineData(15)]
+    [InlineData(16)]
+    public async Task CreateRoleAsync_ForbiddenOrInactiveActor_ThrowsForbiddenException(long actorUserId)
+    {
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CreateRoleAsync(
+                actorUserId,
+                new CreateRoleRequest(Code: "CUSTOM_ROLE_C", Name: "Vai trò C")));
+    }
+
     public void Dispose()
     {
         _dbContext.Dispose();
