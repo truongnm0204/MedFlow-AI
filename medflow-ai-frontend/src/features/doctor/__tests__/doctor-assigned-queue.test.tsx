@@ -239,4 +239,163 @@ describe('DoctorAssignedQueuePage', () => {
       ).toBeInTheDocument();
     });
   });
+
+  it('calls POST /queue/service-points/sp-room-102/call-next, displays called patient and selection reason, and updates queue from Backend entries (Issue #93 / UC31)', async () => {
+    renderPage();
+
+    const table = await screen.findByRole('table', { name: 'Hàng đợi P.102' });
+    expect(extractTicketNos(table)).toEqual([
+      'A012',
+      'A013',
+      'A015',
+      'A014',
+      'A016',
+      'A017',
+      'A018',
+      'A010',
+      'A009',
+    ]);
+
+    const baseEntries = DOCTOR_ASSIGNED_QUEUE_MOCK.servicePoints[0]!.entries;
+    const calledEntry = {
+      ...baseEntries.find((e) => e.ticketNo === 'A015')!,
+      status: 'CALLED' as const,
+      queueGroup: 'CALLED' as const,
+      isEligible: false,
+      calledAt: '08:35',
+      servingOrder: 1,
+    };
+    const updatedEntries = [
+      calledEntry,
+      ...baseEntries
+        .filter((e) => e.ticketNo !== 'A015' && e.ticketNo !== 'A012' && e.ticketNo !== 'A013')
+        .map((e, idx) => ({ ...e, servingOrder: idx + 2 })),
+    ];
+
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: {
+        servicePointId: 'sp-room-102',
+        outcome: 'CALLED',
+        message: 'Đã gọi bệnh nhân Phạm Văn Lộc (phiếu A015) vào phòng P.102.',
+        selectionReason: 'PRIORITY',
+        calledEntry,
+        previousStateVersion: 2,
+        stateVersion: 3,
+        updatedAtUtc: '2026-11-07T01:35:00Z',
+        entries: updatedEntries,
+      },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gọi bệnh nhân tiếp theo tại P.102' }));
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith('/queue/service-points/sp-room-102/call-next', {});
+    });
+
+    const statusBanner = await screen.findByRole('status');
+    expect(statusBanner).toHaveTextContent(
+      'Đã gọi bệnh nhân Phạm Văn Lộc (phiếu A015) vào phòng P.102.',
+    );
+    expect(statusBanner).toHaveTextContent('Lý do chọn: Ưu tiên');
+    expect(statusBanner).toHaveTextContent('A015');
+    expect(statusBanner).toHaveTextContent('Phạm Văn Lộc');
+
+    const updatedTable = screen.getByRole('table', { name: 'Hàng đợi P.102' });
+    expect(extractTicketNos(updatedTable)[0]).toBe('A015');
+    const firstRow = within(updatedTable).getAllByRole('row')[1]!;
+    expect(within(firstRow).getByText('Đã gọi số')).toBeInTheDocument();
+  });
+
+  it('displays HOLD_FOR_SLOT and NO_ELIGIBLE_PATIENT status banners from Backend (Issue #93 / UC31)', async () => {
+    renderPage();
+    await screen.findByRole('table', { name: 'Hàng đợi P.102' });
+
+    const baseEntries = DOCTOR_ASSIGNED_QUEUE_MOCK.servicePoints[0]!.entries;
+    const postSpy = vi
+      .spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({
+        data: {
+          servicePointId: 'sp-room-102',
+          outcome: 'HOLD_FOR_SLOT',
+          message:
+            'Đang giữ khoảng trống bảo vệ lịch hẹn đúng giờ lúc 08:30 (phiếu A014). Chưa gọi chèn lượt khám khác.',
+          selectionReason: null,
+          calledEntry: null,
+          previousStateVersion: null,
+          stateVersion: null,
+          updatedAtUtc: '2026-11-07T01:28:00Z',
+          entries: baseEntries,
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          servicePointId: 'sp-room-102',
+          outcome: 'NO_ELIGIBLE_PATIENT',
+          message: 'Hiện không có bệnh nhân đủ điều kiện để gọi tại điểm dịch vụ P.102.',
+          selectionReason: null,
+          calledEntry: null,
+          previousStateVersion: null,
+          stateVersion: null,
+          updatedAtUtc: '2026-11-07T01:29:00Z',
+          entries: baseEntries,
+        },
+      });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gọi bệnh nhân tiếp theo tại P.102' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('Giữ khoảng trống bảo vệ lịch hẹn');
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Đang giữ khoảng trống bảo vệ lịch hẹn đúng giờ lúc 08:30 (phiếu A014). Chưa gọi chèn lượt khám khác.',
+      );
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gọi bệnh nhân tiếp theo tại P.102' }));
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole('status')).toHaveTextContent('Chưa có bệnh nhân đủ điều kiện');
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Hiện không có bệnh nhân đủ điều kiện để gọi tại điểm dịch vụ P.102.',
+      );
+    });
+  });
+
+  it('surfaces HTTP 409 Conflict ProblemDetails detail in alert banner without mutating queue (Issue #93 / UC31)', async () => {
+    renderPage();
+    const table = await screen.findByRole('table', { name: 'Hàng đợi P.102' });
+
+    const conflictError = new AxiosError('conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
+      status: 409,
+      statusText: 'Conflict',
+      headers: {},
+      config: { headers: {} } as InternalAxiosRequestConfig,
+      data: {
+        detail:
+          'Phòng khám đang có bệnh nhân được gọi hoặc đang khám (A012). Vui lòng hoàn tất hoặc đánh dấu qua lượt trước khi gọi tiếp.',
+      },
+    });
+
+    vi.spyOn(apiClient, 'post').mockRejectedValueOnce(conflictError);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gọi bệnh nhân tiếp theo tại P.102' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Phòng khám đang có bệnh nhân được gọi hoặc đang khám (A012). Vui lòng hoàn tất hoặc đánh dấu qua lượt trước khi gọi tiếp.',
+      );
+    });
+
+    expect(extractTicketNos(table)).toEqual([
+      'A012',
+      'A013',
+      'A015',
+      'A014',
+      'A016',
+      'A017',
+      'A018',
+      'A010',
+      'A009',
+    ]);
+  });
 });

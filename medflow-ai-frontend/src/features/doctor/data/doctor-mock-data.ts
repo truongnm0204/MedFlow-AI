@@ -173,6 +173,7 @@ export const DOCTOR_QUICK_ACTIONS_MOCK: DoctorQuickAction[] = [
 export const DOCTOR_DASHBOARD_MOCK: DoctorDashboardSummary = {
   facilityName: DOCTOR_WORKBENCH_META.facilityName,
   facilityCode: DOCTOR_WORKBENCH_META.facilityCode,
+  servicePointId: 'sp-room-102',
   roomCode: DOCTOR_WORKBENCH_META.roomCode,
   roomName: 'Phòng khám Nội tổng quát 102',
   departmentName: DOCTOR_WORKBENCH_META.departmentName,

@@ -231,6 +231,9 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
     expect(
       screen.queryByRole('button', { name: /Cập nhật trạng thái hàng đợi cho/i }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Gọi bệnh nhân tiếp theo tại/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('calls GET /reception/examination-queue when token is present and handles HTTP 500 error + retry', async () => {
@@ -1058,5 +1061,152 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
     const tuanRow = screen.getByText('Ngô Minh Tuấn').closest('tr');
     expect(tuanRow).not.toBeNull();
     expect(within(tuanRow!).getByText('#2')).toBeInTheDocument();
+  });
+
+  it('calls POST /queue/service-points/sp-room-104/call-next from Reception Queue, shows selection reason, and updates service point entries (Issue #93 / UC31)', async () => {
+    renderQueuePage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Hoàng Đức Em')).toBeInTheDocument();
+    });
+
+    const calledEntry = {
+      id: 'q-005',
+      queueNumber: 1,
+      ticketNo: 'C001',
+      servingOrder: 1,
+      visitCode: 'VIS-2026-0105',
+      patientName: 'Hoàng Đức Em',
+      patientCode: 'BN-2024-0103',
+      visitType: 'WALK_IN' as const,
+      servicePointId: 'sp-room-104',
+      roomCode: 'P.104',
+      roomName: 'Phòng khám Tai Mũi Họng',
+      departmentName: 'Khoa Tai Mũi Họng',
+      doctorName: 'BS.CKI Đinh Long',
+      status: 'CALLED' as const,
+      priority: 'ELDERLY' as const,
+      queueType: 'EXAMINATION' as const,
+      presenceStatus: 'PRESENT' as const,
+      arrivalClass: 'WALK_IN' as const,
+      scheduledAt: null,
+      checkedInAt: '08:40',
+      calledAt: '08:42',
+      startedAt: null,
+      blockedReason: null,
+      queueGroup: 'CALLED' as const,
+      ineligibleReason: null,
+    };
+
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: {
+        servicePointId: 'sp-room-104',
+        outcome: 'CALLED',
+        message: 'Đã gọi bệnh nhân Hoàng Đức Em (phiếu C001) vào phòng P.104.',
+        selectionReason: 'PRIORITY',
+        calledEntry,
+        previousStateVersion: 1,
+        stateVersion: 2,
+        updatedAtUtc: '2026-11-04T01:42:00Z',
+        entries: [calledEntry],
+      },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gọi bệnh nhân tiếp theo tại P.104' }));
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith('/queue/service-points/sp-room-104/call-next', {});
+    });
+
+    const statusBanner = await screen.findByRole('status');
+    expect(statusBanner).toHaveTextContent(
+      'Đã gọi bệnh nhân Hoàng Đức Em (phiếu C001) vào phòng P.104.',
+    );
+    expect(statusBanner).toHaveTextContent('Lý do chọn: Ưu tiên');
+    expect(statusBanner).toHaveTextContent('C001');
+
+    const patientRow = screen
+      .getAllByText('Hoàng Đức Em')
+      .map((el) => el.closest('tr'))
+      .find((row) => row !== null);
+    expect(patientRow).toBeDefined();
+    expect(within(patientRow!).getByText('Đã gọi số')).toBeInTheDocument();
+  });
+
+  it('handles HOLD_FOR_SLOT, NO_ELIGIBLE_PATIENT, and 409 Conflict responses on /reception/queue (Issue #93 / UC31)', async () => {
+    renderQueuePage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Hoàng Đức Em')).toBeInTheDocument();
+    });
+
+    const initialList = buildMockExaminationQueueResponse();
+    const room104Entries = initialList.servicePoints.find(
+      (sp) => sp.servicePointId === 'sp-room-104',
+    )!.entries;
+
+    const conflictError = new AxiosError('conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
+      status: 409,
+      statusText: 'Conflict',
+      headers: {},
+      config: { headers: {} } as InternalAxiosRequestConfig,
+      data: {
+        detail:
+          'Điểm dịch vụ P.102 đang có bệnh nhân đang khám (A012). Không thể gọi bệnh nhân tiếp theo.',
+      },
+    });
+
+    vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({
+        data: {
+          servicePointId: 'sp-room-104',
+          outcome: 'HOLD_FOR_SLOT',
+          message: 'Giữ khoảng trống bảo vệ lịch hẹn sắp tới tại phòng P.104.',
+          selectionReason: null,
+          calledEntry: null,
+          previousStateVersion: null,
+          stateVersion: null,
+          updatedAtUtc: '2026-11-04T01:43:00Z',
+          entries: room104Entries,
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          servicePointId: 'sp-room-104',
+          outcome: 'NO_ELIGIBLE_PATIENT',
+          message: 'Chưa có bệnh nhân đủ điều kiện gọi tại phòng P.104.',
+          selectionReason: null,
+          calledEntry: null,
+          previousStateVersion: null,
+          stateVersion: null,
+          updatedAtUtc: '2026-11-04T01:44:00Z',
+          entries: room104Entries,
+        },
+      })
+      .mockRejectedValueOnce(conflictError);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gọi bệnh nhân tiếp theo tại P.104' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Giữ khoảng trống bảo vệ lịch hẹn sắp tới tại phòng P.104.',
+      );
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gọi bệnh nhân tiếp theo tại P.104' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Chưa có bệnh nhân đủ điều kiện gọi tại phòng P.104.',
+      );
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Gọi bệnh nhân tiếp theo tại P.102' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Điểm dịch vụ P.102 đang có bệnh nhân đang khám (A012). Không thể gọi bệnh nhân tiếp theo.',
+      );
+    });
   });
 });

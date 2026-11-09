@@ -46,6 +46,9 @@ export interface DoctorAssignedQueueEntryDto {
   backfillReason: string | null;
   queueGroup: DoctorQueueGroup;
   ineligibleReason: DoctorQueueIneligibleReason | null;
+  canSafeBackfill?: boolean;
+  holdReason?: string | null;
+  backfillUpdatedAt?: string | null;
 }
 
 export interface DoctorAssignedQueueStatsDto {
@@ -83,4 +86,25 @@ export interface DoctorAssignedQueueResponseDto {
 
 export interface DoctorAssignedQueueQueryParams {
   queueDate?: string;
+}
+
+export type DoctorCallNextOutcome = 'CALLED' | 'NO_ELIGIBLE_PATIENT' | 'HOLD_FOR_SLOT';
+
+export type DoctorCallNextSelectionReason =
+  'APPOINTMENT_DUE' | 'RETURN_CONSULTATION' | 'PRIORITY' | 'SAFE_BACKFILL' | 'FIFO';
+
+export interface DoctorCallNextRequestPayload {
+  notes?: string | null;
+}
+
+export interface DoctorCallNextResponseDto {
+  servicePointId: string;
+  outcome: DoctorCallNextOutcome;
+  message: string;
+  selectionReason: DoctorCallNextSelectionReason | null;
+  calledEntry: DoctorAssignedQueueEntryDto | null;
+  previousStateVersion: number | null;
+  stateVersion: number | null;
+  updatedAtUtc: string;
+  entries: DoctorAssignedQueueEntryDto[];
 }
