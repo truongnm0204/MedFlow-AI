@@ -24,4 +24,11 @@ public interface IRoleCatalogService
         AssignRolePermissionsRequest request,
         string? ipAddress = null,
         CancellationToken ct = default);
+
+    Task<RoleListItemDto> UpdateRoleAsync(
+        long actorUserId,
+        string roleIdentifier,
+        UpdateRoleRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
 }

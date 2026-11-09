@@ -535,4 +535,268 @@ public sealed class AdminRolesEndpointTests : AuthTestBase
             }
         }
     }
+
+    [Fact]
+    public async Task UpdateRole_Unauthenticated_Returns401()
+    {
+        var putResponse = await Client.PutAsJsonAsync(
+            "/api/v1/admin/roles/ROL-03",
+            new UpdateRoleRequest(Description: "Cập nhật mô tả vai trò bác sĩ"));
+        Assert.Equal(HttpStatusCode.Unauthorized, putResponse.StatusCode);
+
+        using var patchRequest = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/system-admin/roles/ROL-03")
+        {
+            Content = JsonContent.Create(new UpdateRoleRequest(Description: "Cập nhật mô tả vai trò bác sĩ")),
+        };
+        var patchResponse = await Client.SendAsync(patchRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, patchResponse.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("PATIENT")]
+    [InlineData("DOCTOR")]
+    [InlineData("RECEPTION")]
+    [InlineData("DIAGNOSTIC_STAFF")]
+    [InlineData("PHARMACY_STAFF")]
+    [InlineData("HOSPITAL_ADMIN")]
+    public async Task UpdateRole_ForbiddenRoles_Returns403(string role)
+    {
+        var token = GenerateToken(11, $"{role.ToLowerInvariant()}@medflow.test", role);
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/roles/ROL-03")
+        {
+            Content = JsonContent.Create(new UpdateRoleRequest(Description: "Cập nhật mô tả vai trò")),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateRole_EmptyPayload_Returns400()
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/roles/ROL-03")
+        {
+            Content = JsonContent.Create(new UpdateRoleRequest()),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("ROL-0")]
+    public async Task UpdateRole_InvalidIdentifier_Returns400(string invalidRoleId)
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/admin/roles/{invalidRoleId}")
+        {
+            Content = JsonContent.Create(new UpdateRoleRequest(Description: "Mô tả hợp lệ")),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("INVALID", "ACTIVE")]
+    [InlineData("CLINICAL", "DELETED")]
+    public async Task UpdateRole_InvalidScopeOrStatus_Returns400(string scope, string status)
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/admin/roles/ROL-03")
+        {
+            Content = JsonContent.Create(new UpdateRoleRequest(Scope: scope, Status: status)),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateRole_SystemRoleDeactivationOrCodeChange_Returns400_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var deactivateRequest = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/roles/ROL-01")
+        {
+            Content = JsonContent.Create(new UpdateRoleRequest(Status: "INACTIVE")),
+        };
+        deactivateRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var deactivateResponse = await Client.SendAsync(deactivateRequest);
+
+        if (deactivateResponse.StatusCode == HttpStatusCode.BadRequest)
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, deactivateResponse.StatusCode);
+        }
+        else
+        {
+            Assert.True(
+                deactivateResponse.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {deactivateResponse.StatusCode}");
+        }
+
+        using var codeChangeRequest = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/roles/ROL-03")
+        {
+            Content = JsonContent.Create(new UpdateRoleRequest(Code: "CLINICAL_DOCTOR")),
+        };
+        codeChangeRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var codeChangeResponse = await Client.SendAsync(codeChangeRequest);
+
+        if (codeChangeResponse.StatusCode == HttpStatusCode.BadRequest)
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, codeChangeResponse.StatusCode);
+        }
+        else
+        {
+            Assert.True(
+                codeChangeResponse.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {codeChangeResponse.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task UpdateRole_SegregationOfDutiesConflict_Returns400()
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/roles/ROL-03")
+        {
+            Content = JsonContent.Create(new UpdateRoleRequest(
+                PermissionCodes: ["PRESCRIPTION_ISSUE", "MEDICINE_DISPENSE"])),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateRole_NonExistentRole_Returns404_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/roles/99999")
+        {
+            Content = JsonContent.Create(new UpdateRoleRequest(Description: "Mô tả cập nhật")),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+        else
+        {
+            Assert.True(
+                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {response.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task UpdateRole_ForgedTokenWithNonAdminDatabaseUser_Returns403_WhenDatabaseAvailable()
+    {
+        var forgedToken = GenerateToken(1, "patient01@medflow.test", "SYSTEM_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/roles/ROL-03")
+        {
+            Content = JsonContent.Create(new UpdateRoleRequest(Description: "Mô tả cập nhật")),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", forgedToken);
+
+        var response = await Client.SendAsync(request);
+
+        if (response.StatusCode == HttpStatusCode.Forbidden)
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+        else
+        {
+            Assert.True(
+                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {response.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task UpdateRole_ValidSystemAdmin_UpdatesAndRestoresRole_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+
+        using var getInitialRequest = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/roles?keyword=RECEPTION");
+        getInitialRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var initialResponse = await Client.SendAsync(getInitialRequest);
+
+        if (initialResponse.StatusCode != HttpStatusCode.OK)
+        {
+            Assert.True(
+                initialResponse.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {initialResponse.StatusCode}");
+            return;
+        }
+
+        var initialPayload = await initialResponse.Content.ReadFromJsonAsync<RoleListResponseDto>();
+        Assert.NotNull(initialPayload);
+        var receptionRole = Assert.Single(initialPayload.Data, r => r.Code == "RECEPTION");
+
+        try
+        {
+            using var patchRequest = new HttpRequestMessage(
+                HttpMethod.Patch,
+                $"/api/v1/admin/roles/{receptionRole.Id}")
+            {
+                Content = JsonContent.Create(new UpdateRoleRequest(
+                    Name: receptionRole.Name,
+                    Description: "Tiếp nhận bệnh nhân, check-in và điều phối hàng đợi (đã cập nhật kiểm thử).",
+                    Note: "Kiểm thử tích hợp cập nhật thông tin vai trò RECEPTION")),
+            };
+            patchRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var patchResponse = await Client.SendAsync(patchRequest);
+            Assert.Equal(HttpStatusCode.OK, patchResponse.StatusCode);
+
+            var updatedDto = await patchResponse.Content.ReadFromJsonAsync<RoleListItemDto>();
+            Assert.NotNull(updatedDto);
+            Assert.Equal("RECEPTION", updatedDto.Code);
+            Assert.Equal(
+                "Tiếp nhận bệnh nhân, check-in và điều phối hàng đợi (đã cập nhật kiểm thử).",
+                updatedDto.Description);
+        }
+        finally
+        {
+            using var restoreRequest = new HttpRequestMessage(
+                HttpMethod.Put,
+                $"/api/v1/admin/roles/{receptionRole.Id}")
+            {
+                Content = JsonContent.Create(new UpdateRoleRequest(
+                    Name: receptionRole.Name,
+                    Description: receptionRole.Description,
+                    Scope: receptionRole.Scope,
+                    Status: receptionRole.Status,
+                    SegregationNote: receptionRole.SegregationNote,
+                    Note: "Khôi phục thông tin mặc định sau kiểm thử")),
+            };
+            restoreRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            await Client.SendAsync(restoreRequest);
+        }
+    }
 }

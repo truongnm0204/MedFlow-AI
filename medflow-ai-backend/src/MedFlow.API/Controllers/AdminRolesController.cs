@@ -70,6 +70,31 @@ public sealed class AdminRolesController : ControllerBase
     }
 
     /// <summary>
+    /// PUT/PATCH /api/v1/admin/roles/{roleId} — Cập nhật thông tin vai trò hệ thống RBAC.
+    /// </summary>
+    [HttpPut("{roleId}")]
+    [HttpPatch("{roleId}")]
+    [ProducesResponseType<RoleListItemDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<RoleListItemDto>> UpdateRole(
+        [FromRoute] string roleId,
+        [FromBody] UpdateRoleRequest request,
+        CancellationToken ct)
+    {
+        var result = await _roleCatalogService.UpdateRoleAsync(
+            GetUserId(),
+            roleId,
+            request,
+            GetIp(),
+            ct);
+        return Ok(result);
+    }
+
+    /// <summary>
     /// PUT /api/v1/admin/roles/{roleId}/permissions — Gán hoặc thu hồi danh sách quyền hạn cho một vai trò.
     /// </summary>
     [HttpPut("{roleId}/permissions")]
