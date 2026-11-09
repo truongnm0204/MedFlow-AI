@@ -227,6 +227,8 @@ export function ReceptionDashboardPage() {
                         setSelectedCheckIn(SCHEDULED_CHECKIN_APPOINTMENTS_MOCK[0]);
                       } else if (id === 'new-patient') {
                         setCreateOpen(true);
+                      } else if (id === 'walk-in') {
+                        navigate('/reception/walk-in');
                       } else if (id === 'search') {
                         navigate('/reception/patients');
                       } else if (id === 'update-patient') {
