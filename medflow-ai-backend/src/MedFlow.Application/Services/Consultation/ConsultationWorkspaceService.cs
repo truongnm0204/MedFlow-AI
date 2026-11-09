@@ -298,6 +298,230 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
             ct);
     }
 
+    public async Task<ConsultationWorkspaceResponseDto> RecordClinicalExaminationAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        RecordClinicalExaminationRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        if (actorUserId <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        var (numericId, code, isQueuePrefix) = ParseVisitOrQueueIdentifier(visitIdOrCode);
+        var validated = ValidateRecordClinicalExaminationRequest(request);
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+
+        var doctorAccess = await EnsureDoctorAccessAsync(actorUserId, nowUtc, requireWritePermission: true, ct);
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        var context = await ResolveAndAuthorizeVisitContextAsync(
+            doctorAccess,
+            numericId,
+            code,
+            isQueuePrefix,
+            visitIdOrCode,
+            ct);
+
+        var visit = context.Visit;
+        var activeEntry = context.ActiveClinicalEntry;
+        var visitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
+
+        if (visitStatus is "CANCELLED" or "NO_SHOW")
+        {
+            throw new ConflictException("Không thể ghi nhận khám lâm sàng cho lượt khám đã hủy hoặc vắng mặt (NO_SHOW).");
+        }
+
+        if (visitStatus is "COMPLETED" or "DONE" ||
+            (activeEntry is not null && NormalizeQueueStatus(activeEntry.Status) == "COMPLETED"))
+        {
+            throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED), không thể chỉnh sửa khám lâm sàng trực tiếp.");
+        }
+
+        if (activeEntry is null || NormalizeQueueStatus(activeEntry.Status) == "CANCELLED")
+        {
+            throw new ConflictException("Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để ghi nhận khám.");
+        }
+
+        var currentQueueStatus = NormalizeQueueStatus(activeEntry.Status);
+        var openDiagnosticCount = CountOpenDiagnosticEntries(context.AllVisitQueueEntries);
+
+        if (visitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" ||
+            (currentQueueStatus != "IN_PROGRESS" && openDiagnosticCount > 0))
+        {
+            throw new ConflictException(
+                "Bệnh nhân đang chờ kết quả cận lâm sàng. Vui lòng mở lại phiên khám (IN_PROGRESS) trước khi cập nhật khám lâm sàng.");
+        }
+
+        if (currentQueueStatus != "IN_PROGRESS" ||
+            visitStatus is not ("IN_PROGRESS" or "IN_CONSULTATION" or "SERVING"))
+        {
+            var effectiveStatus = currentQueueStatus != "IN_PROGRESS" ? currentQueueStatus : visitStatus;
+            throw new ConflictException(
+                $"Lượt khám hiện đang ở trạng thái {effectiveStatus}. Vui lòng bắt đầu phiên khám lâm sàng (IN_PROGRESS) trước khi ghi nhận thông tin khám.");
+        }
+
+        if (context.Room is not null &&
+            !string.Equals(context.Room.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException("Phòng khám của lượt khám hiện không hoạt động hoặc đang bảo trì.");
+        }
+
+        if (context.ServicePoint is not null && context.ServicePoint.IsActive == false)
+        {
+            throw new ConflictException("Điểm phục vụ của buồng khám hiện đang ngừng hoạt động.");
+        }
+
+        var currentStateVersion = activeEntry.StateVersion is > 0 ? activeEntry.StateVersion.Value : 1;
+        if (request.ExpectedStateVersion.HasValue &&
+            request.ExpectedStateVersion.Value != currentStateVersion)
+        {
+            throw new ConflictException(
+                "Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
+        }
+
+        var medicalRecord = await _db.MedicalRecords
+            .Where(m => m.VisitId == visit.Id)
+            .OrderByDescending(m => m.Id)
+            .FirstOrDefaultAsync(ct);
+
+        if (medicalRecord is not null &&
+            string.Equals(medicalRecord.Status?.Trim(), "FINALIZED", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException(
+                "Hồ sơ bệnh án đã được khóa hoàn tất (FINALIZED), không thể ghi nhận thêm phiên bản nháp.");
+        }
+
+        if (medicalRecord is null)
+        {
+            medicalRecord = new MedicalRecord
+            {
+                VisitId = visit.Id,
+                CreatedByDoctorId = doctorAccess.Doctor.Id,
+                Status = "DRAFT",
+                FinalizedAt = null,
+            };
+            _db.MedicalRecords.Add(medicalRecord);
+            await SaveChangesWithConcurrencyGuardAsync(ct);
+        }
+
+        var latestRevision = await _db.MedicalRecordRevisions
+            .AsNoTracking()
+            .Where(r => r.MedicalRecordId == medicalRecord.Id)
+            .OrderByDescending(r => r.RevisionNo)
+            .ThenByDescending(r => r.Id)
+            .FirstOrDefaultAsync(ct);
+
+        var currentRevisionNo = latestRevision?.RevisionNo ?? 0;
+        if (request.ExpectedRevisionNo.HasValue &&
+            request.ExpectedRevisionNo.Value != currentRevisionNo)
+        {
+            throw new ConflictException(
+                "Hồ sơ khám lâm sàng đã có phiên bản mới hơn (revision_no mismatch). Vui lòng tải lại trước khi lưu.");
+        }
+
+        var previousVitals = ParseVitalSigns(latestRevision?.VitalSigns);
+        var bpSystolic = validated.BpSystolicMmhg ?? previousVitals.BpSystolicMmhg;
+        var bpDiastolic = validated.BpDiastolicMmhg ?? previousVitals.BpDiastolicMmhg;
+        var pulseBpm = validated.PulseBpm ?? previousVitals.PulseBpm;
+        var temperatureC = validated.TemperatureC ?? previousVitals.TemperatureC;
+        var spo2Percent = validated.Spo2Percent ?? previousVitals.Spo2Percent;
+        var heightCm = validated.HeightCm ?? previousVitals.HeightCm;
+        var weightKg = validated.WeightKg ?? previousVitals.WeightKg;
+
+        var vitalSignsJson = SerializeVitalSigns(
+            bpSystolic,
+            bpDiastolic,
+            pulseBpm,
+            temperatureC,
+            spo2Percent,
+            heightCm,
+            weightKg);
+
+        var presentingComplaint = validated.PresentingComplaint
+            ?? latestRevision?.PresentingComplaint
+            ?? visit.ReasonForVisit
+            ?? context.Appointment?.ReasonForVisit;
+        var symptomHistory = validated.SymptomHistory ?? latestRevision?.SymptomHistory;
+        var relevantHistoryAllergies = validated.RelevantHistoryAllergies ?? latestRevision?.RelevantHistoryAllergies;
+        var clinicalFindings = validated.ClinicalFindings ?? latestRevision?.ClinicalFindings;
+        var clinicalConclusion = validated.ClinicalConclusion ?? latestRevision?.ClinicalConclusion;
+
+        var nextRevisionNo = currentRevisionNo + 1;
+        var newRevision = new MedicalRecordRevision
+        {
+            MedicalRecordId = medicalRecord.Id,
+            RevisionNo = nextRevisionNo,
+            PresentingComplaint = presentingComplaint,
+            SymptomHistory = symptomHistory,
+            RelevantHistoryAllergies = relevantHistoryAllergies,
+            VitalSigns = vitalSignsJson,
+            ClinicalFindings = clinicalFindings,
+            ClinicalConclusion = clinicalConclusion,
+            EditedByDoctorId = doctorAccess.Doctor.Id,
+            RecordedAt = nowLocal,
+            IsConfirmed = request.IsConfirmed ?? true,
+            AmendmentReason = validated.AmendmentReason,
+        };
+        _db.MedicalRecordRevisions.Add(newRevision);
+
+        if (!string.Equals(visit.Status, "IN_PROGRESS", StringComparison.OrdinalIgnoreCase))
+        {
+            visit.Status = "IN_PROGRESS";
+        }
+
+        if (!string.Equals(activeEntry.Status, "IN_PROGRESS", StringComparison.OrdinalIgnoreCase))
+        {
+            activeEntry.Status = "IN_PROGRESS";
+        }
+
+        var changePayload = new
+        {
+            visitId = visit.Id,
+            visitCode = visit.VisitCode,
+            queueEntryId = activeEntry.Id,
+            medicalRecordId = medicalRecord.Id,
+            previousRevisionNo = currentRevisionNo > 0 ? (int?)currentRevisionNo : null,
+            revisionNo = nextRevisionNo,
+            isConfirmed = newRevision.IsConfirmed,
+            hasVitalSigns = vitalSignsJson is not null,
+            stateVersion = currentStateVersion,
+            ipAddress,
+        };
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actorUserId,
+            HospitalId = doctorAccess.Hospital.Id,
+            Action = "CLINICAL_EXAMINATION_RECORDED",
+            EntityType = "MEDICAL_RECORD",
+            EntityId = medicalRecord.Id.ToString(CultureInfo.InvariantCulture),
+            Reason = validated.AmendmentReason ?? "Bác sĩ ghi nhận khám lâm sàng và sinh hiệu",
+            ChangeData = JsonSerializer.Serialize(changePayload, AuditJsonOptions),
+            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+            OccurredAt = nowUtc,
+        });
+
+        await SaveChangesWithConcurrencyGuardAsync(ct);
+
+        if (tx is not null)
+        {
+            await tx.CommitAsync(ct);
+        }
+
+        return await BuildWorkspaceResponseAsync(
+            doctorAccess,
+            context,
+            actionOutcome: "CLINICAL_EXAMINATION_RECORDED",
+            nowUtc,
+            nowLocal,
+            ct);
+    }
+
     private static (long? NumericId, string? Code, bool IsQueuePrefix) ParseVisitOrQueueIdentifier(string? visitIdOrCode)
     {
         var (numericId, code) = QueueEntryRequestParsing.ParseIdentifier(visitIdOrCode);
@@ -342,6 +566,228 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
         }
 
         return trimmed;
+    }
+
+    private static ValidatedClinicalExaminationInput ValidateRecordClinicalExaminationRequest(
+        RecordClinicalExaminationRequest? request)
+    {
+        if (request is null)
+        {
+            throw new ValidationException("Dữ liệu ghi nhận khám lâm sàng không được để trống.");
+        }
+
+        if (request.ExpectedStateVersion is < 1)
+        {
+            throw new ValidationException("Phiên bản trạng thái (ExpectedStateVersion) phải lớn hơn hoặc bằng 1.");
+        }
+
+        if (request.ExpectedRevisionNo is < 1)
+        {
+            throw new ValidationException("Phiên bản bệnh án (ExpectedRevisionNo) phải lớn hơn hoặc bằng 1.");
+        }
+
+        var presentingComplaint = ValidateClinicalTextField(
+            request.PresentingComplaint,
+            "Lý do khám / triệu chứng chính",
+            1000);
+        var symptomHistory = ValidateClinicalTextField(
+            request.SymptomHistory,
+            "Bệnh sử & diễn tiến triệu chứng",
+            4000);
+        var relevantHistoryAllergies = ValidateClinicalTextField(
+            request.RelevantHistoryAllergies,
+            "Tiền sử & dị ứng liên quan",
+            2000);
+        var clinicalFindings = ValidateClinicalTextField(
+            request.ClinicalFindings,
+            "Khám lâm sàng",
+            4000);
+        var clinicalConclusion = ValidateClinicalTextField(
+            request.ClinicalConclusion,
+            "Nhận định & kết luận lâm sàng ban đầu",
+            2000);
+        var amendmentReason = ValidateClinicalTextField(
+            request.AmendmentReason,
+            "Lý do cập nhật",
+            500);
+
+        var v = request.VitalSigns;
+        var bpSystolic = v?.BpSystolicMmhg ?? request.BpSystolicMmhg;
+        var bpDiastolic = v?.BpDiastolicMmhg ?? request.BpDiastolicMmhg;
+        var pulseBpm = v?.PulseBpm ?? request.PulseBpm;
+        var temperatureC = v?.TemperatureC ?? request.TemperatureC;
+        var spo2Percent = v?.Spo2Percent ?? request.Spo2Percent;
+        var heightCm = v?.HeightCm ?? request.HeightCm;
+        var weightKg = v?.WeightKg ?? request.WeightKg;
+
+        if (bpSystolic.HasValue != bpDiastolic.HasValue)
+        {
+            throw new ValidationException("Huyết áp tâm thu và huyết áp tâm trương phải được nhập cùng nhau.");
+        }
+
+        if (bpSystolic is < 40 or > 300)
+        {
+            throw new ValidationException("Huyết áp tâm thu phải nằm trong khoảng 40–300 mmHg.");
+        }
+
+        if (bpDiastolic is < 20 or > 200)
+        {
+            throw new ValidationException("Huyết áp tâm trương phải nằm trong khoảng 20–200 mmHg.");
+        }
+
+        if (bpSystolic.HasValue && bpDiastolic.HasValue && bpSystolic.Value <= bpDiastolic.Value)
+        {
+            throw new ValidationException("Huyết áp tâm thu phải lớn hơn huyết áp tâm trương.");
+        }
+
+        if (pulseBpm is < 20 or > 300)
+        {
+            throw new ValidationException("Mạch phải nằm trong khoảng 20–300 lần/phút.");
+        }
+
+        if (temperatureC is < 30.0m or > 45.0m)
+        {
+            throw new ValidationException("Nhiệt độ cơ thể phải nằm trong khoảng 30.0–45.0 °C.");
+        }
+
+        if (spo2Percent is < 50 or > 100)
+        {
+            throw new ValidationException("Chỉ số SpO2 phải nằm trong khoảng 50–100%.");
+        }
+
+        if (heightCm is < 30.0m or > 250.0m)
+        {
+            throw new ValidationException("Chiều cao phải nằm trong khoảng 30–250 cm.");
+        }
+
+        if (weightKg is < 1.0m or > 500.0m)
+        {
+            throw new ValidationException("Cân nặng phải nằm trong khoảng 1–500 kg.");
+        }
+
+        var hasAnyText = presentingComplaint is not null ||
+            symptomHistory is not null ||
+            relevantHistoryAllergies is not null ||
+            clinicalFindings is not null ||
+            clinicalConclusion is not null;
+
+        var hasAnyVitalSign = bpSystolic.HasValue ||
+            bpDiastolic.HasValue ||
+            pulseBpm.HasValue ||
+            temperatureC.HasValue ||
+            spo2Percent.HasValue ||
+            heightCm.HasValue ||
+            weightKg.HasValue;
+
+        if (!hasAnyText && !hasAnyVitalSign)
+        {
+            throw new ValidationException(
+                "Vui lòng nhập ít nhất một thông tin triệu chứng, dấu hiệu sinh tồn hoặc nhận xét khám lâm sàng.");
+        }
+
+        return new ValidatedClinicalExaminationInput(
+            PresentingComplaint: presentingComplaint,
+            SymptomHistory: symptomHistory,
+            RelevantHistoryAllergies: relevantHistoryAllergies,
+            BpSystolicMmhg: bpSystolic,
+            BpDiastolicMmhg: bpDiastolic,
+            PulseBpm: pulseBpm,
+            TemperatureC: temperatureC.HasValue
+                ? Math.Round(temperatureC.Value, 1, MidpointRounding.AwayFromZero)
+                : null,
+            Spo2Percent: spo2Percent,
+            HeightCm: heightCm.HasValue
+                ? Math.Round(heightCm.Value, 1, MidpointRounding.AwayFromZero)
+                : null,
+            WeightKg: weightKg.HasValue
+                ? Math.Round(weightKg.Value, 1, MidpointRounding.AwayFromZero)
+                : null,
+            ClinicalFindings: clinicalFindings,
+            ClinicalConclusion: clinicalConclusion,
+            AmendmentReason: amendmentReason);
+    }
+
+    private static string? ValidateClinicalTextField(
+        string? rawValue,
+        string fieldLabel,
+        int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return null;
+        }
+
+        var trimmed = rawValue.Trim();
+        if (trimmed.Contains('<') || trimmed.Contains('>'))
+        {
+            throw new ValidationException($"{fieldLabel} không được chứa ký tự < hoặc >.");
+        }
+
+        if (trimmed.Length > maxLength)
+        {
+            throw new ValidationException($"{fieldLabel} tối đa {maxLength} ký tự.");
+        }
+
+        return trimmed;
+    }
+
+    private static string? SerializeVitalSigns(
+        int? bpSystolic,
+        int? bpDiastolic,
+        int? pulseBpm,
+        decimal? temperatureC,
+        int? spo2Percent,
+        decimal? heightCm,
+        decimal? weightKg)
+    {
+        if (!bpSystolic.HasValue &&
+            !bpDiastolic.HasValue &&
+            !pulseBpm.HasValue &&
+            !temperatureC.HasValue &&
+            !spo2Percent.HasValue &&
+            !heightCm.HasValue &&
+            !weightKg.HasValue)
+        {
+            return null;
+        }
+
+        var payload = new Dictionary<string, object>();
+        if (bpSystolic.HasValue)
+        {
+            payload["bp_systolic_mmhg"] = bpSystolic.Value;
+        }
+
+        if (bpDiastolic.HasValue)
+        {
+            payload["bp_diastolic_mmhg"] = bpDiastolic.Value;
+        }
+
+        if (pulseBpm.HasValue)
+        {
+            payload["pulse_bpm"] = pulseBpm.Value;
+        }
+
+        if (temperatureC.HasValue)
+        {
+            payload["temperature_c"] = Math.Round(temperatureC.Value, 1, MidpointRounding.AwayFromZero);
+        }
+
+        if (spo2Percent.HasValue)
+        {
+            payload["spo2_percent"] = spo2Percent.Value;
+        }
+
+        if (heightCm.HasValue)
+        {
+            payload["height_cm"] = Math.Round(heightCm.Value, 1, MidpointRounding.AwayFromZero);
+        }
+
+        if (weightKg.HasValue)
+        {
+            payload["weight_kg"] = Math.Round(weightKg.Value, 1, MidpointRounding.AwayFromZero);
+        }
+
+        return JsonSerializer.Serialize(payload);
     }
 
     private async Task<DoctorAccessContext> EnsureDoctorAccessAsync(
@@ -1865,4 +2311,19 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
         Doctor AssignedDoctor,
         QueueEntry? ActiveClinicalEntry,
         IReadOnlyList<QueueEntry> AllVisitQueueEntries);
+
+    private sealed record ValidatedClinicalExaminationInput(
+        string? PresentingComplaint,
+        string? SymptomHistory,
+        string? RelevantHistoryAllergies,
+        int? BpSystolicMmhg,
+        int? BpDiastolicMmhg,
+        int? PulseBpm,
+        decimal? TemperatureC,
+        int? Spo2Percent,
+        decimal? HeightCm,
+        decimal? WeightKg,
+        string? ClinicalFindings,
+        string? ClinicalConclusion,
+        string? AmendmentReason);
 }

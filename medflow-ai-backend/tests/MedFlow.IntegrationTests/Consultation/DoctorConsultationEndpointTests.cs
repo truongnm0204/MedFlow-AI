@@ -13,7 +13,8 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
 {
     private const string GetRoute = "/api/v1/doctor/consultation/VIS-202610-0001";
     private const string OpenRoute = "/api/v1/doctor/consultation/VIS-202610-0001/open";
-
+    private const string ClinicalExamRoute = "/api/v1/doctor/consultation/VIS-202610-0001/clinical-examination";
+    private const string ClinicalExamAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/clinical-examination";
     private readonly TestWebAppFactory _factory;
 
     public DoctorConsultationEndpointTests(TestWebAppFactory factory)
@@ -40,6 +41,18 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
     private async Task<HttpResponseMessage> PostWithTokenAsync(string url, string token, object? body = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body);
+        }
+
+        return await Client.SendAsync(request);
+    }
+
+    private async Task<HttpResponseMessage> PutWithTokenAsync(string url, string token, object? body = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         if (body is not null)
         {
@@ -146,5 +159,97 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
                 response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
                 $"Unexpected status code: {response.StatusCode}");
         }
+    }
+
+    [Fact]
+    public async Task RecordClinicalExamination_Unauthenticated_Returns401()
+    {
+        using var postRequest = new HttpRequestMessage(HttpMethod.Post, ClinicalExamRoute);
+        var postResponse = await Client.SendAsync(postRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, postResponse.StatusCode);
+
+        using var putRequest = new HttpRequestMessage(HttpMethod.Put, ClinicalExamAliasRoute);
+        var putResponse = await Client.SendAsync(putRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, putResponse.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("PATIENT")]
+    [InlineData("RECEPTION")]
+    [InlineData("DIAGNOSTIC_STAFF")]
+    [InlineData("PHARMACY_STAFF")]
+    [InlineData("HOSPITAL_ADMIN")]
+    [InlineData("SYSTEM_ADMIN")]
+    public async Task RecordClinicalExamination_ForbiddenRoles_Returns403(string role)
+    {
+        var token = GenerateToken(11, $"{role.ToLowerInvariant()}@medflow.test", role);
+        var body = new { clinicalFindings = "Khám bụng mềm" };
+
+        var postResponse = await PostWithTokenAsync(ClinicalExamRoute, token, body);
+        Assert.Equal(HttpStatusCode.Forbidden, postResponse.StatusCode);
+
+        var putResponse = await PutWithTokenAsync(ClinicalExamAliasRoute, token, body);
+        Assert.Equal(HttpStatusCode.Forbidden, putResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task RecordClinicalExamination_InvalidPayloadOrVitalSigns_Returns400()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+
+        var emptyResponse = await PostWithTokenAsync(
+            ClinicalExamRoute,
+            token,
+            new { amendmentReason = "Chỉ có lý do cập nhật" });
+        Assert.Equal(HttpStatusCode.BadRequest, emptyResponse.StatusCode);
+
+        var invalidBpResponse = await PutWithTokenAsync(
+            ClinicalExamAliasRoute,
+            token,
+            new
+            {
+                bpSystolicMmhg = 90,
+                bpDiastolicMmhg = 110,
+                clinicalFindings = "Khám bụng mềm",
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidBpResponse.StatusCode);
+
+        var invalidRevisionResponse = await PostWithTokenAsync(
+            ClinicalExamRoute,
+            token,
+            new
+            {
+                clinicalFindings = "Khám bụng mềm",
+                expectedRevisionNo = 0,
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidRevisionResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task RecordClinicalExamination_CrossDoctorAndCompletedSeededVisit_Returns403And409_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+        var body = new
+        {
+            presentingComplaint = "Đau thượng vị",
+            bpSystolicMmhg = 120,
+            bpDiastolicMmhg = 80,
+            clinicalFindings = "Bụng mềm, không phản ứng thành bụng",
+        };
+
+        var crossDoctorResponse = await PostWithTokenAsync(
+            "/api/v1/doctor/consultation/VIS-202610-0002/clinical-examination",
+            token,
+            body);
+
+        if (crossDoctorResponse.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable)
+        {
+            return;
+        }
+
+        Assert.Equal(HttpStatusCode.Forbidden, crossDoctorResponse.StatusCode);
+
+        var completedVisitResponse = await PutWithTokenAsync(ClinicalExamRoute, token, body);
+        Assert.Equal(HttpStatusCode.Conflict, completedVisitResponse.StatusCode);
     }
 }
