@@ -42,6 +42,7 @@ import { DoctorDashboardPage } from '@/features/doctor/pages/doctor-dashboard-pa
 import { DoctorAssignedQueuePage } from '@/features/doctor/pages/doctor-assigned-queue-page';
 import { DoctorConsultationWorkspacePage } from '@/features/doctor/pages/doctor-consultation-workspace-page';
 import { DoctorMedicalHistoryPage } from '@/features/doctor/pages/doctor-medical-history-page';
+import { DoctorReviewDiagnosticsPage } from '@/features/doctor/pages/doctor-review-diagnostics-page';
 import { FamilyProfileDetailPage } from '@/features/family/pages/family-profile-detail-page';
 import { FamilyProfileListPage } from '@/features/family/pages/family-profile-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
@@ -237,6 +238,26 @@ export function AppRouter() {
           <RequireAuth>
             <RequireDoctor>
               <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/diagnostic-results"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorReviewDiagnosticsPage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/diagnostic-results"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorReviewDiagnosticsPage />
             </RequireDoctor>
           </RequireAuth>
         }
