@@ -234,6 +234,12 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
     expect(
       screen.queryByRole('button', { name: /Gọi bệnh nhân tiếp theo tại/i }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Tạo lượt khám lại đọc kết quả CLS cho/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Kích hoạt lượt khám lại đọc kết quả CLS cho/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('calls GET /reception/examination-queue when token is present and handles HTTP 500 error + retry', async () => {
@@ -1208,5 +1214,296 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
         'Điểm dịch vụ P.102 đang có bệnh nhân đang khám (A012). Không thể gọi bệnh nhân tiếp theo.',
       );
     });
+  });
+
+  it('creates a waiting RETURN_CONSULTATION entry and activates it to READY with Backend-computed servingOrder and CLS readiness badges (Issue #99 / UC28)', async () => {
+    window.localStorage.setItem('medflow.access_token', 'jwt-reception-token');
+
+    const initialQueue = buildMockExaminationQueueResponse();
+    const room103Initial = initialQueue.servicePoints.find(
+      (sp) => sp.servicePointId === 'sp-room-103',
+    )!;
+    const phuongInitial = room103Initial.entries.find((e) => e.id === 'q-006')!;
+
+    const waitingReturnEntry = {
+      ...phuongInitial,
+      id: 'q-009',
+      queueNumber: 7,
+      ticketNo: 'B007',
+      servingOrder: 3,
+      status: 'WAITING' as const,
+      queueType: 'RETURN_CONSULTATION' as const,
+      presenceStatus: 'PRESENT' as const,
+      isEligible: false,
+      queueGroup: 'NOT_ELIGIBLE' as const,
+      ineligibleReason: 'AWAITING_RESULTS' as const,
+    };
+
+    const readyReturnEntry = {
+      ...waitingReturnEntry,
+      servingOrder: 2,
+      status: 'READY' as const,
+      isEligible: true,
+      queueGroup: 'ELIGIBLE' as const,
+      ineligibleReason: null,
+    };
+
+    const queueAfterCreate = {
+      ...initialQueue,
+      servicePoints: initialQueue.servicePoints.map((sp) =>
+        sp.servicePointId === 'sp-room-103'
+          ? {
+              ...sp,
+              entries: [sp.entries[0]!, waitingReturnEntry, { ...sp.entries[2]!, servingOrder: 4 }],
+            }
+          : sp,
+      ),
+    };
+
+    const queueAfterActivate = {
+      ...initialQueue,
+      servicePoints: initialQueue.servicePoints.map((sp) =>
+        sp.servicePointId === 'sp-room-103'
+          ? {
+              ...sp,
+              entries: [sp.entries[0]!, readyReturnEntry, { ...sp.entries[2]!, servingOrder: 3 }],
+            }
+          : sp,
+      ),
+    };
+
+    let listCallCount = 0;
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (url === '/reception/examination-queue') {
+        listCallCount += 1;
+        if (listCallCount === 1) return { data: initialQueue };
+        if (listCallCount === 2) return { data: queueAfterCreate };
+        return { data: queueAfterActivate };
+      }
+      if (url === '/reception/examination-queue/entries/q-006/status') {
+        return {
+          data: {
+            queueEntryId: 6,
+            currentStatus: 'WAITING',
+            stateVersion: 2,
+            allowedTargetStatuses: ['READY', 'CALLED'],
+            statusHistory: [],
+          },
+        };
+      }
+      if (url === '/reception/examination-queue/entries/q-009/status') {
+        return {
+          data: {
+            queueEntryId: 9,
+            currentStatus: 'WAITING',
+            stateVersion: 1,
+            allowedTargetStatuses: ['READY', 'CALLED'],
+            statusHistory: [],
+          },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    const postSpy = vi
+      .spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({
+        data: {
+          queueEntryId: 'q-009',
+          ticketNo: 'B007',
+          queueNumber: 7,
+          visitId: 106,
+          visitCode: 'VIS-2026-0106',
+          patientCode: 'BN-2024-0117',
+          patientName: 'Vũ Thị Phương',
+          servicePointId: 'sp-room-103',
+          roomCode: 'P.103',
+          roomName: 'Phòng khám Tim mạch 1',
+          actionOutcome: 'CREATED',
+          previousQueueEntryId: 'q-006',
+          previousStatus: 'COMPLETED',
+          currentStatus: 'WAITING',
+          queueType: 'RETURN_CONSULTATION',
+          priority: 'NORMAL',
+          presenceStatus: 'PRESENT',
+          arrivalClass: 'ON_TIME_OR_GRACE',
+          finalResultRequired: true,
+          allDiagnosticResultsReady: false,
+          openDiagnosticCount: 1,
+          isEligible: false,
+          queueGroup: 'NOT_ELIGIBLE',
+          ineligibleReason: 'AWAITING_RESULTS',
+          canSafeBackfill: false,
+          isAppointmentProtected: false,
+          holdReason: null,
+          previousServingOrder: 2,
+          servingOrder: 3,
+          reason: 'Đăng ký lượt quay lại phòng khám bác sĩ trong khi chờ trả kết quả cận lâm sàng',
+          notes: null,
+          previousStateVersion: 2,
+          stateVersion: 1,
+          updatedAtUtc: '2026-11-04T02:20:00Z',
+          updatedEntry: waitingReturnEntry,
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          queueEntryId: 'q-009',
+          ticketNo: 'B007',
+          queueNumber: 7,
+          visitId: 106,
+          visitCode: 'VIS-2026-0106',
+          patientCode: 'BN-2024-0117',
+          patientName: 'Vũ Thị Phương',
+          servicePointId: 'sp-room-103',
+          roomCode: 'P.103',
+          roomName: 'Phòng khám Tim mạch 1',
+          actionOutcome: 'ACTIVATED',
+          previousQueueEntryId: 'q-009',
+          previousStatus: 'WAITING',
+          currentStatus: 'READY',
+          queueType: 'RETURN_CONSULTATION',
+          priority: 'NORMAL',
+          presenceStatus: 'PRESENT',
+          arrivalClass: 'ON_TIME_OR_GRACE',
+          finalResultRequired: true,
+          allDiagnosticResultsReady: true,
+          openDiagnosticCount: 0,
+          isEligible: true,
+          queueGroup: 'ELIGIBLE',
+          ineligibleReason: null,
+          canSafeBackfill: false,
+          isAppointmentProtected: false,
+          holdReason: null,
+          previousServingOrder: 3,
+          servingOrder: 2,
+          reason:
+            'Đã có đầy đủ kết quả cận lâm sàng bắt buộc, bệnh nhân có mặt sẵn sàng đọc kết quả',
+          notes: null,
+          previousStateVersion: 1,
+          stateVersion: 2,
+          updatedAtUtc: '2026-11-04T02:25:00Z',
+          updatedEntry: readyReturnEntry,
+        },
+      });
+
+    renderQueuePage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Lê Minh Cường')).toBeInTheDocument();
+    });
+
+    // Existing RETURN_CONSULTATION IN_PROGRESS entry (Lê Minh Cường) displays Đủ KQ CLS badge
+    const cuongRow = screen.getByText('Lê Minh Cường').closest('tr');
+    expect(cuongRow).not.toBeNull();
+    expect(within(cuongRow!).getByText('Đọc KQ CLS')).toBeInTheDocument();
+    expect(within(cuongRow!).getByText('Đủ KQ CLS')).toBeInTheDocument();
+
+    // 1. Open CREATE_RETURN modal for Vũ Thị Phương (q-006)
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Tạo lượt khám lại đọc kết quả CLS cho Vũ Thị Phương' }),
+    );
+
+    const submitCreateBtn = await screen.findByRole('button', {
+      name: 'Xác nhận tiếp nhận lượt khám lại',
+    });
+    await waitFor(() => {
+      expect(submitCreateBtn).not.toBeDisabled();
+    });
+
+    // Uncheck diagnosticResultsReady (awaiting CLS results), choose preset reason, submit
+    fireEvent.click(
+      screen.getByLabelText('Đã có đầy đủ kết quả cận lâm sàng bắt buộc (final_result_required)'),
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Đăng ký lượt quay lại phòng khám bác sĩ trong khi chờ trả kết quả cận lâm sàng',
+      }),
+    );
+    fireEvent.click(submitCreateBtn);
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        '/reception/examination-queue/entries/q-006/return-to-doctor',
+        {
+          servicePointId: 'sp-room-103',
+          confirmPresent: true,
+          diagnosticResultsReady: false,
+          reason: 'Đăng ký lượt quay lại phòng khám bác sĩ trong khi chờ trả kết quả cận lâm sàng',
+          notes: null,
+          expectedStateVersion: 2,
+        },
+      );
+    });
+
+    // 2. Verify refetched board shows B007 in WAITING with Chờ kết quả CLS badge
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(
+        /Đã tạo lượt chờ đọc kết quả CLS \(RETURN_CONSULTATION\) ở trạng thái Đang chờ \(WAITING\) cho phiếu B007 \(Vũ Thị Phương\) tại P\.103/i,
+      );
+    });
+
+    const phuongWaitingRow = screen.getByText('Vũ Thị Phương').closest('tr');
+    expect(phuongWaitingRow).not.toBeNull();
+    expect(within(phuongWaitingRow!).getByText('B007')).toBeInTheDocument();
+    expect(within(phuongWaitingRow!).getByText('Đọc KQ CLS')).toBeInTheDocument();
+    expect(within(phuongWaitingRow!).getByText('Chờ kết quả CLS')).toBeInTheDocument();
+
+    // 3. Open ACTIVATE_RETURN modal for Vũ Thị Phương (q-009)
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Kích hoạt lượt khám lại đọc kết quả CLS cho Vũ Thị Phương',
+      }),
+    );
+
+    const submitActivateBtn = await screen.findByRole('button', {
+      name: 'Xác nhận kích hoạt lượt khám lại',
+    });
+    await waitFor(() => {
+      expect(submitActivateBtn).not.toBeDisabled();
+    });
+
+    fireEvent.click(
+      screen.getByLabelText('Đã có đầy đủ kết quả cận lâm sàng bắt buộc (final_result_required)'),
+    );
+    fireEvent.click(
+      screen.getByLabelText(
+        'Tôi xác nhận bệnh nhân đã có mặt trực tiếp tại khu vực phòng khám (presenceStatus = PRESENT)',
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Đã có đầy đủ kết quả cận lâm sàng bắt buộc, bệnh nhân có mặt sẵn sàng đọc kết quả',
+      }),
+    );
+    fireEvent.click(submitActivateBtn);
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        '/reception/examination-queue/entries/q-009/return-to-doctor',
+        {
+          servicePointId: 'sp-room-103',
+          confirmPresent: true,
+          diagnosticResultsReady: true,
+          reason:
+            'Đã có đầy đủ kết quả cận lâm sàng bắt buộc, bệnh nhân có mặt sẵn sàng đọc kết quả',
+          notes: null,
+          expectedStateVersion: 1,
+        },
+      );
+    });
+
+    // 4. Verify refetched board shows B007 in READY with Đủ KQ CLS badge and #2 servingOrder
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(
+        /Đã kích hoạt lượt đọc kết quả CLS \(RETURN_CONSULTATION\) sang Sẵn sàng \(READY\) cho phiếu B007 \(Vũ Thị Phương\) tại P\.103 — Đủ KQ CLS, thứ tự phục vụ mới: #2, giữ nguyên số phiếu #7/i,
+      );
+    });
+
+    const phuongReadyRow = screen.getByText('Vũ Thị Phương').closest('tr');
+    expect(phuongReadyRow).not.toBeNull();
+    expect(within(phuongReadyRow!).getByText('#2')).toBeInTheDocument();
+    expect(within(phuongReadyRow!).getByText('Sẵn sàng')).toBeInTheDocument();
+    expect(within(phuongReadyRow!).getByText('Đủ KQ CLS')).toBeInTheDocument();
   });
 });
