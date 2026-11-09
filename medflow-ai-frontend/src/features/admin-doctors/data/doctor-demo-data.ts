@@ -11,6 +11,8 @@ const doctor = (
   room: string,
   portrait: string,
   active = true,
+  hasPendingAppointments = false,
+  pendingAppointmentsCount = 0,
 ): Doctor => ({
   id,
   staffId: `NV-${String(Number(id.slice(-4)) + 1000).padStart(4, '0')}`,
@@ -23,6 +25,8 @@ const doctor = (
   room,
   portrait,
   active,
+  hasPendingAppointments,
+  pendingAppointmentsCount,
   phone: '0912.456.789',
   experience: 12,
   scope: `Khám bệnh, chữa bệnh chuyên khoa ${specialty}`,
@@ -46,6 +50,9 @@ export const INITIAL_DOCTORS: Doctor[] = [
     '004812/BYT-CCHN',
     'PK-101 (Phòng Tiêu hóa 1)',
     '/assets/admin-doctors/list-02.png',
+    true,
+    true,
+    6,
   ),
   doctor(
     'DOC-0089',
@@ -57,6 +64,9 @@ export const INITIAL_DOCTORS: Doctor[] = [
     '001984/BYT-CCHN',
     'PK-108 (Phòng Tim mạch)',
     '/assets/admin-doctors/list-03.png',
+    true,
+    false,
+    0,
   ),
   doctor(
     'DOC-0095',
@@ -68,6 +78,9 @@ export const INITIAL_DOCTORS: Doctor[] = [
     '003421/BYT-CCHN',
     'PK-205 (Phòng Khám Nhi 1)',
     '/assets/admin-doctors/list-04.png',
+    true,
+    true,
+    2,
   ),
   doctor(
     'DOC-0210',
@@ -80,6 +93,8 @@ export const INITIAL_DOCTORS: Doctor[] = [
     'PK-302 (Cơ Xương Khớp)',
     '/assets/admin-doctors/list-05.png',
     false,
+    false,
+    0,
   ),
   doctor(
     'DOC-0165',
