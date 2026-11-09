@@ -75,6 +75,61 @@ public sealed class ReceptionCheckInController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// GET /api/v1/reception/appointments/{idOrCode}/check-in-result — Xem kết quả tiếp nhận (check-in) của lịch hẹn đã check-in (UC24 / M2-022).
+    /// </summary>
+    [HttpGet("api/v1/reception/appointments/{idOrCode}/check-in-result")]
+    [HttpGet("api/v1/reception/appointments/{idOrCode}/checkin-result")]
+    [HttpGet("api/v1/reception/appointments/{idOrCode}/check-in")]
+    [HttpGet("api/v1/reception/appointments/{idOrCode}/checkin")]
+    [HttpGet("api/v1/appointments/{idOrCode}/check-in-result")]
+    [HttpGet("api/v1/appointments/{idOrCode}/check-in")]
+    [HttpGet("api/v1/reception/check-in/appointments/{idOrCode}")]
+    [ProducesResponseType<CheckInScheduledPatientResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<CheckInScheduledPatientResponseDto>> GetCheckInResultByAppointment(
+        [FromRoute] string idOrCode,
+        CancellationToken ct = default)
+    {
+        var result = await _checkInService.GetCheckInResultByAppointmentAsync(
+            GetUserId(),
+            idOrCode,
+            ct);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// GET /api/v1/reception/visits/{idOrCode}/check-in-result — Xem kết quả tiếp nhận (check-in) theo mã hoặc ID lượt khám (UC24 / M2-022).
+    /// </summary>
+    [HttpGet("api/v1/reception/visits/{idOrCode}/check-in-result")]
+    [HttpGet("api/v1/reception/visits/{idOrCode}/checkin-result")]
+    [HttpGet("api/v1/reception/visits/{idOrCode}/check-in")]
+    [HttpGet("api/v1/visits/{idOrCode}/check-in-result")]
+    [HttpGet("api/v1/visits/{idOrCode}/check-in")]
+    [HttpGet("api/v1/reception/check-in/visits/{idOrCode}")]
+    [HttpGet("api/v1/reception/check-in/{idOrCode}/result")]
+    [HttpGet("api/v1/reception/check-in-result/{idOrCode}")]
+    [ProducesResponseType<CheckInScheduledPatientResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<CheckInScheduledPatientResponseDto>> GetCheckInResultByVisit(
+        [FromRoute] string idOrCode,
+        CancellationToken ct = default)
+    {
+        var result = await _checkInService.GetCheckInResultByVisitAsync(
+            GetUserId(),
+            idOrCode,
+            ct);
+        return Ok(result);
+    }
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)

@@ -1009,4 +1009,238 @@ public sealed class CheckInScheduledPatientServiceTests : IDisposable
         Assert.Equal(2L, sysAdminResult.HospitalId);
         Assert.Equal("CHECKED_IN", sysAdminResult.AppointmentStatus);
     }
+
+    [Fact]
+    public async Task GetCheckInResultByAppointmentAndVisitAsync_ReturnsFullResultWithReconstructedAuditVitals_AndIsReadOnly()
+    {
+        var checkInResult = await _service.CheckInScheduledPatientAsync(
+            actorUserId: 5,
+            appointmentIdOrCode: "APT-202610-0100",
+            request: new CheckInScheduledPatientRequest(
+                ReasonForVisit: "Đau thượng vị kèm ợ chua",
+                BloodPressure: "125/82",
+                HeartRate: 78,
+                Temperature: 36.8,
+                IsIdentityVerified: true,
+                IsInsuranceVerified: true,
+                Priority: "NORMAL"),
+            ipAddress: "127.0.0.1");
+
+        var visitCountBefore = await _db.Visits.CountAsync();
+        var queueCountBefore = await _db.QueueEntries.CountAsync();
+        var auditCountBefore = await _db.AuditLogs.CountAsync();
+
+        // 1. Lookup by appointment code
+        var byApptCode = await _service.GetCheckInResultByAppointmentAsync(5, "APT-202610-0100");
+        Assert.Equal(checkInResult.VisitId, byApptCode.VisitId);
+        Assert.Equal(checkInResult.VisitCode, byApptCode.VisitCode);
+        Assert.Equal(checkInResult.TicketCode, byApptCode.TicketCode);
+        Assert.Equal("A001", byApptCode.TicketNo);
+        Assert.Equal(500L, byApptCode.QueueEntryId);
+        Assert.Equal(1, byApptCode.QueueNumber);
+        Assert.Equal("001", byApptCode.QueueNumberFormatted);
+        Assert.Equal("WAITING", byApptCode.QueueStatus);
+        Assert.Equal("PRESENT", byApptCode.PresenceStatus);
+        Assert.Equal("ON_TIME_OR_GRACE", byApptCode.ArrivalClass);
+        Assert.Equal("NORMAL", byApptCode.Priority);
+        Assert.Equal(100L, byApptCode.AppointmentId);
+        Assert.Equal("APT-202610-0100", byApptCode.AppointmentCode);
+        Assert.Equal("CHECKED_IN", byApptCode.AppointmentStatus);
+        Assert.Equal("WAITING", byApptCode.VisitStatus);
+        Assert.Equal("SCHEDULED", byApptCode.VisitType);
+        Assert.Equal(1L, byApptCode.PatientId);
+        Assert.Equal("PAT-0001", byApptCode.PatientCode);
+        Assert.Equal("Nguyễn Văn An", byApptCode.PatientName);
+        Assert.Equal(1L, byApptCode.HospitalId);
+        Assert.Equal("Khoa Tiêu hóa", byApptCode.DepartmentName);
+        Assert.Equal("RM-001", byApptCode.RoomCode);
+        Assert.Equal("Khám Tiêu hóa 101", byApptCode.RoomName);
+        Assert.Equal("BS Nguyễn Minh Đức", byApptCode.DoctorName);
+        Assert.Equal("Đau thượng vị kèm ợ chua", byApptCode.ReasonForVisit);
+        Assert.Equal("125/82", byApptCode.BloodPressure);
+        Assert.Equal(78, byApptCode.HeartRate);
+        Assert.Equal(36.8, byApptCode.Temperature);
+        Assert.True(byApptCode.IsIdentityVerified);
+        Assert.True(byApptCode.IsInsuranceVerified);
+        Assert.Equal("08:50", byApptCode.CheckedInAt);
+        Assert.Equal(3L, byApptCode.CheckedInByStaffId);
+        Assert.Equal("Lê Thị Tiếp Đón", byApptCode.CheckedInByStaffName);
+        Assert.Equal(3, byApptCode.NextStepInstructions.Count);
+
+        // 2. Lookup by numeric appointment ID
+        var byApptId = await _service.GetCheckInResultByAppointmentAsync(5, "100");
+        Assert.Equal(checkInResult.VisitId, byApptId.VisitId);
+        Assert.Equal("125/82", byApptId.BloodPressure);
+
+        // 3. Lookup by visit code and numeric visit ID
+        var byVisitCode = await _service.GetCheckInResultByVisitAsync(5, checkInResult.VisitCode);
+        Assert.Equal(checkInResult.VisitId, byVisitCode.VisitId);
+        Assert.Equal("A001", byVisitCode.TicketNo);
+        Assert.Equal("125/82", byVisitCode.BloodPressure);
+
+        var byVisitId = await _service.GetCheckInResultByVisitAsync(5, checkInResult.VisitId.ToString());
+        Assert.Equal(checkInResult.VisitCode, byVisitId.VisitCode);
+
+        // 4. Cross-lookup resilience (passing VIS-... to Appointment endpoint or APT-... to Visit endpoint)
+        var crossVisitOnAppt = await _service.GetCheckInResultByAppointmentAsync(5, checkInResult.VisitCode);
+        Assert.Equal(checkInResult.VisitId, crossVisitOnAppt.VisitId);
+
+        var crossApptOnVisit = await _service.GetCheckInResultByVisitAsync(5, "APT-202610-0100");
+        Assert.Equal(checkInResult.VisitId, crossApptOnVisit.VisitId);
+
+        // Read-only invariant: no extra rows written
+        Assert.Equal(visitCountBefore, await _db.Visits.CountAsync());
+        Assert.Equal(queueCountBefore, await _db.QueueEntries.CountAsync());
+        Assert.Equal(auditCountBefore, await _db.AuditLogs.CountAsync());
+    }
+
+    [Fact]
+    public async Task GetCheckInResult_ReflectsUpdatedRoomAfterTransfer_AndZeroWaitTimeWhenCalledOrCompleted()
+    {
+        await _service.CheckInScheduledPatientAsync(
+            actorUserId: 5,
+            appointmentIdOrCode: "APT-202610-0100",
+            request: new CheckInScheduledPatientRequest(IsIdentityVerified: true));
+
+        var secondCheckIn = await _service.CheckInScheduledPatientAsync(
+            actorUserId: 5,
+            appointmentIdOrCode: "APT-202610-0101",
+            request: new CheckInScheduledPatientRequest(IsIdentityVerified: true));
+
+        var initialView = await _service.GetCheckInResultByVisitAsync(5, secondCheckIn.VisitCode);
+        Assert.Equal(1, initialView.WaitingCountBefore);
+        Assert.Equal(15, initialView.EstimatedWaitMinutes);
+        Assert.Equal("RM-001", initialView.RoomCode);
+
+        // Simulate room transfer (UC27) to a new room in Hospital 1
+        _db.HospitalRooms.Add(new HospitalRoom
+        {
+            Id = 2,
+            HospitalId = 1,
+            DepartmentId = 2,
+            RoomCode = "RM-002",
+            Name = "Khám Tiêu hóa 102",
+            RoomType = "EXAMINATION",
+            Location = "Tầng 1 - Khu B",
+            Capacity = 2,
+            Status = "ACTIVE",
+        });
+
+        var visit = await _db.Visits.SingleAsync(v => v.Id == secondCheckIn.VisitId);
+        visit.ExaminationRoomId = 2;
+
+        var queueEntry = await _db.QueueEntries.SingleAsync(q => q.Id == secondCheckIn.QueueEntryId);
+        queueEntry.Status = "CALLED";
+        await _db.SaveChangesAsync();
+
+        var updatedView = await _service.GetCheckInResultByAppointmentAsync(5, "APT-202610-0101");
+        Assert.Equal(2L, updatedView.RoomId);
+        Assert.Equal("RM-002", updatedView.RoomCode);
+        Assert.Equal("Khám Tiêu hóa 102", updatedView.RoomName);
+        Assert.Equal("Tầng 1 - Khu B", updatedView.RoomLocation);
+        Assert.Contains("Khám Tiêu hóa 102 (RM-002)", updatedView.NextStepInstructions[0]);
+        Assert.Equal("CALLED", updatedView.QueueStatus);
+        Assert.Equal(0, updatedView.WaitingCountBefore);
+        Assert.Equal(0, updatedView.EstimatedWaitMinutes);
+    }
+
+    [Fact]
+    public async Task GetCheckInResult_ValidationNotFoundAndConflictGuards_ThrowsExpectedExceptions()
+    {
+        // 400 ValidationException for invalid identifiers
+        foreach (var invalid in new[] { "", "   ", "0", "-5", "bad@code", new string('A', 45) })
+        {
+            await Assert.ThrowsAsync<ValidationException>(() =>
+                _service.GetCheckInResultByAppointmentAsync(5, invalid));
+            await Assert.ThrowsAsync<ValidationException>(() =>
+                _service.GetCheckInResultByVisitAsync(5, invalid));
+        }
+
+        // 404 NotFoundException for non-existent appointment or visit
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.GetCheckInResultByAppointmentAsync(5, "APT-202610-9999"));
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.GetCheckInResultByAppointmentAsync(5, "99999"));
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.GetCheckInResultByVisitAsync(5, "VIS-202610-9999"));
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.GetCheckInResultByVisitAsync(5, "99999"));
+
+        // 409 ConflictException when appointment is still BOOKED (not checked in yet)
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.GetCheckInResultByAppointmentAsync(5, "APT-202610-0101"));
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.GetCheckInResultByVisitAsync(5, "101"));
+
+        // 409 ConflictException when appointment is CANCELLED or NO_SHOW
+        var appt102 = await _db.Appointments.SingleAsync(a => a.Id == 102);
+        appt102.Status = "CANCELLED";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.GetCheckInResultByAppointmentAsync(5, "APT-202610-0102"));
+
+        appt102.Status = "NO_SHOW";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.GetCheckInResultByAppointmentAsync(5, "APT-202610-0102"));
+
+        // 409 ConflictException when checked-in visit or queue entry is later CANCELLED
+        var checkedIn = await _service.CheckInScheduledPatientAsync(
+            actorUserId: 5,
+            appointmentIdOrCode: "APT-202610-0100",
+            request: new CheckInScheduledPatientRequest(IsIdentityVerified: true));
+
+        var queueEntry = await _db.QueueEntries.SingleAsync(q => q.Id == checkedIn.QueueEntryId);
+        queueEntry.Status = "CANCELLED";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.GetCheckInResultByVisitAsync(5, checkedIn.VisitCode));
+
+        queueEntry.Status = "WAITING";
+        var visit = await _db.Visits.SingleAsync(v => v.Id == checkedIn.VisitId);
+        visit.Status = "CANCELLED";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.GetCheckInResultByVisitAsync(5, checkedIn.VisitCode));
+    }
+
+    [Fact]
+    public async Task GetCheckInResult_TwoLayerAuthorizationAndHospitalIsolation_EnforcesRoleAndHospitalBoundary()
+    {
+        var checkedIn = await _service.CheckInScheduledPatientAsync(
+            actorUserId: 5,
+            appointmentIdOrCode: "APT-202610-0100",
+            request: new CheckInScheduledPatientRequest(IsIdentityVerified: true));
+
+        // 401 UnauthorizedAccessException for invalid actorUserId
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.GetCheckInResultByAppointmentAsync(0, "APT-202610-0100"));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.GetCheckInResultByVisitAsync(-1, checkedIn.VisitCode));
+
+        // 403 ForbiddenException for PATIENT (1) and DOCTOR (3)
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetCheckInResultByAppointmentAsync(1, "APT-202610-0100"));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetCheckInResultByVisitAsync(3, checkedIn.VisitCode));
+
+        // 403 ForbiddenException for cross-hospital reception staff (UserId = 25 in Hospital 2)
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetCheckInResultByAppointmentAsync(25, "APT-202610-0100"));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetCheckInResultByVisitAsync(25, checkedIn.VisitCode));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetCheckInResultByAppointmentAsync(25, "APT-202610-0101"));
+
+        // HOSPITAL_ADMIN (11) in Hospital 1 and SYSTEM_ADMIN (13) succeed
+        var hospitalAdminView = await _service.GetCheckInResultByAppointmentAsync(11, "APT-202610-0100");
+        Assert.Equal(checkedIn.VisitId, hospitalAdminView.VisitId);
+
+        var sysAdminView = await _service.GetCheckInResultByVisitAsync(13, checkedIn.VisitCode);
+        Assert.Equal(checkedIn.VisitId, sysAdminView.VisitId);
+    }
 }
