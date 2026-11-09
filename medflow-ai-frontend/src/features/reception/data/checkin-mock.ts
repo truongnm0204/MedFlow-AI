@@ -1,4 +1,8 @@
-import type { ScheduledCheckInAppointment } from '../types/checkin.types';
+import type {
+  CheckInPriority,
+  CheckInSuccessResult,
+  ScheduledCheckInAppointment,
+} from '../types/checkin.types';
 
 export const SCHEDULED_CHECKIN_APPOINTMENTS_MOCK: ScheduledCheckInAppointment[] = [
   {
@@ -52,3 +56,31 @@ export const SCHEDULED_CHECKIN_APPOINTMENTS_MOCK: ScheduledCheckInAppointment[] 
     status: 'BOOKED',
   },
 ];
+
+export function createMockCheckInResult(
+  appointment: ScheduledCheckInAppointment,
+  priority: CheckInPriority = 'NORMAL',
+): CheckInSuccessResult {
+  return {
+    visitId: `VIS-${appointment.appointmentCode.replace('APT-', '')}`,
+    ticketNo: appointment.id === 'ap-001' ? 'A018' : 'A022',
+    patientName: appointment.patientName,
+    patientCode: appointment.patientCode,
+    roomName: appointment.roomName,
+    departmentName: appointment.department,
+    doctorName: appointment.doctorName,
+    checkedInAt: new Date().toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
+    priority,
+    queueNumber: 4,
+    waitingCountBefore: 3,
+    estimatedWaitMinutes: 15,
+    nextStepInstructions: [
+      `Di chuyển đến trước ${appointment.roomName} (${appointment.department} - Tầng 1).`,
+      'Theo dõi màn hình điện tử và lắng nghe loa gọi số thứ tự tiếp nhận.',
+      'Chuẩn bị sẵn thẻ CCCD/BHYT bản gốc trước khi vào phòng khám.',
+    ],
+  };
+}
