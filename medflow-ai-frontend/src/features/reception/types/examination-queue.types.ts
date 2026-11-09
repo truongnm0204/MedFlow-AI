@@ -17,6 +17,15 @@ export type ExaminationVisitTypeFilter = 'ALL' | ExaminationVisitType;
 export type QueueArrivalClassFilter = 'ALL' | QueueArrivalClass;
 export type EarlyArrivalBackfillActionMode = 'SAFE_BACKFILL' | 'HOLD_FOR_SLOT';
 export type QueueTurnActionMode = 'MISSED_TURN' | 'RESTORE_TURN';
+export type ExaminationQueueGroup =
+  'IN_PROGRESS' | 'CALLED' | 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'SKIPPED' | 'COMPLETED';
+
+export type ExaminationQueueIneligibleReason =
+  'NOT_ARRIVED' | 'LEFT' | 'BLOCKED' | 'AWAITING_RESULTS';
+
+export type ReturnToDoctorActionOutcome = 'CREATED' | 'ACTIVATED' | 'UPDATED';
+
+export type ReturnToDoctorModalMode = 'CREATE_RETURN' | 'ACTIVATE_RETURN';
 
 export interface ExaminationQueueEntryDto {
   id: string;
@@ -49,9 +58,8 @@ export interface ExaminationQueueEntryDto {
   isBackfilled?: boolean;
   backfillReason?: string | null;
   backfillUpdatedAt?: string | null;
-  queueGroup?:
-    'IN_PROGRESS' | 'CALLED' | 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'SKIPPED' | 'COMPLETED' | null;
-  ineligibleReason?: 'NOT_ARRIVED' | 'LEFT' | 'BLOCKED' | 'AWAITING_RESULTS' | null;
+  queueGroup?: ExaminationQueueGroup | null;
+  ineligibleReason?: ExaminationQueueIneligibleReason | null;
 }
 
 export interface ServicePointQueueDto {
@@ -247,4 +255,57 @@ export interface CallNextPatientResponseDto {
   stateVersion: number | null;
   updatedAtUtc: string;
   entries: ExaminationQueueEntryDto[];
+}
+
+export interface CreateReturnToDoctorQueueEntryRequestPayload {
+  servicePointId?: string | null;
+  confirmPresent: boolean;
+  diagnosticResultsReady?: boolean | null;
+  reason: string;
+  notes?: string | null;
+  expectedStateVersion?: number | null;
+}
+
+export interface CreateReturnToDoctorQueueEntryResponseDto {
+  queueEntryId: string;
+  ticketNo: string;
+  queueNumber: number;
+  visitId: number;
+  visitCode: string;
+  patientCode: string;
+  patientName: string;
+  servicePointId: string;
+  roomCode: string;
+  roomName: string;
+  actionOutcome: ReturnToDoctorActionOutcome;
+  previousQueueEntryId: string | null;
+  previousStatus: ExaminationQueueStatus | null;
+  currentStatus: ExaminationQueueStatus;
+  queueType: ExaminationQueueType;
+  priority: ExaminationQueuePriority;
+  presenceStatus: QueuePresenceStatus;
+  arrivalClass: QueueArrivalClass;
+  finalResultRequired: boolean;
+  allDiagnosticResultsReady: boolean;
+  openDiagnosticCount: number;
+  isEligible: boolean;
+  queueGroup: ExaminationQueueGroup;
+  ineligibleReason: ExaminationQueueIneligibleReason | null;
+  canSafeBackfill: boolean;
+  isAppointmentProtected: boolean;
+  holdReason: string | null;
+  previousServingOrder: number | null;
+  servingOrder: number;
+  reason: string;
+  notes: string | null;
+  previousStateVersion: number | null;
+  stateVersion: number;
+  updatedAtUtc: string;
+  updatedEntry: ExaminationQueueEntryDto;
+}
+
+export interface ReturnToDoctorQueueTarget {
+  entry: ExaminationQueueEntryDto;
+  servicePoint: ServicePointQueueDto;
+  mode: ReturnToDoctorModalMode;
 }

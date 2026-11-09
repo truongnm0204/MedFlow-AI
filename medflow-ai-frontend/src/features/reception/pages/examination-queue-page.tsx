@@ -28,6 +28,7 @@ import { ExaminationQueueStatCards } from '../components/examination-queue-stat-
 import { PatientDetailModal } from '../components/patient-detail-modal';
 import { ReceptionSidebar } from '../components/reception-sidebar';
 import { UpdateQueueStatusModal } from '../components/update-queue-status-modal';
+import { ReturnToDoctorQueueModal } from '../components/return-to-doctor-queue-modal';
 import { DEFAULT_QUEUE_DATE } from '../data/examination-queue-mock';
 import { findPatientDetailByCode } from '../data/patient-detail-mock';
 import { useCallNextEligiblePatient, useExaminationQueue } from '../hooks/use-examination-queue';
@@ -37,6 +38,7 @@ import {
 } from '../schemas/examination-queue-filter.schema';
 import type {
   CallNextPatientResponseDto,
+  CreateReturnToDoctorQueueEntryResponseDto,
   EarlyArrivalBackfillResponseDto,
   EarlyArrivalBackfillTarget,
   ExaminationQueueEntryDto,
@@ -45,6 +47,7 @@ import type {
   ExaminationQueueStatusFilter,
   LateArrivalMissedTurnTarget,
   QueueTurnActionResponseDto,
+  ReturnToDoctorQueueTarget,
   ServicePointQueueDto,
 } from '../types/examination-queue.types';
 import type {
@@ -101,6 +104,8 @@ export function ExaminationQueuePage() {
     null,
   );
   const [cancelTarget, setCancelTarget] = useState<CancelQueueEntryTarget | null>(null);
+  const [returnToDoctorTarget, setReturnToDoctorTarget] =
+    useState<ReturnToDoctorQueueTarget | null>(null);
   const [statusOverrides, setStatusOverrides] = useState<
     Record<string, Partial<ExaminationQueueEntryDto>>
   >({});
@@ -337,6 +342,57 @@ export function ExaminationQueuePage() {
       `Đã hủy lượt khám phiếu ${entry.ticketNo} (${entry.patientName}) tại ${servicePoint.roomCode} — giữ nguyên số phiếu #${result.queueNumber}, thứ tự phục vụ các lượt còn lại đã được hệ thống tính lại.`,
     );
     setCancelTarget(null);
+  };
+
+  const handleReturnToDoctorApplied = (result: CreateReturnToDoctorQueueEntryResponseDto) => {
+    const overrideKey = `${appliedFilters.queueDate}:${result.servicePointId}`;
+    setEntryOverridesByServicePoint((prev) => {
+      if (!(overrideKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[overrideKey];
+      return next;
+    });
+
+    setStatusOverrides((prev) => {
+      const next = { ...prev };
+      if (result.previousQueueEntryId && result.previousQueueEntryId in next) {
+        delete next[result.previousQueueEntryId];
+      }
+      next[result.queueEntryId] = {
+        ...result.updatedEntry,
+        status: result.currentStatus,
+        queueType: result.queueType,
+        priority: result.priority,
+        presenceStatus: result.presenceStatus,
+        arrivalClass: result.arrivalClass,
+        servingOrder: result.servingOrder,
+        isEligible: result.isEligible,
+        queueGroup: result.queueGroup,
+        ineligibleReason: result.ineligibleReason,
+        canSafeBackfill: result.canSafeBackfill,
+        isAppointmentProtected: result.isAppointmentProtected,
+        holdReason: result.holdReason,
+      };
+      return next;
+    });
+
+    if (result.actionOutcome === 'CREATED') {
+      if (result.currentStatus === 'READY') {
+        setUpdateNotice(
+          `Đã tạo và kích hoạt lượt đọc kết quả CLS (RETURN_CONSULTATION) sang Sẵn sàng (READY) cho phiếu ${result.ticketNo} (${result.patientName}) tại ${result.roomCode} — Đủ KQ CLS, thứ tự phục vụ: #${result.servingOrder}, số phiếu #${result.queueNumber}.`,
+        );
+      } else {
+        setUpdateNotice(
+          `Đã tạo lượt chờ đọc kết quả CLS (RETURN_CONSULTATION) ở trạng thái Đang chờ (WAITING) cho phiếu ${result.ticketNo} (${result.patientName}) tại ${result.roomCode} — Chờ hoàn tất KQ CLS bắt buộc, thứ tự hiển thị: #${result.servingOrder}, số phiếu #${result.queueNumber}.`,
+        );
+      }
+    } else {
+      setUpdateNotice(
+        `Đã kích hoạt lượt đọc kết quả CLS (RETURN_CONSULTATION) sang Sẵn sàng (READY) cho phiếu ${result.ticketNo} (${result.patientName}) tại ${result.roomCode} — Đủ KQ CLS, thứ tự phục vụ mới: #${result.servingOrder}, giữ nguyên số phiếu #${result.queueNumber}.`,
+      );
+    }
+
+    setReturnToDoctorTarget(null);
   };
 
   const handleCallNext = async (servicePoint: ServicePointQueueDto) => {
@@ -674,6 +730,14 @@ export function ExaminationQueuePage() {
                                 }
                               : undefined
                           }
+                          onOpenReturnToDoctor={
+                            canManageQueue
+                              ? (entry, sp, mode) => {
+                                  setUpdateNotice(null);
+                                  setReturnToDoctorTarget({ entry, servicePoint: sp, mode });
+                                }
+                              : undefined
+                          }
                           onOpenCancelEntry={
                             canManageQueue
                               ? (entry, sp) => {
@@ -779,6 +843,12 @@ export function ExaminationQueuePage() {
                             Lượt bị hủy (CANCELLED) được loại khỏi hàng đợi; số phiếu đã cấp không
                             được cấp lại và thứ tự phục vụ các lượt còn lại được tính lại từ Backend
                           </li>
+                          <li>
+                            Bệnh nhân quay lại đọc kết quả cận lâm sàng (RETURN_CONSULTATION) tách
+                            biệt khỏi ưu tiên lâm sàng; chỉ đủ điều kiện gọi khám (READY) khi hoàn
+                            tất kết quả CLS bắt buộc và có mặt (PRESENT), được luân phiên công bằng
+                            từ Backend mà không phá vỡ lịch hẹn được bảo vệ
+                          </li>
                         </ol>
                       </CardContent>
                     </Card>
@@ -861,6 +931,16 @@ export function ExaminationQueuePage() {
             target={cancelTarget}
             onClose={() => setCancelTarget(null)}
             onCancelled={handleQueueEntryCancelled}
+          />
+        )}
+
+        {returnToDoctorTarget && (
+          <ReturnToDoctorQueueModal
+            key={`${returnToDoctorTarget.entry.id}:${returnToDoctorTarget.mode}`}
+            open={Boolean(returnToDoctorTarget)}
+            target={returnToDoctorTarget}
+            onClose={() => setReturnToDoctorTarget(null)}
+            onApplied={handleReturnToDoctorApplied}
           />
         )}
       </div>

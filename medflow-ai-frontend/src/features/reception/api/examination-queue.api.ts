@@ -10,6 +10,8 @@ import {
 import type {
   CallNextPatientRequestPayload,
   CallNextPatientResponseDto,
+  CreateReturnToDoctorQueueEntryRequestPayload,
+  CreateReturnToDoctorQueueEntryResponseDto,
   EarlyArrivalBackfillRequestPayload,
   EarlyArrivalBackfillResponseDto,
   ExaminationQueueQueryParams,
@@ -134,6 +136,18 @@ export async function callNextEligiblePatient(
   const { data } = await apiClient.post<CallNextPatientResponseDto>(
     `/queue/service-points/${encoded}/call-next`,
     body,
+  );
+  return data;
+}
+
+export async function createReturnToDoctorQueueEntry(
+  idOrCode: string,
+  payload: CreateReturnToDoctorQueueEntryRequestPayload,
+): Promise<CreateReturnToDoctorQueueEntryResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+  const { data } = await apiClient.post<CreateReturnToDoctorQueueEntryResponseDto>(
+    `/reception/examination-queue/entries/${encoded}/return-to-doctor`,
+    payload,
   );
   return data;
 }

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   applyEarlyArrivalBackfill,
   callNextEligiblePatient,
+  createReturnToDoctorQueueEntry,
   fetchExaminationQueue,
   markQueueEntryMissedTurn,
   restoreSkippedQueueTurn,
@@ -12,6 +13,8 @@ import { applyQueueStatusUpdateToResponse } from '../data/examination-queue-mock
 import type {
   CallNextPatientRequestPayload,
   CallNextPatientResponseDto,
+  CreateReturnToDoctorQueueEntryRequestPayload,
+  CreateReturnToDoctorQueueEntryResponseDto,
   EarlyArrivalBackfillRequestPayload,
   ExaminationQueueQueryParams,
   ExaminationQueueResponseDto,
@@ -130,6 +133,42 @@ export function useCallNextEligiblePatient() {
       void queryClient.invalidateQueries({
         queryKey: ['reception', 'examination-queue'],
       });
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'assigned-queue'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'dashboard'],
+      });
+    },
+  });
+}
+
+export interface CreateReturnToDoctorQueueEntryVariables {
+  idOrCode: string;
+  payload: CreateReturnToDoctorQueueEntryRequestPayload;
+}
+
+export function useCreateReturnToDoctorQueueEntry() {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    CreateReturnToDoctorQueueEntryResponseDto,
+    unknown,
+    CreateReturnToDoctorQueueEntryVariables
+  >({
+    mutationFn: ({ idOrCode, payload }) => createReturnToDoctorQueueEntry(idOrCode, payload),
+    onSuccess: (data, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: ['reception', 'examination-queue'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['queue-entry-status', variables.idOrCode.trim()],
+      });
+      if (data.queueEntryId && data.queueEntryId.trim() !== variables.idOrCode.trim()) {
+        void queryClient.invalidateQueries({
+          queryKey: ['queue-entry-status', data.queueEntryId.trim()],
+        });
+      }
       void queryClient.invalidateQueries({
         queryKey: ['doctor', 'assigned-queue'],
       });

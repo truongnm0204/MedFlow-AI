@@ -1,4 +1,4 @@
-import { Megaphone, Stethoscope, XCircle } from 'lucide-react';
+import { FileCheck2, Megaphone, Stethoscope, XCircle } from 'lucide-react';
 
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -7,10 +7,12 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import type {
   CallNextSelectionReason,
   ExaminationQueueEntryDto,
+  ExaminationQueueIneligibleReason,
   ExaminationQueuePriority,
   ExaminationQueueStatus,
   QueueArrivalClass,
   QueuePresenceStatus,
+  ReturnToDoctorModalMode,
   ServicePointQueueDto,
 } from '../types/examination-queue.types';
 import { CANCELLABLE_QUEUE_STATUSES } from '../types/queue-status-update.types';
@@ -31,6 +33,11 @@ export interface ExaminationQueueServicePointCardProps {
   onOpenMissedTurn?: (entry: ExaminationQueueEntryDto, servicePoint: ServicePointQueueDto) => void;
   onOpenRestoreTurn?: (entry: ExaminationQueueEntryDto, servicePoint: ServicePointQueueDto) => void;
   onOpenCancelEntry?: (entry: ExaminationQueueEntryDto, servicePoint: ServicePointQueueDto) => void;
+  onOpenReturnToDoctor?: (
+    entry: ExaminationQueueEntryDto,
+    servicePoint: ServicePointQueueDto,
+    mode: ReturnToDoctorModalMode,
+  ) => void;
   onCallNext?: (servicePoint: ServicePointQueueDto) => void;
   isCallingNext?: boolean;
 }
@@ -80,6 +87,17 @@ export const ARRIVAL_CLASS_META: Record<
 };
 
 // oxlint-disable-next-line react/only-export-components
+export const EXAMINATION_QUEUE_INELIGIBLE_REASON_META: Record<
+  ExaminationQueueIneligibleReason,
+  { label: string; tone: 'amber' | 'rose' }
+> = {
+  NOT_ARRIVED: { label: 'Chưa đến', tone: 'amber' },
+  LEFT: { label: 'Đã rời khu chờ', tone: 'rose' },
+  BLOCKED: { label: 'Giữ chỗ theo giờ hẹn', tone: 'amber' },
+  AWAITING_RESULTS: { label: 'Chờ kết quả CLS', tone: 'rose' },
+};
+
+// oxlint-disable-next-line react/only-export-components
 export const CALL_NEXT_SELECTION_REASON_META: Record<
   CallNextSelectionReason,
   { label: string; description: string; tone: 'emerald' | 'amber' | 'sky' | 'slate' }
@@ -121,6 +139,7 @@ export function ExaminationQueueServicePointCard({
   onOpenMissedTurn,
   onOpenRestoreTurn,
   onOpenCancelEntry,
+  onOpenReturnToDoctor,
   onCallNext,
   isCallingNext,
 }: ExaminationQueueServicePointCardProps) {
@@ -264,7 +283,24 @@ export function ExaminationQueueServicePointCard({
                       <Badge tone={priorityMeta.tone}>{priorityMeta.label}</Badge>
                     </td>
                     <td className="py-3">
-                      <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
+                        {entry.ineligibleReason && (
+                          <Badge
+                            tone={
+                              EXAMINATION_QUEUE_INELIGIBLE_REASON_META[entry.ineligibleReason].tone
+                            }
+                          >
+                            {EXAMINATION_QUEUE_INELIGIBLE_REASON_META[entry.ineligibleReason].label}
+                          </Badge>
+                        )}
+                        {entry.queueType === 'RETURN_CONSULTATION' &&
+                          entry.ineligibleReason !== 'AWAITING_RESULTS' &&
+                          (entry.status === 'READY' ||
+                            entry.status === 'CALLED' ||
+                            entry.status === 'IN_PROGRESS' ||
+                            entry.isEligible === true) && <Badge tone="emerald">Đủ KQ CLS</Badge>}
+                      </div>
                       {entry.blockedReason && (
                         <div className="text-[10px] text-rose-600 mt-1 max-w-44">
                           {entry.blockedReason}
@@ -288,6 +324,36 @@ export function ExaminationQueueServicePointCard({
                                 aria-label={`Xử lý đến sớm hoặc Safe Backfill cho ${entry.patientName}`}
                               >
                                 Xử lý đến sớm / Backfill
+                              </Button>
+                            )}
+                          {onOpenReturnToDoctor &&
+                            ((entry.queueType === 'EXAMINATION' && entry.status !== 'SKIPPED') ||
+                              (entry.queueType === 'RETURN_CONSULTATION' &&
+                                (entry.status === 'WAITING' ||
+                                  (entry.status === 'READY' &&
+                                    (entry.presenceStatus !== 'PRESENT' ||
+                                      entry.ineligibleReason === 'AWAITING_RESULTS'))))) && (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => {
+                                  const isActivate = entry.queueType === 'RETURN_CONSULTATION';
+                                  onOpenReturnToDoctor(
+                                    entry,
+                                    servicePoint,
+                                    isActivate ? 'ACTIVATE_RETURN' : 'CREATE_RETURN',
+                                  );
+                                }}
+                                aria-label={
+                                  entry.queueType === 'RETURN_CONSULTATION'
+                                    ? `Kích hoạt lượt khám lại đọc kết quả CLS cho ${entry.patientName}`
+                                    : `Tạo lượt khám lại đọc kết quả CLS cho ${entry.patientName}`
+                                }
+                              >
+                                <FileCheck2 className="w-3.5 h-3.5" aria-hidden="true" />
+                                {entry.queueType === 'RETURN_CONSULTATION'
+                                  ? 'Kích hoạt đọc KQ CLS'
+                                  : 'Tạo lượt đọc KQ CLS'}
                               </Button>
                             )}
                           {onOpenMissedTurn && entry.status === 'CALLED' && (
