@@ -10,5 +10,6 @@ public sealed record AssignedPatientEntryDto(
     string ChiefComplaint,
     string AssignedAt,
     string Priority,
+    string QueueType,
     string Status
 );

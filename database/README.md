@@ -35,6 +35,7 @@ psql -h localhost -U postgres -d medflow_db -v ON_ERROR_STOP=1 -f database/migra
 psql -h localhost -U postgres -d medflow_db -v ON_ERROR_STOP=1 -f database/migrations/006_seed_upcoming_examination_slots.sql
 psql -h localhost -U postgres -d medflow_db -v ON_ERROR_STOP=1 -f database/migrations/007_add_appointments_reason_for_visit.sql
 psql -h localhost -U postgres -d medflow_db -v ON_ERROR_STOP=1 -f database/migrations/008_add_appointments_cancellation_fields.sql
+psql -h localhost -U postgres -d medflow_db -v ON_ERROR_STOP=1 -f database/migrations/010_queue_early_arrival_backfill.sql
 ```
 
 For the Docker dev container (`medflow-postgres` on port 5433):

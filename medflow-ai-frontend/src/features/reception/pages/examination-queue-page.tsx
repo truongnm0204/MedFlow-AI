@@ -12,31 +12,47 @@ import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { Spinner } from '@/shared/ui/spinner';
 
+import { ApplyClinicalPriorityModal } from '../components/apply-clinical-priority-modal';
+import { CallNextResultBanner } from '../components/call-next-result-banner';
+import { CancelQueueEntryModal } from '../components/cancel-queue-entry-modal';
 import { EarlyArrivalBackfillModal } from '../components/early-arrival-backfill-modal';
 import { ExaminationQueueEmptyState } from '../components/examination-queue-empty-state';
 import { ExaminationQueueFilterBar } from '../components/examination-queue-filter-bar';
-import { ExaminationQueueServicePointCard } from '../components/examination-queue-service-point-card';
+import {
+  ARRIVAL_CLASS_META,
+  EXAMINATION_QUEUE_PRIORITY_META,
+  ExaminationQueueServicePointCard,
+} from '../components/examination-queue-service-point-card';
+import { LateArrivalMissedTurnModal } from '../components/late-arrival-missed-turn-modal';
 import { ExaminationQueueStatCards } from '../components/examination-queue-stat-cards';
 import { PatientDetailModal } from '../components/patient-detail-modal';
 import { ReceptionSidebar } from '../components/reception-sidebar';
 import { UpdateQueueStatusModal } from '../components/update-queue-status-modal';
 import { DEFAULT_QUEUE_DATE } from '../data/examination-queue-mock';
 import { findPatientDetailByCode } from '../data/patient-detail-mock';
-import { useExaminationQueue } from '../hooks/use-examination-queue';
+import { useCallNextEligiblePatient, useExaminationQueue } from '../hooks/use-examination-queue';
 import {
   examinationQueueFilterSchema,
   type ExaminationQueueFilterFormValues,
 } from '../schemas/examination-queue-filter.schema';
 import type {
+  CallNextPatientResponseDto,
   EarlyArrivalBackfillResponseDto,
   EarlyArrivalBackfillTarget,
   ExaminationQueueEntryDto,
   ExaminationQueueStatsDto,
   ExaminationQueueStatus,
   ExaminationQueueStatusFilter,
+  LateArrivalMissedTurnTarget,
+  QueueTurnActionResponseDto,
   ServicePointQueueDto,
 } from '../types/examination-queue.types';
-import type { UpdateQueueStatusTarget } from '../types/queue-status-update.types';
+import type {
+  CancelQueueEntryResponseDto,
+  CancelQueueEntryTarget,
+  UpdateQueuePriorityResponseDto,
+  UpdateQueueStatusTarget,
+} from '../types/queue-status-update.types';
 import { recalculateServicePointServingOrder } from '../utils/early-arrival-backfill.utils';
 
 const STATUS_LABEL: Record<ExaminationQueueStatus, string> = {
@@ -53,6 +69,7 @@ const INITIAL_FILTERS: ExaminationQueueFilterFormValues = {
   servicePointId: 'ALL',
   status: 'ALL',
   priority: 'ALL',
+  queueType: 'ALL',
   visitType: 'ALL',
   arrivalClass: 'ALL',
   keyword: '',
@@ -79,10 +96,19 @@ export function ExaminationQueuePage() {
   const [updatingQueueTarget, setUpdatingQueueTarget] = useState<UpdateQueueStatusTarget | null>(
     null,
   );
+  const [priorityTarget, setPriorityTarget] = useState<ExaminationQueueEntryDto | null>(null);
+  const [turnActionTarget, setTurnActionTarget] = useState<LateArrivalMissedTurnTarget | null>(
+    null,
+  );
+  const [cancelTarget, setCancelTarget] = useState<CancelQueueEntryTarget | null>(null);
   const [statusOverrides, setStatusOverrides] = useState<
     Record<string, Partial<ExaminationQueueEntryDto>>
   >({});
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
+  const [callingServicePointId, setCallingServicePointId] = useState<string | null>(null);
+  const [callNextResult, setCallNextResult] = useState<CallNextPatientResponseDto | null>(null);
+  const [callNextError, setCallNextError] = useState<string | null>(null);
+  const callNextMutation = useCallNextEligiblePatient();
   const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
 
   const { data, isPending, isError, error, refetch } = useExaminationQueue({
@@ -113,6 +139,7 @@ export function ExaminationQueuePage() {
     const rawPoints = data?.servicePoints ?? [];
     return rawPoints.map((sp) => {
       const overrideKey = `${appliedFilters.queueDate}:${sp.servicePointId}`;
+      const hasEntryOverride = overrideKey in entryOverridesByServicePoint;
       const baseEntries = entryOverridesByServicePoint[overrideKey] ?? sp.entries;
       const entries = baseEntries.map((entry) => {
         const override = statusOverrides[entry.id];
@@ -139,7 +166,9 @@ export function ExaminationQueuePage() {
         inProgressCount,
         completedCount,
         skippedCount,
-        currentServingTicketNo: currentServingEntry?.ticketNo ?? sp.currentServingTicketNo,
+        currentServingTicketNo: hasEntryOverride
+          ? (currentServingEntry?.ticketNo ?? null)
+          : (currentServingEntry?.ticketNo ?? sp.currentServingTicketNo),
         nextTicketNo: nextWaitingEntry?.ticketNo ?? null,
       };
     });
@@ -229,6 +258,128 @@ export function ExaminationQueuePage() {
     });
   };
 
+  const handlePriorityApplied = (result: UpdateQueuePriorityResponseDto) => {
+    if (priorityTarget) {
+      const overrideKey = `${appliedFilters.queueDate}:${priorityTarget.servicePointId}`;
+      setEntryOverridesByServicePoint((prev) => {
+        if (!(overrideKey in prev)) return prev;
+        const next = { ...prev };
+        delete next[overrideKey];
+        return next;
+      });
+      setUpdateNotice(
+        `Đã áp dụng mức ưu tiên ${EXAMINATION_QUEUE_PRIORITY_META[result.priority].label} cho phiếu ${result.ticketNo} (${priorityTarget.patientName}). Thứ tự phục vụ đã được hệ thống tính lại, giữ nguyên số phiếu #${result.queueNumber}.`,
+      );
+    }
+    setPriorityTarget(null);
+  };
+
+  const handleTurnActionApplied = (result: QueueTurnActionResponseDto) => {
+    const overrideKey = `${appliedFilters.queueDate}:${result.servicePointId}`;
+    setEntryOverridesByServicePoint((prev) => {
+      if (!(overrideKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[overrideKey];
+      return next;
+    });
+
+    setStatusOverrides((prev) => ({
+      ...prev,
+      [result.queueEntryId]: {
+        ...result.updatedEntry,
+        status: result.currentStatus,
+        presenceStatus: result.presenceStatus,
+        arrivalClass: result.arrivalClass,
+        servingOrder: result.servingOrder,
+        isAppointmentProtected: result.isAppointmentProtected,
+        blockedReason: result.blockedReason,
+      },
+    }));
+
+    if (result.action === 'MISSED_TURN') {
+      setUpdateNotice(
+        `Đã đánh dấu Qua lượt (SKIPPED) cho phiếu ${result.ticketNo} (${result.patientName}) — Thứ tự hiển thị: #${result.servingOrder}, giữ nguyên số phiếu #${result.queueNumber}.`,
+      );
+    } else {
+      const arrivalLabel = ARRIVAL_CLASS_META[result.arrivalClass].label;
+      const protectionNote =
+        !result.isAppointmentProtected && result.arrivalClass === 'LATE'
+          ? ' (mất bảo vệ giờ hẹn cũ)'
+          : '';
+      setUpdateNotice(
+        `Đã khôi phục lượt khám sang Sẵn sàng (READY) cho phiếu ${result.ticketNo} (${result.patientName}) — Phân loại: ${arrivalLabel}${protectionNote}, thứ tự phục vụ mới: #${result.servingOrder}, giữ nguyên số phiếu #${result.queueNumber}.`,
+      );
+    }
+
+    setTurnActionTarget(null);
+  };
+
+  const handleQueueEntryCancelled = (result: CancelQueueEntryResponseDto) => {
+    if (!cancelTarget) return;
+    const { entry, servicePoint } = cancelTarget;
+    const overrideKey = `${appliedFilters.queueDate}:${servicePoint.servicePointId}`;
+
+    // Bỏ override cục bộ để danh sách refetch từ BE (đã loại lượt CANCELLED, tính lại servingOrder) được hiển thị.
+    setEntryOverridesByServicePoint((prev) => {
+      if (!(overrideKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[overrideKey];
+      return next;
+    });
+    setStatusOverrides((prev) => {
+      if (!(entry.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[entry.id];
+      return next;
+    });
+
+    setUpdateNotice(
+      `Đã hủy lượt khám phiếu ${entry.ticketNo} (${entry.patientName}) tại ${servicePoint.roomCode} — giữ nguyên số phiếu #${result.queueNumber}, thứ tự phục vụ các lượt còn lại đã được hệ thống tính lại.`,
+    );
+    setCancelTarget(null);
+  };
+
+  const handleCallNext = async (servicePoint: ServicePointQueueDto) => {
+    setUpdateNotice(null);
+    setBackfillNotice(null);
+    setCallNextResult(null);
+    setCallNextError(null);
+    setCallingServicePointId(servicePoint.servicePointId);
+
+    try {
+      const result = await callNextMutation.mutateAsync({
+        servicePointId: servicePoint.servicePointId,
+      });
+      const requestedKey = `${appliedFilters.queueDate}:${servicePoint.servicePointId}`;
+      const responseKey = `${appliedFilters.queueDate}:${result.servicePointId}`;
+      setEntryOverridesByServicePoint((prev) => ({
+        ...prev,
+        [requestedKey]: result.entries,
+        [responseKey]: result.entries,
+      }));
+      setStatusOverrides((prev) => {
+        const entryIdsToClear = new Set([
+          ...servicePoint.entries.map((entry) => entry.id),
+          ...result.entries.map((entry) => entry.id),
+        ]);
+        const next = { ...prev };
+        let changed = false;
+        for (const id of entryIdsToClear) {
+          if (id in next) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+      setCallNextResult(result);
+    } catch (err) {
+      setCallNextError(getErrorMessage(err, 'Không thể gọi bệnh nhân tiếp theo.'));
+    } finally {
+      setCallingServicePointId(null);
+    }
+  };
+
   const servicePointOptions = useMemo(() => {
     const totalCount = servicePoints.reduce((acc, sp) => acc + sp.entries.length, 0);
     return [
@@ -279,6 +430,7 @@ export function ExaminationQueuePage() {
     const hasEntryFilter =
       appliedFilters.status !== 'ALL' ||
       appliedFilters.priority !== 'ALL' ||
+      appliedFilters.queueType !== 'ALL' ||
       appliedFilters.visitType !== 'ALL' ||
       appliedFilters.arrivalClass !== 'ALL' ||
       kw.length > 0;
@@ -289,46 +441,48 @@ export function ExaminationQueuePage() {
           sp.servicePointId === appliedFilters.servicePointId,
       )
       .map((sp) => {
-        const filteredEntries = sp.entries
-          .filter((entry) => {
-            if (appliedFilters.status !== 'ALL' && entry.status !== appliedFilters.status) {
-              return false;
-            }
-            if (appliedFilters.priority !== 'ALL' && entry.priority !== appliedFilters.priority) {
-              return false;
-            }
-            if (
-              appliedFilters.visitType !== 'ALL' &&
-              entry.visitType !== appliedFilters.visitType
-            ) {
-              return false;
-            }
-            if (
-              appliedFilters.arrivalClass !== 'ALL' &&
-              entry.arrivalClass !== appliedFilters.arrivalClass
-            ) {
-              return false;
-            }
-            if (kw) {
-              const matchesKeyword =
-                entry.ticketNo.toLowerCase().includes(kw) ||
-                entry.patientName.toLowerCase().includes(kw) ||
-                entry.patientCode.toLowerCase().includes(kw) ||
-                entry.visitCode.toLowerCase().includes(kw) ||
-                entry.roomCode.toLowerCase().includes(kw);
-              if (!matchesKeyword) return false;
-            }
-            return true;
-          })
-          .sort((a, b) => a.servingOrder - b.servingOrder);
-
+        const overrideKey = `${appliedFilters.queueDate}:${sp.servicePointId}`;
+        const hasBackendOrderOverride = overrideKey in entryOverridesByServicePoint;
+        const matchingEntries = sp.entries.filter((entry) => {
+          if (appliedFilters.status !== 'ALL' && entry.status !== appliedFilters.status) {
+            return false;
+          }
+          if (appliedFilters.priority !== 'ALL' && entry.priority !== appliedFilters.priority) {
+            return false;
+          }
+          if (appliedFilters.queueType !== 'ALL' && entry.queueType !== appliedFilters.queueType) {
+            return false;
+          }
+          if (appliedFilters.visitType !== 'ALL' && entry.visitType !== appliedFilters.visitType) {
+            return false;
+          }
+          if (
+            appliedFilters.arrivalClass !== 'ALL' &&
+            entry.arrivalClass !== appliedFilters.arrivalClass
+          ) {
+            return false;
+          }
+          if (kw) {
+            const matchesKeyword =
+              entry.ticketNo.toLowerCase().includes(kw) ||
+              entry.patientName.toLowerCase().includes(kw) ||
+              entry.patientCode.toLowerCase().includes(kw) ||
+              entry.visitCode.toLowerCase().includes(kw) ||
+              entry.roomCode.toLowerCase().includes(kw);
+            if (!matchesKeyword) return false;
+          }
+          return true;
+        });
+        const filteredEntries = hasBackendOrderOverride
+          ? matchingEntries
+          : [...matchingEntries].sort((a, b) => a.servingOrder - b.servingOrder);
         return {
           ...sp,
           entries: filteredEntries,
         };
       })
       .filter((sp) => (hasEntryFilter ? sp.entries.length > 0 : true));
-  }, [servicePoints, appliedFilters]);
+  }, [servicePoints, appliedFilters, entryOverridesByServicePoint]);
 
   const totalMatchingEntries = useMemo(
     () => visibleServicePoints.reduce((acc, sp) => acc + sp.entries.length, 0),
@@ -454,6 +608,13 @@ export function ExaminationQueuePage() {
                   </div>
                 )}
 
+                <CallNextResultBanner
+                  result={callNextResult}
+                  error={callNextError}
+                  onDismissResult={() => setCallNextResult(null)}
+                  onDismissError={() => setCallNextError(null)}
+                />
+
                 {effectiveStats && <ExaminationQueueStatCards stats={effectiveStats} />}
 
                 <ExaminationQueueFilterBar
@@ -475,10 +636,52 @@ export function ExaminationQueuePage() {
                           servicePoint={servicePoint}
                           canManageQueue={canManageQueue}
                           onSelectPatient={setSelectedPatientCode}
+                          onCallNext={canManageQueue ? (sp) => void handleCallNext(sp) : undefined}
+                          isCallingNext={callingServicePointId === servicePoint.servicePointId}
                           onOpenEarlyArrivalBackfill={(entry, sp) =>
                             setBackfillTarget({ entry, servicePoint: sp })
                           }
                           onUpdateStatus={canManageQueue ? handleOpenUpdateStatus : undefined}
+                          onApplyPriority={
+                            canManageQueue
+                              ? (entry) => {
+                                  setUpdateNotice(null);
+                                  setPriorityTarget(entry);
+                                }
+                              : undefined
+                          }
+                          onOpenMissedTurn={
+                            canManageQueue
+                              ? (entry, sp) => {
+                                  setUpdateNotice(null);
+                                  setTurnActionTarget({
+                                    entry,
+                                    servicePoint: sp,
+                                    mode: 'MISSED_TURN',
+                                  });
+                                }
+                              : undefined
+                          }
+                          onOpenRestoreTurn={
+                            canManageQueue
+                              ? (entry, sp) => {
+                                  setUpdateNotice(null);
+                                  setTurnActionTarget({
+                                    entry,
+                                    servicePoint: sp,
+                                    mode: 'RESTORE_TURN',
+                                  });
+                                }
+                              : undefined
+                          }
+                          onOpenCancelEntry={
+                            canManageQueue
+                              ? (entry, sp) => {
+                                  setUpdateNotice(null);
+                                  setCancelTarget({ entry, servicePoint: sp });
+                                }
+                              : undefined
+                          }
                         />
                       ))
                     ) : (
@@ -557,13 +760,24 @@ export function ExaminationQueuePage() {
                         <ol className="list-decimal list-inside space-y-1.5 text-ink font-medium">
                           <li>Lượt đang khám (IN_PROGRESS) và đã gọi số (CALLED)</li>
                           <li>
-                            Mức độ ưu tiên lâm sàng (Khẩn cấp, Cao tuổi, Thai phụ, Trả KQ CLS)
+                            Ưu tiên theo quy định: Người cao tuổi (≥ 75 tuổi), Thai phụ — không áp
+                            dụng cấp cứu
                           </li>
                           <li>Bệnh nhân đặt lịch hẹn đúng giờ (ON_TIME_OR_GRACE)</li>
                           <li>Thời điểm check-in thực tế tại quầy tiếp đón</li>
                           <li>
                             Bệnh nhân đến sớm (EARLY) chỉ được Safe Backfill khi phòng trống lịch
                             hẹn đúng giờ (Appointment Protection) và giữ nguyên số phiếu đã cấp
+                          </li>
+                          <li>
+                            Bệnh nhân đến muộn ngoài thời gian ân hạn (LATE) mất quyền bảo vệ khung
+                            giờ hẹn cũ; lượt qua lượt (SKIPPED) được khôi phục sang Sẵn sàng (READY)
+                            khi xác nhận có mặt (PRESENT), giữ nguyên số phiếu và tính lại thứ tự
+                            phục vụ từ Backend
+                          </li>
+                          <li>
+                            Lượt bị hủy (CANCELLED) được loại khỏi hàng đợi; số phiếu đã cấp không
+                            được cấp lại và thứ tự phục vụ các lượt còn lại được tính lại từ Backend
                           </li>
                         </ol>
                       </CardContent>
@@ -617,6 +831,36 @@ export function ExaminationQueuePage() {
               );
               setUpdatingQueueTarget(null);
             }}
+          />
+        )}
+
+        {priorityTarget && (
+          <ApplyClinicalPriorityModal
+            key={priorityTarget.id}
+            open
+            entry={priorityTarget}
+            onClose={() => setPriorityTarget(null)}
+            onApplied={handlePriorityApplied}
+          />
+        )}
+
+        {turnActionTarget && (
+          <LateArrivalMissedTurnModal
+            key={`${turnActionTarget.entry.id}:${turnActionTarget.mode}`}
+            open={Boolean(turnActionTarget)}
+            target={turnActionTarget}
+            onClose={() => setTurnActionTarget(null)}
+            onApplied={handleTurnActionApplied}
+          />
+        )}
+
+        {cancelTarget && (
+          <CancelQueueEntryModal
+            key={cancelTarget.entry.id}
+            open
+            target={cancelTarget}
+            onClose={() => setCancelTarget(null)}
+            onCancelled={handleQueueEntryCancelled}
           />
         )}
       </div>

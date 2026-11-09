@@ -12,6 +12,23 @@ export interface PriceHistoryEntry {
   appliedBy: string;
 }
 
+export interface UpdateServicePricePayload {
+  price: number;
+  decisionNumber: string;
+  effectiveDate: string;
+  appliedBy: string;
+  note?: string;
+}
+
+export interface ServicePricingMetrics {
+  totalPricedServices: number;
+  averagePrice: number;
+  minPrice: number;
+  maxPrice: number;
+  latestDecision: string;
+  latestEffectiveDate: string;
+}
+
 export interface ExaminationService {
   id: string;
   code: string;

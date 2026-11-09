@@ -25,7 +25,7 @@ const SAMPLE_TARGET: UpdateQueueStatusTarget = {
   doctorName: 'BS.CKII. Phạm Quốc Hùng',
   currentStatus: 'CALLED',
   presenceStatus: 'PRESENT',
-  priority: 'URGENT',
+  priority: 'ELDERLY',
   blockedReason: null,
   stateVersion: 2,
 };
