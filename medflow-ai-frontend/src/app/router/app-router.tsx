@@ -40,6 +40,7 @@ import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
 import { DiagnosticDashboardPage } from '@/features/diagnostic/pages/diagnostic-dashboard-page';
 import { DoctorDashboardPage } from '@/features/doctor/pages/doctor-dashboard-page';
 import { DoctorAssignedQueuePage } from '@/features/doctor/pages/doctor-assigned-queue-page';
+import { DoctorConsultationWorkspacePage } from '@/features/doctor/pages/doctor-consultation-workspace-page';
 import { FamilyProfileDetailPage } from '@/features/family/pages/family-profile-detail-page';
 import { FamilyProfileListPage } from '@/features/family/pages/family-profile-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
@@ -205,6 +206,26 @@ export function AppRouter() {
           <RequireAuth>
             <RequireDoctor>
               <DoctorAssignedQueuePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
             </RequireDoctor>
           </RequireAuth>
         }

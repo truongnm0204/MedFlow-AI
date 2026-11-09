@@ -1,10 +1,13 @@
-import { Megaphone, Stethoscope } from 'lucide-react';
+import { FileText, Megaphone, Stethoscope } from 'lucide-react';
 
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
-import type { DoctorAssignedServicePointDto } from '../types/doctor-assigned-queue.types';
+import type {
+  DoctorAssignedQueueEntryDto,
+  DoctorAssignedServicePointDto,
+} from '../types/doctor-assigned-queue.types';
 import {
   ARRIVAL_CLASS_META,
   INELIGIBLE_REASON_META,
@@ -17,12 +20,14 @@ interface DoctorAssignedServicePointCardProps {
   servicePoint: DoctorAssignedServicePointDto;
   onCallNext?: (servicePoint: DoctorAssignedServicePointDto) => void;
   isCallingNext?: boolean;
+  onOpenConsultation?: (entry: DoctorAssignedQueueEntryDto) => void;
 }
 
 export function DoctorAssignedServicePointCard({
   servicePoint,
   onCallNext,
   isCallingNext,
+  onOpenConsultation,
 }: DoctorAssignedServicePointCardProps) {
   return (
     <Card>
@@ -92,6 +97,9 @@ export function DoctorAssignedServicePointCard({
                 <th className="py-2.5 font-semibold">Thời gian</th>
                 <th className="py-2.5 font-semibold">Ưu tiên</th>
                 <th className="py-2.5 font-semibold">Nhóm hàng đợi</th>
+                {onOpenConsultation && (
+                  <th className="py-2.5 font-semibold text-right">Thao tác</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -168,6 +176,31 @@ export function DoctorAssignedServicePointCard({
                         )}
                       </div>
                     </td>
+                    {onOpenConsultation && (
+                      <td className="py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => onOpenConsultation(entry)}
+                          aria-label={`Mở bàn khám ${entry.ticketNo}`}
+                          className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors ${
+                            entry.status === 'CALLED'
+                              ? 'bg-primary text-white hover:bg-primary-dark'
+                              : entry.status === 'IN_PROGRESS'
+                                ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                : 'border border-border bg-white text-navy hover:bg-canvas'
+                          }`}
+                        >
+                          <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>
+                            {entry.status === 'CALLED'
+                              ? 'Bắt đầu khám'
+                              : entry.status === 'IN_PROGRESS'
+                                ? 'Tiếp tục khám'
+                                : 'Xem hồ sơ'}
+                          </span>
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 );
               })}
