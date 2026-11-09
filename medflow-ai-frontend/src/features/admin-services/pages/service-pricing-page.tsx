@@ -1,371 +1,454 @@
 import {
-  Clock,
-  Coins,
-  CreditCard,
+  Calendar,
+  CheckCircle2,
+  DollarSign,
   FileSpreadsheet,
-  PauseCircle,
-  Printer,
+  History,
   RotateCcw,
   Search,
-  X,
+  Tag,
+  TrendingUp,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 
+import { useAuthStore } from '@/features/auth/store/auth.store';
+import { hasAnyRole } from '@/features/auth/utils/rbac';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { Button } from '@/shared/ui/button';
 
-import { ServicePagination } from '../components/service-pagination';
-import { DEPARTMENTS } from '../data/examination-services-data';
+import { ServicePriceHistoryModal } from '../components/service-price-history-modal';
+import { ServicePriceUpdateModal } from '../components/service-price-update-modal';
+import { CATEGORIES, DEPARTMENTS } from '../data/examination-services-data';
 import { useExaminationServiceStore } from '../store/examination-service.store';
-import type { ExaminationService } from '../types/examination-service.types';
-
-function exportPricingToCsv(services: ExaminationService[]) {
-  const quote = (val: string) => `"${val.replaceAll('"', '""').replace(/^[=+\-@]/, "'$&")}"`;
-  const headers = [
-    'Mã DV',
-    'Tên Dịch Vụ',
-    'Khoa Phụ Trách',
-    'Phân Loại',
-    'Đơn Giá (VNĐ)',
-    'Số Quyết Định',
-    'Ngày Hiệu Lực',
-    'Trạng Thái',
-  ];
-  const rows = services.map((s) => [
-    s.code,
-    s.name,
-    s.department,
-    s.category,
-    String(s.price),
-    s.decisionNumber || 'QĐ-142/BV-KH',
-    s.effectiveDate || '2026-01-01',
-    s.status === 'ACTIVE' ? 'Đang áp dụng' : 'Tạm dừng',
-  ]);
-  const csv = '\uFEFF' + [headers, ...rows].map((r) => r.map(quote).join(',')).join('\r\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `bang-gia-dich-vu-${new Date().toISOString().slice(0, 10)}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
-}
 
 export function ServicePricingPage() {
-  const searchInputRef = useRef<HTMLInputElement>(null);
+  const user = useAuthStore((state) => state.user);
+  const canUpdatePrice = hasAnyRole(user?.roles, ['HOSPITAL_ADMIN', 'SYSTEM_ADMIN']);
 
   const services = useExaminationServiceStore((state) => state.services);
+  const setPriceHistoryService = useExaminationServiceStore(
+    (state) => state.setPriceHistoryService,
+  );
+  const setUpdatePriceService = useExaminationServiceStore((state) => state.setUpdatePriceService);
 
-  const [search, setSearch] = useState('');
-  const [department, setDepartment] = useState('all');
-  const [status, setStatus] = useState('all');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [priceRangeFilter, setPriceRangeFilter] = useState<
+    'all' | 'under300' | '300to500' | 'above500'
+  >('all');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        searchInputRef.current?.focus();
-      }
+  const formatVnd = (num: number) => num.toLocaleString('vi-VN') + ' đ';
+
+  // KPI Metrics Calculation
+  const metrics = useMemo(() => {
+    if (services.length === 0) {
+      return {
+        total: 0,
+        avgPrice: 0,
+        maxPrice: 0,
+        minPrice: 0,
+        latestDecision: 'N/A',
+        latestDate: 'N/A',
+      };
+    }
+    const prices = services.map((s) => s.price);
+    const sum = prices.reduce((acc, p) => acc + p, 0);
+    const avg = Math.round(sum / prices.length);
+    const max = Math.max(...prices);
+    const min = Math.min(...prices);
+
+    // Find the latest decision entry
+    const latestService = services.find((s) => s.decisionNumber);
+    const latestDecision = latestService?.decisionNumber ?? 'QĐ-142/BV-KH';
+    const latestDate = latestService?.effectiveDate ?? '2026-01-01';
+
+    return {
+      total: services.length,
+      avgPrice: avg,
+      maxPrice: max,
+      minPrice: min,
+      latestDecision,
+      latestDate,
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [services]);
 
+  // Filtered Services
   const filteredServices = useMemo(() => {
-    return services.filter((s) => {
-      if (search) {
-        const q = search.trim().toLowerCase();
-        const match =
-          s.code.toLowerCase().includes(q) ||
-          s.name.toLowerCase().includes(q) ||
-          s.description.toLowerCase().includes(q);
-        if (!match) return false;
+    return services.filter((item) => {
+      const q = searchQuery.trim().toLowerCase();
+      const matchesQuery =
+        !q ||
+        item.code.toLowerCase().includes(q) ||
+        item.name.toLowerCase().includes(q) ||
+        item.department.toLowerCase().includes(q);
+
+      const matchesDept = !departmentFilter || item.department === departmentFilter;
+      const matchesCat = !categoryFilter || item.category === categoryFilter;
+      const matchesStatus = !statusFilter || item.status === statusFilter;
+
+      let matchesPrice = true;
+      if (priceRangeFilter === 'under300') {
+        matchesPrice = item.price < 300000;
+      } else if (priceRangeFilter === '300to500') {
+        matchesPrice = item.price >= 300000 && item.price <= 500000;
+      } else if (priceRangeFilter === 'above500') {
+        matchesPrice = item.price > 500000;
       }
-      if (department !== 'all' && s.department !== department) return false;
-      if (status !== 'all' && s.status !== status) return false;
-      return true;
+
+      return matchesQuery && matchesDept && matchesCat && matchesStatus && matchesPrice;
     });
-  }, [services, search, department, status]);
+  }, [services, searchQuery, departmentFilter, categoryFilter, statusFilter, priceRangeFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredServices.length / pageSize));
-  const currentPage = Math.min(page, totalPages);
-  const paginatedServices = filteredServices.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize,
-  );
-
-  // Metrics calculation
-  const total = services.length;
-  const activeCount = services.filter((s) => s.status === 'ACTIVE').length;
-  const suspendedCount = services.filter((s) => s.status === 'SUSPENDED').length;
-  const avgPrice =
-    total > 0 ? Math.round(services.reduce((acc, s) => acc + s.price, 0) / total) : 0;
+  const page = Math.min(currentPage, totalPages);
+  const paginatedServices = filteredServices.slice((page - 1) * pageSize, page * pageSize);
 
   const handleResetFilters = () => {
-    setSearch('');
-    setDepartment('all');
-    setStatus('all');
-    setPage(1);
+    setSearchQuery('');
+    setDepartmentFilter('');
+    setCategoryFilter('');
+    setPriceRangeFilter('all');
+    setStatusFilter('');
+    setCurrentPage(1);
   };
 
-  const isFiltered = Boolean(search.trim()) || department !== 'all' || status !== 'all';
+  const handleExportCsv = () => {
+    const quote = (val: string) => `"${val.replaceAll('"', '""')}"`;
+    const headers = [
+      'Mã Dịch Vụ',
+      'Tên Dịch Vụ Khám',
+      'Khoa Quản Lý',
+      'Phân Loại',
+      'Đơn Giá (VNĐ)',
+      'Số Quyết Định',
+      'Ngày Hiệu Lực',
+      'Trạng Thái',
+    ];
+    const rows = filteredServices.map((s) => [
+      s.code,
+      s.name,
+      s.department,
+      s.category,
+      s.price.toString(),
+      s.decisionNumber ?? 'QĐ-142/BV-KH',
+      s.effectiveDate ?? '2026-01-01',
+      s.status === 'ACTIVE' ? 'Hoạt động' : 'Tạm dừng',
+    ]);
+    const csvContent = [
+      headers.map(quote).join(','),
+      ...rows.map((r) => r.map(quote).join(',')),
+    ].join('\r\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `medflow_bang_gia_dich_vu_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <AdminPortalShell
       activeTab="Bảng giá & Biểu phí"
-      breadcrumbs={[
-        { label: 'Cấu hình Cơ sở' },
-        { label: 'Bảng giá & Biểu phí Dịch vụ (SCR-ADM-PRC-01)' },
-      ]}
+      breadcrumbs={[{ label: 'Cấu hình Cơ sở' }, { label: 'Bảng giá & Biểu phí Dịch vụ (UC52)' }]}
     >
-      <div className="mx-auto max-w-[1720px] space-y-5 p-6">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold tracking-tight text-ink">
-              Bảng Giá & Biểu Phí Dịch Vụ Y Tế
+      <main className="space-y-6 px-6 py-6 font-sans">
+        {/* Header Title Section */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">
+                UC52 • Quản lý Biểu phí Cơ sở
+              </span>
+              <span className="rounded-md bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-primary">
+                Hospital Admin
+              </span>
+            </div>
+            <h1 className="mt-1.5 text-xl font-bold text-ink sm:text-2xl">
+              Bảng giá & Biểu phí Dịch vụ Khám Ngoại trú
             </h1>
-            <span className="rounded bg-sky-100 px-2 py-0.5 font-mono text-[10px] font-bold text-primary">
-              UC52
-            </span>
-          </div>
-          <p className="mt-1 text-xs text-sub">
-            Niêm yết công khai và quản trị biểu phí áp dụng cho dịch vụ khám ngoại trú, hội chẩn và
-            cận lâm sàng.
-          </p>
-        </div>
-
-        {/* 4 Stat Cards */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="flex items-center justify-between rounded-xl border border-border bg-white p-4 shadow-xs">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-sub">
-                DỊCH VỤ NIÊM YẾT
-              </p>
-              <div className="mt-1 text-2xl font-bold tracking-tight text-ink">
-                {String(total).padStart(2, '0')}
-              </div>
-              <p className="mt-1 text-[11px] text-sub">Danh mục dịch vụ y tế & kỹ thuật</p>
-            </div>
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-primary">
-              <CreditCard className="h-5 w-5" aria-hidden="true" />
-            </div>
+            <p className="mt-0.5 text-xs text-sub">
+              Niêm yết biểu phí dịch vụ khám ngoại trú, quản lý lịch sử quyết định giá và điều chỉnh
+              giá theo chính sách bệnh viện.
+            </p>
           </div>
 
-          <div className="flex items-center justify-between rounded-xl border border-border bg-white p-4 shadow-xs">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-sub">
-                ĐANG ÁP DỤNG HIỆU LỰC
-              </p>
-              <div className="mt-1 text-2xl font-bold tracking-tight text-ink">
-                {String(activeCount).padStart(2, '0')}
-              </div>
-              <p className="mt-1 text-[11px] text-emerald-700 font-medium">
-                ● Biểu phí hiện hành đã phê duyệt
-              </p>
-            </div>
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
-              <CreditCard className="h-5 w-5" aria-hidden="true" />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between rounded-xl border border-border bg-white p-4 shadow-xs">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-sub">
-                TẠM DỪNG NIÊM YẾT
-              </p>
-              <div className="mt-1 text-2xl font-bold tracking-tight text-ink">
-                {String(suspendedCount).padStart(2, '0')}
-              </div>
-              <p className="mt-1 text-[11px] text-amber-700 font-medium">
-                ● Cần thẩm định hoặc điều chỉnh
-              </p>
-            </div>
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-              <PauseCircle className="h-5 w-5" aria-hidden="true" />
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between rounded-xl border border-border bg-white p-4 shadow-xs">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-sub">
-                MỨC GIÁ TRUNG BÌNH
-              </p>
-              <div className="mt-1 text-2xl font-bold tracking-tight text-ink">
-                {avgPrice.toLocaleString('vi-VN')} đ
-              </div>
-              <p className="mt-1 text-[11px] text-sub">Giá thu bình quân dịch vụ</p>
-            </div>
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-              <Coins className="h-5 w-5" aria-hidden="true" />
-            </div>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={handleExportCsv} className="gap-1.5">
+              <FileSpreadsheet className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+              <span>Xuất Biểu phí CSV</span>
+            </Button>
+            <Link
+              to="/admin/services"
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50 transition-colors"
+            >
+              <span>Xem Danh mục Kỹ thuật →</span>
+            </Link>
           </div>
         </div>
 
-        {/* Filters Toolbar */}
-        <div className="space-y-3 rounded-xl border border-border bg-white p-4 shadow-xs">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="relative flex-1">
+        {/* 4 KPI Metric Cards */}
+        <section
+          aria-label="Chỉ số biểu phí dịch vụ"
+          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+        >
+          {/* Card 1 */}
+          <div className="rounded-xl border border-border bg-white p-4 shadow-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-sub">
+                TỔNG DỊCH VỤ ĐỊNH GIÁ
+              </span>
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-100 text-primary">
+                <Tag className="h-4 w-4" aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-2 text-2xl font-bold text-ink">{metrics.total}</div>
+            <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-700 font-medium">
+              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>100% dịch vụ đã áp dụng giá</span>
+            </div>
+          </div>
+
+          {/* Card 2 */}
+          <div className="rounded-xl border border-border bg-white p-4 shadow-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-sub">
+                ĐƠN GIÁ TRUNG BÌNH
+              </span>
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+                <DollarSign className="h-4 w-4" aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-2 text-2xl font-bold text-ink">{formatVnd(metrics.avgPrice)}</div>
+            <div className="mt-1 text-[11px] text-sub">Biểu phí trung bình toàn viện</div>
+          </div>
+
+          {/* Card 3 */}
+          <div className="rounded-xl border border-border bg-white p-4 shadow-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-sub">
+                KHOẢNG GIÁ NIÊM YẾT
+              </span>
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+                <TrendingUp className="h-4 w-4" aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-2 text-base font-bold text-ink truncate">
+              {formatVnd(metrics.minPrice)} - {formatVnd(metrics.maxPrice)}
+            </div>
+            <div className="mt-1 text-[11px] text-sub">Tối thiểu đến tối đa</div>
+          </div>
+
+          {/* Card 4 */}
+          <div className="rounded-xl border border-border bg-white p-4 shadow-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-sub">
+                QUYẾT ĐỊNH GẦN NHẤT
+              </span>
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
+                <Calendar className="h-4 w-4" aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-2 text-base font-bold text-ink truncate font-mono">
+              {metrics.latestDecision}
+            </div>
+            <div className="mt-1 text-[11px] text-sub">Hiệu lực: {metrics.latestDate}</div>
+          </div>
+        </section>
+
+        {/* Filter Bar */}
+        <section
+          aria-label="Bộ lọc biểu phí"
+          className="rounded-xl border border-border bg-white p-4 shadow-xs space-y-3"
+        >
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {/* Search Input */}
+            <div className="relative lg:col-span-2">
               <Search
                 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
                 aria-hidden="true"
               />
               <input
-                ref={searchInputRef}
+                id="pricing-search-input"
                 type="text"
-                value={search}
+                value={searchQuery}
                 onChange={(e) => {
-                  setSearch(e.target.value);
-                  setPage(1);
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1);
                 }}
-                placeholder="Tìm theo mã DV (EX-*), tên dịch vụ..."
-                aria-label="Tìm kiếm dịch vụ và biểu phí"
-                className="h-9 w-full rounded-lg border border-border bg-slate-50/50 pl-9 pr-16 text-xs text-ink placeholder:text-slate-400 focus:border-primary focus:bg-white focus:outline-none focus:ring-1 focus:ring-primary"
+                placeholder="Tìm mã hoặc tên dịch vụ khám..."
+                className="w-full rounded-lg border border-border bg-slate-50 py-2 pl-9 pr-3 text-xs text-ink placeholder:text-slate-400 focus:border-primary focus:bg-white focus:outline-none"
               />
-              {search ? (
-                <button
-                  type="button"
-                  onClick={() => setSearch('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:text-slate-600"
-                  aria-label="Xóa nội dung tìm kiếm"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              ) : (
-                <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 hidden rounded border border-border bg-white px-1.5 py-0.5 text-[10px] font-mono text-slate-400 sm:inline-block">
-                  Ctrl+K
-                </kbd>
-              )}
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => exportPricingToCsv(filteredServices)}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50"
+            {/* Department Select */}
+            <div>
+              <select
+                id="pricing-department-filter"
+                value={departmentFilter}
+                onChange={(e) => {
+                  setDepartmentFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="w-full rounded-lg border border-border bg-slate-50 px-3 py-2 text-xs text-ink focus:border-primary focus:bg-white focus:outline-none"
               >
-                <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
-                <span>Xuất CSV</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-xs font-semibold text-slate-700 shadow-xs hover:bg-slate-50"
+                <option value="">Tất cả khoa phòng</option>
+                {DEPARTMENTS.map((dept) => (
+                  <option key={dept} value={dept}>
+                    {dept}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Category Select */}
+            <div>
+              <select
+                id="pricing-category-filter"
+                value={categoryFilter}
+                onChange={(e) => {
+                  setCategoryFilter(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="w-full rounded-lg border border-border bg-slate-50 px-3 py-2 text-xs text-ink focus:border-primary focus:bg-white focus:outline-none"
               >
-                <Printer className="h-3.5 w-3.5 text-slate-600" aria-hidden="true" />
-                <span>In biểu phí</span>
-              </button>
+                <option value="">Tất cả phân loại</option>
+                {CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Price Range Select */}
+            <div>
+              <select
+                id="pricing-range-filter"
+                value={priceRangeFilter}
+                onChange={(e) => {
+                  setPriceRangeFilter(e.target.value as typeof priceRangeFilter);
+                  setCurrentPage(1);
+                }}
+                className="w-full rounded-lg border border-border bg-slate-50 px-3 py-2 text-xs text-ink focus:border-primary focus:bg-white focus:outline-none"
+              >
+                <option value="all">Tất cả mức giá</option>
+                <option value="under300">Dưới 300.000 đ</option>
+                <option value="300to500">300.000 đ - 500.000 đ</option>
+                <option value="above500">Trên 500.000 đ</option>
+              </select>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-2">
-            <select
-              aria-label="Khoa phòng phụ trách"
-              value={department}
-              onChange={(e) => {
-                setDepartment(e.target.value);
-                setPage(1);
-              }}
-              className="h-8 w-full rounded-md border border-border bg-white px-2.5 text-xs text-ink focus:border-primary focus:outline-none"
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
+            <div className="text-sub">
+              Hiển thị <strong>{filteredServices.length}</strong> /{' '}
+              <strong>{services.length}</strong> dịch vụ
+            </div>
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 hover:text-primary transition-colors cursor-pointer"
             >
-              <option value="all">Tất cả khoa phòng</option>
-              {DEPARTMENTS.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-
-            <select
-              aria-label="Trạng thái áp dụng"
-              value={status}
-              onChange={(e) => {
-                setStatus(e.target.value);
-                setPage(1);
-              }}
-              className="h-8 w-full rounded-md border border-border bg-white px-2.5 text-xs text-ink focus:border-primary focus:outline-none"
-            >
-              <option value="all">Tất cả trạng thái</option>
-              <option value="ACTIVE">Đang áp dụng</option>
-              <option value="SUSPENDED">Tạm dừng niêm yết</option>
-            </select>
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Đặt lại bộ lọc</span>
+            </button>
           </div>
+        </section>
 
-          <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-xs text-sub">
-            <span>
-              Tìm thấy <strong className="text-ink">{filteredServices.length}</strong> dịch vụ trong
-              danh mục
-            </span>
-            {isFiltered && (
-              <button
-                type="button"
-                onClick={handleResetFilters}
-                className="inline-flex items-center gap-1 font-semibold text-primary hover:text-primary-dark"
-              >
-                <RotateCcw className="h-3 w-3" aria-hidden="true" />
-                <span>Đặt lại bộ lọc</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Table View (Pure View: No update or history buttons) */}
-        <div className="rounded-xl border border-border bg-white shadow-xs overflow-hidden">
+        {/* Pricing Table Section */}
+        <section
+          aria-label="Danh sách biểu phí dịch vụ"
+          className="overflow-hidden rounded-xl border border-border bg-white shadow-xs"
+        >
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="border-b border-border bg-slate-50 text-[11px] font-bold uppercase text-sub">
+            <table className="w-full min-w-[1100px] table-fixed text-left text-xs">
+              <thead className="border-b border-border bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-sub">
                 <tr>
-                  <th className="px-4 py-3">Mã DV</th>
-                  <th className="px-4 py-3">Tên Dịch Vụ</th>
-                  <th className="px-4 py-3">Khoa Phụ Trách</th>
-                  <th className="px-4 py-3">Phân Loại</th>
-                  <th className="px-4 py-3 text-right">Đơn Giá Niêm Yết</th>
-                  <th className="px-4 py-3">Số Quyết Định</th>
-                  <th className="px-4 py-3 text-center">Trạng Thái</th>
+                  <th className="w-[9%] px-4 py-3.5">MÃ DỊCH VỤ</th>
+                  <th className="w-[26%] px-4 py-3.5">TÊN DỊCH VỤ KHÁM NGOẠI TRÚ</th>
+                  <th className="w-[15%] px-4 py-3.5">KHOA QUẢN LÝ</th>
+                  <th className="w-[12%] px-4 py-3.5">PHÂN LOẠI</th>
+                  <th className="w-[11%] px-4 py-3.5">GIÁ HIỆN HÀNH</th>
+                  <th className="w-[11%] px-4 py-3.5">QUYẾT ĐỊNH</th>
+                  <th className="w-[16%] px-4 py-3.5 text-right pr-6">THAO TÁC</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {paginatedServices.map((service) => (
-                  <tr key={service.id} className="hover:bg-slate-50/70 transition-colors">
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span className="font-mono text-[11px] font-bold text-primary bg-sky-50 border border-sky-100 px-2 py-0.5 rounded">
-                        {service.code}
-                      </span>
+                  <tr key={service.id} className="hover:bg-sky-50/30 transition-colors">
+                    {/* Code */}
+                    <td className="px-4 py-3.5 font-mono text-xs font-bold text-slate-800">
+                      {service.code}
                     </td>
-                    <td className="px-4 py-3 max-w-xs">
-                      <div className="font-bold text-ink text-xs">{service.name}</div>
-                      <div className="line-clamp-1 text-[11px] text-sub">{service.description}</div>
+
+                    {/* Name */}
+                    <td className="px-4 py-3.5">
+                      <div className="font-bold text-ink leading-snug">{service.name}</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">
+                        {service.description}
+                      </div>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                      {service.department}
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 border border-slate-200">
+
+                    {/* Department */}
+                    <td className="px-4 py-3.5 text-slate-700 font-medium">{service.department}</td>
+
+                    {/* Category */}
+                    <td className="px-4 py-3.5">
+                      <span className="inline-block rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-700">
                         {service.category}
                       </span>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-right font-bold text-sm text-emerald-700">
-                      {service.price.toLocaleString('vi-VN')} đ
+
+                    {/* Price */}
+                    <td className="px-4 py-3.5">
+                      <span className="font-bold text-sm text-emerald-800">
+                        {formatVnd(service.price)}
+                      </span>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-slate-600">
-                      <div className="font-mono text-[11px] font-semibold">
-                        {service.decisionNumber || 'QĐ-142/BV-KH'}
+
+                    {/* Decision */}
+                    <td className="px-4 py-3.5">
+                      <div className="font-mono text-[11px] font-semibold text-slate-700">
+                        {service.decisionNumber ?? 'QĐ-142/BV-KH'}
                       </div>
-                      <div className="flex items-center gap-1 text-[10px] text-sub">
-                        <Clock className="h-3 w-3 text-slate-400" />
-                        <span>Từ: {service.effectiveDate || '2026-01-01'}</span>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        {service.effectiveDate ?? '01/01/2026'}
                       </div>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-center">
-                      {service.status === 'ACTIVE' ? (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700">
-                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Đang áp dụng
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
-                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Tạm dừng
-                        </span>
-                      )}
+
+                    {/* Actions */}
+                    <td className="px-4 py-3.5 text-right pr-6">
+                      <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+                        {canUpdatePrice && (
+                          <Button
+                            size="sm"
+                            onClick={() => setUpdatePriceService(service)}
+                            className="h-7 px-2.5 text-[11px] gap-1 whitespace-nowrap"
+                            title={`Cập nhật giá cho ${service.name}`}
+                            aria-label={`Cập nhật giá ${service.name}`}
+                          >
+                            <DollarSign className="h-3 w-3" aria-hidden="true" />
+                            <span>Cập nhật giá</span>
+                          </Button>
+                        )}
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => setPriceHistoryService(service)}
+                          className="h-7 px-2 text-[11px] gap-1 text-sub hover:text-ink"
+                          title={`Xem lịch sử giá của ${service.name}`}
+                          aria-label={`Xem lịch sử giá ${service.name}`}
+                        >
+                          <History className="h-3 w-3" aria-hidden="true" />
+                          <span className="hidden sm:inline">Lịch sử</span>
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -373,19 +456,54 @@ export function ServicePricingPage() {
             </table>
           </div>
 
-          <ServicePagination
-            count={filteredServices.length}
-            currentPage={currentPage}
-            pageSize={pageSize}
-            totalPages={totalPages}
-            onPageChange={setPage}
-            onPageSizeChange={(newSize) => {
-              setPageSize(newSize);
-              setPage(1);
-            }}
-          />
-        </div>
-      </div>
+          {filteredServices.length === 0 && (
+            <div className="py-16 text-center text-sub">
+              <p className="text-sm font-semibold text-slate-700">
+                Không tìm thấy biểu phí dịch vụ phù hợp với bộ lọc.
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                Hãy thử kiểm tra lại từ khóa tìm kiếm hoặc bấm đặt lại bộ lọc.
+              </p>
+              <Button variant="secondary" size="sm" onClick={handleResetFilters} className="mt-4">
+                Đặt lại bộ lọc
+              </Button>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {filteredServices.length > pageSize && (
+            <div className="flex items-center justify-between border-t border-border px-6 py-3 bg-slate-50/50 text-xs">
+              <span className="text-sub">
+                Trang <strong>{page}</strong> / <strong>{totalPages}</strong>
+              </span>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={page <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  className="h-7 px-2.5 text-xs"
+                >
+                  Trước
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={page >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  className="h-7 px-2.5 text-xs"
+                >
+                  Sau
+                </Button>
+              </div>
+            </div>
+          )}
+        </section>
+      </main>
+
+      {/* Pricing Modals */}
+      <ServicePriceUpdateModal />
+      <ServicePriceHistoryModal />
     </AdminPortalShell>
   );
 }
