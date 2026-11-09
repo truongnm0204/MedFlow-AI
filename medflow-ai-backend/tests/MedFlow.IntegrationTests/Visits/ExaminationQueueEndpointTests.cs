@@ -203,8 +203,9 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
             {
                 Content = JsonContent.Create(new AssignExaminationRoomRequest(
                     RoomCode: "RM-002",
-                    Priority: "URGENT",
-                    Reason: "Điều phối kiểm tra hàng đợi UC28")),
+                    Priority: "PREGNANT",
+                    Reason: "Điều phối kiểm tra hàng đợi UC28",
+                    PriorityVerificationConfirmed: true)),
             };
             assignReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -235,7 +236,7 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
             Assert.NotNull(queueDto);
             var rm002Bucket = Assert.Single(queueDto.ServicePoints, sp => sp.RoomCode == "RM-002");
             var matchedEntry = Assert.Single(rm002Bucket.Entries, e => e.VisitCode == testVisitCode);
-            Assert.Equal("URGENT", matchedEntry.Priority);
+            Assert.Equal("PREGNANT", matchedEntry.Priority);
             Assert.Equal("WAITING", matchedEntry.Status);
             Assert.Equal("WALK_IN", matchedEntry.VisitType);
             Assert.Equal(1, matchedEntry.ServingOrder);
@@ -339,6 +340,7 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
                                 DoctorName: "BS.CKI Nguyễn Minh Đức",
                                 Status: "IN_PROGRESS",
                                 Priority: "NORMAL",
+                                QueueType: "EXAMINATION",
                                 PresenceStatus: "PRESENT",
                                 ArrivalClass: "ON_TIME_OR_GRACE",
                                 ScheduledAt: "08:00",
@@ -361,7 +363,8 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
                                 DepartmentName: "Khoa Tiêu hóa",
                                 DoctorName: "BS.CKI Nguyễn Minh Đức",
                                 Status: "WAITING",
-                                Priority: "URGENT",
+                                Priority: "PREGNANT",
+                                QueueType: "EXAMINATION",
                                 PresenceStatus: "PRESENT",
                                 ArrivalClass: "ON_TIME_OR_GRACE",
                                 ScheduledAt: "08:15",
@@ -372,5 +375,51 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
                         ]),
                 ]));
         }
+
+        public Task<EarlyArrivalBackfillResponseDto> ApplyEarlyArrivalBackfillAsync(
+            long actorUserId,
+            string idOrCode,
+            EarlyArrivalBackfillRequest request,
+            string? ipAddress = null,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<QueueTurnActionResponseDto> MarkMissedTurnAsync(
+            long actorUserId,
+            string idOrCode,
+            MarkMissedTurnRequest request,
+            string? ipAddress = null,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<QueueTurnActionResponseDto> RestoreSkippedTurnAsync(
+            long actorUserId,
+            string idOrCode,
+            RestoreQueueTurnRequest request,
+            string? ipAddress = null,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<DoctorAssignedQueueResponseDto> GetDoctorAssignedQueueAsync(
+            long actorUserId,
+            GetDoctorAssignedQueueRequest? request = null,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<CallNextPatientResponseDto> CallNextPatientAsync(
+            long actorUserId,
+            string servicePointId,
+            CallNextPatientRequest? request = null,
+            string? ipAddress = null,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<CreateReturnToDoctorQueueEntryResponseDto> CreateReturnToDoctorQueueEntryAsync(
+            long actorUserId,
+            string idOrCode,
+            CreateReturnToDoctorQueueEntryRequest request,
+            string? ipAddress = null,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 }

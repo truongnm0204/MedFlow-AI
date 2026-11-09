@@ -1,9 +1,9 @@
 export type ExaminationQueueStatus =
   'WAITING' | 'READY' | 'CALLED' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED';
 
-export type ExaminationQueuePriority =
-  'NORMAL' | 'URGENT' | 'ELDERLY' | 'PREGNANT' | 'RETURN_RESULT';
+export type ExaminationQueuePriority = 'NORMAL' | 'ELDERLY' | 'PREGNANT';
 
+export type ExaminationQueueType = 'EXAMINATION' | 'RETURN_CONSULTATION';
 export type QueuePresenceStatus = 'PRESENT' | 'NOT_ARRIVED' | 'LEFT';
 
 export type QueueArrivalClass = 'ON_TIME_OR_GRACE' | 'EARLY' | 'LATE' | 'WALK_IN';
@@ -12,9 +12,11 @@ export type ExaminationVisitType = 'SCHEDULED' | 'WALK_IN';
 
 export type ExaminationQueueStatusFilter = 'ALL' | ExaminationQueueStatus;
 export type ExaminationQueuePriorityFilter = 'ALL' | ExaminationQueuePriority;
+export type ExaminationQueueTypeFilter = 'ALL' | ExaminationQueueType;
 export type ExaminationVisitTypeFilter = 'ALL' | ExaminationVisitType;
 export type QueueArrivalClassFilter = 'ALL' | QueueArrivalClass;
 export type EarlyArrivalBackfillActionMode = 'SAFE_BACKFILL' | 'HOLD_FOR_SLOT';
+export type QueueTurnActionMode = 'MISSED_TURN' | 'RESTORE_TURN';
 
 export interface ExaminationQueueEntryDto {
   id: string;
@@ -32,6 +34,7 @@ export interface ExaminationQueueEntryDto {
   doctorName: string;
   status: ExaminationQueueStatus;
   priority: ExaminationQueuePriority;
+  queueType: ExaminationQueueType;
   presenceStatus: QueuePresenceStatus;
   arrivalClass: QueueArrivalClass;
   scheduledAt: string | null;
@@ -39,9 +42,16 @@ export interface ExaminationQueueEntryDto {
   calledAt: string | null;
   startedAt: string | null;
   blockedReason: string | null;
+  isEligible?: boolean;
+  canSafeBackfill?: boolean;
+  isAppointmentProtected?: boolean;
+  holdReason?: string | null;
   isBackfilled?: boolean;
   backfillReason?: string | null;
   backfillUpdatedAt?: string | null;
+  queueGroup?:
+    'IN_PROGRESS' | 'CALLED' | 'ELIGIBLE' | 'NOT_ELIGIBLE' | 'SKIPPED' | 'COMPLETED' | null;
+  ineligibleReason?: 'NOT_ARRIVED' | 'LEFT' | 'BLOCKED' | 'AWAITING_RESULTS' | null;
 }
 
 export interface ServicePointQueueDto {
@@ -147,6 +157,52 @@ export interface EarlyArrivalBackfillTarget {
   servicePoint: ServicePointQueueDto;
 }
 
+export interface MarkMissedTurnRequestPayload {
+  servicePointId: string;
+  reason: string;
+  notes?: string | null;
+  expectedStateVersion?: number | null;
+}
+
+export interface RestoreQueueTurnRequestPayload {
+  servicePointId: string;
+  confirmPresent: boolean;
+  reason: string;
+  notes?: string | null;
+  expectedStateVersion?: number | null;
+}
+
+export interface QueueTurnActionResponseDto {
+  queueEntryId: string;
+  ticketNo: string;
+  queueNumber: number;
+  visitCode: string;
+  patientCode: string;
+  patientName: string;
+  servicePointId: string;
+  action: QueueTurnActionMode;
+  previousStatus: ExaminationQueueStatus;
+  currentStatus: ExaminationQueueStatus;
+  presenceStatus: QueuePresenceStatus;
+  arrivalClass: QueueArrivalClass;
+  previousServingOrder: number;
+  servingOrder: number;
+  isAppointmentProtected: boolean;
+  blockedReason: string | null;
+  reason: string;
+  notes: string | null;
+  previousStateVersion: number;
+  stateVersion: number;
+  updatedAtUtc: string;
+  updatedEntry: ExaminationQueueEntryDto;
+}
+
+export interface LateArrivalMissedTurnTarget {
+  entry: ExaminationQueueEntryDto;
+  servicePoint: ServicePointQueueDto;
+  mode: QueueTurnActionMode;
+}
+
 export const EXAMINATION_QUEUE_STATUS_VALUES = [
   'WAITING',
   'READY',
@@ -155,6 +211,8 @@ export const EXAMINATION_QUEUE_STATUS_VALUES = [
   'COMPLETED',
   'SKIPPED',
 ] as const;
+
+export const EXAMINATION_QUEUE_PRIORITY_VALUES = ['NORMAL', 'ELDERLY', 'PREGNANT'] as const;
 
 export const QUEUE_PRESENCE_STATUS_VALUES = ['PRESENT', 'NOT_ARRIVED', 'LEFT'] as const;
 
@@ -168,4 +226,25 @@ export interface UpdateExaminationQueueStatusResponseDto {
   entry: ExaminationQueueEntryDto;
   previousStatus: ExaminationQueueStatus;
   updatedAtUtc: string;
+}
+
+export type CallNextOutcome = 'CALLED' | 'NO_ELIGIBLE_PATIENT' | 'HOLD_FOR_SLOT';
+
+export type CallNextSelectionReason =
+  'APPOINTMENT_DUE' | 'RETURN_CONSULTATION' | 'PRIORITY' | 'SAFE_BACKFILL' | 'FIFO';
+
+export interface CallNextPatientRequestPayload {
+  notes?: string | null;
+}
+
+export interface CallNextPatientResponseDto {
+  servicePointId: string;
+  outcome: CallNextOutcome;
+  message: string;
+  selectionReason: CallNextSelectionReason | null;
+  calledEntry: ExaminationQueueEntryDto | null;
+  previousStateVersion: number | null;
+  stateVersion: number | null;
+  updatedAtUtc: string;
+  entries: ExaminationQueueEntryDto[];
 }

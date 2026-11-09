@@ -47,10 +47,8 @@ type FieldErrors = Partial<Record<keyof AssignExaminationRoomFormValues, string>
 
 const PRIORITY_OPTIONS: { value: VisitPriority; label: string }[] = [
   { value: 'NORMAL', label: 'Bình thường (NORMAL)' },
-  { value: 'URGENT', label: 'Cấp cứu / Ưu tiên (URGENT)' },
   { value: 'ELDERLY', label: 'Người cao tuổi (ELDERLY)' },
   { value: 'PREGNANT', label: 'Phụ nữ mang thai (PREGNANT)' },
-  { value: 'RETURN_RESULT', label: 'Đọc kết quả CLS (RETURN_RESULT)' },
 ];
 
 export function AssignExaminationRoomModal({
@@ -65,6 +63,8 @@ export function AssignExaminationRoomModal({
     visitIdOrCode: target.visitIdOrCode,
     roomCode: '',
     priority: target.priority ?? 'NORMAL',
+    initialPriority: target.priority ?? 'NORMAL',
+    priorityVerificationConfirmed: false,
     reason: '',
   }));
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -118,6 +118,7 @@ export function AssignExaminationRoomModal({
       roomCode: parsed.data.roomCode.toUpperCase(),
       priority: parsed.data.priority,
       reason: parsed.data.reason.length > 0 ? parsed.data.reason : null,
+      priorityVerificationConfirmed: parsed.data.priorityVerificationConfirmed,
     };
 
     try {
@@ -223,9 +224,18 @@ export function AssignExaminationRoomModal({
             <select
               id="assign-room-priority"
               value={values.priority}
-              onChange={(e) =>
-                setValues((prev) => ({ ...prev, priority: e.target.value as VisitPriority }))
-              }
+              onChange={(e) => {
+                setValues((prev) => ({
+                  ...prev,
+                  priority: e.target.value as VisitPriority,
+                  priorityVerificationConfirmed: false,
+                }));
+                setErrors((prev) => ({
+                  ...prev,
+                  priority: undefined,
+                  priorityVerificationConfirmed: undefined,
+                }));
+              }}
               className="w-full rounded-lg border border-border bg-white px-4 py-3 text-sm text-ink shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
             >
               {PRIORITY_OPTIONS.map((opt) => (
@@ -234,6 +244,40 @@ export function AssignExaminationRoomModal({
                 </option>
               ))}
             </select>
+            {values.priority !== 'NORMAL' && values.priority !== values.initialPriority && (
+              <div className="mt-1">
+                <div className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    id="assign-room-priority-verification"
+                    checked={values.priorityVerificationConfirmed}
+                    onChange={(e) => {
+                      setValues((prev) => ({
+                        ...prev,
+                        priorityVerificationConfirmed: e.target.checked,
+                      }));
+                      setErrors((prev) => ({
+                        ...prev,
+                        priorityVerificationConfirmed: undefined,
+                      }));
+                    }}
+                    className="mt-0.5 h-4 w-4 rounded border-border text-primary focus:ring-primary/40"
+                  />
+                  <label
+                    htmlFor="assign-room-priority-verification"
+                    className="text-xs font-medium text-ink leading-relaxed"
+                  >
+                    Tôi đã kiểm tra giấy tờ chứng minh đối tượng ưu tiên (CCCD/giấy tờ tùy thân hoặc
+                    sổ khám thai)
+                  </label>
+                </div>
+                {errors.priorityVerificationConfirmed && (
+                  <p role="alert" className="mt-1 text-xs font-semibold text-rose-600">
+                    {errors.priorityVerificationConfirmed}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
