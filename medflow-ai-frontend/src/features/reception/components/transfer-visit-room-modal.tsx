@@ -76,6 +76,7 @@ export function TransferVisitRoomModal({
 
   const rooms = compatibleRoomsQuery.data?.compatibleRooms ?? fallbackRooms;
   const transferHistory = compatibleRoomsQuery.data?.transferHistory ?? fallbackHistory;
+  const isLoadingRooms = compatibleRoomsQuery.isLoading && rooms.length === 0;
   const currentRoomCode =
     compatibleRoomsQuery.data?.currentRoomCode ?? target.currentRoomCode ?? 'RM-001';
   const departmentName =
@@ -239,84 +240,100 @@ export function TransferVisitRoomModal({
             </span>
           </div>
 
-          <div className="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            {rooms.map((room) => {
-              const isSelected =
-                values.targetRoomCode.toUpperCase() === room.roomCode.toUpperCase();
-              const isDisabled = room.isCurrentRoom || !room.isCompatible || !room.isAvailable;
+          {isLoadingRooms ? (
+            <div
+              role="status"
+              className="mt-2.5 rounded-xl border border-border bg-canvas p-6 text-center text-xs text-sub"
+            >
+              Đang tải danh sách buồng khám tương thích...
+            </div>
+          ) : rooms.length === 0 ? (
+            <div
+              role="status"
+              className="mt-2.5 rounded-xl border border-dashed border-border bg-canvas p-6 text-center text-xs text-sub"
+            >
+              Không tìm thấy buồng khám lâm sàng tương thích nào cùng chuyên khoa cho lượt khám này.
+            </div>
+          ) : (
+            <div className="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {rooms.map((room) => {
+                const isSelected =
+                  values.targetRoomCode.toUpperCase() === room.roomCode.toUpperCase();
+                const isDisabled = room.isCurrentRoom || !room.isCompatible || !room.isAvailable;
 
-              return (
-                <button
-                  key={room.roomId}
-                  type="button"
-                  disabled={isDisabled}
-                  aria-pressed={isSelected}
-                  onClick={() => handleSelectRoom(room)}
-                  className={`flex flex-col justify-between rounded-xl border p-3.5 text-left transition-colors ${
-                    isSelected
-                      ? 'border-primary bg-sky-50/70 ring-2 ring-primary/30'
-                      : isDisabled
-                        ? 'cursor-not-allowed border-border bg-canvas opacity-60'
-                        : 'border-border bg-white hover:border-primary/60'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <DoorOpen aria-hidden="true" className="h-4 w-4 text-primary" />
-                      <div>
-                        <span className="font-mono text-xs font-bold text-navy">
-                          {room.roomCode}
-                        </span>
-                        <div className="text-sm font-bold text-ink">{room.roomName}</div>
+                return (
+                  <button
+                    key={room.roomId}
+                    type="button"
+                    disabled={isDisabled}
+                    aria-pressed={isSelected}
+                    onClick={() => handleSelectRoom(room)}
+                    className={`flex flex-col justify-between rounded-xl border p-3.5 text-left transition-colors ${
+                      isSelected
+                        ? 'border-primary bg-sky-50/70 ring-2 ring-primary/30'
+                        : isDisabled
+                          ? 'cursor-not-allowed border-border bg-canvas opacity-60'
+                          : 'border-border bg-white hover:border-primary/60'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <DoorOpen aria-hidden="true" className="h-4 w-4 text-primary" />
+                        <div>
+                          <span className="font-mono text-xs font-bold text-navy">
+                            {room.roomCode}
+                          </span>
+                          <div className="text-sm font-bold text-ink">{room.roomName}</div>
+                        </div>
                       </div>
-                    </div>
-                    <Badge
-                      tone={
-                        room.isCurrentRoom
-                          ? 'sky'
+                      <Badge
+                        tone={
+                          room.isCurrentRoom
+                            ? 'sky'
+                            : room.isCompatible && room.isAvailable
+                              ? 'emerald'
+                              : !room.isCompatible
+                                ? 'slate'
+                                : 'rose'
+                        }
+                      >
+                        {room.isCurrentRoom
+                          ? 'Phòng hiện tại'
                           : room.isCompatible && room.isAvailable
-                            ? 'emerald'
+                            ? 'Khả dụng'
                             : !room.isCompatible
-                              ? 'slate'
-                              : 'rose'
-                      }
-                    >
-                      {room.isCurrentRoom
-                        ? 'Phòng hiện tại'
-                        : room.isCompatible && room.isAvailable
-                          ? 'Khả dụng'
-                          : !room.isCompatible
-                            ? 'Khác khoa'
-                            : 'Không khả dụng'}
-                    </Badge>
-                  </div>
-
-                  <div className="mt-2.5 flex items-center justify-between text-xs text-sub">
-                    <span>
-                      {room.departmentName ?? 'Khoa lâm sàng'} • {room.location ?? 'Tầng 1'}
-                    </span>
-                    <span className="inline-flex items-center gap-1 font-mono font-semibold text-ink">
-                      <Users aria-hidden="true" className="h-3.5 w-3.5 text-sub" />
-                      {room.activeVisitCount}/{room.capacity} ca
-                    </span>
-                  </div>
-
-                  {room.unavailableReason && (
-                    <div className="mt-1.5 text-[11px] font-medium text-rose-600">
-                      {room.unavailableReason}
+                              ? 'Khác khoa'
+                              : 'Không khả dụng'}
+                      </Badge>
                     </div>
-                  )}
 
-                  {isSelected && (
-                    <div className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-primary">
-                      <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5" />
-                      <span>Đã chọn chuyển sang phòng này</span>
+                    <div className="mt-2.5 flex items-center justify-between text-xs text-sub">
+                      <span>
+                        {room.departmentName ?? 'Khoa lâm sàng'} • {room.location ?? 'Tầng 1'}
+                      </span>
+                      <span className="inline-flex items-center gap-1 font-mono font-semibold text-ink">
+                        <Users aria-hidden="true" className="h-3.5 w-3.5 text-sub" />
+                        {room.activeVisitCount}/{room.capacity} ca
+                      </span>
                     </div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+
+                    {room.unavailableReason && (
+                      <div className="mt-1.5 text-[11px] font-medium text-rose-600">
+                        {room.unavailableReason}
+                      </div>
+                    )}
+
+                    {isSelected && (
+                      <div className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-primary">
+                        <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5" />
+                        <span>Đã chọn chuyển sang phòng này</span>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {errors.targetRoomCode && (
             <p role="alert" className="mt-2 text-xs font-semibold text-rose-600">
@@ -351,12 +368,16 @@ export function TransferVisitRoomModal({
           />
         </div>
 
-        {transferHistory.length > 0 && (
-          <div className="mt-5 rounded-xl border border-border bg-canvas p-3.5">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-navy">
-              <History aria-hidden="true" className="h-4 w-4 text-primary" />
-              <span>Lịch sử điều chuyển phòng ({transferHistory.length})</span>
-            </div>
+        <div className="mt-5 rounded-xl border border-border bg-canvas p-3.5">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-navy">
+            <History aria-hidden="true" className="h-4 w-4 text-primary" />
+            <span>Lịch sử điều chuyển phòng ({transferHistory.length})</span>
+          </div>
+          {transferHistory.length === 0 ? (
+            <p className="mt-2 text-xs italic text-sub">
+              Chưa có lịch sử điều chuyển phòng cho lượt khám này.
+            </p>
+          ) : (
             <ul className="mt-2 space-y-1.5 text-xs text-sub">
               {transferHistory.map((item) => (
                 <li
@@ -375,8 +396,8 @@ export function TransferVisitRoomModal({
                 </li>
               ))}
             </ul>
-          </div>
-        )}
+          )}
+        </div>
 
         <div className="mt-6 flex justify-end gap-3">
           <Button type="button" variant="secondary" aria-label="Hủy bỏ" onClick={onClose}>
