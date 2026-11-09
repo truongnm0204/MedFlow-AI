@@ -666,6 +666,269 @@ public sealed class RoleCatalogServiceTests : IDisposable
                 new AssignRolePermissionsRequest(PermissionCodes: ["PATIENT_PROFILE_READ"])));
     }
 
+    [Fact]
+    public async Task UpdateRoleAsync_CustomRoleFullUpdate_PersistsCodeNameMetadataPermissionsAndAuditLog()
+    {
+        var result = await _service.UpdateRoleAsync(
+            13,
+            "ROL-08",
+            new UpdateRoleRequest(
+                Code: "compliance_auditor",
+                Name: "Kiểm toán viên tuân thủ",
+                Scope: "OPERATIONAL",
+                Status: "ACTIVE",
+                Description: "Kiểm toán tuân thủ quy trình vận hành.",
+                SegregationNote: "Chỉ đọc dữ liệu vận hành.",
+                PermissionCodes: ["AUDIT_READ", "PATIENT_PROFILE_READ"],
+                Note: "Kích hoạt và mở rộng phạm vi kiểm toán"),
+            "10.0.0.20");
+
+        Assert.Equal(8, result.RoleId);
+        Assert.Equal("ROL-08", result.Id);
+        Assert.Equal("COMPLIANCE_AUDITOR", result.Code);
+        Assert.Equal("Kiểm toán viên tuân thủ", result.Name);
+        Assert.Equal("OPERATIONAL", result.Scope);
+        Assert.Equal("ACTIVE", result.Status);
+        Assert.False(result.IsSystemRole);
+        Assert.Equal("Kiểm toán tuân thủ quy trình vận hành.", result.Description);
+        Assert.Equal("Chỉ đọc dữ liệu vận hành.", result.SegregationNote);
+        Assert.Equal("20/04/2026", result.UpdatedAt);
+        Assert.Equal(2, result.PermissionCount);
+        Assert.Equal(
+            new[] { "AUDIT_READ", "PATIENT_PROFILE_READ" },
+            result.Permissions.Select(p => p.Code));
+
+        var dbRole = await _dbContext.Roles.SingleAsync(r => r.Id == 8);
+        Assert.Equal("COMPLIANCE_AUDITOR", dbRole.Code);
+        Assert.Equal("Kiểm toán viên tuân thủ", dbRole.Name);
+
+        var dbRolePermissions = await _dbContext.RolePermissions
+            .Where(rp => rp.RoleId == 8)
+            .ToListAsync();
+        Assert.Equal(2, dbRolePermissions.Count);
+
+        var audit = await _dbContext.AuditLogs
+            .SingleAsync(a => a.EntityType == "Role" && a.Action == "ROLE_UPDATED" && a.EntityId == "8");
+        Assert.Equal(13, audit.ActorUserId);
+        Assert.Equal(1, audit.HospitalId);
+        Assert.Equal("Kích hoạt và mở rộng phạm vi kiểm toán", audit.Reason);
+        Assert.Equal(FixedNowUtc, audit.OccurredAt);
+        Assert.NotNull(audit.ChangeData);
+        Assert.Contains("COMPLIANCE_AUDITOR", audit.ChangeData);
+        Assert.Contains("SECURITY_AUDITOR", audit.ChangeData);
+        Assert.Contains("OPERATIONAL", audit.ChangeData);
+        Assert.Contains("ACTIVE", audit.ChangeData);
+
+        // Verify subsequent read and permission assignment preserve updated metadata
+        var byId = await _service.GetRoleByIdAsync(13, 8);
+        Assert.Equal("COMPLIANCE_AUDITOR", byId.Code);
+        Assert.Equal("Kiểm toán viên tuân thủ", byId.Name);
+        Assert.Equal("OPERATIONAL", byId.Scope);
+        Assert.Equal("ACTIVE", byId.Status);
+        Assert.Equal("Kiểm toán tuân thủ quy trình vận hành.", byId.Description);
+        Assert.Equal("Chỉ đọc dữ liệu vận hành.", byId.SegregationNote);
+
+        var afterPermUpdate = await _service.AssignRolePermissionsAsync(
+            13,
+            "ROL-08",
+            new AssignRolePermissionsRequest(PermissionCodes: ["AUDIT_READ"]));
+        Assert.Equal("COMPLIANCE_AUDITOR", afterPermUpdate.Code);
+        Assert.Equal("Kiểm toán viên tuân thủ", afterPermUpdate.Name);
+        Assert.Equal("OPERATIONAL", afterPermUpdate.Scope);
+        Assert.Equal("ACTIVE", afterPermUpdate.Status);
+        Assert.Equal("Kiểm toán tuân thủ quy trình vận hành.", afterPermUpdate.Description);
+        Assert.Equal("Chỉ đọc dữ liệu vận hành.", afterPermUpdate.SegregationNote);
+        Assert.Equal(1, afterPermUpdate.PermissionCount);
+    }
+
+    [Fact]
+    public async Task UpdateRoleAsync_SystemRoleMetadataUpdate_UpdatesNameDescriptionScopeAndSegregationNoteWhilePreservingPermissions()
+    {
+        var result = await _service.UpdateRoleAsync(
+            13,
+            "ROL-03",
+            new UpdateRoleRequest(
+                Name: "Bác sĩ điều trị chính",
+                Description: "Khám lâm sàng, kê đơn và điều phối chuyên môn.",
+                Scope: "CLINICAL",
+                SegregationNote: "Tách biệt hoàn toàn với cấp phát dược.",
+                Status: "ACTIVE",
+                Reason: "Chuẩn hóa mô tả chức danh bác sĩ"));
+
+        Assert.Equal(3, result.RoleId);
+        Assert.Equal("DOCTOR", result.Code);
+        Assert.True(result.IsSystemRole);
+        Assert.Equal("Bác sĩ điều trị chính", result.Name);
+        Assert.Equal("Khám lâm sàng, kê đơn và điều phối chuyên môn.", result.Description);
+        Assert.Equal("Tách biệt hoàn toàn với cấp phát dược.", result.SegregationNote);
+        Assert.Equal("CLINICAL", result.Scope);
+        Assert.Equal("ACTIVE", result.Status);
+        Assert.Equal(4, result.PermissionCount);
+    }
+
+    [Fact]
+    public async Task UpdateRoleAsync_SystemRoleCodeChange_ThrowsValidationException()
+    {
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(
+                13,
+                "ROL-03",
+                new UpdateRoleRequest(Code: "CLINICAL_DOCTOR")));
+
+        Assert.Contains("code", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("ROL-01", "INACTIVE", null)]
+    [InlineData("SYSTEM_ADMIN", null, false)]
+    [InlineData("ROL-03", "INACTIVE", null)]
+    [InlineData("DOCTOR", null, false)]
+    public async Task UpdateRoleAsync_DeactivateSystemRole_ThrowsValidationException(
+        string roleIdentifier,
+        string? status,
+        bool? isActive)
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(
+                13,
+                roleIdentifier,
+                new UpdateRoleRequest(Status: status, IsActive: isActive)));
+    }
+
+    [Fact]
+    public async Task UpdateRoleAsync_SystemAdminInvalidScopeOrMissingUserManage_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(
+                13,
+                "ROL-01",
+                new UpdateRoleRequest(Scope: "OPERATIONAL")));
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(
+                13,
+                "ROL-01",
+                new UpdateRoleRequest(PermissionCodes: ["HOSPITAL_CONFIG", "AUDIT_READ"])));
+
+        Assert.Contains("USER_MANAGE", ex.Message);
+    }
+
+    [Fact]
+    public async Task UpdateRoleAsync_DuplicateCodeOrDuplicateName_ThrowsConflictException()
+    {
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateRoleAsync(
+                13,
+                "ROL-08",
+                new UpdateRoleRequest(Code: "DOCTOR")));
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateRoleAsync(
+                13,
+                "ROL-08",
+                new UpdateRoleRequest(Name: "Bác sĩ lâm sàng")));
+    }
+
+    [Fact]
+    public async Task UpdateRoleAsync_EmptyPayloadOrInvalidFields_ThrowsValidationException()
+    {
+        // Empty payload
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest()));
+
+        // Invalid scope
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(Scope: "INVALID")));
+
+        // Invalid status
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(Status: "DELETED")));
+
+        // Contradicted status and isActive
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(Status: "ACTIVE", IsActive: false)));
+
+        // Mismatched code and roleCode
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(Code: "CUSTOM_A", RoleCode: "CUSTOM_B")));
+
+        // Invalid code token
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(Code: "1INVALID")));
+
+        // Mismatched name and roleName
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(Name: "Vai trò A", RoleName: "Vai trò B")));
+
+        // Name too short / too long
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(Name: "A")));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(Name: new string('A', 121))));
+
+        // Description whitespace or > 500 chars
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(Description: "   ")));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(Description: new string('D', 501))));
+
+        // SegregationNote whitespace or > 500 chars
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(SegregationNote: "   ")));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(SegregationNote: new string('S', 501))));
+
+        // Mismatched or too-long audit note/reason
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(Description: "Hợp lệ", Note: "Ghi chú 1", Reason: "Ghi chú 2")));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(Description: "Hợp lệ", Note: new string('N', 251))));
+
+        // Empty or unknown permission codes
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(PermissionCodes: [])));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-08", new UpdateRoleRequest(PermissionCodes: ["UNKNOWN_PERM"])));
+
+        // SoD conflict
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(
+                13,
+                "ROL-08",
+                new UpdateRoleRequest(PermissionCodes: ["PRESCRIPTION_ISSUE", "MEDICINE_DISPENSE"])));
+    }
+
+    [Fact]
+    public async Task UpdateRoleAsync_NonExistentRoleOrInvalidIdentifier_ThrowsExpectedException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.UpdateRoleAsync(13, "999", new UpdateRoleRequest(Description: "Mô tả mới")));
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-99", new UpdateRoleRequest(Description: "Mô tả mới")));
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.UpdateRoleAsync(13, "UNKNOWN_ROLE", new UpdateRoleRequest(Description: "Mô tả mới")));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "0", new UpdateRoleRequest(Description: "Mô tả mới")));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "ROL-0", new UpdateRoleRequest(Description: "Mô tả mới")));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateRoleAsync(13, "", new UpdateRoleRequest(Description: "Mô tả mới")));
+    }
+
+    [Fact]
+    public async Task UpdateRoleAsync_UnauthorizedOrInactiveActor_ThrowsNotFoundOrForbiddenException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.UpdateRoleAsync(999, "ROL-08", new UpdateRoleRequest(Description: "Mô tả mới")));
+
+        foreach (var forbiddenActorId in new long[] { 11, 14, 15, 16 })
+        {
+            await Assert.ThrowsAsync<ForbiddenException>(() =>
+                _service.UpdateRoleAsync(forbiddenActorId, "ROL-08", new UpdateRoleRequest(Description: "Mô tả mới")));
+        }
+    }
+
     public void Dispose()
     {
         _dbContext.Dispose();
