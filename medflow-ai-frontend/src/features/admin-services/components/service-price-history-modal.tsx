@@ -1,10 +1,13 @@
-import { AlertCircle, Calendar, X } from 'lucide-react';
+import { AlertCircle, Calendar, DollarSign, X } from 'lucide-react';
+
+import { Button } from '@/shared/ui/button';
 
 import { useExaminationServiceStore } from '../store/examination-service.store';
 
 export function ServicePriceHistoryModal() {
   const service = useExaminationServiceStore((state) => state.priceHistoryService);
   const setService = useExaminationServiceStore((state) => state.setPriceHistoryService);
+  const setUpdatePriceService = useExaminationServiceStore((state) => state.setUpdatePriceService);
 
   if (!service) return null;
 
@@ -88,7 +91,16 @@ export function ServicePriceHistoryModal() {
                 <tbody className="divide-y divide-slate-100">
                   {history.map((item, idx) => (
                     <tr key={idx} className="hover:bg-slate-50/50">
-                      <td className="px-3 py-2.5 font-medium text-slate-800">{item.date}</td>
+                      <td className="px-3 py-2.5 font-medium text-slate-800">
+                        <div className="flex items-center gap-1.5">
+                          <span>{item.date}</span>
+                          {idx === 0 && (
+                            <span className="rounded-full bg-emerald-100 px-1.5 py-0.2 text-[9px] font-bold text-emerald-800">
+                              Đang áp dụng
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-3 py-2.5 font-mono text-[11px] text-slate-600">
                         {item.decisionNumber}
                       </td>
@@ -116,7 +128,7 @@ export function ServicePriceHistoryModal() {
           </div>
         </div>
 
-        <div className="flex justify-end border-t border-border px-6 py-3 bg-slate-50 rounded-b-xl">
+        <div className="flex items-center justify-between border-t border-border px-6 py-3 bg-slate-50 rounded-b-xl">
           <button
             type="button"
             onClick={() => setService(null)}
@@ -124,6 +136,18 @@ export function ServicePriceHistoryModal() {
           >
             Đóng
           </button>
+          <Button
+            size="sm"
+            className="gap-1.5"
+            onClick={() => {
+              const target = service;
+              setService(null);
+              setUpdatePriceService(target);
+            }}
+          >
+            <DollarSign className="h-4 w-4" aria-hidden="true" />
+            <span>Cập nhật giá mới</span>
+          </Button>
         </div>
       </div>
     </div>

@@ -212,10 +212,19 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         CancellationToken ct)
     {
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var hospital = await EnsureQueueViewerAccessAndResolveHospitalAsync(actorUserId, nowUtc, ct);
+
+        return await BuildQueueBoardForHospitalAsync(hospital, explicitQueueDate, ct);
+    }
+
+    private async Task<QueueBoard> BuildQueueBoardForHospitalAsync(
+        Hospital hospital,
+        DateOnly? explicitQueueDate,
+        CancellationToken ct)
+    {
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
-
-        var hospital = await EnsureQueueViewerAccessAndResolveHospitalAsync(actorUserId, nowUtc, ct);
 
         var departments = await _db.Departments
             .AsNoTracking()
@@ -348,6 +357,15 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             .OrderBy(q => q.Id)
             .ToListAsync(ct);
 
+        // diagnostic_orders is not mapped in EF (ADR 0008): an open DIAGNOSTIC queue entry marks pending results.
+        var visitsWithOpenDiagnostics = allQueueEntries
+            .Where(q => q.VisitId.HasValue
+                && AppointmentBookingRules.NormalizeStatusKey(q.QueueType) == "DIAGNOSTIC"
+                && !q.CompletedAt.HasValue
+                && AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("COMPLETED" or "CANCELLED"))
+            .Select(q => q.VisitId!.Value)
+            .ToHashSet();
+
         var hospitalQueueEntries = allQueueEntries
             .Where(q => IsExaminationQueueEntryInHospital(
                 q,
@@ -399,6 +417,21 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         }
 
         var policySet = await QueueOrderingPolicyLoader.LoadAsync(_db, hospital.Id, nowUtc, ct);
+        Dictionary<long, QueueFairnessState> fairnessByServicePoint;
+        try
+        {
+            fairnessByServicePoint = bucketRawSpIds.Count == 0
+                ? new Dictionary<long, QueueFairnessState>()
+                : await _db.QueueFairnessStates
+                    .AsNoTracking()
+                    .Where(s => s.QueueDate == effectiveQueueDate && bucketRawSpIds.Contains(s.ServicePointId))
+                    .ToDictionaryAsync(s => s.ServicePointId, ct);
+        }
+        catch (NotSupportedException)
+        {
+            fairnessByServicePoint = new Dictionary<long, QueueFairnessState>();
+        }
+
         var boardBuckets = new List<QueueBoardBucket>(buckets.Count);
 
         foreach (var bucket in buckets)
@@ -461,7 +494,9 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                 var presenceStatus = NormalizePresenceStatus(q, v);
                 var arrivalClass = NormalizeArrivalClass(q, visitType);
 
-                var scheduledDateTime = q?.ScheduledAt ?? slot?.StartsAt;
+                var scheduledDateTime = queueType == ClinicalQueueRules.QueueTypeReturnConsultation && q is not null && !q.ScheduledAt.HasValue
+                    ? null
+                    : (q?.ScheduledAt ?? slot?.StartsAt);
                 var checkedInDateTime = v?.CheckedInAt ?? q?.ArrivedAt ?? q?.ReadyAt ?? q?.ScheduledAt ?? slot?.StartsAt;
 
                 var scheduledAt = scheduledDateTime?.ToString("HH:mm", CultureInfo.InvariantCulture);
@@ -471,6 +506,9 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                 var blockedReason = string.IsNullOrWhiteSpace(q?.BlockedReason)
                     ? null
                     : q.BlockedReason.Trim();
+                var pendingRequiredResults = v is not null
+                    && (visitsWithOpenDiagnostics.Contains(v.Id)
+                        || AppointmentBookingRules.NormalizeStatusKey(v.Status) is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS");
 
                 var entryId = q is not null
                     ? $"q-{q.Id:D3}"
@@ -509,17 +547,27 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                     Status: status,
                     Priority: priority,
                     PresenceStatus: presenceStatus,
-                    IsScheduled: visitType == "SCHEDULED",
+                    IsScheduled: visitType == "SCHEDULED" && scheduledDateTime.HasValue,
                     StoredArrivalClass: arrivalClass,
                     ScheduledAt: scheduledDateTime,
                     ArrivedAt: q?.ArrivedAt ?? v?.CheckedInAt,
                     ReadySince: q?.ReadyAt ?? checkedInDateTime,
                     BackfilledAt: q?.BackfilledAt,
-                    QueueNumber: queueNumber));
+                    QueueNumber: queueNumber,
+                    QueueType: queueType,
+                    BlockedReason: blockedReason,
+                    PendingRequiredResults: pendingRequiredResults));
             }
 
             var bucketPolicy = policySet.ForServicePoint(bucket.RawServicePointId);
-            var orderingResult = ExaminationQueueOrderingEngine.Evaluate(orderingItems, bucketPolicy, nowLocal);
+            var counter = bucket.RawServicePointId is long spId
+                && fairnessByServicePoint.TryGetValue(spId, out var fairnessRow)
+                    ? QueueFairnessRotation.ResolveEffectiveCounter(
+                        fairnessRow.ConsecutivePriorityStarted,
+                        fairnessRow.PolicyVersion,
+                        bucketPolicy)
+                    : 0;
+            var orderingResult = ExaminationQueueOrderingEngine.Evaluate(orderingItems, bucketPolicy, nowLocal, counter);
 
             var boardEntries = new List<QueueBoardEntry>(orderingResult.OrderedIndices.Count);
             foreach (var idx in orderingResult.OrderedIndices)
@@ -534,6 +582,8 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                     CanSafeBackfill = eval.CanSafeBackfill,
                     IsAppointmentProtected = eval.IsAppointmentProtected,
                     HoldReason = eval.HoldReason,
+                    QueueGroup = ResolveQueueGroup(rawDto.Status, eval.IsEligible),
+                    IneligibleReason = eval.IneligibleReason,
                 };
 
                 boardEntries.Add(new QueueBoardEntry(evaluatedDto, rawQueueEntry, eval));
@@ -544,6 +594,15 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
 
         return new QueueBoard(hospital, nowUtc, nowLocal, effectiveQueueDate, boardBuckets);
     }
+
+    private static string ResolveQueueGroup(string status, bool isEligible) => status switch
+    {
+        "IN_PROGRESS" => QueueGroups.InProgress,
+        "CALLED" => QueueGroups.Called,
+        "SKIPPED" => QueueGroups.Skipped,
+        "COMPLETED" => QueueGroups.Completed,
+        _ => isEligible ? QueueGroups.Eligible : QueueGroups.NotEligible,
+    };
 
     private static DateOnly? ParseAndValidateQueueDate(string? queueDate)
     {

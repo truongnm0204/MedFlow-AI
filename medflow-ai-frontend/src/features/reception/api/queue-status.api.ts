@@ -1,6 +1,8 @@
 import { apiClient } from '@/shared/lib/axios';
 
 import type {
+  CancelQueueEntryRequestPayload,
+  CancelQueueEntryResponseDto,
   QueueEntryStatusDetailDto,
   UpdateQueuePriorityRequestPayload,
   UpdateQueuePriorityResponseDto,
@@ -35,6 +37,18 @@ export async function updateQueueEntryPriority(
   const encoded = encodeURIComponent(idOrCode.trim());
   const { data } = await apiClient.patch<UpdateQueuePriorityResponseDto>(
     `/reception/examination-queue/entries/${encoded}/priority`,
+    payload,
+  );
+  return data;
+}
+
+export async function cancelQueueEntry(
+  idOrCode: string,
+  payload: CancelQueueEntryRequestPayload,
+): Promise<CancelQueueEntryResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+  const { data } = await apiClient.post<CancelQueueEntryResponseDto>(
+    `/reception/examination-queue/entries/${encoded}/cancel`,
     payload,
   );
   return data;
