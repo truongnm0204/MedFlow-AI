@@ -399,5 +399,27 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
             string? ipAddress = null,
             CancellationToken ct = default)
             => throw new NotSupportedException();
+
+        public Task<DoctorAssignedQueueResponseDto> GetDoctorAssignedQueueAsync(
+            long actorUserId,
+            GetDoctorAssignedQueueRequest? request = null,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<CallNextPatientResponseDto> CallNextPatientAsync(
+            long actorUserId,
+            string servicePointId,
+            CallNextPatientRequest? request = null,
+            string? ipAddress = null,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<CreateReturnToDoctorQueueEntryResponseDto> CreateReturnToDoctorQueueEntryAsync(
+            long actorUserId,
+            string idOrCode,
+            CreateReturnToDoctorQueueEntryRequest request,
+            string? ipAddress = null,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 }

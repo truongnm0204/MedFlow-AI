@@ -1013,8 +1013,9 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
             .AsNoTracking()
             .Where(q =>
                 q.QueueDate == today &&
-                q.QueueType != null &&
-                q.QueueType.ToUpper() == "EXAMINATION" &&
+                (q.QueueType == null ||
+                 q.QueueType.ToUpper() == "EXAMINATION" ||
+                 q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
                 (servicePoint == null ||
                  q.ServicePointId == servicePoint.Id ||
                  q.CurrentServicePointId == servicePoint.Id))
