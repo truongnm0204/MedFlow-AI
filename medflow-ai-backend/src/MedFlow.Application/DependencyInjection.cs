@@ -2,6 +2,7 @@ using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Auth;
 using MedFlow.Application.Services.Departments;
+using MedFlow.Application.Services.Consultation;
 using MedFlow.Application.Services.Diagnostic;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Application.Services.ExaminationRooms;
@@ -61,6 +62,7 @@ public static class DependencyInjection
         services.AddScoped<IReceptionPatientSearchService, ReceptionPatientSearchService>();
         services.AddScoped<ICreatePatientAtReceptionService, CreatePatientAtReceptionService>();
         services.AddScoped<IUpdatePatientAtReceptionService, UpdatePatientAtReceptionService>();
+        services.AddScoped<IConsultationWorkspaceService, ConsultationWorkspaceService>();
         return services;
     }
 }

@@ -1,0 +1,1020 @@
+using MedFlow.Application.DTOs.Consultation;
+using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Application.Services.Consultation;
+using MedFlow.Domain.Entities;
+using MedFlow.Domain.Enums;
+using MedFlow.Domain.Exceptions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Storage;
+
+namespace MedFlow.UnitTests.Consultation;
+
+public sealed class ConsultationWorkspaceServiceTests : IDisposable
+{
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+    }
+
+    private sealed class ConsultationTestDbContext : DbContext, IApplicationDbContext
+    {
+        public ConsultationTestDbContext(DbContextOptions<ConsultationTestDbContext> options)
+            : base(options)
+        {
+        }
+
+        private static NotSupportedException NotUsed() =>
+            new("Not needed for ConsultationWorkspaceService unit tests.");
+
+        public DbSet<User> Users => Set<User>();
+        public DbSet<Role> Roles => Set<Role>();
+        public DbSet<Permission> Permissions => Set<Permission>();
+        public DbSet<UserRole> UserRoles => Set<UserRole>();
+        public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
+        public DbSet<Patient> Patients => Set<Patient>();
+        public DbSet<Staff> Staff => Set<Staff>();
+        public DbSet<Doctor> Doctors => Set<Doctor>();
+        public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => throw NotUsed();
+        public DbSet<ExaminationSlot> ExaminationSlots => Set<ExaminationSlot>();
+        public DbSet<AuthSession> AuthSessions => throw NotUsed();
+        public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
+        public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+        public DbSet<Hospital> Hospitals => Set<Hospital>();
+        public DbSet<Department> Departments => Set<Department>();
+        public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
+        public DbSet<Specialty> Specialties => Set<Specialty>();
+        public DbSet<Service> Services => Set<Service>();
+        public DbSet<ServicePrice> ServicePrices => throw NotUsed();
+        public DbSet<HospitalPolicy> HospitalPolicies => Set<HospitalPolicy>();
+        public DbSet<Appointment> Appointments => Set<Appointment>();
+        public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
+        public DbSet<Visit> Visits => Set<Visit>();
+        public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
+        public DbSet<Payment> Payments => throw NotUsed();
+        public DbSet<Prescription> Prescriptions => Set<Prescription>();
+        public DbSet<PrescriptionItem> PrescriptionItems => Set<PrescriptionItem>();
+        public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
+        public DbSet<QueueFairnessState> QueueFairnessStates => Set<QueueFairnessState>();
+        public DbSet<MedicalRecord> MedicalRecords => Set<MedicalRecord>();
+        public DbSet<MedicalRecordRevision> MedicalRecordRevisions => Set<MedicalRecordRevision>();
+        public DbSet<VisitDiagnosis> VisitDiagnoses => Set<VisitDiagnosis>();
+
+        public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
+            => Database.BeginTransactionAsync(ct);
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Ignore<AuthSession>();
+            modelBuilder.Ignore<AuthVerificationChallenge>();
+            modelBuilder.Ignore<ServicePrice>();
+            modelBuilder.Ignore<DoctorServiceAuthorization>();
+            modelBuilder.Ignore<PatientFamilyLink>();
+            modelBuilder.Ignore<Payment>();
+            modelBuilder.Ignore<Medicine>();
+            modelBuilder.Ignore<MedicineBatch>();
+            modelBuilder.Ignore<MedicationDispense>();
+            modelBuilder.Ignore<DispenseItem>();
+            modelBuilder.Ignore<StockTransaction>();
+
+            modelBuilder.Entity<User>().HasKey(u => u.Id);
+            modelBuilder.Entity<Role>().HasKey(r => r.Id);
+            modelBuilder.Entity<Permission>().HasKey(p => p.Id);
+            modelBuilder.Entity<UserRole>().HasKey(ur => new { ur.UserId, ur.RoleId });
+            modelBuilder.Entity<RolePermission>().HasKey(rp => new { rp.RoleId, rp.PermissionId });
+            modelBuilder.Entity<Patient>().HasKey(p => p.Id);
+            modelBuilder.Entity<Hospital>().HasKey(h => h.Id);
+            modelBuilder.Entity<Department>().HasKey(d => d.Id);
+            modelBuilder.Entity<Specialty>().HasKey(s => s.Id);
+            modelBuilder.Entity<Service>().HasKey(s => s.Id);
+            modelBuilder.Entity<HospitalPolicy>().HasKey(p => p.Id);
+            modelBuilder.Entity<HospitalRoom>(b =>
+            {
+                b.HasKey(r => r.Id);
+                b.HasOne(r => r.Department).WithMany(d => d.HospitalRooms).HasForeignKey(r => r.DepartmentId);
+            });
+            modelBuilder.Entity<Staff>(b =>
+            {
+                b.HasKey(s => s.Id);
+                b.HasOne(s => s.User).WithOne(u => u.Staff).HasForeignKey<Staff>(s => s.UserId);
+                b.HasOne(s => s.Department).WithMany().HasForeignKey(s => s.DepartmentId);
+            });
+            modelBuilder.Entity<Doctor>(b =>
+            {
+                b.HasKey(d => d.Id);
+                b.HasOne(d => d.Staff).WithOne(s => s.Doctor).HasForeignKey<Doctor>(d => d.StaffId);
+                b.HasOne(d => d.Specialty).WithMany().HasForeignKey(d => d.SpecialtyId);
+            });
+            modelBuilder.Entity<ExaminationSlot>(b =>
+            {
+                b.HasKey(s => s.Id);
+                b.HasOne(s => s.Service).WithMany().HasForeignKey(s => s.ServiceId);
+                b.HasOne(s => s.Doctor).WithMany(d => d.ExaminationSlots).HasForeignKey(s => s.DoctorId);
+                b.HasOne(s => s.Room).WithMany().HasForeignKey(s => s.RoomId);
+            });
+            modelBuilder.Entity<Appointment>(b =>
+            {
+                b.HasKey(a => a.Id);
+                b.HasOne(a => a.Patient).WithMany().HasForeignKey(a => a.PatientId);
+                b.HasOne(a => a.Slot).WithMany(s => s.Appointments).HasForeignKey(a => a.SlotId);
+            });
+            modelBuilder.Entity<Visit>().HasKey(v => v.Id);
+            modelBuilder.Entity<QueueEntry>().HasKey(q => q.Id);
+            modelBuilder.Entity<QueueServicePoint>().HasKey(sp => sp.Id);
+            modelBuilder.Entity<QueueFairnessState>().HasKey(s => new { s.ServicePointId, s.QueueDate });
+            modelBuilder.Entity<MedicalRecord>().HasKey(m => m.Id);
+            modelBuilder.Entity<MedicalRecordRevision>().HasKey(r => r.Id);
+            modelBuilder.Entity<VisitDiagnosis>().HasKey(d => d.Id);
+            modelBuilder.Entity<Prescription>().HasKey(p => p.Id);
+            modelBuilder.Entity<PrescriptionItem>().HasKey(i => i.Id);
+            modelBuilder.Entity<AuditLog>(b =>
+            {
+                b.HasKey(a => a.Id);
+                b.Ignore(a => a.IpAddress);
+            });
+        }
+    }
+
+    private readonly DbContextOptions<ConsultationTestDbContext> _dbOptions;
+    private readonly ConsultationTestDbContext _db;
+    private readonly FixedTimeProvider _timeProvider;
+    private readonly ConsultationWorkspaceService _service;
+
+    public ConsultationWorkspaceServiceTests()
+    {
+        _dbOptions = new DbContextOptionsBuilder<ConsultationTestDbContext>()
+            .UseInMemoryDatabase($"ConsultationWorkspaceServiceTests_{Guid.NewGuid():N}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+
+        _db = new ConsultationTestDbContext(_dbOptions);
+        // 2026-10-22 02:00 UTC == 2026-10-22 09:00 Vietnam time
+        _timeProvider = new FixedTimeProvider(new DateTimeOffset(2026, 10, 22, 2, 0, 0, TimeSpan.Zero));
+        _service = new ConsultationWorkspaceService(_db, _timeProvider);
+
+        SeedTestData();
+    }
+
+    public void Dispose()
+    {
+        _db.Dispose();
+    }
+
+    private void SeedTestData()
+    {
+        _db.Roles.AddRange(
+            new Role { Id = 1, Code = "PATIENT", Name = "Bệnh nhân" },
+            new Role { Id = 2, Code = "RECEPTION", Name = "Lễ tân" },
+            new Role { Id = 3, Code = "DOCTOR", Name = "Bác sĩ" },
+            new Role { Id = 4, Code = "DIAGNOSTIC_STAFF", Name = "Nhân viên CLS" },
+            new Role { Id = 5, Code = "PHARMACY_STAFF", Name = "Dược sĩ" },
+            new Role { Id = 6, Code = "HOSPITAL_ADMIN", Name = "Quản trị bệnh viện" },
+            new Role { Id = 7, Code = "SYSTEM_ADMIN", Name = "Quản trị hệ thống" });
+
+        _db.Permissions.AddRange(
+            new Permission { Id = 1, Code = "MEDICAL_RECORD_WRITE" },
+            new Permission { Id = 2, Code = "DIAGNOSTIC_ORDER" },
+            new Permission { Id = 3, Code = "PRESCRIPTION_ISSUE" },
+            new Permission { Id = 4, Code = "PAYMENT_VIEW" });
+
+        _db.RolePermissions.AddRange(
+            new RolePermission { RoleId = 3, PermissionId = 1 },
+            new RolePermission { RoleId = 3, PermissionId = 2 },
+            new RolePermission { RoleId = 3, PermissionId = 3 },
+            new RolePermission { RoleId = 3, PermissionId = 4 });
+
+        _db.Hospitals.AddRange(
+            new Hospital { Id = 1, HospitalCode = "HOSP-01", Name = "Bệnh viện Đa khoa MedFlow Sài Gòn", IsActive = true },
+            new Hospital { Id = 2, HospitalCode = "HOSP-02", Name = "Bệnh viện MedFlow Hà Nội", IsActive = true });
+
+        _db.Departments.AddRange(
+            new Department { Id = 1, HospitalId = 1, DepartmentCode = "DEPT-NOI", Name = "Khoa Nội Tổng Quát", IsActive = true },
+            new Department { Id = 2, HospitalId = 1, DepartmentCode = "DEPT-TIM", Name = "Khoa Tim Mạch", IsActive = true },
+            new Department { Id = 3, HospitalId = 2, DepartmentCode = "DEPT-HN", Name = "Khoa Nội Hà Nội", IsActive = true });
+
+        _db.Specialties.AddRange(
+            new Specialty { Id = 1, SpecialtyCode = "SPEC-NOI", Name = "Nội tổng quát", IsActive = true },
+            new Specialty { Id = 2, SpecialtyCode = "SPEC-TIM", Name = "Tim mạch", IsActive = true });
+
+        _db.Services.AddRange(
+            new Service
+            {
+                Id = 1,
+                HospitalId = 1,
+                DepartmentId = 1,
+                SpecialtyId = 1,
+                ServiceCode = "SVC-NOI-01",
+                Name = "Khám Nội tổng quát",
+                ServiceType = "CONSULTATION",
+                IsActive = true,
+            },
+            new Service
+            {
+                Id = 2,
+                HospitalId = 1,
+                DepartmentId = 2,
+                SpecialtyId = 2,
+                ServiceCode = "SVC-TIM-01",
+                Name = "Khám Tim mạch",
+                ServiceType = "CONSULTATION",
+                IsActive = true,
+            });
+
+        _db.HospitalRooms.AddRange(
+            new HospitalRoom
+            {
+                Id = 1,
+                HospitalId = 1,
+                DepartmentId = 1,
+                RoomCode = "RM-101",
+                Name = "Phòng khám Nội 101",
+                RoomType = "EXAMINATION",
+                Location = "Tầng 1 - Khu A",
+                Capacity = 20,
+                Status = "ACTIVE",
+            },
+            new HospitalRoom
+            {
+                Id = 2,
+                HospitalId = 1,
+                DepartmentId = 2,
+                RoomCode = "RM-102",
+                Name = "Phòng khám Tim mạch 102",
+                RoomType = "EXAMINATION",
+                Location = "Tầng 1 - Khu B",
+                Capacity = 20,
+                Status = "ACTIVE",
+            },
+            new HospitalRoom
+            {
+                Id = 3,
+                HospitalId = 2,
+                DepartmentId = 3,
+                RoomCode = "RM-201",
+                Name = "Phòng khám Nội Hà Nội 201",
+                RoomType = "EXAMINATION",
+                Location = "Tầng 2",
+                Capacity = 20,
+                Status = "ACTIVE",
+            });
+
+        // Users: 3 = Doctor 1 (Hospital 1), 4 = Doctor 2 (Hospital 1), 5 = Doctor 3 (Hospital 2), 6 = Reception
+        _db.Users.AddRange(
+            new User { Id = 3, Email = "doctor01@medflow.test", AccountStatus = AccountStatus.ACTIVE },
+            new User { Id = 4, Email = "doctor02@medflow.test", AccountStatus = AccountStatus.ACTIVE },
+            new User { Id = 5, Email = "doctor03@medflow.test", AccountStatus = AccountStatus.ACTIVE },
+            new User { Id = 6, Email = "reception@medflow.test", AccountStatus = AccountStatus.ACTIVE });
+
+        _db.UserRoles.AddRange(
+            new UserRole { UserId = 3, RoleId = 3 },
+            new UserRole { UserId = 4, RoleId = 3 },
+            new UserRole { UserId = 5, RoleId = 3 },
+            new UserRole { UserId = 6, RoleId = 2 });
+
+        _db.Staff.AddRange(
+            new Staff
+            {
+                Id = 1,
+                UserId = 3,
+                HospitalId = 1,
+                DepartmentId = 1,
+                StaffCode = "STF-001",
+                FullName = "Nguyễn Văn Minh",
+                Status = "ACTIVE",
+            },
+            new Staff
+            {
+                Id = 2,
+                UserId = 4,
+                HospitalId = 1,
+                DepartmentId = 2,
+                StaffCode = "STF-002",
+                FullName = "Trần Thị Lan",
+                Status = "ACTIVE",
+            },
+            new Staff
+            {
+                Id = 3,
+                UserId = 5,
+                HospitalId = 2,
+                DepartmentId = 3,
+                StaffCode = "STF-003",
+                FullName = "Lê Hoàng Nam",
+                Status = "ACTIVE",
+            });
+
+        _db.Doctors.AddRange(
+            new Doctor
+            {
+                Id = 1,
+                StaffId = 1,
+                HospitalId = 1,
+                SpecialtyId = 1,
+                DoctorCode = "DOC-001",
+                ProfessionalTitle = "BS.CKI",
+                IsActive = true,
+            },
+            new Doctor
+            {
+                Id = 2,
+                StaffId = 2,
+                HospitalId = 1,
+                SpecialtyId = 2,
+                DoctorCode = "DOC-002",
+                ProfessionalTitle = "ThS.BS",
+                IsActive = true,
+            },
+            new Doctor
+            {
+                Id = 3,
+                StaffId = 3,
+                HospitalId = 2,
+                SpecialtyId = 1,
+                DoctorCode = "DOC-003",
+                ProfessionalTitle = "BS",
+                IsActive = true,
+            });
+
+        _db.QueueServicePoints.AddRange(
+            new QueueServicePoint
+            {
+                Id = 1,
+                HospitalId = 1,
+                RoomId = 1,
+                DoctorId = 1,
+                ServiceId = 1,
+                PointType = "EXAMINATION_ROOM",
+                Name = "Buồng khám Nội 101",
+                IsActive = true,
+            },
+            new QueueServicePoint
+            {
+                Id = 2,
+                HospitalId = 1,
+                RoomId = 2,
+                DoctorId = 2,
+                ServiceId = 2,
+                PointType = "EXAMINATION_ROOM",
+                Name = "Buồng khám Tim mạch 102",
+                IsActive = true,
+            },
+            new QueueServicePoint
+            {
+                Id = 3,
+                HospitalId = 2,
+                RoomId = 3,
+                DoctorId = 3,
+                ServiceId = 1,
+                PointType = "EXAMINATION_ROOM",
+                Name = "Buồng khám Nội HN 201",
+                IsActive = true,
+            });
+
+        _db.Patients.AddRange(
+            new Patient
+            {
+                Id = 1,
+                PatientCode = "PAT-0001",
+                FullName = "Phạm Thị Hoa",
+                DateOfBirth = new DateOnly(1985, 5, 14),
+                Gender = "FEMALE",
+                Phone = "0901234567",
+                Email = "hoa.pham@medflow.test",
+                Address = "123 Nguyễn Thị Minh Khai, Quận 1, TP.HCM",
+                BloodType = "O+",
+                IdentificationHash = "secret-hash-001",
+                Status = "ACTIVE",
+            },
+            new Patient
+            {
+                Id = 2,
+                PatientCode = "PAT-0002",
+                FullName = "Đặng Quốc Bảo",
+                DateOfBirth = new DateOnly(1978, 8, 20),
+                Gender = "MALE",
+                Phone = "0902345678",
+                Email = "bao.dang@medflow.test",
+                Address = "456 Lê Lợi, Quận 1, TP.HCM",
+                BloodType = "A+",
+                IdentificationHash = "secret-hash-002",
+                Status = "ACTIVE",
+            });
+
+        _db.ExaminationSlots.AddRange(
+            new ExaminationSlot
+            {
+                Id = 1,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 10, 15, 10, 0, 0),
+                EndsAt = new DateTime(2026, 10, 15, 10, 30, 0),
+                Capacity = 1,
+                Status = "BOOKED",
+            },
+            new ExaminationSlot
+            {
+                Id = 11,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 1,
+                StartsAt = new DateTime(2026, 10, 22, 9, 0, 0),
+                EndsAt = new DateTime(2026, 10, 22, 9, 30, 0),
+                Capacity = 1,
+                Status = "BOOKED",
+            });
+
+        _db.Appointments.AddRange(
+            new Appointment
+            {
+                Id = 1,
+                AppointmentCode = "APT-202610-0001",
+                PatientId = 1,
+                SlotId = 1,
+                ReasonForVisit = "Đau thượng vị",
+                Status = "COMPLETED",
+            },
+            new Appointment
+            {
+                Id = 11,
+                AppointmentCode = "APT-202610-0011",
+                PatientId = 1,
+                SlotId = 11,
+                ReasonForVisit = "Đau vùng thượng vị kéo dài 3 ngày",
+                Status = "CHECKED_IN",
+            });
+
+        // Visit 1: Completed visit with finalized medical record, vitals JSONB, diagnosis, prescription
+        // Visit 2: Doctor 2's visit in Hospital 1
+        // Visit 11: CALLED visit owned by Doctor 1 ready to open workspace
+        // Visit 21: Doctor 3's visit in Hospital 2
+        _db.Visits.AddRange(
+            new Visit
+            {
+                Id = 1,
+                VisitCode = "VIS-202610-0001",
+                PatientId = 1,
+                AppointmentId = 1,
+                AssignedDoctorId = 1,
+                ExaminationRoomId = 1,
+                ReasonForVisit = "Đau thượng vị",
+                Status = "COMPLETED",
+                CheckedInAt = new DateTime(2026, 10, 15, 9, 45, 0),
+                CompletedAt = new DateTime(2026, 10, 15, 11, 25, 0),
+                CompletedByDoctorId = 1,
+            },
+            new Visit
+            {
+                Id = 2,
+                VisitCode = "VIS-202610-0002",
+                PatientId = 2,
+                AssignedDoctorId = 2,
+                ExaminationRoomId = 2,
+                ReasonForVisit = "Đau ngực không điển hình",
+                Status = "CALLED",
+                CheckedInAt = new DateTime(2026, 10, 22, 8, 30, 0),
+            },
+            new Visit
+            {
+                Id = 11,
+                VisitCode = "VIS-202610-0011",
+                PatientId = 1,
+                AppointmentId = 11,
+                AssignedDoctorId = 1,
+                ExaminationRoomId = 1,
+                ReasonForVisit = "Đau vùng thượng vị kéo dài 3 ngày",
+                Status = "CALLED",
+                CheckedInAt = new DateTime(2026, 10, 22, 8, 45, 0),
+            },
+            new Visit
+            {
+                Id = 21,
+                VisitCode = "VIS-202610-0021",
+                PatientId = 2,
+                AssignedDoctorId = 3,
+                ExaminationRoomId = 3,
+                ReasonForVisit = "Khám nội tổng quát",
+                Status = "CALLED",
+                CheckedInAt = new DateTime(2026, 10, 22, 8, 40, 0),
+            });
+
+        _db.QueueEntries.AddRange(
+            new QueueEntry
+            {
+                Id = 1,
+                VisitId = 1,
+                AppointmentId = 1,
+                ServicePointId = 1,
+                CurrentServicePointId = 1,
+                QueueDate = new DateOnly(2026, 10, 15),
+                QueueNumber = 1,
+                QueueType = "EXAMINATION",
+                Status = "COMPLETED",
+                PresenceStatus = "PRESENT",
+                ArrivalClass = "ON_TIME",
+                ManualPriority = "NORMAL",
+                StateVersion = 4,
+                ScheduledAt = new DateTime(2026, 10, 15, 10, 0, 0),
+                ArrivedAt = new DateTime(2026, 10, 15, 9, 45, 0),
+                ReadyAt = new DateTime(2026, 10, 15, 9, 46, 0),
+                CalledAt = new DateTime(2026, 10, 15, 10, 2, 0),
+                StartedAt = new DateTime(2026, 10, 15, 10, 5, 0),
+                CompletedAt = new DateTime(2026, 10, 15, 11, 25, 0),
+            },
+            new QueueEntry
+            {
+                Id = 2,
+                VisitId = 2,
+                ServicePointId = 2,
+                CurrentServicePointId = 2,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 1,
+                QueueType = "EXAMINATION",
+                Status = "CALLED",
+                PresenceStatus = "PRESENT",
+                ArrivalClass = "WALK_IN",
+                ManualPriority = "NORMAL",
+                StateVersion = 2,
+                ArrivedAt = new DateTime(2026, 10, 22, 8, 30, 0),
+                ReadyAt = new DateTime(2026, 10, 22, 8, 31, 0),
+                CalledAt = new DateTime(2026, 10, 22, 8, 55, 0),
+            },
+            new QueueEntry
+            {
+                Id = 11,
+                VisitId = 11,
+                AppointmentId = 11,
+                ServicePointId = 1,
+                CurrentServicePointId = 1,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 1,
+                QueueType = "EXAMINATION",
+                Status = "CALLED",
+                PresenceStatus = "PRESENT",
+                ArrivalClass = "ON_TIME",
+                ManualPriority = "NORMAL",
+                StateVersion = 2,
+                ScheduledAt = new DateTime(2026, 10, 22, 9, 0, 0),
+                ArrivedAt = new DateTime(2026, 10, 22, 8, 45, 0),
+                ReadyAt = new DateTime(2026, 10, 22, 8, 46, 0),
+                CalledAt = new DateTime(2026, 10, 22, 8, 58, 0),
+            },
+            new QueueEntry
+            {
+                Id = 21,
+                VisitId = 21,
+                ServicePointId = 3,
+                CurrentServicePointId = 3,
+                QueueDate = new DateOnly(2026, 10, 22),
+                QueueNumber = 1,
+                QueueType = "EXAMINATION",
+                Status = "CALLED",
+                PresenceStatus = "PRESENT",
+                ArrivalClass = "WALK_IN",
+                ManualPriority = "NORMAL",
+                StateVersion = 2,
+                ArrivedAt = new DateTime(2026, 10, 22, 8, 40, 0),
+                ReadyAt = new DateTime(2026, 10, 22, 8, 41, 0),
+                CalledAt = new DateTime(2026, 10, 22, 8, 50, 0),
+            });
+
+        _db.MedicalRecords.Add(new MedicalRecord
+        {
+            Id = 1,
+            VisitId = 1,
+            CreatedByDoctorId = 1,
+            Status = "FINALIZED",
+            FinalizedAt = new DateTime(2026, 10, 15, 11, 25, 0),
+        });
+
+        _db.MedicalRecordRevisions.Add(new MedicalRecordRevision
+        {
+            Id = 1,
+            MedicalRecordId = 1,
+            RevisionNo = 1,
+            PresentingComplaint = "Đau thượng vị",
+            SymptomHistory = "Triệu chứng mức độ nhẹ, theo dõi ngoại trú (demo).",
+            RelevantHistoryAllergies = "Chưa ghi nhận dị ứng (chỉ là dữ liệu demo, không phải xác nhận y tế).",
+            VitalSigns = """{"bp_systolic_mmhg":119,"bp_diastolic_mmhg":76,"pulse_bpm":73,"temperature_c":36.6,"spo2_percent":98,"height_cm":161,"weight_kg":56}""",
+            ClinicalFindings = "Khám lâm sàng ổn định (nội dung mô phỏng).",
+            ClinicalConclusion = "Viêm dạ dày mạn tính - kết quả minh họa.",
+            EditedByDoctorId = 1,
+            RecordedAt = new DateTime(2026, 10, 15, 11, 20, 0),
+            IsConfirmed = true,
+            AmendmentReason = null,
+        });
+
+        _db.VisitDiagnoses.Add(new VisitDiagnosis
+        {
+            Id = 1,
+            VisitId = 1,
+            Icd10CodeId = 1,
+            IsPrimary = true,
+            CodeSnapshot = "K29.5",
+            NameSnapshot = "Viêm dạ dày mạn tính",
+            CatalogVersion = "DEMO-ICD10",
+            ClinicalDiagnosis = "Viêm dạ dày mạn tính (demo)",
+            Status = "CONFIRMED",
+            ConfirmedAt = new DateTime(2026, 10, 15, 11, 20, 0),
+            RecordedByDoctorId = 1,
+            RecordedAt = new DateTime(2026, 10, 15, 11, 15, 0),
+        });
+
+        _db.Prescriptions.Add(new Prescription
+        {
+            Id = 1,
+            PrescriptionCode = "RX-202610-0001",
+            VisitId = 1,
+            PrescribingDoctorId = 1,
+            FulfillmentChoice = "HOSPITAL_PHARMACY",
+            Status = "DISPENSED",
+            IssuedAt = new DateTime(2026, 10, 15, 11, 22, 0),
+            CreatedAt = new DateTime(2026, 10, 15, 11, 20, 0),
+        });
+
+        _db.PrescriptionItems.AddRange(
+            new PrescriptionItem { Id = 1, PrescriptionId = 1, MedicineId = 1, PrescribedQuantity = 14 },
+            new PrescriptionItem { Id = 2, PrescriptionId = 1, MedicineId = 2, PrescribedQuantity = 20 });
+
+        _db.SaveChanges();
+    }
+
+    // -------------------------------------------------------------------------
+    // 1. Authorization & Access Control
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task GetAndOpenWorkspace_InvalidActorUserId_ThrowsUnauthorizedAccessException(long actorUserId)
+    {
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => _service.GetWorkspaceAsync(actorUserId, "VIS-202610-0011"));
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => _service.OpenWorkspaceAsync(actorUserId, "VIS-202610-0011"));
+    }
+
+    [Fact]
+    public async Task GetWorkspace_UnknownUser_ThrowsNotFoundException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(
+            () => _service.GetWorkspaceAsync(999, "VIS-202610-0011"));
+    }
+
+    [Fact]
+    public async Task GetWorkspace_InactiveUser_ThrowsForbiddenException()
+    {
+        var user = await _db.Users.FirstAsync(u => u.Id == 3);
+        user.AccountStatus = AccountStatus.INACTIVE;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetWorkspaceAsync(3, "VIS-202610-0011"));
+    }
+
+    [Fact]
+    public async Task GetWorkspace_LockedUser_ThrowsForbiddenException()
+    {
+        var user = await _db.Users.FirstAsync(u => u.Id == 3);
+        user.LockedUntil = _timeProvider.GetUtcNow().UtcDateTime.AddMinutes(15);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetWorkspaceAsync(3, "VIS-202610-0011"));
+    }
+
+    [Fact]
+    public async Task GetWorkspace_UserWithoutDoctorRole_ThrowsForbiddenException()
+    {
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetWorkspaceAsync(6, "VIS-202610-0011"));
+    }
+
+    [Fact]
+    public async Task GetWorkspace_InactiveStaffOrDoctor_ThrowsForbiddenException()
+    {
+        var doctor = await _db.Doctors.FirstAsync(d => d.Id == 1);
+        doctor.IsActive = false;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetWorkspaceAsync(3, "VIS-202610-0011"));
+    }
+
+    [Fact]
+    public async Task OpenWorkspace_MissingMedicalRecordWritePermission_ThrowsForbiddenException()
+    {
+        var writePerm = await _db.RolePermissions
+            .FirstAsync(rp => rp.RoleId == 3 && rp.PermissionId == 1);
+        _db.RolePermissions.Remove(writePerm);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011"));
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Ownership Isolation (Hospital & Doctor/ServicePoint)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetAndOpenWorkspace_CrossHospitalVisit_ThrowsForbiddenException()
+    {
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetWorkspaceAsync(3, "VIS-202610-0021"));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0021"));
+    }
+
+    [Fact]
+    public async Task GetAndOpenWorkspace_OtherDoctorVisitInSameHospital_ThrowsForbiddenException()
+    {
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetWorkspaceAsync(3, "VIS-202610-0002"));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0002"));
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. Input Validation & NotFound
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("0")]
+    [InlineData("-5")]
+    [InlineData("q-0")]
+    [InlineData("VIS-202610-0001-EXTRA-LONG-IDENTIFIER-OVER-40-CHARS")]
+    [InlineData("VIS<script>")]
+    public async Task GetAndOpenWorkspace_InvalidIdentifier_ThrowsValidationException(string invalidId)
+    {
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.GetWorkspaceAsync(3, invalidId));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.OpenWorkspaceAsync(3, invalidId));
+    }
+
+    [Fact]
+    public async Task OpenWorkspace_InvalidExpectedStateVersionOrNotes_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011", new OpenConsultationWorkspaceRequest(ExpectedStateVersion: 0)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011", new OpenConsultationWorkspaceRequest(Notes: new string('a', 301))));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011", new OpenConsultationWorkspaceRequest(Notes: "ghi chú <script>")));
+    }
+
+    [Fact]
+    public async Task GetAndOpenWorkspace_NonExistentVisitOrQueueEntry_ThrowsNotFoundException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(
+            () => _service.GetWorkspaceAsync(3, "VIS-202610-9999"));
+
+        await Assert.ThrowsAsync<NotFoundException>(
+            () => _service.OpenWorkspaceAsync(3, "q-999"));
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. OpenWorkspace State Transitions & Guards
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task OpenWorkspace_CalledVisitByVisitCode_TransitionsToInProgress_BootstrapsDraftMedicalRecordAndWritesAudit()
+    {
+        var result = await _service.OpenWorkspaceAsync(
+            actorUserId: 3,
+            visitIdOrCode: "VIS-202610-0011",
+            request: new OpenConsultationWorkspaceRequest(ExpectedStateVersion: 2, Notes: "Bắt đầu khám ngoại trú"),
+            ipAddress: "127.0.0.1");
+
+        Assert.Equal("OPENED", result.ActionOutcome);
+        Assert.Equal("IN_PROGRESS", result.WorkspaceState);
+        Assert.True(result.CanEditClinical);
+        Assert.Null(result.ReadOnlyReason);
+        Assert.Equal("VIS-202610-0011", result.Visit.VisitCode);
+        Assert.Equal("IN_PROGRESS", result.Visit.Status);
+        Assert.NotNull(result.Queue);
+        Assert.Equal("IN_PROGRESS", result.Queue!.Status);
+        Assert.Equal(3, result.Queue.StateVersion);
+        Assert.Equal("09:00", result.Queue.StartedAt);
+
+        Assert.NotNull(result.ClinicalContext.MedicalRecordId);
+        Assert.Equal("DRAFT", result.ClinicalContext.MedicalRecordStatus);
+        Assert.Equal(1, result.ClinicalContext.CurrentRevisionNo);
+        Assert.False(result.ClinicalContext.IsConfirmed);
+        Assert.Equal("Đau vùng thượng vị kéo dài 3 ngày", result.ClinicalContext.PresentingComplaint);
+
+        var updatedVisit = await _db.Visits.FirstAsync(v => v.Id == 11);
+        var updatedEntry = await _db.QueueEntries.FirstAsync(q => q.Id == 11);
+        Assert.Equal("IN_PROGRESS", updatedVisit.Status);
+        Assert.Equal("IN_PROGRESS", updatedEntry.Status);
+        Assert.Equal(3, updatedEntry.StateVersion);
+
+        var audit = await _db.AuditLogs.SingleOrDefaultAsync(a =>
+            a.Action == "CONSULTATION_WORKSPACE_OPENED" &&
+            a.EntityId == "VIS-202610-0011");
+        Assert.NotNull(audit);
+        Assert.Equal(3, audit!.ActorUserId);
+        Assert.Equal(1, audit.HospitalId);
+        Assert.Equal("Bắt đầu khám ngoại trú", audit.Reason);
+    }
+
+    [Fact]
+    public async Task OpenWorkspace_CalledVisitByQueueEntryId_TransitionsToInProgressAndbecomesIdempotentOnSecondCall()
+    {
+        var firstOpen = await _service.OpenWorkspaceAsync(3, "q-011");
+        Assert.Equal("OPENED", firstOpen.ActionOutcome);
+        Assert.Equal(3, firstOpen.Queue!.StateVersion);
+
+        var secondOpen = await _service.OpenWorkspaceAsync(3, "11", new OpenConsultationWorkspaceRequest(ExpectedStateVersion: 3));
+        Assert.Equal("ALREADY_IN_PROGRESS", secondOpen.ActionOutcome);
+        Assert.Equal("IN_PROGRESS", secondOpen.WorkspaceState);
+        Assert.True(secondOpen.CanEditClinical);
+        Assert.Equal(3, secondOpen.Queue!.StateVersion);
+
+        var auditCount = await _db.AuditLogs.CountAsync(a => a.Action == "CONSULTATION_WORKSPACE_OPENED");
+        Assert.Equal(1, auditCount);
+    }
+
+    [Theory]
+    [InlineData("WAITING")]
+    [InlineData("READY")]
+    [InlineData("SKIPPED")]
+    public async Task OpenWorkspace_WhenQueueEntryNotCalled_ThrowsConflictException(string queueStatus)
+    {
+        var entry = await _db.QueueEntries.FirstAsync(q => q.Id == 11);
+        entry.Status = queueStatus;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011"));
+    }
+
+    [Fact]
+    public async Task OpenWorkspace_WhenAnotherEntryAlreadyInProgressInSameServicePoint_ThrowsConflictException()
+    {
+        _db.Visits.Add(new Visit
+        {
+            Id = 12,
+            VisitCode = "VIS-202610-0012",
+            PatientId = 2,
+            AssignedDoctorId = 1,
+            ExaminationRoomId = 1,
+            Status = "IN_PROGRESS",
+            CheckedInAt = new DateTime(2026, 10, 22, 8, 20, 0),
+        });
+        _db.QueueEntries.Add(new QueueEntry
+        {
+            Id = 12,
+            VisitId = 12,
+            ServicePointId = 1,
+            CurrentServicePointId = 1,
+            QueueDate = new DateOnly(2026, 10, 22),
+            QueueNumber = 2,
+            QueueType = "EXAMINATION",
+            Status = "IN_PROGRESS",
+            PresenceStatus = "PRESENT",
+            StartedAt = new DateTime(2026, 10, 22, 8, 50, 0),
+        });
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011"));
+    }
+
+    [Fact]
+    public async Task OpenWorkspace_ReturnConsultationWithPendingMandatoryDiagnostic_ThrowsConflictException()
+    {
+        var entry = await _db.QueueEntries.FirstAsync(q => q.Id == 11);
+        entry.QueueType = "RETURN_CONSULTATION";
+
+        _db.QueueEntries.Add(new QueueEntry
+        {
+            Id = 110,
+            VisitId = 11,
+            QueueDate = new DateOnly(2026, 10, 22),
+            QueueNumber = 5,
+            QueueType = "DIAGNOSTIC",
+            Status = "IN_PROGRESS",
+            PresenceStatus = "PRESENT",
+        });
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011"));
+    }
+
+    [Theory]
+    [InlineData("NOT_ARRIVED")]
+    [InlineData("LEFT")]
+    public async Task OpenWorkspace_WhenPatientNotPresent_ThrowsConflictException(string presenceStatus)
+    {
+        var entry = await _db.QueueEntries.FirstAsync(q => q.Id == 11);
+        entry.PresenceStatus = presenceStatus;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011"));
+    }
+
+    [Fact]
+    public async Task OpenWorkspace_WhenRoomInMaintenanceOrServicePointInactive_ThrowsConflictException()
+    {
+        var room = await _db.HospitalRooms.FirstAsync(r => r.Id == 1);
+        room.Status = "MAINTENANCE";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011"));
+
+        room.Status = "ACTIVE";
+        var sp = await _db.QueueServicePoints.FirstAsync(s => s.Id == 1);
+        sp.IsActive = false;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011"));
+    }
+
+    [Theory]
+    [InlineData("COMPLETED")]
+    [InlineData("CANCELLED")]
+    [InlineData("NO_SHOW")]
+    public async Task OpenWorkspace_TerminalVisitStatus_ThrowsConflictException(string terminalStatus)
+    {
+        var visit = await _db.Visits.FirstAsync(v => v.Id == 11);
+        visit.Status = terminalStatus;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011"));
+    }
+
+    [Fact]
+    public async Task OpenWorkspace_StateVersionMismatch_ThrowsConflictException()
+    {
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.OpenWorkspaceAsync(
+                3,
+                "VIS-202610-0011",
+                new OpenConsultationWorkspaceRequest(ExpectedStateVersion: 99)));
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. GetWorkspace Clinical Context Projection & AllowedActions
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetWorkspace_SeededCompletedVisit_ReturnsVitalSignsDiagnosesPrescriptionsAndReadOnlyActions()
+    {
+        var result = await _service.GetWorkspaceAsync(3, "VIS-202610-0001");
+
+        Assert.Equal("VIEWED", result.ActionOutcome);
+        Assert.Equal("COMPLETED", result.WorkspaceState);
+        Assert.False(result.CanEditClinical);
+        Assert.NotNull(result.ReadOnlyReason);
+
+        Assert.Equal("VIS-202610-0001", result.Visit.VisitCode);
+        Assert.Equal("PAT-0001", result.Patient.PatientCode);
+        Assert.Equal("Phạm Thị Hoa", result.Patient.FullName);
+
+        var vitals = result.ClinicalContext.VitalSigns;
+        Assert.Equal(119, vitals.BpSystolicMmhg);
+        Assert.Equal(76, vitals.BpDiastolicMmhg);
+        Assert.Equal("119/76 mmHg", vitals.BloodPressureLabel);
+        Assert.Equal(73, vitals.PulseBpm);
+        Assert.Equal(36.6m, vitals.TemperatureC);
+        Assert.Equal(98, vitals.Spo2Percent);
+        Assert.Equal(161m, vitals.HeightCm);
+        Assert.Equal(56m, vitals.WeightKg);
+        Assert.Equal(21.6m, vitals.Bmi);
+
+        var diagnosis = Assert.Single(result.ClinicalContext.Diagnoses);
+        Assert.Equal("K29.5", diagnosis.Code);
+        Assert.Equal("Viêm dạ dày mạn tính", diagnosis.Name);
+        Assert.True(diagnosis.IsPrimary);
+        Assert.Equal("CONFIRMED", diagnosis.Status);
+
+        Assert.Equal(1, result.ClinicalContext.PrescriptionSummary.TotalPrescriptions);
+        Assert.Equal("RX-202610-0001", result.ClinicalContext.PrescriptionSummary.LatestPrescriptionCode);
+        Assert.Equal(2, result.ClinicalContext.PrescriptionSummary.ItemCount);
+
+        var historyAction = Assert.Single(result.AllowedActions, a => a.Id == "view-medical-history");
+        Assert.True(historyAction.Enabled);
+
+        var editActions = result.AllowedActions.Where(a => a.Id != "view-medical-history");
+        Assert.All(editActions, a =>
+        {
+            Assert.False(a.Enabled);
+            Assert.False(string.IsNullOrWhiteSpace(a.DisabledReason));
+        });
+    }
+}
