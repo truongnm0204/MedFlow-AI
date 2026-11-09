@@ -1,0 +1,25 @@
+namespace MedFlow.Application.DTOs.Visits;
+
+public sealed record QueueTurnActionResponseDto(
+    string QueueEntryId,
+    string TicketNo,
+    int QueueNumber,
+    string VisitCode,
+    string PatientCode,
+    string PatientName,
+    string ServicePointId,
+    string Action,
+    string PreviousStatus,
+    string CurrentStatus,
+    string PresenceStatus,
+    string ArrivalClass,
+    int PreviousServingOrder,
+    int ServingOrder,
+    bool IsAppointmentProtected,
+    string? BlockedReason,
+    string Reason,
+    string? Notes,
+    int PreviousStateVersion,
+    int StateVersion,
+    DateTime UpdatedAtUtc,
+    ExaminationQueueEntryDto UpdatedEntry);

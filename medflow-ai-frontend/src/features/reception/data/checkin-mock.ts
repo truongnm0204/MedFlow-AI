@@ -1,0 +1,86 @@
+import type {
+  CheckInPriority,
+  CheckInSuccessResult,
+  ScheduledCheckInAppointment,
+} from '../types/checkin.types';
+
+export const SCHEDULED_CHECKIN_APPOINTMENTS_MOCK: ScheduledCheckInAppointment[] = [
+  {
+    id: 'ap-001',
+    appointmentCode: 'APT-2024-0012',
+    patientCode: 'BN-2024-0018',
+    patientName: 'Đỗ Gia Huy',
+    gender: 'MALE',
+    birthYear: 1990,
+    identityCard: '001090012345',
+    phoneNumber: '0912345678',
+    healthInsuranceNumber: 'DN4010123456789',
+    doctorName: 'BS. CKII Trần Khánh',
+    department: 'Nội tổng quát',
+    roomName: 'P.102',
+    time: '09:00',
+    date: '2026-10-30',
+    status: 'BOOKED',
+  },
+  {
+    id: 'ap-002',
+    appointmentCode: 'APT-2024-0015',
+    patientCode: 'BN-2024-0025',
+    patientName: 'Ngô Thị Lan',
+    gender: 'FEMALE',
+    birthYear: 1975,
+    identityCard: '001175023456',
+    phoneNumber: '0987654321',
+    healthInsuranceNumber: 'HT2010234567890',
+    doctorName: 'BS. CKII Trần Khánh',
+    department: 'Nội tổng quát',
+    roomName: 'P.102',
+    time: '09:15',
+    date: '2026-10-30',
+    status: 'BOOKED',
+  },
+  {
+    id: 'ap-003',
+    appointmentCode: 'APT-2024-0019',
+    patientCode: 'BN-2024-0038',
+    patientName: 'Bùi Quốc Nam',
+    gender: 'MALE',
+    birthYear: 1958,
+    identityCard: '001058034567',
+    phoneNumber: '0903456789',
+    doctorName: 'BS. Lê Hạnh',
+    department: 'Da liễu',
+    roomName: 'P.301',
+    time: '09:30',
+    date: '2026-10-30',
+    status: 'BOOKED',
+  },
+];
+
+export function createMockCheckInResult(
+  appointment: ScheduledCheckInAppointment,
+  priority: CheckInPriority = 'NORMAL',
+): CheckInSuccessResult {
+  return {
+    visitId: `VIS-${appointment.appointmentCode.replace('APT-', '')}`,
+    ticketNo: appointment.id === 'ap-001' ? 'A018' : 'A022',
+    patientName: appointment.patientName,
+    patientCode: appointment.patientCode,
+    roomName: appointment.roomName,
+    departmentName: appointment.department,
+    doctorName: appointment.doctorName,
+    checkedInAt: new Date().toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
+    priority,
+    queueNumber: 4,
+    waitingCountBefore: 3,
+    estimatedWaitMinutes: 15,
+    nextStepInstructions: [
+      `Di chuyển đến trước ${appointment.roomName} (${appointment.department} - Tầng 1).`,
+      'Theo dõi màn hình điện tử và lắng nghe loa gọi số thứ tự tiếp nhận.',
+      'Chuẩn bị sẵn thẻ CCCD/BHYT bản gốc trước khi vào phòng khám.',
+    ],
+  };
+}

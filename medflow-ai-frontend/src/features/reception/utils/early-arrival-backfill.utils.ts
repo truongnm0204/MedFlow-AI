@@ -160,11 +160,9 @@ const STATUS_BUCKET_RANK: Record<ExaminationQueueEntryDto['status'], number> = {
 };
 
 const PRIORITY_RANK: Record<ExaminationQueuePriority, number> = {
-  URGENT: 0,
-  ELDERLY: 1,
-  PREGNANT: 2,
-  RETURN_RESULT: 3,
-  NORMAL: 4,
+  ELDERLY: 0,
+  PREGNANT: 0,
+  NORMAL: 1,
 };
 
 function getBackfillFairnessTier(entry: ExaminationQueueEntryDto): number {
