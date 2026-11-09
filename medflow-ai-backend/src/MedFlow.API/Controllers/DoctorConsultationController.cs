@@ -53,6 +53,32 @@ public sealed class DoctorConsultationController : ControllerBase
         CancellationToken ct = default)
         => Ok(await _consultationWorkspaceService.OpenWorkspaceAsync(GetUserId(), idOrCode, request, GetIp(), ct));
 
+    /// <summary>
+    /// POST/PUT /api/v1/doctor/consultation/{idOrCode}/clinical-examination — Ghi nhận triệu chứng, sinh hiệu và khám lâm sàng (UC33 / #110).
+    /// </summary>
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/clinical-examination")]
+    [HttpPut("/api/v1/doctor/consultation/{idOrCode}/clinical-examination")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/clinical-examination")]
+    [HttpPut("/api/v1/doctor/visits/{idOrCode}/clinical-examination")]
+    [HttpPost("/api/v1/visits/{idOrCode}/clinical-examination")]
+    [HttpPut("/api/v1/visits/{idOrCode}/clinical-examination")]
+    [ProducesResponseType<ConsultationWorkspaceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ConsultationWorkspaceResponseDto>> RecordClinicalExamination(
+        string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] RecordClinicalExaminationRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.RecordClinicalExaminationAsync(
+            GetUserId(),
+            idOrCode,
+            request!,
+            GetIp(),
+            ct));
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
