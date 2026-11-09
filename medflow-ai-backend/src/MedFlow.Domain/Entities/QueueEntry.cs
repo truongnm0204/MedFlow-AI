@@ -22,4 +22,6 @@ public class QueueEntry
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public string? BlockedReason { get; set; }
+    public DateTime? BackfilledAt { get; set; }
+    public string? BackfillReason { get; set; }
 }

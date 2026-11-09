@@ -190,8 +190,9 @@ public sealed class VisitRoomAssignmentEndpointTests : AuthTestBase
             "VIS-202610-0100",
             new AssignExaminationRoomRequest(
                 RoomCode: "RM-002",
-                Priority: "URGENT",
-                Reason: "Điều phối vào phòng khám Tiêu hóa 102"));
+                Priority: "PREGNANT",
+                Reason: "Điều phối vào phòng khám Tiêu hóa 102",
+                PriorityVerificationConfirmed: true));
         var putOkResp = await client.SendAsync(putOkReq);
         Assert.Equal(HttpStatusCode.OK, putOkResp.StatusCode);
         var assignedDto = await putOkResp.Content.ReadFromJsonAsync<AssignExaminationRoomResponseDto>();
@@ -199,7 +200,7 @@ public sealed class VisitRoomAssignmentEndpointTests : AuthTestBase
         Assert.Equal(2L, assignedDto.ExaminationRoomId);
         Assert.Equal("RM-002", assignedDto.RoomCode);
         Assert.Equal("WAITING", assignedDto.VisitStatus);
-        Assert.Equal("URGENT", assignedDto.Priority);
+        Assert.Equal("PREGNANT", assignedDto.Priority);
 
         // 3. NotFoundException -> 404 ProblemDetails
         using var notFoundReq = AuthedPutRoom(
@@ -377,8 +378,9 @@ public sealed class VisitRoomAssignmentEndpointTests : AuthTestBase
                 testVisitCode,
                 new AssignExaminationRoomRequest(
                     RoomCode: "RM-002",
-                    Priority: "URGENT",
-                    Reason: "Điều phối vào phòng khám Tiêu hóa 102"));
+                    Priority: "PREGNANT",
+                    Reason: "Điều phối vào phòng khám Tiêu hóa 102",
+                    PriorityVerificationConfirmed: true));
             var assignResp = await Client.SendAsync(assignReq);
             Assert.Equal(HttpStatusCode.OK, assignResp.StatusCode);
 
@@ -389,7 +391,7 @@ public sealed class VisitRoomAssignmentEndpointTests : AuthTestBase
             Assert.Equal(2L, assignedDto.ExaminationRoomId);
             Assert.Equal("RM-002", assignedDto.RoomCode);
             Assert.Equal("WAITING", assignedDto.VisitStatus);
-            Assert.Equal("URGENT", assignedDto.Priority);
+            Assert.Equal("PREGNANT", assignedDto.Priority);
             Assert.Equal(3L, assignedDto.CheckedInByStaffId);
             Assert.NotNull(assignedDto.QueueEntryId);
 
