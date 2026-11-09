@@ -550,4 +550,51 @@ public sealed class VisitRoomAssignmentServiceTests : IDisposable
         Assert.True(rm006.IsCompatible);
         Assert.False(rm006.IsAvailable);
     }
+
+    [Fact]
+    public async Task AssignExaminationRoomAsync_CheckInAfterGrace_PersistsLateArrivalClass()
+    {
+        var visit = await _db.Visits.SingleAsync(v => v.Id == 100);
+        visit.CheckedInAt = new DateTime(2026, 10, 27, 9, 20, 0);
+        await _db.SaveChangesAsync();
+
+        var request = new AssignExaminationRoomRequest(
+            ExaminationRoomId: 1,
+            Priority: null,
+            Reason: "Điều phối bệnh nhân đến trễ sau thời gian ân hạn",
+            PriorityVerificationConfirmed: false);
+
+        await _service.AssignExaminationRoomAsync(
+            actorUserId: 5,
+            visitIdOrCode: "VIS-202610-0100",
+            request: request,
+            ipAddress: "127.0.0.1");
+
+        var updatedQueue = await _db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == 500);
+        Assert.Equal("LATE", updatedQueue.ArrivalClass);
+    }
+
+    [Fact]
+    public async Task AssignExaminationRoomAsync_ExistingCancelledReservation_CreatesNewQueueEntryWithoutReusingCancelledNumber()
+    {
+        var entry500 = await _db.QueueEntries.SingleAsync(q => q.Id == 500);
+        entry500.Status = "CANCELLED";
+        entry500.QueueDate = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
+        await _db.SaveChangesAsync();
+
+        var result = await _service.AssignExaminationRoomAsync(
+            5,
+            "VIS-202610-0100",
+            new AssignExaminationRoomRequest(ExaminationRoomId: 1),
+            "127.0.0.1");
+
+        Assert.NotNull(result.QueueEntryId);
+        Assert.NotEqual(500L, result.QueueEntryId.Value);
+        Assert.Equal("WAITING", result.QueueStatus);
+        Assert.Equal(4, result.QueueNumber);
+
+        var cancelledEntryInDb = await _db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == 500);
+        Assert.Equal("CANCELLED", cancelledEntryInDb.Status);
+        Assert.Equal(3, cancelledEntryInDb.QueueNumber);
+    }
 }

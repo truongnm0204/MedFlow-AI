@@ -57,30 +57,8 @@ public sealed partial class ExaminationQueueService
             throw new ValidationException("Điểm phục vụ / phòng khám là bắt buộc.");
         }
 
-        var reason = request.Reason?.Trim();
-        if (string.IsNullOrEmpty(reason) || reason.Length < 5 || reason.Length > 300)
-        {
-            throw new ValidationException("Lý do điều phối phải từ 5 đến 300 ký tự.");
-        }
-
-        if (reason.Contains('<') || reason.Contains('>'))
-        {
-            throw new ValidationException("Lý do điều phối không được chứa ký tự < hoặc >.");
-        }
-
-        var notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
-        if (notes is not null)
-        {
-            if (notes.Length > 300)
-            {
-                throw new ValidationException("Ghi chú tối đa 300 ký tự.");
-            }
-
-            if (notes.Contains('<') || notes.Contains('>'))
-            {
-                throw new ValidationException("Ghi chú không được chứa ký tự < hoặc >.");
-            }
-        }
+        var reason = ValidateCoordinationReason(request.Reason);
+        var notes = ValidateCoordinationNotes(request.Notes);
 
         if (actionMode == "SAFE_BACKFILL" && !request.AcknowledgeAppointmentProtection)
         {
@@ -89,49 +67,11 @@ public sealed partial class ExaminationQueueService
 
         await using var tx = await _db.BeginTransactionAsync(ct);
 
-        QueueEntry? target = null;
-        if (numericId.HasValue)
-        {
-            target = await _db.QueueEntries.FirstOrDefaultAsync(q => q.Id == numericId.Value, ct);
-        }
-        else if (!string.IsNullOrEmpty(code))
-        {
-            var visit = await _db.Visits
-                .AsNoTracking()
-                .FirstOrDefaultAsync(v => v.VisitCode == code, ct);
-            if (visit is not null)
-            {
-                target = await _db.QueueEntries
-                    .Where(q => q.VisitId == visit.Id && (q.QueueType == null || q.QueueType == "EXAMINATION"))
-                    .OrderByDescending(q => q.Id)
-                    .FirstOrDefaultAsync(ct);
-            }
-        }
-
-        if (target is null)
-        {
-            throw new NotFoundException("Không tìm thấy lượt xếp hàng khám.");
-        }
-
+        var target = await FindExaminationQueueEntryForActionAsync(numericId, code, ct);
         var board = await BuildQueueBoardAsync(actorUserId, target.QueueDate, ct);
-
-        QueueBoardBucket? bucket = null;
-        QueueBoardEntry? entry = null;
-        foreach (var b in board.Buckets)
-        {
-            var found = b.Entries.FirstOrDefault(e => e.QueueEntry?.Id == target.Id);
-            if (found is not null)
-            {
-                bucket = b;
-                entry = found;
-                break;
-            }
-        }
-
-        if (bucket is null || entry is null)
-        {
-            throw new NotFoundException("Không tìm thấy lượt xếp hàng khám.");
-        }
+        var before = FindBoardEntry(board, target.Id)
+            ?? throw new NotFoundException("Không tìm thấy lượt xếp hàng khám.");
+        var (bucket, entry) = before;
 
         if (board.EffectiveQueueDate != DateOnly.FromDateTime(board.NowLocal))
         {
@@ -234,21 +174,9 @@ public sealed partial class ExaminationQueueService
         await _db.SaveChangesAsync(ct);
 
         var afterBoard = await BuildQueueBoardAsync(actorUserId, target.QueueDate, ct);
-        QueueBoardEntry? afterEntry = null;
-        foreach (var b in afterBoard.Buckets)
-        {
-            var found = b.Entries.FirstOrDefault(e => e.QueueEntry?.Id == target.Id);
-            if (found is not null)
-            {
-                afterEntry = found;
-                break;
-            }
-        }
-
-        if (afterEntry is null)
-        {
-            throw new ConflictException("Không thể tải lại hàng đợi sau khi điều phối.");
-        }
+        var after = FindBoardEntry(afterBoard, target.Id)
+            ?? throw new ConflictException("Không thể tải lại hàng đợi sau khi điều phối.");
+        var afterEntry = after.Entry;
 
         await tx.CommitAsync(ct);
 
