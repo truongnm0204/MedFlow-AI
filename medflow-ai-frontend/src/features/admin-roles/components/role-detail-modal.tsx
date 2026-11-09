@@ -10,9 +10,15 @@ interface RoleDetailModalProps {
   role: RoleItem | null;
   onClose: () => void;
   onAssignPermissions?: (role: RoleItem) => void;
+  onEditRole?: (role: RoleItem) => void;
 }
 
-export function RoleDetailModal({ role, onClose, onAssignPermissions }: RoleDetailModalProps) {
+export function RoleDetailModal({
+  role,
+  onClose,
+  onAssignPermissions,
+  onEditRole,
+}: RoleDetailModalProps) {
   if (!role) return null;
 
   return (
@@ -90,6 +96,11 @@ export function RoleDetailModal({ role, onClose, onAssignPermissions }: RoleDeta
           <Button type="button" variant="secondary" onClick={onClose}>
             Đóng
           </Button>
+          {onEditRole && (
+            <Button type="button" variant="secondary" onClick={() => onEditRole(role)}>
+              Chỉnh sửa vai trò
+            </Button>
+          )}
           {onAssignPermissions && (
             <Button type="button" onClick={() => onAssignPermissions(role)}>
               Phân quyền vai trò

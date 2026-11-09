@@ -12,6 +12,7 @@ import {
   assignRolePermissionsApi,
   createRoleApi,
   fetchRolesPermissionsCatalogApi,
+  updateRoleApi,
 } from '../api/role-permissions.api';
 import { getMockRolesCatalog } from '../data/role-mock-data';
 import type {
@@ -19,6 +20,7 @@ import type {
   RoleItem,
   RolesPermissionsCatalogDto,
   UpdateRolePermissionsRequest,
+  UpdateRoleRequest,
 } from '../types/role.types';
 
 export const ROLE_PERMISSIONS_QUERY_KEY = ['admin', 'roles-permissions'] as const;
@@ -104,6 +106,41 @@ export function useCreateRole(): UseMutationResult<RoleItem, Error, CreateRoleRe
               customRoles: roles.filter((role) => !role.isSystemRole).length,
               totalAssignedAccounts: roles.reduce((sum, role) => sum + role.assignedUsersCount, 0),
               totalPermissions: base.permissions.length,
+            },
+          };
+        });
+      },
+    },
+    queryClient,
+  );
+}
+
+export function useUpdateRole(): UseMutationResult<RoleItem, Error, UpdateRoleRequest> {
+  const contextQueryClient = useContext(QueryClientContext);
+  const queryClient = contextQueryClient ?? fallbackQueryClient;
+
+  return useMutation(
+    {
+      mutationFn: (payload) => updateRoleApi(payload),
+      onSuccess: (updatedRole) => {
+        queryClient.setQueryData<RolesPermissionsCatalogDto>(ROLE_PERMISSIONS_QUERY_KEY, (prev) => {
+          const base = prev ?? getMockRolesCatalog();
+          const roles = base.roles.map((role) =>
+            role.id === updatedRole.id ||
+            (updatedRole.roleId !== undefined && role.roleId === updatedRole.roleId)
+              ? updatedRole
+              : role,
+          );
+          const activeRoles = roles.filter((role) => role.status === 'ACTIVE').length;
+          const inactiveRoles = roles.length - activeRoles;
+          return {
+            ...base,
+            roles,
+            metrics: {
+              ...base.metrics,
+              totalRoles: roles.length,
+              activeRoles,
+              inactiveRoles,
             },
           };
         });

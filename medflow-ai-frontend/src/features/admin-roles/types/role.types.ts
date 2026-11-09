@@ -74,6 +74,18 @@ export interface CreateRoleRequest {
   note?: string;
 }
 
+export interface UpdateRoleRequest {
+  roleId: string;
+  code?: string;
+  name: string;
+  description: string;
+  scope: RoleScope;
+  status: RoleStatus;
+  segregationNote: string;
+  permissionCodes?: string[];
+  note?: string;
+}
+
 export interface AssignRolePermissionsResponseDto {
   role: RoleItem;
   updatedAt: string;
