@@ -43,6 +43,11 @@ public interface IApplicationDbContext
     DbSet<MedicalRecord> MedicalRecords => throw new NotSupportedException("MedicalRecords DbSet is not configured in this test context.");
     DbSet<MedicalRecordRevision> MedicalRecordRevisions => throw new NotSupportedException("MedicalRecordRevisions DbSet is not configured in this test context.");
     DbSet<VisitDiagnosis> VisitDiagnoses => throw new NotSupportedException("VisitDiagnoses DbSet is not configured in this test context.");
+    DbSet<Icd10Code> Icd10Codes => throw new NotSupportedException("Icd10Codes DbSet is not configured in this test context.");
+    DbSet<ClinicalAddendum> ClinicalAddenda => throw new NotSupportedException("ClinicalAddenda DbSet is not configured in this test context.");
+    DbSet<DiagnosticOrder> DiagnosticOrders => throw new NotSupportedException("DiagnosticOrders DbSet is not configured in this test context.");
+    DbSet<DiagnosticResult> DiagnosticResults => throw new NotSupportedException("DiagnosticResults DbSet is not configured in this test context.");
+    DbSet<DiagnosticResultVersion> DiagnosticResultVersions => throw new NotSupportedException("DiagnosticResultVersions DbSet is not configured in this test context.");
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);
