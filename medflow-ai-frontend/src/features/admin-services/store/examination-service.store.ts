@@ -1,7 +1,12 @@
 import { create } from 'zustand';
 
 import { INITIAL_SERVICES } from '../data/examination-services-data';
-import type { ColumnKey, ExaminationService } from '../types/examination-service.types';
+import type {
+  ColumnKey,
+  ExaminationService,
+  PriceHistoryEntry,
+  UpdateServicePricePayload,
+} from '../types/examination-service.types';
 
 const DEFAULT_VISIBLE_COLUMNS: Record<ColumnKey, boolean> = {
   code: true,
@@ -26,6 +31,9 @@ interface ExaminationServiceState {
   selectedIds: string[];
   visibleColumns: Record<ColumnKey, boolean>;
   priceHistoryService: ExaminationService | null;
+  updatePriceService: ExaminationService | null;
+  setUpdatePriceService: (service: ExaminationService | null) => void;
+  updateServicePrice: (id: string, payload: UpdateServicePricePayload) => void;
   isColumnModalOpen: boolean;
 
   setSearchQuery: (query: string) => void;
@@ -65,6 +73,38 @@ export const useExaminationServiceStore = create<ExaminationServiceState>((set) 
   priceHistoryService: null,
   isColumnModalOpen: false,
 
+  updatePriceService: null,
+  setUpdatePriceService: (service) => set({ updatePriceService: service }),
+  updateServicePrice: (id, payload) =>
+    set((state) => ({
+      services: state.services.map((item) => {
+        if (item.id !== id && item.code !== id) return item;
+        const currentHistory: PriceHistoryEntry[] = item.priceHistory ?? [
+          {
+            date: item.effectiveDate ?? '2026-01-01',
+            price: item.price,
+            decisionNumber: item.decisionNumber ?? 'QĐ-142/BV-KH',
+            note: 'Biểu phí hiện hành',
+            appliedBy: 'Hội đồng Giá Bệnh viện',
+          },
+        ];
+        const newHistoryEntry: PriceHistoryEntry = {
+          date: payload.effectiveDate,
+          price: payload.price,
+          decisionNumber: payload.decisionNumber,
+          note: payload.note || `Điều chỉnh giá theo QĐ ${payload.decisionNumber}`,
+          appliedBy: payload.appliedBy,
+        };
+        return {
+          ...item,
+          price: payload.price,
+          effectiveDate: payload.effectiveDate,
+          decisionNumber: payload.decisionNumber,
+          priceHistory: [newHistoryEntry, ...currentHistory],
+        };
+      }),
+      updatePriceService: null,
+    })),
   setSearchQuery: (query) => set({ searchQuery: query, page: 1 }),
   setCategoryFilter: (category) => set({ categoryFilter: category, page: 1 }),
   setDepartmentFilter: (department) => set({ departmentFilter: department, page: 1 }),

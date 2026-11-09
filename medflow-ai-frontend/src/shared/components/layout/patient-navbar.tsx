@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Bell, Menu, Phone, X } from 'lucide-react';
+import { Menu, Phone, X } from 'lucide-react';
+
+import { NotificationBellPopover } from '@/features/appointment/components/notification-bell-popover';
 import { MedflowLogo } from './medflow-logo';
 import { PATIENT_NAV_LINKS, isNavLinkActive } from './nav-links';
 import { UserMenu, type UserMenuUser } from './user-menu';
@@ -12,7 +14,11 @@ interface PatientNavbarProps {
 }
 
 /** Header bệnh nhân đã đăng nhập theo Figma `10:106`. */
-export function PatientNavbar({ user, notificationCount = 0, onLogout }: PatientNavbarProps) {
+export function PatientNavbar({
+  user,
+  notificationCount: _notificationCount = 0,
+  onLogout,
+}: PatientNavbarProps) {
   const [open, setOpen] = useState(false);
   const { pathname } = useLocation();
 
@@ -50,18 +56,7 @@ export function PatientNavbar({ user, notificationCount = 0, onLogout }: Patient
             1900 6868
           </a>
 
-          <button
-            type="button"
-            className="relative rounded-lg border border-border bg-canvas p-2 text-sub transition-colors hover:bg-slate-100"
-            aria-label="Thông báo"
-          >
-            <Bell className="h-4 w-4" aria-hidden="true" />
-            {notificationCount > 0 && (
-              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold text-white">
-                {notificationCount}
-              </span>
-            )}
-          </button>
+          <NotificationBellPopover />
 
           <UserMenu user={user ?? null} onLogout={onLogout} />
         </div>

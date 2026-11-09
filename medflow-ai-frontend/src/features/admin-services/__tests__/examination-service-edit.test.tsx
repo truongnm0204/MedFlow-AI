@@ -134,4 +134,14 @@ describe('ServiceEditModal (SCR-ADM-ESV-03)', () => {
 
     expect(useExaminationServiceStore.getState().priceHistoryService?.id).toBe('EX-1-01');
   });
+
+  it('opens update price modal when clicking Điều chỉnh giá button', () => {
+    renderModal('EX-1-01');
+
+    const updatePriceBtn = screen.getByRole('button', { name: /Điều chỉnh giá/i });
+    fireEvent.click(updatePriceBtn);
+
+    expect(useExaminationServiceStore.getState().updatePriceService?.id).toBe('EX-1-01');
+    expect(screen.getByText('Cập nhật Biểu phí Dịch vụ (UC52)')).toBeInTheDocument();
+  });
 });
