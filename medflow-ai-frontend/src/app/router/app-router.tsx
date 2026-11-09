@@ -38,6 +38,7 @@ import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
 import { DiagnosticDashboardPage } from '@/features/diagnostic/pages/diagnostic-dashboard-page';
+import { DiagnosticResultsTrackingPage } from '@/features/diagnostic/pages/diagnostic-results-tracking-page';
 import { DoctorDashboardPage } from '@/features/doctor/pages/doctor-dashboard-page';
 import { DoctorAssignedQueuePage } from '@/features/doctor/pages/doctor-assigned-queue-page';
 import { DoctorConsultationWorkspacePage } from '@/features/doctor/pages/doctor-consultation-workspace-page';
@@ -65,6 +66,7 @@ import {
   RequireDoctor,
   RequirePharmacy,
   RequireReception,
+  RequireRole,
   RequireSystemAdmin,
 } from './guards';
 
@@ -298,6 +300,16 @@ export function AppRouter() {
             <RequireDiagnostic>
               <DiagnosticDashboardPage />
             </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/results-tracking"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['DIAGNOSTIC_STAFF', 'DOCTOR']}>
+              <DiagnosticResultsTrackingPage />
+            </RequireRole>
           </RequireAuth>
         }
       />
