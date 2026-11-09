@@ -10,6 +10,7 @@ using MedFlow.Application.Services.HospitalAdmin;
 using MedFlow.Application.Services.Hospitals;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Application.Services.Pharmacy;
+using MedFlow.Application.Services.Reception;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Services;
 using MedFlow.Application.Services.SystemAdmin;
@@ -56,6 +57,7 @@ public static class DependencyInjection
         services.AddScoped<IVisitRoomAssignmentService, VisitRoomAssignmentService>();
         services.AddScoped<IExaminationQueueService, ExaminationQueueService>();
         services.AddScoped<IQueueStatusService, QueueStatusService>();
+        services.AddScoped<IReceptionPatientSearchService, ReceptionPatientSearchService>();
         return services;
     }
 }
