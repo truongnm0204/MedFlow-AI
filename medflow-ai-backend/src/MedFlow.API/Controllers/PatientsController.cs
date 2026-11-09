@@ -12,10 +12,14 @@ namespace MedFlow.API.Controllers;
 public sealed class PatientsController : ControllerBase
 {
     private readonly IPatientProfileService _profileService;
+    private readonly IFamilyProfileService _familyProfileService;
 
-    public PatientsController(IPatientProfileService profileService)
+    public PatientsController(
+        IPatientProfileService profileService,
+        IFamilyProfileService familyProfileService)
     {
         _profileService = profileService;
+        _familyProfileService = familyProfileService;
     }
 
     /// <summary>GET /api/v1/patients/me/profile — Xem thông tin hồ sơ cá nhân của bệnh nhân đang đăng nhập.</summary>
@@ -26,6 +30,18 @@ public sealed class PatientsController : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<PatientProfileResponse>> GetMyProfile(CancellationToken ct)
         => Ok(await _profileService.GetPersonalProfileAsync(GetUserId(), ct));
+
+    /// <summary>GET /api/v1/patients/me/family-members — Xem danh sách hồ sơ người thân của bệnh nhân đang đăng nhập.</summary>
+    [HttpGet("me/family-members")]
+    [HttpGet("me/family-profiles")]
+    [ProducesResponseType<IReadOnlyList<FamilyMemberResponse>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IReadOnlyList<FamilyMemberResponse>>> GetMyFamilyMembers(
+        [FromQuery] bool includeSelf = true,
+        CancellationToken ct = default)
+        => Ok(await _familyProfileService.GetFamilyMembersAsync(GetUserId(), includeSelf, ct));
 
     private long GetUserId()
     {

@@ -17,7 +17,7 @@ export interface QueueEntry {
   departmentName?: string; // chuyen khoa / khoa kham
   status: QueueStatus;
   checkedInAt: string; // ISO time, vd "08:15"
-  priority: 'NORMAL' | 'URGENT' | 'ELDERLY' | 'PREGNANT' | 'RETURN_RESULT';
+  priority: 'NORMAL' | 'ELDERLY' | 'PREGNANT';
 }
 
 export interface ReceptionStats {

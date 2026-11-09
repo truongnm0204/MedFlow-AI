@@ -1,5 +1,7 @@
 import { RefreshCw } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/features/auth/store/auth.store';
@@ -9,6 +11,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import { AssignedQueueTable } from '../components/assigned-queue-table';
+import { DoctorCallNextBanner } from '../components/doctor-call-next-banner';
 import { DoctorQuickActions } from '../components/doctor-quick-actions';
 import { DoctorSidebar } from '../components/doctor-sidebar';
 import { DoctorStatCards } from '../components/doctor-stat-cards';
@@ -19,8 +22,14 @@ import {
   DOCTOR_WORKBENCH_META,
   PENDING_DIAGNOSTICS_MOCK,
 } from '../data/doctor-mock-data';
+import { useCallNextDoctorPatient } from '../hooks/use-doctor-assigned-queue';
 import { useDoctorDashboard } from '../hooks/use-doctor-dashboard';
 import type { AssignedQueueStatus, PendingDiagnosticItem } from '../types/doctor.types';
+import type {
+  DoctorAssignedQueueEntryDto,
+  DoctorAssignedQueueResponseDto,
+  DoctorCallNextResponseDto,
+} from '../types/doctor-assigned-queue.types';
 type QueueFilter = 'ALL' | AssignedQueueStatus;
 
 const QUEUE_FILTER_OPTIONS: { id: QueueFilter; label: string }[] = [
@@ -39,15 +48,22 @@ const DIAGNOSTIC_STATUS_META: Record<
 };
 
 export function DoctorDashboardPage() {
+  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
   const { data, isPending, isError, error, refetch } = useDoctorDashboard(undefined, true);
+  const queryClient = useQueryClient();
+  const callNextMutation = useCallNextDoctorPatient();
 
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
   const [activeNav, setActiveNav] = useState('dashboard');
   const [queueFilter, setQueueFilter] = useState<QueueFilter>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
 
+  const [callNextResult, setCallNextResult] = useState<DoctorCallNextResponseDto | null>(null);
+  const [callNextError, setCallNextError] = useState<string | null>(null);
+  const [calledEntryOverride, setCalledEntryOverride] =
+    useState<DoctorAssignedQueueEntryDto | null>(null);
   const doctorDisplayName =
     user?.fullName?.trim() ||
     data?.doctorProfile?.displayName?.trim() ||
@@ -64,10 +80,51 @@ export function DoctorDashboardPage() {
   const departmentName = data?.departmentName || DOCTOR_WORKBENCH_META.departmentName;
   const shiftLabel = data?.shiftLabel || DOCTOR_WORKBENCH_META.shiftLabel;
   const stats = data?.stats ?? DOCTOR_STATS_MOCK;
-  const assignedQueue = data?.assignedQueue ?? ASSIGNED_QUEUE_MOCK;
+  const baseAssignedQueue = data?.assignedQueue ?? ASSIGNED_QUEUE_MOCK;
+  const assignedQueue = useMemo(() => {
+    if (!calledEntryOverride) return baseAssignedQueue;
+    return baseAssignedQueue.map((item) => {
+      if (
+        item.queueNo === calledEntryOverride.ticketNo ||
+        item.patientCode === calledEntryOverride.patientCode
+      ) {
+        return { ...item, status: 'CALLED' as const };
+      }
+      return item;
+    });
+  }, [baseAssignedQueue, calledEntryOverride]);
   const pendingDiagnostics = data?.pendingDiagnostics ?? PENDING_DIAGNOSTICS_MOCK;
   const quickActions = data?.quickActions ?? DOCTOR_QUICK_ACTIONS_MOCK;
 
+  const handleCallNextFromDashboard = async () => {
+    setCallNextResult(null);
+    setCallNextError(null);
+    const cachedAssignedQueue = queryClient.getQueryData<DoctorAssignedQueueResponseDto>([
+      'doctor',
+      'assigned-queue',
+      null,
+    ]);
+    const servicePointId =
+      data?.servicePointId ??
+      cachedAssignedQueue?.servicePoints[0]?.servicePointId ??
+      'sp-room-102';
+
+    try {
+      const result = await callNextMutation.mutateAsync({ servicePointId });
+      setCallNextResult(result);
+      if (result.outcome === 'CALLED' && result.calledEntry) {
+        setCalledEntryOverride(result.calledEntry);
+      }
+    } catch (err) {
+      setCallNextError(getErrorMessage(err, 'Không thể gọi bệnh nhân tiếp theo.'));
+    }
+  };
+
+  const handleQuickAction = (actionId: string) => {
+    if (actionId === 'call-next') {
+      void handleCallNextFromDashboard();
+    }
+  };
   const filteredQueue = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
     return assignedQueue.filter((item) => {
@@ -87,7 +144,13 @@ export function DoctorDashboardPage() {
         activeItem={activeNav}
         doctorName={doctorDisplayName}
         roomLabel={`${roomCode} • ${departmentName}`}
-        onItemSelect={setActiveNav}
+        onItemSelect={(item) => {
+          if (item === 'assigned-queue') {
+            navigate('/doctor/assigned-queue');
+            return;
+          }
+          setActiveNav(item);
+        }}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -150,6 +213,12 @@ export function DoctorDashboardPage() {
               </div>
             </Alert>
           )}
+          <DoctorCallNextBanner
+            result={callNextResult}
+            error={callNextError}
+            onDismissResult={() => setCallNextResult(null)}
+            onDismissError={() => setCallNextError(null)}
+          />
           <DoctorStatCards stats={stats} />
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <Card className="xl:col-span-2">
@@ -203,11 +272,7 @@ export function DoctorDashboardPage() {
                   <div className="text-sm font-bold text-slate-900">Lối vào nghiệp vụ bác sĩ</div>
                 </CardHeader>
                 <CardContent className="pt-0">
-                  <DoctorQuickActions
-                    actions={quickActions}
-                    // TODO(M2/M3): nối thao tác nhanh tới luồng gọi số, khám lâm sàng, chỉ định CLS và kê đơn.
-                    onAction={(_id) => undefined}
-                  />
+                  <DoctorQuickActions actions={quickActions} onAction={handleQuickAction} />
                 </CardContent>
               </Card>
 
