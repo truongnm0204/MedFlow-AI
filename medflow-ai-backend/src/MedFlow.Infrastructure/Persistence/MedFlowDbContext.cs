@@ -45,6 +45,7 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<DispenseItem> DispenseItems => Set<DispenseItem>();
     public DbSet<StockTransaction> StockTransactions => Set<StockTransaction>();
     public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
+    public DbSet<QueueFairnessState> QueueFairnessStates => Set<QueueFairnessState>();
 
     public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => Database.BeginTransactionAsync(ct);

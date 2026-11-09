@@ -52,20 +52,26 @@ export function DoctorEditHeader({
 
 export function DoctorEditFooter({
   onClose,
-  onSuspend,
+  pendingAppointmentsCount = 0,
 }: {
   onClose: () => void;
-  onSuspend: () => void;
+  pendingAppointmentsCount?: number;
 }) {
   return (
     <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-slate-50 px-6 py-4">
-      <button
-        type="button"
-        className="rounded border border-rose-200 px-3 py-2 text-[11px] font-semibold text-rose-600"
-        onClick={onSuspend}
-      >
-        ⊖ Tạm ngừng nhận lịch
-      </button>
+      <div className="flex items-center gap-2">
+        {pendingAppointmentsCount > 0 ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-[11px] font-medium text-rose-700">
+            <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+            Có {pendingAppointmentsCount} ca hẹn tuần này
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-600">
+            <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+            Không có ca hẹn tuần này
+          </span>
+        )}
+      </div>
       <div className="flex gap-2">
         <Button type="button" variant="secondary" size="sm" onClick={onClose}>
           Hủy bỏ [Esc]

@@ -1,4 +1,5 @@
-import { BadgeCheck, Calendar, Power, SquarePen } from 'lucide-react';
+import { BadgeCheck, Calendar, MoreVertical, Power, SquarePen } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import type { Doctor } from '../types/doctor.types';
@@ -9,15 +10,29 @@ interface DoctorTableProps {
   onToggleSelection: (id: string) => void;
   onToggleAll: () => void;
   onToggleStatus: (id: string) => void;
+  onRequestDeactivate?: (doctor: Doctor) => void;
 }
-
 export function DoctorTable({
   doctors,
   selectedIds,
   onToggleSelection,
   onToggleAll,
   onToggleStatus,
+  onRequestDeactivate,
 }: DoctorTableProps) {
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setOpenMenuId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[1120px] table-fixed text-left text-xs">
@@ -52,8 +67,8 @@ export function DoctorTable({
             <th className="px-2">Khoa công tác</th>
             <th className="px-2">Số CCHN (BYT)</th>
             <th className="px-2">Buồng khám mặc định</th>
-            <th className="px-2">Trạng thái</th>
-            <th className="px-2">Thao tác</th>
+            <th className="px-2">TRẠNG THÁI HỒ SƠ</th>
+            <th className="px-2">THAO TÁC</th>
           </tr>
         </thead>
         <tbody>
@@ -111,44 +126,99 @@ export function DoctorTable({
               </td>
               <td className="px-2">
                 <span
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold ${doctor.active ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                    doctor.active
+                      ? 'border-sky-200 bg-sky-50 text-sky-700'
+                      : 'border-slate-200 bg-slate-100 text-slate-600'
+                  }`}
                 >
-                  <span>●</span>
-                  {doctor.active ? 'Đang nhận lịch' : 'Tạm ngừng nhận lịch'}
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      doctor.active ? 'bg-sky-500' : 'bg-slate-400'
+                    }`}
+                  />
+                  {doctor.active ? 'Đang hoạt động' : 'Ngừng hoạt động'}
                 </span>
               </td>
               <td className="px-2">
-                <div className="flex items-center gap-2">
+                <div
+                  ref={openMenuId === doctor.id ? menuRef : undefined}
+                  className="relative flex items-center gap-1.5"
+                >
                   <Link
                     to={`/admin/doctors/${doctor.id}/edit`}
                     title={`Chỉnh sửa ${doctor.name}`}
                     aria-label={`Chỉnh sửa ${doctor.name}`}
+                    className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-primary"
                   >
-                    <SquarePen
-                      className="h-4 w-4 text-slate-500 hover:text-primary"
-                      aria-hidden="true"
-                    />
+                    <SquarePen className="h-4 w-4" aria-hidden="true" />
                   </Link>
                   <button
                     type="button"
                     disabled
                     aria-label={`Lịch khám ${doctor.name}`}
-                    title="Lịch khám sẽ có ở màn hình tiếp theo"
-                    className="opacity-40"
+                    title="Lịch khám bác sĩ (SCR-ADM-DOC-04)"
+                    className="rounded p-1 text-slate-500 opacity-40 cursor-not-allowed"
                   >
-                    <Calendar className="h-4 w-4 text-slate-500" aria-hidden="true" />
+                    <Calendar className="h-4 w-4" aria-hidden="true" />
                   </button>
-                  <button
-                    type="button"
-                    aria-label={`${doctor.active ? 'Tạm ngừng' : 'Kích hoạt'} ${doctor.name}`}
-                    title={doctor.active ? 'Tạm ngừng nhận lịch' : 'Kích hoạt nhận lịch'}
-                    onClick={() => onToggleStatus(doctor.id)}
-                  >
-                    <Power
-                      className="h-4 w-4 text-slate-500 hover:text-amber-600"
-                      aria-hidden="true"
-                    />
-                  </button>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      aria-label={`Thao tác ${doctor.name}`}
+                      title="Tùy chọn thao tác"
+                      aria-expanded={openMenuId === doctor.id}
+                      onClick={() =>
+                        setOpenMenuId((current) => (current === doctor.id ? null : doctor.id))
+                      }
+                      className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-ink"
+                    >
+                      <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                    {openMenuId === doctor.id && (
+                      <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-xl border border-border bg-white p-1.5 shadow-lg">
+                        {doctor.active ? (
+                          <button
+                            type="button"
+                            aria-label={`Ngừng hoạt động ${doctor.name}`}
+                            onClick={() => {
+                              setOpenMenuId(null);
+                              if (onRequestDeactivate) {
+                                onRequestDeactivate(doctor);
+                              } else {
+                                onToggleStatus(doctor.id);
+                              }
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-50"
+                          >
+                            <Power className="h-3.5 w-3.5" aria-hidden="true" />
+                            Ngừng hoạt động
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            aria-label={`Kích hoạt lại ${doctor.name}`}
+                            onClick={() => {
+                              setOpenMenuId(null);
+                              onToggleStatus(doctor.id);
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-50"
+                          >
+                            <Power className="h-3.5 w-3.5" aria-hidden="true" />
+                            Kích hoạt lại
+                          </button>
+                        )}
+                        <Link
+                          to={`/admin/doctors/${doctor.id}/edit`}
+                          onClick={() => setOpenMenuId(null)}
+                          className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                        >
+                          <SquarePen className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+                          Chỉnh sửa hồ sơ
+                        </Link>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </td>
             </tr>
