@@ -12,6 +12,7 @@ interface RoleTableProps {
   onPageChange: (page: number) => void;
   onSelectRole: (role: RoleItem) => void;
   onAssignPermissions?: (role: RoleItem) => void;
+  onEditRole?: (role: RoleItem) => void;
 }
 
 const STATUS_STYLES: Record<RoleStatus, string> = {
@@ -38,6 +39,7 @@ export function RoleTable({
   onPageChange,
   onSelectRole,
   onAssignPermissions,
+  onEditRole,
 }: RoleTableProps) {
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
@@ -123,6 +125,16 @@ export function RoleTable({
                       >
                         Xem quyền
                       </button>
+                      {onEditRole && (
+                        <button
+                          type="button"
+                          onClick={() => onEditRole(item)}
+                          aria-label={`Chỉnh sửa ${item.name}`}
+                          className="rounded-lg border border-border bg-white px-2.5 py-1 text-xs font-semibold text-navy transition-colors hover:bg-canvas hover:text-primary"
+                        >
+                          Chỉnh sửa
+                        </button>
+                      )}
                       {onAssignPermissions && (
                         <button
                           type="button"

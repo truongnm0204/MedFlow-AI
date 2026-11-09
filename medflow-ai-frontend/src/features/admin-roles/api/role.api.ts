@@ -119,4 +119,4 @@ export async function fetchRoleByIdApi(roleId: number): Promise<RoleItem> {
   return mapRoleItemDto(data);
 }
 
-export { createRoleApi } from './role-permissions.api';
+export { createRoleApi, updateRoleApi } from './role-permissions.api';

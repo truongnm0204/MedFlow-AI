@@ -7,6 +7,7 @@ import type {
   RoleScope,
   RolesPermissionsCatalogDto,
   RoleStatus,
+  UpdateRoleRequest,
 } from '../types/role.types';
 
 export const ROLE_SCOPE_LABELS: Record<RoleScope, string> = {
@@ -375,6 +376,38 @@ export function createMockRole(payload: CreateRoleRequest): RoleItem {
 
   currentMockRoles = [...currentMockRoles, createdRole];
   return cloneRoleItem(createdRole);
+}
+
+export function updateMockRole(payload: UpdateRoleRequest): RoleItem {
+  const index = currentMockRoles.findIndex(
+    (role) => role.id === payload.roleId || role.code === payload.roleId,
+  );
+  if (index === -1) {
+    throw new Error('Không tìm thấy vai trò cần cập nhật.');
+  }
+
+  const existing = currentMockRoles[index];
+  const nextPermissions = payload.permissionCodes
+    ? SYSTEM_PERMISSION_LIST.filter((perm) => new Set(payload.permissionCodes).has(perm.code)).map(
+        (perm) => ({ ...perm }),
+      )
+    : existing.permissions.map((perm) => ({ ...perm }));
+
+  const updatedRole: RoleItem = {
+    ...existing,
+    code:
+      !existing.isSystemRole && payload.code ? payload.code.trim().toUpperCase() : existing.code,
+    name: payload.name.trim(),
+    description: payload.description.trim(),
+    scope: payload.scope,
+    status: payload.status,
+    segregationNote: payload.segregationNote.trim(),
+    permissions: nextPermissions,
+    updatedAt: 'Hôm nay',
+  };
+
+  currentMockRoles[index] = updatedRole;
+  return cloneRoleItem(updatedRole);
 }
 
 export function resetMockRolesCatalog(): void {

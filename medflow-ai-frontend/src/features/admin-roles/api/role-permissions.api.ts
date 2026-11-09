@@ -8,6 +8,7 @@ import {
   getMockRolesCatalog,
   SYSTEM_PERMISSION_LIST,
   updateMockRolePermissions,
+  updateMockRole,
 } from '../data/role-mock-data';
 import type {
   AssignRolePermissionsResponseDto,
@@ -20,6 +21,7 @@ import type {
   RolePermissionsCatalogResponseDto,
   RolesPermissionsCatalogDto,
   UpdateRolePermissionsRequest,
+  UpdateRoleRequest,
 } from '../types/role.types';
 
 function shouldFallbackToMock(error: unknown): boolean {
@@ -179,4 +181,44 @@ export async function createRoleApi(payload: CreateRoleRequest): Promise<RoleIte
   }
 
   return createMockRole(body);
+}
+
+export async function updateRoleApi(payload: UpdateRoleRequest): Promise<RoleItem> {
+  const trimmedNote = payload.note?.trim();
+  const trimmedCode = payload.code?.trim().toUpperCase();
+  const body = {
+    ...(trimmedCode ? { code: trimmedCode } : {}),
+    name: payload.name.trim(),
+    description: payload.description.trim(),
+    scope: payload.scope,
+    status: payload.status,
+    segregationNote: payload.segregationNote.trim(),
+    ...(payload.permissionCodes ? { permissionCodes: payload.permissionCodes } : {}),
+    ...(trimmedNote ? { note: trimmedNote } : {}),
+  };
+
+  if (shouldUseHttpApi()) {
+    try {
+      const { data } = await apiClient.put<RoleItem | RoleListItemDto>(
+        `/admin/roles/${encodeURIComponent(payload.roleId)}`,
+        body,
+      );
+      const updatedRole =
+        'roleId' in data && typeof data.roleId === 'number'
+          ? mapRoleItemDto(data as RoleListItemDto)
+          : (data as RoleItem);
+      try {
+        updateMockRole(payload);
+      } catch {
+        // Role exists only on server; ignore mock sync error
+      }
+      return updatedRole;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return updateMockRole(payload);
 }

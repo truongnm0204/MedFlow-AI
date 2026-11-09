@@ -9,6 +9,7 @@ import { Alert, Button, toast } from '@/shared/ui';
 import { RoleAccessCheckPanel } from '../components/role-access-check-panel';
 import { RoleCreateModal } from '../components/role-create-modal';
 import { RoleDetailModal } from '../components/role-detail-modal';
+import { RoleEditModal } from '../components/role-edit-modal';
 import { RoleFilterBar } from '../components/role-filters';
 import { RoleMetricsCards } from '../components/role-metrics';
 import { RolePermissionMatrixModal } from '../components/role-permission-matrix-modal';
@@ -24,6 +25,7 @@ import {
   useAssignRolePermissions,
   useCreateRole,
   useRolesPermissionsCatalog,
+  useUpdateRole,
 } from '../hooks/use-role-permissions';
 import type {
   CreateRoleRequest,
@@ -31,6 +33,7 @@ import type {
   RoleItem,
   RoleViewMode,
   UpdateRolePermissionsRequest,
+  UpdateRoleRequest,
 } from '../types/role.types';
 const PAGE_SIZE = 8;
 
@@ -87,6 +90,7 @@ export function RoleListPage({
   const catalogQuery = useRolesPermissionsCatalog();
   const assignMutation = useAssignRolePermissions();
   const createMutation = useCreateRole();
+  const updateMutation = useUpdateRole();
 
   const roles = catalogQuery.data?.roles ?? ROLES_MOCK_DATA;
   const metrics = catalogQuery.data?.metrics ?? ROLE_METRICS_MOCK;
@@ -103,6 +107,7 @@ export function RoleListPage({
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(
     Boolean(initialCreateOpen && canManageRoles),
   );
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [pageErrorMessage, setPageErrorMessage] = useState<string | null>(null);
   const [modalErrorMessage, setModalErrorMessage] = useState<string | null>(null);
@@ -114,6 +119,10 @@ export function RoleListPage({
   const assigningRole = useMemo(
     () => roles.find((item) => item.id === assigningRoleId) ?? null,
     [roles, assigningRoleId],
+  );
+  const editingRole = useMemo(
+    () => roles.find((item) => item.id === editingRoleId) ?? null,
+    [roles, editingRoleId],
   );
 
   const filtered = useMemo(() => {
@@ -176,6 +185,31 @@ export function RoleListPage({
       setCreateModalErrorMessage(msg);
       setPageErrorMessage(msg);
       toast.error(msg, 'Lỗi tạo vai trò');
+    }
+  };
+
+  const handleOpenEditModal = (role: RoleItem) => {
+    if (!canManageRoles) return;
+    setModalErrorMessage(null);
+    setEditingRoleId(role.id);
+  };
+
+  const handleSaveRole = async (payload: UpdateRoleRequest) => {
+    setStatusMessage(null);
+    setPageErrorMessage(null);
+    setModalErrorMessage(null);
+    try {
+      const updated = await updateMutation.mutateAsync(payload);
+      setStatusMessage(
+        `Đã cập nhật thông tin vai trò ${updated.name} (${updated.code}) thành công.`,
+      );
+      toast.success(`Đã lưu cấu hình cho vai trò ${updated.code}.`, 'Cập nhật vai trò thành công');
+      setEditingRoleId(null);
+    } catch (err) {
+      const msg = getErrorMessage(err, 'Không thể cập nhật thông tin vai trò.');
+      setModalErrorMessage(msg);
+      setPageErrorMessage(msg);
+      toast.error(msg, 'Lỗi cập nhật vai trò');
     }
   };
 
@@ -339,6 +373,7 @@ export function RoleListPage({
             onPageChange={setPage}
             onSelectRole={(role) => setSelectedRoleId(role.id)}
             onAssignPermissions={canManageRoles ? handleOpenAssignModal : undefined}
+            onEditRole={canManageRoles ? handleOpenEditModal : undefined}
           />
         ) : viewMode === 'matrix' ? (
           <RolePermissionMatrixView
@@ -358,6 +393,14 @@ export function RoleListPage({
             ? (role) => {
                 setSelectedRoleId(null);
                 handleOpenAssignModal(role);
+              }
+            : undefined
+        }
+        onEditRole={
+          canManageRoles
+            ? (role) => {
+                setSelectedRoleId(null);
+                handleOpenEditModal(role);
               }
             : undefined
         }
@@ -381,6 +424,16 @@ export function RoleListPage({
           setIsCreateModalOpen(false);
         }}
         onCreate={handleCreateRole}
+      />
+      <RoleEditModal
+        role={editingRole}
+        isSubmitting={updateMutation.isPending}
+        serverError={modalErrorMessage}
+        onClose={() => {
+          setModalErrorMessage(null);
+          setEditingRoleId(null);
+        }}
+        onSave={handleSaveRole}
       />
     </AdminPortalShell>
   );
