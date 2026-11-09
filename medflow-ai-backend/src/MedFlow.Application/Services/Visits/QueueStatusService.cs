@@ -6,6 +6,7 @@ using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Policies;
+using MedFlow.Application.Services.Visits.Queueing;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -247,6 +248,35 @@ public sealed class QueueStatusService : IQueueStatusService
         if (!allowedTargets.Contains(targetStatus, StringComparer.OrdinalIgnoreCase))
         {
             throw new ConflictException($"Chuyển tiếp trạng thái hàng đợi từ {currentStatus} sang {targetStatus} không hợp lệ.");
+        }
+
+        var resolvedQueueTypeForUpdate = ClinicalQueueRules.ResolveQueueType(queueEntry.QueueType, visit?.Status);
+        if (resolvedQueueTypeForUpdate == ClinicalQueueRules.QueueTypeReturnConsultation &&
+            targetStatus is "READY" or "CALLED" or "IN_PROGRESS" &&
+            visit is not null)
+        {
+            var policySet = await QueueOrderingPolicyLoader.LoadAsync(_db, context.HospitalId, nowUtc, ct);
+            var servicePointIdForPolicy = queueEntry.CurrentServicePointId ?? queueEntry.ServicePointId ?? context.ServicePoint?.Id;
+            var policy = policySet.ForServicePoint(servicePointIdForPolicy);
+            if (policy.FinalResultRequired)
+            {
+                var hasOpenDiagnostics = await _db.QueueEntries
+                    .AsNoTracking()
+                    .AnyAsync(q =>
+                        q.VisitId == visit.Id &&
+                        q.QueueType != null &&
+                        q.QueueType.ToUpper() == "DIAGNOSTIC" &&
+                        q.CompletedAt == null &&
+                        (q.Status == null ||
+                         (q.Status.ToUpper() != "COMPLETED" && q.Status.ToUpper() != "CANCELLED")),
+                        ct);
+
+                if (hasOpenDiagnostics)
+                {
+                    throw new ConflictException(
+                        "Chưa thể chuyển trạng thái lượt khám lại vì kết quả cận lâm sàng bắt buộc chưa sẵn sàng.");
+                }
+            }
         }
 
         if (targetStatus is "CALLED" or "IN_PROGRESS")
@@ -831,6 +861,8 @@ public sealed class QueueStatusService : IQueueStatusService
             : queueEntry.QueueType.ToUpperInvariant();
         queueEntry.ArrivalClass ??= "ON_TIME_OR_GRACE";
         queueEntry.ManualPriority ??= ClinicalQueueRules.PriorityNormal;
+        var isReturnConsultation = ClinicalQueueRules.ResolveQueueType(queueEntry.QueueType, visit?.Status) ==
+                                   ClinicalQueueRules.QueueTypeReturnConsultation;
         switch (targetStatus)
         {
             case "WAITING":
@@ -850,7 +882,7 @@ public sealed class QueueStatusService : IQueueStatusService
 
                 if (visit is not null)
                 {
-                    visit.Status = "WAITING";
+                    visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "WAITING";
                 }
 
                 break;
@@ -864,7 +896,7 @@ public sealed class QueueStatusService : IQueueStatusService
                 queueEntry.BlockedReason = null;
                 if (visit is not null)
                 {
-                    visit.Status = "WAITING";
+                    visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "WAITING";
                 }
 
                 break;
@@ -883,7 +915,7 @@ public sealed class QueueStatusService : IQueueStatusService
                         : queueEntry.PresenceStatus.ToUpperInvariant());
                 if (visit is not null)
                 {
-                    visit.Status = "CALLED";
+                    visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "CALLED";
                 }
 
                 break;
@@ -928,7 +960,7 @@ public sealed class QueueStatusService : IQueueStatusService
                         : (string.IsNullOrWhiteSpace(queueEntry.PresenceStatus) ? "NOT_ARRIVED" : queueEntry.PresenceStatus.ToUpperInvariant()));
                 if (visit is not null)
                 {
-                    visit.Status = "WAITING";
+                    visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "WAITING";
                 }
 
                 break;

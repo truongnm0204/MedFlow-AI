@@ -97,7 +97,7 @@ public sealed partial class ExaminationQueueService
         target.StartedAt = null;
         target.StateVersion = nextVersion;
 
-        if (visit is not null)
+        if (visit is not null && entry.Dto.QueueType == ClinicalQueueRules.QueueTypeExamination)
         {
             visit.Status = "WAITING";
         }
@@ -268,7 +268,7 @@ public sealed partial class ExaminationQueueService
         target.BackfillReason = null;
         target.StateVersion = nextVersion;
 
-        if (visit is not null)
+        if (visit is not null && entry.Dto.QueueType == ClinicalQueueRules.QueueTypeExamination)
         {
             visit.Status = "WAITING";
         }
