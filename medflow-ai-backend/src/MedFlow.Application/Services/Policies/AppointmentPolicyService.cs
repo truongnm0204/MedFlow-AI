@@ -4,7 +4,6 @@ using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
-using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.Application.Services.Policies;
 
@@ -21,14 +20,15 @@ public sealed class AppointmentPolicyService : IAppointmentPolicyService
 
     public async Task<AppointmentPolicyDto> GetEffectiveAsync(long hospitalId, CancellationToken ct = default)
     {
-        var rows = await LoadRowsAsync(hospitalId, tracking: false, ct);
-        var current = SelectCurrent(rows, DateTime.UtcNow);
+        var rows = await HospitalPolicyStore.LoadRowsAsync(
+            _db, hospitalId, AppointmentPolicyKeys.PolicyType, tracking: false, ct);
+        var current = HospitalPolicyStore.SelectCurrent(rows, DateTime.UtcNow);
         return BuildDto(current);
     }
 
     public async Task<AppointmentPolicyDto> GetForAdminAsync(long userId, CancellationToken ct = default)
     {
-        var hospitalId = await ResolveHospitalIdAsync(userId, ct);
+        var hospitalId = await HospitalPolicyStore.ResolveAdminHospitalIdAsync(_db, userId, ct);
         return await GetEffectiveAsync(hospitalId, ct);
     }
 
@@ -38,27 +38,27 @@ public sealed class AppointmentPolicyService : IAppointmentPolicyService
         string? ipAddress,
         CancellationToken ct = default)
     {
-        var hospitalId = await ResolveHospitalIdAsync(userId, ct);
+        var hospitalId = await HospitalPolicyStore.ResolveAdminHospitalIdAsync(_db, userId, ct);
 
-        var bookingWindowDays = ValidateField(
+        var bookingWindowDays = HospitalPolicyStore.ValidateRange(
             request.BookingWindowDays, "Số ngày được đặt trước tối đa", 1, 365);
-        var bookingLeadHours = ValidateField(
+        var bookingLeadHours = HospitalPolicyStore.ValidateRange(
             request.BookingLeadHours, "Số giờ đặt trước tối thiểu", 0, 168);
-        var maxActiveBookings = ValidateField(
+        var maxActiveBookings = HospitalPolicyStore.ValidateRange(
             request.MaxActiveBookings, "Số lịch hẹn hoạt động tối đa", 1, 20);
-        var rescheduleMinimumHours = ValidateField(
+        var rescheduleMinimumHours = HospitalPolicyStore.ValidateRange(
             request.RescheduleMinimumHours, "Số giờ tối thiểu trước khi đổi lịch", 0, 168);
-        var maxReschedules = ValidateField(
+        var maxReschedules = HospitalPolicyStore.ValidateRange(
             request.MaxReschedules, "Số lần đổi lịch tối đa", 0, 10);
-        var cancelMinimumHours = ValidateField(
+        var cancelMinimumHours = HospitalPolicyStore.ValidateRange(
             request.CancelMinimumHours, "Số giờ tối thiểu trước khi hủy lịch", 0, 168);
-        var noShowGraceMinutes = ValidateField(
+        var noShowGraceMinutes = HospitalPolicyStore.ValidateRange(
             request.NoShowGraceMinutes, "Số phút chờ trước khi tính vắng mặt", 0, 120);
-        var noShowMaxCount = ValidateField(
+        var noShowMaxCount = HospitalPolicyStore.ValidateRange(
             request.NoShowMaxCount, "Số lần vắng mặt tối đa", 1, 20);
-        var noShowLookbackDays = ValidateField(
+        var noShowLookbackDays = HospitalPolicyStore.ValidateRange(
             request.NoShowLookbackDays, "Số ngày xét vắng mặt", 1, 365);
-        var noShowBlockDays = ValidateField(
+        var noShowBlockDays = HospitalPolicyStore.ValidateRange(
             request.NoShowBlockDays, "Số ngày khóa đặt lịch", 0, 365);
 
         if (bookingLeadHours >= bookingWindowDays * 24)
@@ -67,8 +67,9 @@ public sealed class AppointmentPolicyService : IAppointmentPolicyService
         }
 
         var now = DateTime.UtcNow;
-        var rows = await LoadRowsAsync(hospitalId, tracking: true, ct);
-        var current = SelectCurrent(rows, now);
+        var rows = await HospitalPolicyStore.LoadRowsAsync(
+            _db, hospitalId, AppointmentPolicyKeys.PolicyType, tracking: true, ct);
+        var current = HospitalPolicyStore.SelectCurrent(rows, now);
 
         var desiredEntries = new (string Key, Dictionary<string, int> NewProps, (string Prop, int DefaultValue)[] Defaults)[]
         {
@@ -134,7 +135,7 @@ public sealed class AppointmentPolicyService : IAppointmentPolicyService
             {
                 foreach (var (prop, defaultVal) in defaults)
                 {
-                    var currentVal = ReadInt(currentRow, prop, defaultVal);
+                    var currentVal = HospitalPolicyStore.ReadInt(currentRow, prop, defaultVal);
                     if (currentVal != newProps[prop])
                     {
                         isChanged = true;
@@ -148,30 +149,9 @@ public sealed class AppointmentPolicyService : IAppointmentPolicyService
                 continue;
             }
 
-            foreach (var row in rows.Where(r => r.PolicyKey == key && IsEffective(r, now)))
-            {
-                row.EffectiveTo = now;
-            }
-
-            var nextVersion = rows
-                .Where(r => r.PolicyKey == key)
-                .Select(r => r.PolicyVersion ?? 0)
-                .DefaultIfEmpty(0)
-                .Max() + 1;
-
             var newJson = JsonSerializer.Serialize(newProps);
-
-            _db.HospitalPolicies.Add(new HospitalPolicy
-            {
-                HospitalId = hospitalId,
-                QueueServicePointId = null,
-                PolicyType = AppointmentPolicyKeys.PolicyType,
-                PolicyKey = key,
-                PolicyValue = newJson,
-                PolicyVersion = nextVersion,
-                EffectiveFrom = now,
-                EffectiveTo = null,
-            });
+            var nextVersion = HospitalPolicyStore.AppendVersion(
+                _db, rows, hospitalId, AppointmentPolicyKeys.PolicyType, key, newJson, now);
 
             changes.Add((key, currentRow?.PolicyValue, newJson, nextVersion));
         }
@@ -202,53 +182,6 @@ public sealed class AppointmentPolicyService : IAppointmentPolicyService
         return await GetEffectiveAsync(hospitalId, ct);
     }
 
-    private async Task<long> ResolveHospitalIdAsync(long userId, CancellationToken ct)
-    {
-        var hospitalId = await _db.Staff
-            .AsNoTracking()
-            .Where(s => s.UserId == userId && s.Status == "ACTIVE")
-            .Select(s => s.HospitalId)
-            .FirstOrDefaultAsync(ct);
-
-        if (hospitalId is null)
-        {
-            throw new ForbiddenException("Tài khoản quản trị chưa được gán bệnh viện.");
-        }
-
-        return hospitalId.Value;
-    }
-
-    private async Task<List<HospitalPolicy>> LoadRowsAsync(long hospitalId, bool tracking, CancellationToken ct)
-    {
-        var query = _db.HospitalPolicies
-            .Where(p => p.HospitalId == hospitalId
-                && p.PolicyType == AppointmentPolicyKeys.PolicyType
-                && p.QueueServicePointId == null);
-
-        if (!tracking)
-        {
-            query = query.AsNoTracking();
-        }
-
-        return await query.ToListAsync(ct);
-    }
-
-    private static Dictionary<string, HospitalPolicy> SelectCurrent(IEnumerable<HospitalPolicy> rows, DateTime now)
-    {
-        return rows
-            .Where(r => IsEffective(r, now))
-            .GroupBy(r => r.PolicyKey)
-            .ToDictionary(
-                g => g.Key,
-                g => g.OrderByDescending(r => r.PolicyVersion ?? 0)
-                      .ThenByDescending(r => r.Id)
-                      .First());
-    }
-
-    private static bool IsEffective(HospitalPolicy row, DateTime now)
-        => (row.EffectiveFrom is null || row.EffectiveFrom <= now)
-            && (row.EffectiveTo is null || row.EffectiveTo > now);
-
     private static AppointmentPolicyDto BuildDto(Dictionary<string, HospitalPolicy> current)
     {
         current.TryGetValue(AppointmentPolicyKeys.BookingWindowDays, out var bookingWindowRow);
@@ -265,86 +198,46 @@ public sealed class AppointmentPolicyService : IAppointmentPolicyService
             : current.Values.Max(r => r.EffectiveFrom);
 
         return new AppointmentPolicyDto(
-            BookingWindowDays: ReadInt(
+            BookingWindowDays: HospitalPolicyStore.ReadInt(
                 bookingWindowRow,
                 AppointmentPolicyKeys.PropMaxDaysAhead,
                 AppointmentPolicyKeys.DefaultBookingWindowDays),
-            BookingLeadHours: ReadInt(
+            BookingLeadHours: HospitalPolicyStore.ReadInt(
                 bookingLeadRow,
                 AppointmentPolicyKeys.PropMinimumHours,
                 AppointmentPolicyKeys.DefaultBookingLeadHours),
-            MaxActiveBookings: ReadInt(
+            MaxActiveBookings: HospitalPolicyStore.ReadInt(
                 maxActiveRow,
                 AppointmentPolicyKeys.PropCount,
                 AppointmentPolicyKeys.DefaultMaxActiveBookings),
-            RescheduleMinimumHours: ReadInt(
+            RescheduleMinimumHours: HospitalPolicyStore.ReadInt(
                 rescheduleRow,
                 AppointmentPolicyKeys.PropMinimumHours,
                 AppointmentPolicyKeys.DefaultRescheduleMinimumHours),
-            MaxReschedules: ReadInt(
+            MaxReschedules: HospitalPolicyStore.ReadInt(
                 maxReschedulesRow,
                 AppointmentPolicyKeys.PropCount,
                 AppointmentPolicyKeys.DefaultMaxReschedules),
-            CancelMinimumHours: ReadInt(
+            CancelMinimumHours: HospitalPolicyStore.ReadInt(
                 cancelRow,
                 AppointmentPolicyKeys.PropMinimumHours,
                 AppointmentPolicyKeys.DefaultCancelMinimumHours),
-            NoShowGraceMinutes: ReadInt(
+            NoShowGraceMinutes: HospitalPolicyStore.ReadInt(
                 graceRow,
                 AppointmentPolicyKeys.PropMinutes,
                 AppointmentPolicyKeys.DefaultNoShowGraceMinutes),
-            NoShowMaxCount: ReadInt(
+            NoShowMaxCount: HospitalPolicyStore.ReadInt(
                 noShowLimitRow,
                 AppointmentPolicyKeys.PropMaxCount,
                 AppointmentPolicyKeys.DefaultNoShowMaxCount),
-            NoShowLookbackDays: ReadInt(
+            NoShowLookbackDays: HospitalPolicyStore.ReadInt(
                 noShowLimitRow,
                 AppointmentPolicyKeys.PropLookbackDays,
                 AppointmentPolicyKeys.DefaultNoShowLookbackDays),
-            NoShowBlockDays: ReadInt(
+            NoShowBlockDays: HospitalPolicyStore.ReadInt(
                 noShowLimitRow,
                 AppointmentPolicyKeys.PropBlockDays,
                 AppointmentPolicyKeys.DefaultNoShowBlockDays),
             LastUpdatedAt: lastUpdatedAt);
-    }
-
-    private static int ReadInt(HospitalPolicy? row, string propertyName, int defaultValue)
-    {
-        if (row is null || string.IsNullOrWhiteSpace(row.PolicyValue))
-        {
-            return defaultValue;
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(row.PolicyValue);
-            if (doc.RootElement.ValueKind == JsonValueKind.Object
-                && doc.RootElement.TryGetProperty(propertyName, out var prop)
-                && prop.TryGetInt32(out var value))
-            {
-                return value;
-            }
-        }
-        catch (JsonException)
-        {
-            // Fallback to defaultValue when JSON is malformed.
-        }
-
-        return defaultValue;
-    }
-
-    private static int ValidateField(int? value, string label, int min, int max)
-    {
-        if (value is null)
-        {
-            throw new ValidationException($"{label} là bắt buộc.");
-        }
-
-        if (value.Value < min || value.Value > max)
-        {
-            throw new ValidationException($"{label} phải từ {min} đến {max}.");
-        }
-
-        return value.Value;
     }
 }

@@ -1,16 +1,13 @@
 import { ExternalLink } from 'lucide-react';
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { Button } from '@/shared/ui/button';
 
 export function ServiceCreateSidebar() {
   const navigate = useNavigate();
-  const [notice, setNotice] = useState<string | null>(null);
 
   const handleOpenPriceTable = () => {
-    setNotice('Chuyển hướng liên kết đến Bảng giá theo cơ sở (UC52) trong giai đoạn tiếp theo.');
-    setTimeout(() => setNotice(null), 4000);
+    navigate('/admin/pricing');
   };
 
   const handleOpenBookingPolicy = () => {
@@ -19,15 +16,6 @@ export function ServiceCreateSidebar() {
 
   return (
     <aside className="space-y-6">
-      {notice && (
-        <div
-          role="status"
-          className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-xs text-sky-800 shadow-xs"
-        >
-          {notice}
-        </div>
-      )}
-
       {/* CARD 1: FACILITY PRICING REFERENCE */}
       <section className="rounded-xl border border-border bg-white p-6 shadow-sm">
         <div>

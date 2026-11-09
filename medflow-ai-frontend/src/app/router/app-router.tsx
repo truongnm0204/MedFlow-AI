@@ -12,6 +12,8 @@ import { StaffAccountListPage } from '@/features/admin-staff/pages/staff-account
 import { RoleListPage } from '@/features/admin-roles/pages/role-list-page';
 import { OperationalReportsPage } from '@/features/admin-reports/pages/operational-reports-page';
 import { AppointmentPolicyPage } from '@/features/admin-policies/pages/appointment-policy-page';
+import { QueuePolicyPage } from '@/features/admin-policies/pages/queue-policy-page';
+import { ServicePricingPage } from '@/features/admin-services/pages/service-pricing-page';
 import { RoomListPage } from '@/features/admin-rooms/pages/room-list-page';
 import { StaffAccountEditPage } from '@/features/admin-staff/pages/staff-account-edit-page';
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
@@ -37,12 +39,14 @@ import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
 import { DiagnosticDashboardPage } from '@/features/diagnostic/pages/diagnostic-dashboard-page';
 import { DoctorDashboardPage } from '@/features/doctor/pages/doctor-dashboard-page';
+import { DoctorAssignedQueuePage } from '@/features/doctor/pages/doctor-assigned-queue-page';
 import { FamilyProfileDetailPage } from '@/features/family/pages/family-profile-detail-page';
 import { FamilyProfileListPage } from '@/features/family/pages/family-profile-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
 import { HospitalAdminDashboardPage } from '@/features/hospital-admin/pages/hospital-admin-dashboard-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
+import { AssignRoomPage } from '@/features/reception/pages/assign-room-page';
 import { PatientSearchPage } from '@/features/reception/pages/patient-search-page';
 import { VisitRoutingPage } from '@/features/reception/pages/visit-routing-page';
 import { ExaminationQueuePage } from '@/features/reception/pages/examination-queue-page';
@@ -165,11 +169,31 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/reception/assign-room"
+        element={
+          <RequireAuth>
+            <RequireReception>
+              <AssignRoomPage />
+            </RequireReception>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/doctor"
         element={
           <RequireAuth>
             <RequireDoctor>
               <DoctorDashboardPage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/assigned-queue"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorAssignedQueuePage />
             </RequireDoctor>
           </RequireAuth>
         }
@@ -445,6 +469,26 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/admin/pricing"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ServicePricingPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/service-pricing"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <ServicePricingPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/policies"
         element={
           <RequireAuth>
@@ -460,6 +504,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequireAdmin>
               <AppointmentPolicyPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/queue-policy"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <QueuePolicyPage />
             </RequireAdmin>
           </RequireAuth>
         }
