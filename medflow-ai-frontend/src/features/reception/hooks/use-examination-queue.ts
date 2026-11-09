@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
   applyEarlyArrivalBackfill,
+  callNextEligiblePatient,
   fetchExaminationQueue,
   markQueueEntryMissedTurn,
   restoreSkippedQueueTurn,
@@ -9,6 +10,8 @@ import {
 } from '../api/examination-queue.api';
 import { applyQueueStatusUpdateToResponse } from '../data/examination-queue-mock';
 import type {
+  CallNextPatientRequestPayload,
+  CallNextPatientResponseDto,
   EarlyArrivalBackfillRequestPayload,
   ExaminationQueueQueryParams,
   ExaminationQueueResponseDto,
@@ -108,6 +111,30 @@ export function useRestoreSkippedTurn() {
       });
       void queryClient.invalidateQueries({
         queryKey: ['queue-entry-status', variables.idOrCode.trim()],
+      });
+    },
+  });
+}
+
+export interface CallNextEligiblePatientVariables {
+  servicePointId: string;
+  payload?: CallNextPatientRequestPayload;
+}
+
+export function useCallNextEligiblePatient() {
+  const queryClient = useQueryClient();
+
+  return useMutation<CallNextPatientResponseDto, unknown, CallNextEligiblePatientVariables>({
+    mutationFn: ({ servicePointId, payload }) => callNextEligiblePatient(servicePointId, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ['reception', 'examination-queue'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'assigned-queue'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'dashboard'],
       });
     },
   });

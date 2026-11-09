@@ -1,5 +1,6 @@
 import type {
   DoctorAssignedQueueStatsDto,
+  DoctorCallNextSelectionReason,
   DoctorQueueArrivalClass,
   DoctorQueueGroup,
   DoctorQueueGroupFilter,
@@ -55,6 +56,37 @@ export const ARRIVAL_CLASS_META: Record<
   EARLY: { label: 'Đến sớm', tone: 'sky' },
   LATE: { label: 'Đến muộn', tone: 'amber' },
   WALK_IN: { label: 'Vãng lai', tone: 'slate' },
+};
+
+export const CALL_NEXT_SELECTION_REASON_META: Record<
+  DoctorCallNextSelectionReason,
+  { label: string; description: string; tone: DoctorQueueBadgeTone }
+> = {
+  APPOINTMENT_DUE: {
+    label: 'Đúng giờ hẹn',
+    description: 'Lịch hẹn được bảo vệ đã đến giờ khám',
+    tone: 'emerald',
+  },
+  RETURN_CONSULTATION: {
+    label: 'Đọc KQ CLS',
+    description: 'Bệnh nhân quay lại đọc kết quả cận lâm sàng đã sẵn sàng',
+    tone: 'emerald',
+  },
+  PRIORITY: {
+    label: 'Ưu tiên',
+    description: 'Nhóm ưu tiên (Người cao tuổi / Thai phụ) theo tỷ lệ luân phiên công bằng',
+    tone: 'amber',
+  },
+  SAFE_BACKFILL: {
+    label: 'Safe Backfill',
+    description: 'Khám sớm an toàn trong khoảng trống trước lịch hẹn được bảo vệ kế tiếp',
+    tone: 'sky',
+  },
+  FIFO: {
+    label: 'FIFO',
+    description: 'Thứ tự sẵn sàng khám theo quy tắc công bằng (FIFO)',
+    tone: 'slate',
+  },
 };
 
 export const QUEUE_GROUP_FILTER_OPTIONS: {
