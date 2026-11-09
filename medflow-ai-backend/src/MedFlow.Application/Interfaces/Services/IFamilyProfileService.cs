@@ -8,4 +8,9 @@ public interface IFamilyProfileService
         long userId,
         bool includeSelf = true,
         CancellationToken ct = default);
+
+    Task<FamilyMemberResponse> GetFamilyMemberDetailAsync(
+        long userId,
+        string identifier,
+        CancellationToken ct = default);
 }
