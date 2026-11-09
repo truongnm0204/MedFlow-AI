@@ -48,6 +48,7 @@ import { HomePage } from '@/features/home/pages/home-page';
 import { HospitalAdminDashboardPage } from '@/features/hospital-admin/pages/hospital-admin-dashboard-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
+import { DispensingResultPage } from '@/features/pharmacy/pages/dispensing-result-page';
 import { AssignRoomPage } from '@/features/reception/pages/assign-room-page';
 import { VisitRoutingPage } from '@/features/reception/pages/visit-routing-page';
 import { ExaminationQueuePage } from '@/features/reception/pages/examination-queue-page';
@@ -307,6 +308,26 @@ export function AppRouter() {
           <RequireAuth>
             <RequirePharmacy>
               <PharmacyDashboardPage />
+            </RequirePharmacy>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy/dispensing-result"
+        element={
+          <RequireAuth>
+            <RequirePharmacy>
+              <DispensingResultPage />
+            </RequirePharmacy>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy/dispensing/:dispenseCode"
+        element={
+          <RequireAuth>
+            <RequirePharmacy>
+              <DispensingResultPage />
             </RequirePharmacy>
           </RequireAuth>
         }
