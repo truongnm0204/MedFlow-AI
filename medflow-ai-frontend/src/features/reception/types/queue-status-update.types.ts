@@ -1,8 +1,11 @@
 import type {
+  ExaminationQueueEntryDto,
   ExaminationQueuePriority,
   ExaminationQueueStatus,
+  ExaminationQueueType,
   QueueArrivalClass,
   QueuePresenceStatus,
+  ServicePointQueueDto,
 } from './examination-queue.types';
 
 export const ALLOWED_QUEUE_STATUS_TRANSITIONS: Readonly<
@@ -38,7 +41,6 @@ export interface UpdateQueueStatusTarget {
 export interface UpdateQueueStatusRequestPayload {
   targetStatus: ExaminationQueueStatus;
   presenceStatus?: QueuePresenceStatus | null;
-  priority?: ExaminationQueuePriority | null;
   reason?: string | null;
   blockedReason?: string | null;
   notes?: string | null;
@@ -158,3 +160,58 @@ export interface UpdateQueueStatusResponseDto {
   allowedTargetStatuses: ExaminationQueueStatus[];
   statusHistory: QueueStatusTransitionHistoryItemDto[];
 }
+
+export interface UpdateQueuePriorityRequestPayload {
+  priority: ExaminationQueuePriority;
+  reason: string;
+  verificationConfirmed: boolean;
+  expectedStateVersion: number;
+}
+
+export interface UpdateQueuePriorityResponseDto {
+  queueEntryId: number;
+  visitId: number | null;
+  visitCode: string | null;
+  ticketNo: string;
+  queueNumber: number;
+  queueType: ExaminationQueueType;
+  currentStatus: ExaminationQueueStatus;
+  previousPriority: ExaminationQueuePriority;
+  priority: ExaminationQueuePriority;
+  verificationRequired: boolean;
+  verificationConfirmed: boolean;
+  reason: string;
+  previousStateVersion: number;
+  stateVersion: number;
+  updatedByUserId: number;
+  updatedByStaffCode: string | null;
+  updatedByName: string;
+  updatedAtUtc: string;
+}
+
+/** Trạng thái nguồn được phép hủy lượt (ADR 0016). `RESERVED` được BE map sang `WAITING` khi đọc danh sách. */
+export const CANCELLABLE_QUEUE_STATUSES: readonly ExaminationQueueStatus[] = [
+  'WAITING',
+  'READY',
+  'CALLED',
+  'SKIPPED',
+];
+
+export interface CancelQueueEntryTarget {
+  entry: ExaminationQueueEntryDto;
+  servicePoint: ServicePointQueueDto;
+}
+
+export interface CancelQueueEntryRequestPayload {
+  reason: string;
+  expectedStateVersion: number;
+  notes: string | null;
+}
+
+export type CancelQueueEntryResponseDto = Omit<
+  UpdateQueueStatusResponseDto,
+  'currentStatus' | 'allowedTargetStatuses'
+> & {
+  currentStatus: 'CANCELLED';
+  allowedTargetStatuses: [];
+};

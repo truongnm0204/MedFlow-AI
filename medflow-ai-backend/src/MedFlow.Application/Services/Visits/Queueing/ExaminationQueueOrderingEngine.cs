@@ -4,11 +4,12 @@ namespace MedFlow.Application.Services.Visits.Queueing;
 
 public static class ExaminationQueueOrderingEngine
 {
-    // Note: Fairness counters (walkin_priority_ratio, queue_fairness_states) belong to #94 call-next, not #96.
+    // Fairness: tier 1 (fast-track priority group) and tiers 2-4 (other eligible) are interleaved by QueueFairnessRotation from consecutivePriorityCalls.
     public static QueueOrderingResult Evaluate(
         IReadOnlyList<QueueOrderingItem> items,
         QueueOrderingPolicy policy,
-        DateTime nowLocal)
+        DateTime nowLocal,
+        int consecutivePriorityCalls = 0)
     {
         ArgumentNullException.ThrowIfNull(items);
         ArgumentNullException.ThrowIfNull(policy);
@@ -24,9 +25,11 @@ public static class ExaminationQueueOrderingEngine
 
         var effectiveArrivalClasses = new string[count];
         var activeWaitings = new bool[count];
+        var awaitingResults = new bool[count];
         var isEligibles = new bool[count];
         var isAppointmentProtecteds = new bool[count];
         var isDueProtecteds = new bool[count];
+        var ineligibleReasons = new string?[count];
         var roomIdle = true;
 
         for (var i = 0; i < count; i++)
@@ -37,35 +40,26 @@ public static class ExaminationQueueOrderingEngine
                 roomIdle = false;
             }
 
-            string effectiveArrivalClass;
-            if (!item.IsScheduled)
-            {
-                effectiveArrivalClass = "WALK_IN";
-            }
-            else if (item.ScheduledAt.HasValue && item.ArrivedAt.HasValue)
-            {
-                var scheduled = item.ScheduledAt.Value;
-                var arrived = item.ArrivedAt.Value;
-                if (arrived < scheduled.AddMinutes(-g))
-                {
-                    effectiveArrivalClass = "EARLY";
-                }
-                else if (arrived > scheduled.AddMinutes(g))
-                {
-                    effectiveArrivalClass = "LATE";
-                }
-                else
-                {
-                    effectiveArrivalClass = "ON_TIME_OR_GRACE";
-                }
-            }
-            else
-            {
-                effectiveArrivalClass = item.StoredArrivalClass;
-            }
+            var effectiveArrivalClass = QueueArrivalClassifier.Classify(
+                item.IsScheduled,
+                item.ScheduledAt,
+                item.ArrivedAt,
+                g,
+                item.StoredArrivalClass);
 
             var activeWaiting = item.Status is "WAITING" or "READY";
-            var isEligible = activeWaiting && item.PresenceStatus == "PRESENT";
+
+            // A HOLD_FOR_SLOT block only lasts until the appointment time; once due, protection is restored.
+            var holdExpired = item.IsScheduled && item.ScheduledAt.HasValue && item.ScheduledAt.Value <= now;
+            var isBlocked = !string.IsNullOrWhiteSpace(item.BlockedReason) && !holdExpired;
+            var isAwaitingResults = item.QueueType == ClinicalQueueRules.QueueTypeReturnConsultation
+                && policy.FinalResultRequired
+                && item.PendingRequiredResults;
+
+            var isEligible = activeWaiting
+                && item.PresenceStatus == "PRESENT"
+                && !isBlocked
+                && !isAwaitingResults;
             var isAppointmentProtected = item.IsScheduled
                 && activeWaiting
                 && item.ScheduledAt.HasValue
@@ -73,41 +67,32 @@ public static class ExaminationQueueOrderingEngine
                 && effectiveArrivalClass != "LATE"
                 && (item.PresenceStatus == "PRESENT" || now <= item.ScheduledAt.Value.AddMinutes(g));
             var isDueProtected = isAppointmentProtected
-                && item.PresenceStatus == "PRESENT"
+                && isEligible
                 && item.ScheduledAt!.Value <= now;
 
             effectiveArrivalClasses[i] = effectiveArrivalClass;
             activeWaitings[i] = activeWaiting;
+            awaitingResults[i] = isAwaitingResults;
             isEligibles[i] = isEligible;
             isAppointmentProtecteds[i] = isAppointmentProtected;
             isDueProtecteds[i] = isDueProtected;
+            ineligibleReasons[i] = activeWaiting && !isEligible
+                ? ResolveIneligibleReason(item, isBlocked, isAwaitingResults)
+                : null;
         }
 
-        var orderedIndices = Enumerable.Range(0, count)
-            .OrderBy(i => GetStatusRank(items[i].Status))
-            .ThenBy(i => GetTier(items[i], GetStatusRank(items[i].Status), effectiveArrivalClasses[i], isDueProtecteds[i], isEligibles[i]))
-            .ThenBy(i =>
-            {
-                var statusRank = GetStatusRank(items[i].Status);
-                var tier = GetTier(items[i], statusRank, effectiveArrivalClasses[i], isDueProtecteds[i], isEligibles[i]);
-                return GetPrimaryTime(items[i], statusRank, tier);
-            })
-            .ThenBy(i => items[i].ReadySince ?? DateTime.MaxValue)
-            .ThenBy(i => items[i].QueueNumber)
-            .ThenBy(i => i)
-            .ToArray();
+        var hasDueProtectedOthers = new bool[count];
+        var protectedNextStartsAts = new DateTime?[count];
+        var statusRanks = new int[count];
+        var tiers = new int[count];
+        var primaryTimes = new DateTime[count];
 
-        var servingOrders = new int[count];
-        for (var pos = 0; pos < count; pos++)
-        {
-            servingOrders[orderedIndices[pos]] = pos + 1;
-        }
-
-        var evaluations = new QueueEntryEvaluation[count];
         for (var i = 0; i < count; i++)
         {
+            var item = items[i];
             var hasDueProtectedOther = false;
             DateTime? protectedNextStartsAt = null;
+            DateTime? upcomingProtectedOther = null;
 
             for (var j = 0; j < count; j++)
             {
@@ -121,23 +106,71 @@ public static class ExaminationQueueOrderingEngine
                     hasDueProtectedOther = true;
                 }
 
-                if (isAppointmentProtecteds[j] && items[j].ScheduledAt.HasValue)
+                if (!isAppointmentProtecteds[j] || !items[j].ScheduledAt.HasValue)
                 {
-                    var candidate = items[j].ScheduledAt!.Value;
-                    if (!protectedNextStartsAt.HasValue || candidate < protectedNextStartsAt.Value)
-                    {
-                        protectedNextStartsAt = candidate;
-                    }
+                    continue;
+                }
+
+                var candidate = items[j].ScheduledAt!.Value;
+                if (!protectedNextStartsAt.HasValue || candidate < protectedNextStartsAt.Value)
+                {
+                    protectedNextStartsAt = candidate;
+                }
+
+                if (!isDueProtecteds[j] && (!upcomingProtectedOther.HasValue || candidate < upcomingProtectedOther.Value))
+                {
+                    upcomingProtectedOther = candidate;
                 }
             }
 
+            var statusRank = GetStatusRank(item.Status);
+
+            // Due appointments always sit in tier 0 above the fast track, so the gap gate only
+            // protects the next appointment that is not yet due.
+            var canFastTrack = statusRank == 2
+                && isEligibles[i]
+                && !isDueProtecteds[i]
+                && (ClinicalQueueRules.IsElevated(item.Priority)
+                    || item.QueueType == ClinicalQueueRules.QueueTypeReturnConsultation)
+                && HasSafeGap(upcomingProtectedOther, policy, now);
+
+            var tier = GetTier(item, statusRank, effectiveArrivalClasses[i], isDueProtecteds[i], canFastTrack, isEligibles[i]);
+
+            hasDueProtectedOthers[i] = hasDueProtectedOther;
+            protectedNextStartsAts[i] = protectedNextStartsAt;
+            statusRanks[i] = statusRank;
+            tiers[i] = tier;
+            primaryTimes[i] = GetPrimaryTime(item, statusRank, tier);
+        }
+
+        var orderedIndices = Enumerable.Range(0, count)
+            .OrderBy(i => statusRanks[i])
+            .ThenBy(i => tiers[i])
+            .ThenBy(i => primaryTimes[i])
+            .ThenBy(i => items[i].ReadySince ?? DateTime.MaxValue)
+            .ThenBy(i => items[i].QueueNumber)
+            .ThenBy(i => i)
+            .ToArray();
+
+
+        ApplyFairnessRotation(orderedIndices, statusRanks, tiers, policy, consecutivePriorityCalls);
+        var servingOrders = new int[count];
+        for (var pos = 0; pos < count; pos++)
+        {
+            servingOrders[orderedIndices[pos]] = pos + 1;
+        }
+
+        var evaluations = new QueueEntryEvaluation[count];
+        for (var i = 0; i < count; i++)
+        {
             var (canSafeBackfill, holdReason) = EvaluateSafeBackfill(
                 items[i],
                 activeWaitings[i],
+                awaitingResults[i],
                 isDueProtecteds[i],
-                hasDueProtectedOther,
+                hasDueProtectedOthers[i],
                 roomIdle,
-                protectedNextStartsAt,
+                protectedNextStartsAts[i],
                 policy,
                 now);
 
@@ -149,16 +182,127 @@ public static class ExaminationQueueOrderingEngine
                 IsDueProtected: isDueProtecteds[i],
                 CanSafeBackfill: canSafeBackfill,
                 HoldReason: holdReason,
-                HasDueProtectedAppointment: hasDueProtectedOther,
-                ProtectedNextStartsAt: protectedNextStartsAt);
+                HasDueProtectedAppointment: hasDueProtectedOthers[i],
+                ProtectedNextStartsAt: protectedNextStartsAts[i],
+                IneligibleReason: ineligibleReasons[i]);
         }
 
         return new QueueOrderingResult(orderedIndices, evaluations);
     }
 
+
+    private static void ApplyFairnessRotation(
+        int[] orderedIndices,
+        int[] statusRanks,
+        int[] tiers,
+        QueueOrderingPolicy policy,
+        int consecutivePriorityCalls)
+    {
+        var sliceStart = -1;
+        var sliceEnd = -1;
+
+        for (var pos = 0; pos < orderedIndices.Length; pos++)
+        {
+            var idx = orderedIndices[pos];
+            if (statusRanks[idx] == 2 && tiers[idx] is >= 1 and <= 4)
+            {
+                if (sliceStart < 0)
+                {
+                    sliceStart = pos;
+                }
+
+                sliceEnd = pos;
+            }
+            else if (sliceStart >= 0)
+            {
+                break;
+            }
+        }
+
+        if (sliceStart < 0 || sliceStart == sliceEnd)
+        {
+            return;
+        }
+
+        var priorityGroup = new List<int>();
+        var normalGroup = new List<int>();
+
+        for (var pos = sliceStart; pos <= sliceEnd; pos++)
+        {
+            var idx = orderedIndices[pos];
+            if (tiers[idx] == 1)
+            {
+                priorityGroup.Add(idx);
+            }
+            else
+            {
+                normalGroup.Add(idx);
+            }
+        }
+
+        if (priorityGroup.Count == 0 || normalGroup.Count == 0)
+        {
+            return;
+        }
+
+        var counter = consecutivePriorityCalls;
+        var pPos = 0;
+        var nPos = 0;
+        var writePos = sliceStart;
+
+        while (pPos < priorityGroup.Count || nPos < normalGroup.Count)
+        {
+            var takePriority = QueueFairnessRotation.PreferPriority(counter, policy.PriorityWeight, policy.NormalWeight)
+                ? pPos < priorityGroup.Count
+                : nPos >= normalGroup.Count;
+
+            orderedIndices[writePos++] = takePriority
+                ? priorityGroup[pPos++]
+                : normalGroup[nPos++];
+
+            counter = QueueFairnessRotation.Advance(counter, takePriority, policy.PriorityWeight, policy.NormalWeight);
+        }
+    }
+    private static string? ResolveIneligibleReason(QueueOrderingItem item, bool isBlocked, bool isAwaitingResults)
+    {
+        if (item.PresenceStatus == "LEFT")
+        {
+            return QueueIneligibleReasons.Left;
+        }
+
+        if (item.PresenceStatus != "PRESENT")
+        {
+            return QueueIneligibleReasons.NotArrived;
+        }
+
+        if (isBlocked)
+        {
+            return QueueIneligibleReasons.Blocked;
+        }
+
+        return isAwaitingResults ? QueueIneligibleReasons.AwaitingResults : null;
+    }
+
+    private static bool HasSafeGap(DateTime? nextProtectedStartsAt, QueueOrderingPolicy policy, DateTime now)
+    {
+        if (!nextProtectedStartsAt.HasValue)
+        {
+            return true;
+        }
+
+        if (!policy.ExpectedDurationMinutes.HasValue || !policy.SafetyBufferMinutes.HasValue)
+        {
+            return false;
+        }
+
+        return now.AddMinutes(policy.ExpectedDurationMinutes.Value + policy.SafetyBufferMinutes.Value)
+            <= nextProtectedStartsAt.Value;
+    }
+
     private static (bool CanSafeBackfill, string? HoldReason) EvaluateSafeBackfill(
         QueueOrderingItem item,
         bool activeWaiting,
+        bool awaitingResults,
         bool isDueProtectedSelf,
         bool hasDueProtectedAppointment,
         bool roomIdle,
@@ -174,6 +318,11 @@ public static class ExaminationQueueOrderingEngine
         if (item.PresenceStatus != "PRESENT")
         {
             return (false, "Bệnh nhân phải ở trạng thái Có mặt trước khi Safe Backfill.");
+        }
+
+        if (awaitingResults)
+        {
+            return (false, "Lượt khám lại đang chờ đủ kết quả cận lâm sàng bắt buộc.");
         }
 
         if (isDueProtectedSelf)
@@ -230,6 +379,7 @@ public static class ExaminationQueueOrderingEngine
         int statusRank,
         string effectiveArrivalClass,
         bool isDueProtected,
+        bool canFastTrack,
         bool isEligible)
     {
         if (statusRank != 2)
@@ -237,27 +387,32 @@ public static class ExaminationQueueOrderingEngine
             return 0;
         }
 
-        if (isEligible && ClinicalQueueRules.IsElevated(item.Priority))
+        if (isDueProtected)
         {
             return 0;
         }
 
-        if (isDueProtected || (isEligible && item.IsScheduled && effectiveArrivalClass == "ON_TIME_OR_GRACE"))
+        if (canFastTrack)
         {
             return 1;
         }
 
-        if (isEligible && item.Status == "READY" && item.BackfilledAt.HasValue)
+        if (isEligible && item.IsScheduled && effectiveArrivalClass == "ON_TIME_OR_GRACE")
         {
             return 2;
         }
 
-        if (isEligible)
+        if (isEligible && item.Status == "READY" && item.BackfilledAt.HasValue)
         {
             return 3;
         }
 
-        return 4;
+        if (isEligible)
+        {
+            return 4;
+        }
+
+        return 5;
     }
 
     private static DateTime GetPrimaryTime(QueueOrderingItem item, int statusRank, int tier)
@@ -269,10 +424,11 @@ public static class ExaminationQueueOrderingEngine
 
         return tier switch
         {
-            0 => item.ReadySince ?? item.ArrivedAt ?? DateTime.MaxValue,
-            1 => item.ScheduledAt ?? item.ReadySince ?? DateTime.MaxValue,
-            2 => item.BackfilledAt ?? item.ReadySince ?? DateTime.MaxValue,
-            3 => item.ReadySince ?? item.ArrivedAt ?? DateTime.MaxValue,
+            0 => item.ScheduledAt ?? item.ReadySince ?? DateTime.MaxValue,
+            1 => item.ReadySince ?? item.ArrivedAt ?? DateTime.MaxValue,
+            2 => item.ScheduledAt ?? item.ReadySince ?? DateTime.MaxValue,
+            3 => item.BackfilledAt ?? item.ReadySince ?? DateTime.MaxValue,
+            4 => item.ReadySince ?? item.ArrivedAt ?? DateTime.MaxValue,
             _ => item.ScheduledAt ?? item.ReadySince ?? DateTime.MaxValue,
         };
     }
