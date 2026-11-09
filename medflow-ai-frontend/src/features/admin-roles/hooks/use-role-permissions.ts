@@ -10,10 +10,12 @@ import { useContext } from 'react';
 
 import {
   assignRolePermissionsApi,
+  createRoleApi,
   fetchRolesPermissionsCatalogApi,
 } from '../api/role-permissions.api';
 import { getMockRolesCatalog } from '../data/role-mock-data';
 import type {
+  CreateRoleRequest,
   RoleItem,
   RolesPermissionsCatalogDto,
   UpdateRolePermissionsRequest,
@@ -63,6 +65,46 @@ export function useAssignRolePermissions(): UseMutationResult<
           return {
             ...base,
             roles,
+          };
+        });
+      },
+    },
+    queryClient,
+  );
+}
+
+export function useCreateRole(): UseMutationResult<RoleItem, Error, CreateRoleRequest> {
+  const contextQueryClient = useContext(QueryClientContext);
+  const queryClient = contextQueryClient ?? fallbackQueryClient;
+
+  return useMutation(
+    {
+      mutationFn: (payload) => createRoleApi(payload),
+      onSuccess: (createdRole) => {
+        queryClient.setQueryData<RolesPermissionsCatalogDto>(ROLE_PERMISSIONS_QUERY_KEY, (prev) => {
+          const base = prev ?? getMockRolesCatalog();
+          const exists = base.roles.some(
+            (role) => role.id === createdRole.id || role.code === createdRole.code,
+          );
+          const roles = exists
+            ? base.roles.map((role) =>
+                role.id === createdRole.id || role.code === createdRole.code ? createdRole : role,
+              )
+            : [...base.roles, createdRole];
+
+          return {
+            ...base,
+            roles,
+            metrics: {
+              ...base.metrics,
+              totalRoles: roles.length,
+              activeRoles: roles.filter((role) => role.status === 'ACTIVE').length,
+              inactiveRoles: roles.filter((role) => role.status !== 'ACTIVE').length,
+              systemRoles: roles.filter((role) => role.isSystemRole).length,
+              customRoles: roles.filter((role) => !role.isSystemRole).length,
+              totalAssignedAccounts: roles.reduce((sum, role) => sum + role.assignedUsersCount, 0),
+              totalPermissions: base.permissions.length,
+            },
           };
         });
       },
