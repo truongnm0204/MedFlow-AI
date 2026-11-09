@@ -37,6 +37,57 @@ public sealed class ExaminationQueueController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// POST /api/v1/reception/queue-entries/{idOrCode}/early-arrival-backfill — Điều phối bệnh nhân đến sớm / Safe Backfill hoặc giữ chờ khung giờ hẹn (UC28 / M2-044).
+    /// </summary>
+    [HttpPost("/api/v1/reception/queue-entries/{idOrCode}/early-arrival-backfill")]
+    [HttpPost("/api/v1/reception/examination-queue/entries/{idOrCode}/early-arrival-backfill")]
+    [ProducesResponseType<EarlyArrivalBackfillResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<EarlyArrivalBackfillResponseDto>> ApplyEarlyArrivalBackfill(
+        string idOrCode,
+        [FromBody] EarlyArrivalBackfillRequest request,
+        CancellationToken ct)
+        => Ok(await _examinationQueueService.ApplyEarlyArrivalBackfillAsync(GetUserId(), idOrCode, request, GetIp(), ct));
+
+    /// <summary>
+    /// POST /api/v1/reception/queue-entries/{idOrCode}/missed-turn — Đánh dấu Qua lượt (SKIPPED) khi gọi tên nhưng bệnh nhân vắng mặt (UC28 / M2-046).
+    /// </summary>
+    [HttpPost("/api/v1/reception/queue-entries/{idOrCode}/missed-turn")]
+    [HttpPost("/api/v1/reception/examination-queue/entries/{idOrCode}/missed-turn")]
+    [ProducesResponseType<QueueTurnActionResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<QueueTurnActionResponseDto>> MarkMissedTurn(
+        string idOrCode,
+        [FromBody] MarkMissedTurnRequest request,
+        CancellationToken ct)
+        => Ok(await _examinationQueueService.MarkMissedTurnAsync(GetUserId(), idOrCode, request, GetIp(), ct));
+
+    /// <summary>
+    /// POST /api/v1/reception/queue-entries/{idOrCode}/restore-turn — Khôi phục lượt khám từ Qua lượt (SKIPPED) về Sẵn sàng (READY) sau khi xác nhận bệnh nhân có mặt (UC28 / M2-046).
+    /// </summary>
+    [HttpPost("/api/v1/reception/queue-entries/{idOrCode}/restore-turn")]
+    [HttpPost("/api/v1/reception/examination-queue/entries/{idOrCode}/restore-turn")]
+    [ProducesResponseType<QueueTurnActionResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<QueueTurnActionResponseDto>> RestoreSkippedTurn(
+        string idOrCode,
+        [FromBody] RestoreQueueTurnRequest request,
+        CancellationToken ct)
+        => Ok(await _examinationQueueService.RestoreSkippedTurnAsync(GetUserId(), idOrCode, request, GetIp(), ct));
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
@@ -49,4 +100,8 @@ public sealed class ExaminationQueueController : ControllerBase
 
         return userId;
     }
+
+    private string? GetIp() =>
+        HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
+        ?? HttpContext.Connection.RemoteIpAddress?.ToString();
 }

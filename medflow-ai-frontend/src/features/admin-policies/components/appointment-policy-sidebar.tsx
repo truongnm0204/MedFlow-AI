@@ -3,6 +3,7 @@ import { CalendarClock, History, ShieldAlert, SlidersHorizontal } from 'lucide-r
 import { Badge } from '@/shared/ui/badge';
 
 import type { AppointmentPolicyFormValues } from '../schemas/appointment-policy.schema';
+import { formatPolicyUpdatedAt } from '../utils/format-policy-updated-at';
 
 export interface AppointmentPolicySidebarProps {
   values: AppointmentPolicyFormValues;
@@ -12,25 +13,6 @@ export interface AppointmentPolicySidebarProps {
 
 function safeInt(value: number | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-function formatUpdatedAt(isoString: string | null): string {
-  if (!isoString) {
-    return 'Đang áp dụng giá trị mặc định hệ thống';
-  }
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) {
-    return 'Đang áp dụng giá trị mặc định hệ thống';
-  }
-  return new Intl.DateTimeFormat('vi-VN', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: 'Asia/Ho_Chi_Minh',
-  }).format(date);
 }
 
 export function AppointmentPolicySidebar({
@@ -122,7 +104,7 @@ export function AppointmentPolicySidebar({
           <div className="rounded-lg border border-slate-200 bg-white p-3.5">
             <div className="text-[11px] font-semibold text-sub">Cập nhật gần nhất</div>
             <div className="mt-1 font-mono text-xs font-bold text-ink">
-              {formatUpdatedAt(lastUpdatedAt)}
+              {formatPolicyUpdatedAt(lastUpdatedAt)}
             </div>
           </div>
 
