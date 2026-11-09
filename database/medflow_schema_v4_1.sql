@@ -241,7 +241,9 @@ CREATE TABLE "queue_entries" (
     "called_at" timestamp without time zone,
     "started_at" timestamp without time zone,
     "completed_at" timestamp without time zone,
-    "blocked_reason" text
+    "blocked_reason" text,
+    "backfilled_at" timestamp without time zone,
+    "backfill_reason" text
 );
 
 CREATE TABLE "queue_fairness_states" (
@@ -779,4 +781,8 @@ ALTER TABLE "audit_logs"
 -- index for IP-based audit queries
 CREATE INDEX IF NOT EXISTS "ix_audit_logs_ip_address" ON "audit_logs" ("ip_address");
 
+
+-- 011_outpatient_clinical_priority
+ALTER TABLE "queue_entries" ADD CONSTRAINT "ck_queue_entries_manual_priority"
+  CHECK ("manual_priority" IS NULL OR "manual_priority" IN ('NORMAL','ELDERLY','PREGNANT'));
 

@@ -8,10 +8,15 @@ import {
   buildMockUpdateExaminationQueueStatusResponse,
 } from '../data/examination-queue-mock';
 import type {
+  CallNextPatientRequestPayload,
+  CallNextPatientResponseDto,
   EarlyArrivalBackfillRequestPayload,
   EarlyArrivalBackfillResponseDto,
   ExaminationQueueQueryParams,
   ExaminationQueueResponseDto,
+  MarkMissedTurnRequestPayload,
+  QueueTurnActionResponseDto,
+  RestoreQueueTurnRequestPayload,
   UpdateExaminationQueueStatusPayload,
   UpdateExaminationQueueStatusResponseDto,
 } from '../types/examination-queue.types';
@@ -94,4 +99,41 @@ export async function updateExaminationQueueStatus(
   }
 
   return buildMockUpdateExaminationQueueStatusResponse(queueEntryId, payload, currentQueueData);
+}
+
+export async function markQueueEntryMissedTurn(
+  idOrCode: string,
+  payload: MarkMissedTurnRequestPayload,
+): Promise<QueueTurnActionResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+  const { data } = await apiClient.post<QueueTurnActionResponseDto>(
+    `/reception/examination-queue/entries/${encoded}/missed-turn`,
+    payload,
+  );
+  return data;
+}
+
+export async function restoreSkippedQueueTurn(
+  idOrCode: string,
+  payload: RestoreQueueTurnRequestPayload,
+): Promise<QueueTurnActionResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+  const { data } = await apiClient.post<QueueTurnActionResponseDto>(
+    `/reception/examination-queue/entries/${encoded}/restore-turn`,
+    payload,
+  );
+  return data;
+}
+
+export async function callNextEligiblePatient(
+  servicePointId: string,
+  payload?: CallNextPatientRequestPayload,
+): Promise<CallNextPatientResponseDto> {
+  const encoded = encodeURIComponent(servicePointId.trim());
+  const body = payload?.notes !== undefined ? { notes: payload.notes } : {};
+  const { data } = await apiClient.post<CallNextPatientResponseDto>(
+    `/queue/service-points/${encoded}/call-next`,
+    body,
+  );
+  return data;
 }

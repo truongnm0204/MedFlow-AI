@@ -62,7 +62,8 @@ public class QueueEntryConfiguration : IEntityTypeConfiguration<QueueEntry>
             .HasMaxLength(10);
 
         builder.Property(q => q.StateVersion)
-            .HasColumnName("state_version");
+            .HasColumnName("state_version")
+            .IsConcurrencyToken();
 
         builder.Property(q => q.ReadyAt)
             .HasColumnName("ready_at")
@@ -82,5 +83,12 @@ public class QueueEntryConfiguration : IEntityTypeConfiguration<QueueEntry>
 
         builder.Property(q => q.BlockedReason)
             .HasColumnName("blocked_reason");
+
+        builder.Property(q => q.BackfilledAt)
+            .HasColumnName("backfilled_at")
+            .HasColumnType("timestamp without time zone");
+
+        builder.Property(q => q.BackfillReason)
+            .HasColumnName("backfill_reason");
     }
 }

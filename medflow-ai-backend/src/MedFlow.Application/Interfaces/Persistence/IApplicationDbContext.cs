@@ -39,6 +39,7 @@ public interface IApplicationDbContext
     DbSet<DispenseItem> DispenseItems => throw new NotSupportedException("DispenseItems DbSet is not configured in this test context.");
     DbSet<StockTransaction> StockTransactions => throw new NotSupportedException("StockTransactions DbSet is not configured in this test context.");
     DbSet<QueueServicePoint> QueueServicePoints => throw new NotSupportedException("QueueServicePoints DbSet is not configured in this test context.");
+    DbSet<QueueFairnessState> QueueFairnessStates => throw new NotSupportedException("QueueFairnessStates DbSet is not configured in this test context.");
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);

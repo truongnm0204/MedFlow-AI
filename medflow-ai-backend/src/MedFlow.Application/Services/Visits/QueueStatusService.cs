@@ -5,6 +5,8 @@ using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Application.Services.Policies;
+using MedFlow.Application.Services.Visits.Queueing;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -15,7 +17,16 @@ namespace MedFlow.Application.Services.Visits;
 public sealed class QueueStatusService : IQueueStatusService
 {
     public const string QueueStatusUpdateAction = "QUEUE_STATUS_UPDATED";
+    public const string QueuePriorityUpdateAction = "QUEUE_PRIORITY_UPDATED";
+    public const string QueueEntryCancelAction = "QUEUE_ENTRY_CANCELLED";
     public const string QueueEntryEntityType = "QUEUE_ENTRY";
+
+    private static readonly string[] QueueManagerRoles =
+    [
+        "RECEPTION",
+        "HOSPITAL_ADMIN",
+        "SYSTEM_ADMIN",
+    ];
 
     private static readonly string[] AllowedOperatorRoles =
     [
@@ -44,7 +55,6 @@ public sealed class QueueStatusService : IQueueStatusService
         "IN_PROGRESS",
         "COMPLETED",
         "SKIPPED",
-        "CANCELLED",
     };
 
     private static readonly HashSet<string> ValidPresenceStatuses = new(StringComparer.OrdinalIgnoreCase)
@@ -54,24 +64,15 @@ public sealed class QueueStatusService : IQueueStatusService
         "LEFT",
     };
 
-    private static readonly HashSet<string> ValidPriorityValues = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "NORMAL",
-        "URGENT",
-        "ELDERLY",
-        "PREGNANT",
-        "RETURN_RESULT",
-    };
-
     private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> AllowedTransitions =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["RESERVED"] = ["WAITING", "READY", "CANCELLED"],
-            ["WAITING"] = ["READY", "CALLED", "SKIPPED", "CANCELLED"],
-            ["READY"] = ["WAITING", "CALLED", "SKIPPED", "CANCELLED"],
-            ["CALLED"] = ["IN_PROGRESS", "WAITING", "READY", "SKIPPED", "CANCELLED"],
+            ["RESERVED"] = ["WAITING", "READY"],
+            ["WAITING"] = ["READY", "CALLED", "SKIPPED"],
+            ["READY"] = ["WAITING", "CALLED", "SKIPPED"],
+            ["CALLED"] = ["IN_PROGRESS", "WAITING", "READY", "SKIPPED"],
             ["IN_PROGRESS"] = ["COMPLETED", "WAITING", "SKIPPED"],
-            ["SKIPPED"] = ["WAITING", "READY", "CALLED", "CANCELLED"],
+            ["SKIPPED"] = ["WAITING", "READY", "CALLED"],
             ["COMPLETED"] = [],
             ["CANCELLED"] = [],
         };
@@ -103,7 +104,7 @@ public sealed class QueueStatusService : IQueueStatusService
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
         }
 
-        var (numericId, code) = ParseIdentifier(idOrCode);
+        var (numericId, code) = QueueEntryRequestParsing.ParseIdentifier(idOrCode);
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
         var operatorAccess = await EnsureOperatorAccessAsync(actorUserId, nowUtc, ct);
 
@@ -151,7 +152,7 @@ public sealed class QueueStatusService : IQueueStatusService
             CurrentStatus: currentStatus,
             VisitStatus: context.Visit?.Status,
             PresenceStatus: string.IsNullOrWhiteSpace(queueEntry.PresenceStatus) ? "PRESENT" : queueEntry.PresenceStatus.ToUpperInvariant(),
-            Priority: string.IsNullOrWhiteSpace(queueEntry.ManualPriority) ? "NORMAL" : queueEntry.ManualPriority.ToUpperInvariant(),
+            Priority: ClinicalQueueRules.NormalizeStoredPriority(queueEntry.ManualPriority),
             ArrivalClass: string.IsNullOrWhiteSpace(queueEntry.ArrivalClass) ? "ON_TIME_OR_GRACE" : queueEntry.ArrivalClass.ToUpperInvariant(),
             StateVersion: queueEntry.StateVersion is > 0 ? queueEntry.StateVersion.Value : 1,
             ScheduledAt: queueEntry.ScheduledAt,
@@ -179,10 +180,9 @@ public sealed class QueueStatusService : IQueueStatusService
 
         ArgumentNullException.ThrowIfNull(request);
 
-        var (numericId, code) = ParseIdentifier(idOrCode);
+        var (numericId, code) = QueueEntryRequestParsing.ParseIdentifier(idOrCode);
         var targetStatus = ResolveAndValidateTargetStatus(request);
         var requestedPresence = NormalizeAndValidatePresenceStatus(request.PresenceStatus);
-        var requestedPriority = NormalizeAndValidatePriority(request.Priority);
         var trimmedReason = TrimAndValidateLength(request.Reason, "Lý do cập nhật trạng thái");
         var trimmedBlockedReason = TrimAndValidateLength(request.BlockedReason, "Lý do chặn/qua lượt");
         var trimmedNotes = TrimAndValidateLength(request.Notes, "Ghi chú");
@@ -195,9 +195,9 @@ public sealed class QueueStatusService : IQueueStatusService
         var effectiveReason = trimmedReason ?? trimmedBlockedReason;
         var effectiveBlockedReason = trimmedBlockedReason ?? trimmedReason;
 
-        if (targetStatus is "SKIPPED" or "CANCELLED" && string.IsNullOrWhiteSpace(effectiveBlockedReason))
+        if (targetStatus == "SKIPPED" && string.IsNullOrWhiteSpace(effectiveBlockedReason))
         {
-            throw new ValidationException("Vui lòng nhập lý do khi chuyển trạng thái sang Qua lượt (SKIPPED) hoặc Hủy (CANCELLED).");
+            throw new ValidationException("Vui lòng nhập lý do khi chuyển trạng thái sang Qua lượt (SKIPPED).");
         }
 
         if (targetStatus == "IN_PROGRESS" && requestedPresence is "NOT_ARRIVED" or "LEFT")
@@ -224,9 +224,7 @@ public sealed class QueueStatusService : IQueueStatusService
         var previousPresenceStatus = string.IsNullOrWhiteSpace(queueEntry.PresenceStatus)
             ? "PRESENT"
             : queueEntry.PresenceStatus.ToUpperInvariant();
-        var previousPriority = string.IsNullOrWhiteSpace(queueEntry.ManualPriority)
-            ? "NORMAL"
-            : queueEntry.ManualPriority.ToUpperInvariant();
+        var previousPriority = ClinicalQueueRules.NormalizeStoredPriority(queueEntry.ManualPriority);
         var previousStateVersion = queueEntry.StateVersion is > 0 ? queueEntry.StateVersion.Value : 1;
 
         if (currentStatus is "COMPLETED" or "CANCELLED" ||
@@ -252,10 +250,38 @@ public sealed class QueueStatusService : IQueueStatusService
             throw new ConflictException($"Chuyển tiếp trạng thái hàng đợi từ {currentStatus} sang {targetStatus} không hợp lệ.");
         }
 
+        var resolvedQueueTypeForUpdate = ClinicalQueueRules.ResolveQueueType(queueEntry.QueueType, visit?.Status);
+        if (resolvedQueueTypeForUpdate == ClinicalQueueRules.QueueTypeReturnConsultation &&
+            targetStatus is "READY" or "CALLED" or "IN_PROGRESS" &&
+            visit is not null)
+        {
+            var policySet = await QueueOrderingPolicyLoader.LoadAsync(_db, context.HospitalId, nowUtc, ct);
+            var servicePointIdForPolicy = queueEntry.CurrentServicePointId ?? queueEntry.ServicePointId ?? context.ServicePoint?.Id;
+            var policy = policySet.ForServicePoint(servicePointIdForPolicy);
+            if (policy.FinalResultRequired)
+            {
+                var hasOpenDiagnostics = await _db.QueueEntries
+                    .AsNoTracking()
+                    .AnyAsync(q =>
+                        q.VisitId == visit.Id &&
+                        q.QueueType != null &&
+                        q.QueueType.ToUpper() == "DIAGNOSTIC" &&
+                        q.CompletedAt == null &&
+                        (q.Status == null ||
+                         (q.Status.ToUpper() != "COMPLETED" && q.Status.ToUpper() != "CANCELLED")),
+                        ct);
+
+                if (hasOpenDiagnostics)
+                {
+                    throw new ConflictException(
+                        "Chưa thể chuyển trạng thái lượt khám lại vì kết quả cận lâm sàng bắt buộc chưa sẵn sàng.");
+                }
+            }
+        }
+
         if (targetStatus is "CALLED" or "IN_PROGRESS")
         {
-            var isExaminationQueue = string.IsNullOrWhiteSpace(queueEntry.QueueType) ||
-                                     string.Equals(queueEntry.QueueType.Trim(), "EXAMINATION", StringComparison.OrdinalIgnoreCase);
+            var isExaminationQueue = ClinicalQueueRules.IsClinicalExaminationQueueType(queueEntry.QueueType);
 
             if (isExaminationQueue &&
                 visit is not null &&
@@ -283,7 +309,6 @@ public sealed class QueueStatusService : IQueueStatusService
             visit,
             targetStatus,
             requestedPresence,
-            requestedPriority,
             effectiveBlockedReason,
             previousStateVersion,
             nowLocal);
@@ -323,14 +348,339 @@ public sealed class QueueStatusService : IQueueStatusService
             EntityId = queueEntry.Id.ToString(CultureInfo.InvariantCulture),
             Reason = effectiveReason,
             ChangeData = JsonSerializer.Serialize(auditPayload, JsonOptions),
-            IpAddress = ParseIpAddress(ipAddress),
+            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
             OccurredAt = nowUtc,
         };
 
         _db.AuditLogs.Add(auditLog);
         await _db.SaveChangesAsync(ct);
 
-        var nextAllowedTargets = GetAllowedTargetStatuses(targetStatus, visit);
+        return await BuildStatusResponseAsync(
+            context,
+            currentStatus,
+            previousVisitStatus,
+            previousPresenceStatus,
+            previousStateVersion,
+            effectiveReason,
+            trimmedNotes,
+            operatorAccess,
+            actorUserId,
+            updatedByName,
+            nowUtc,
+            ct);
+    }
+
+    public async Task<UpdateQueuePriorityResponseDto> UpdateQueueEntryPriorityAsync(
+        long actorUserId,
+        string idOrCode,
+        UpdateQueuePriorityRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        if (actorUserId <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        ArgumentNullException.ThrowIfNull(request);
+
+        var (numericId, code) = QueueEntryRequestParsing.ParseIdentifier(idOrCode);
+
+        var target = ClinicalQueueRules.NormalizePriorityOrThrow(request.Priority)
+            ?? throw new ValidationException("Vui lòng chọn mức ưu tiên (NORMAL, ELDERLY, PREGNANT).");
+
+        var reason = TrimAndValidateLength(request.Reason, "Lý do áp dụng mức ưu tiên")
+            ?? throw new ValidationException("Vui lòng nhập lý do khi áp dụng hoặc thay đổi mức ưu tiên.");
+
+        if (!request.ExpectedStateVersion.HasValue || request.ExpectedStateVersion.Value < 1)
+        {
+            throw new ValidationException("Phiên bản trạng thái (ExpectedStateVersion) là bắt buộc và phải lớn hơn hoặc bằng 1.");
+        }
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var operatorAccess = await EnsureOperatorAccessAsync(actorUserId, nowUtc, ct);
+        EnsureQueueManagerAccess(operatorAccess, "Chỉ nhân viên tiếp đón hoặc quản trị được phép áp dụng mức ưu tiên.");
+
+        var context = await ResolveQueueEntryContextAsync(
+            numericId,
+            code,
+            idOrCode,
+            operatorAccess,
+            trackEntities: true,
+            ct);
+
+        var queueEntry = context.QueueEntry;
+        var visit = context.Visit;
+
+        if (!ClinicalQueueRules.IsClinicalExaminationQueueType(queueEntry.QueueType))
+        {
+            throw new ConflictException("Chỉ áp dụng mức ưu tiên cho lượt khám lâm sàng (không áp dụng cho hàng đợi cận lâm sàng).");
+        }
+
+        var currentStatus = NormalizeCurrentQueueStatus(queueEntry.Status);
+        if (currentStatus is "COMPLETED" or "CANCELLED" or "IN_PROGRESS" ||
+            (visit is not null && IsTerminalVisitStatus(visit.Status)))
+        {
+            throw new ConflictException("Không thể thay đổi mức ưu tiên cho lượt đang khám, đã hoàn tất hoặc đã hủy.");
+        }
+
+        var previousStateVersion = queueEntry.StateVersion is > 0 ? queueEntry.StateVersion.Value : 1;
+        if (request.ExpectedStateVersion.Value != previousStateVersion)
+        {
+            throw new ConflictException("Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
+        }
+
+        var previousPriority = ClinicalQueueRules.NormalizeStoredPriority(queueEntry.ManualPriority);
+        if (string.Equals(previousPriority, target, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException($"Lượt xếp hàng hiện đã ở mức ưu tiên {target}.");
+        }
+
+        ClinicalQueueRules.EnsurePatientEligible(target, context.Patient, DateOnly.FromDateTime(nowLocal));
+
+        var servicePointId = queueEntry.CurrentServicePointId ?? queueEntry.ServicePointId;
+        var verificationRequired = ClinicalQueueRules.IsElevated(target) &&
+            await QueuePolicyReader.IsManualPriorityVerificationRequiredAsync(
+                _db,
+                context.HospitalId,
+                servicePointId,
+                nowUtc,
+                ct);
+
+        if (verificationRequired && request.VerificationConfirmed != true)
+        {
+            throw new ValidationException("Chính sách bệnh viện yêu cầu xác minh giấy tờ trước khi áp dụng ưu tiên ELDERLY/PREGNANT (verificationConfirmed = true).");
+        }
+
+        var updatedStateVersion = previousStateVersion + 1;
+        queueEntry.ManualPriority = target;
+        queueEntry.StateVersion = updatedStateVersion;
+
+        var updatedByName = !string.IsNullOrWhiteSpace(operatorAccess.ActorStaff?.FullName)
+            ? operatorAccess.ActorStaff.FullName
+            : operatorAccess.ActorUser.Email;
+
+        var verificationConfirmed = request.VerificationConfirmed == true;
+        var auditPayload = new QueuePriorityChangeAuditPayload(
+            QueueEntryId: queueEntry.Id,
+            VisitId: visit?.Id ?? queueEntry.VisitId,
+            VisitCode: visit?.VisitCode,
+            PreviousPriority: previousPriority,
+            UpdatedPriority: target,
+            VerificationRequired: verificationRequired,
+            VerificationConfirmed: verificationConfirmed,
+            PreviousStateVersion: previousStateVersion,
+            UpdatedStateVersion: updatedStateVersion,
+            Reason: reason,
+            UpdatedByUserId: actorUserId,
+            UpdatedByStaffCode: operatorAccess.ActorStaff?.StaffCode,
+            UpdatedByName: updatedByName,
+            UpdatedAtUtc: nowUtc);
+
+        var auditLog = new AuditLog
+        {
+            ActorUserId = actorUserId,
+            HospitalId = context.HospitalId,
+            Action = QueuePriorityUpdateAction,
+            EntityType = QueueEntryEntityType,
+            EntityId = queueEntry.Id.ToString(CultureInfo.InvariantCulture),
+            Reason = reason,
+            ChangeData = JsonSerializer.Serialize(auditPayload, JsonOptions),
+            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+            OccurredAt = nowUtc,
+        };
+
+        _db.AuditLogs.Add(auditLog);
+        await _db.SaveChangesAsync(ct);
+
+        var queueNumber = queueEntry.QueueNumber is > 0 ? queueEntry.QueueNumber.Value : 1;
+        var ticketNo = FormatTicketNo(queueNumber, context.Room?.RoomCode);
+        var visitCode = visit is not null
+            ? (string.IsNullOrWhiteSpace(visit.VisitCode) ? $"VIS-{visit.Id:D4}" : visit.VisitCode)
+            : null;
+
+        return new UpdateQueuePriorityResponseDto(
+            QueueEntryId: queueEntry.Id,
+            VisitId: visit?.Id ?? queueEntry.VisitId,
+            VisitCode: visitCode,
+            TicketNo: ticketNo,
+            QueueNumber: queueNumber,
+            QueueType: ClinicalQueueRules.ResolveQueueType(queueEntry.QueueType, visit?.Status),
+            CurrentStatus: currentStatus,
+            PreviousPriority: previousPriority,
+            Priority: target,
+            VerificationRequired: verificationRequired,
+            VerificationConfirmed: verificationConfirmed,
+            Reason: reason,
+            PreviousStateVersion: previousStateVersion,
+            StateVersion: updatedStateVersion,
+            UpdatedByUserId: actorUserId,
+            UpdatedByStaffCode: operatorAccess.ActorStaff?.StaffCode,
+            UpdatedByName: updatedByName,
+            UpdatedAtUtc: nowUtc);
+    }
+
+    public async Task<UpdateQueueStatusResponseDto> CancelQueueEntryAsync(
+        long actorUserId,
+        string idOrCode,
+        CancelQueueEntryRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        if (actorUserId <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        ArgumentNullException.ThrowIfNull(request);
+
+        var (numericId, code) = QueueEntryRequestParsing.ParseIdentifier(idOrCode);
+
+        var reason = TrimAndValidateLength(request.Reason, "Lý do hủy lượt")
+            ?? throw new ValidationException("Vui lòng nhập lý do hủy lượt xếp hàng.");
+
+        var notes = TrimAndValidateLength(request.Notes, "Ghi chú");
+
+        if (!request.ExpectedStateVersion.HasValue || request.ExpectedStateVersion.Value < 1)
+        {
+            throw new ValidationException("Phiên bản trạng thái (ExpectedStateVersion) là bắt buộc và phải lớn hơn hoặc bằng 1.");
+        }
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var operatorAccess = await EnsureOperatorAccessAsync(actorUserId, nowUtc, ct);
+        EnsureQueueManagerAccess(operatorAccess, "Chỉ nhân viên tiếp đón hoặc quản trị được phép hủy lượt xếp hàng.");
+
+        var context = await ResolveQueueEntryContextAsync(
+            numericId,
+            code,
+            idOrCode,
+            operatorAccess,
+            trackEntities: true,
+            ct);
+
+        var queueEntry = context.QueueEntry;
+        var visit = context.Visit;
+
+        if (!ClinicalQueueRules.IsClinicalExaminationQueueType(queueEntry.QueueType))
+        {
+            throw new ConflictException("Chỉ hủy được lượt khám lâm sàng (không áp dụng cho hàng đợi cận lâm sàng).");
+        }
+
+        var currentStatus = NormalizeCurrentQueueStatus(queueEntry.Status);
+        if (currentStatus == "CANCELLED")
+        {
+            throw new ConflictException("Lượt xếp hàng đã được hủy trước đó.");
+        }
+
+        if (currentStatus is "IN_PROGRESS" or "COMPLETED" ||
+            (visit is not null && IsTerminalVisitStatus(visit.Status)))
+        {
+            throw new ConflictException("Không thể hủy lượt đang khám (IN_PROGRESS) hoặc đã hoàn tất.");
+        }
+
+        var previousStateVersion = queueEntry.StateVersion is > 0 ? queueEntry.StateVersion.Value : 1;
+        if (request.ExpectedStateVersion.Value != previousStateVersion)
+        {
+            throw new ConflictException("Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
+        }
+
+        var previousVisitStatus = visit?.Status;
+        var previousPresenceStatus = string.IsNullOrWhiteSpace(queueEntry.PresenceStatus)
+            ? "PRESENT"
+            : queueEntry.PresenceStatus.ToUpperInvariant();
+        var previousPriority = ClinicalQueueRules.NormalizeStoredPriority(queueEntry.ManualPriority);
+
+        var resolvedQueueType = ClinicalQueueRules.ResolveQueueType(queueEntry.QueueType, visit?.Status);
+        var visitToCancel = resolvedQueueType == ClinicalQueueRules.QueueTypeExamination ? visit : null;
+
+        var cancelPresence = previousPresenceStatus == "NOT_ARRIVED" ? "NOT_ARRIVED" : "LEFT";
+
+        ApplyStatusTransition(
+            queueEntry,
+            visitToCancel,
+            "CANCELLED",
+            cancelPresence,
+            reason,
+            previousStateVersion,
+            nowLocal);
+
+        var updatedByName = !string.IsNullOrWhiteSpace(operatorAccess.ActorStaff?.FullName)
+            ? operatorAccess.ActorStaff.FullName
+            : operatorAccess.ActorUser.Email;
+
+        var auditPayload = new QueueStatusTransitionAuditPayload(
+            QueueEntryId: queueEntry.Id,
+            VisitId: visit?.Id ?? queueEntry.VisitId,
+            VisitCode: visit?.VisitCode,
+            PreviousStatus: currentStatus,
+            TargetStatus: "CANCELLED",
+            PreviousVisitStatus: previousVisitStatus,
+            UpdatedVisitStatus: visit?.Status,
+            PreviousPresenceStatus: previousPresenceStatus,
+            UpdatedPresenceStatus: queueEntry.PresenceStatus,
+            PreviousPriority: previousPriority,
+            UpdatedPriority: queueEntry.ManualPriority,
+            PreviousStateVersion: previousStateVersion,
+            UpdatedStateVersion: queueEntry.StateVersion ?? (previousStateVersion + 1),
+            Reason: reason,
+            BlockedReason: queueEntry.BlockedReason,
+            Notes: notes,
+            UpdatedByUserId: actorUserId,
+            UpdatedByStaffCode: operatorAccess.ActorStaff?.StaffCode,
+            UpdatedByName: updatedByName,
+            UpdatedAtUtc: nowUtc);
+
+        var auditLog = new AuditLog
+        {
+            ActorUserId = actorUserId,
+            HospitalId = context.HospitalId,
+            Action = QueueEntryCancelAction,
+            EntityType = QueueEntryEntityType,
+            EntityId = queueEntry.Id.ToString(CultureInfo.InvariantCulture),
+            Reason = reason,
+            ChangeData = JsonSerializer.Serialize(auditPayload, JsonOptions),
+            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+            OccurredAt = nowUtc,
+        };
+
+        _db.AuditLogs.Add(auditLog);
+        await _db.SaveChangesAsync(ct);
+
+        return await BuildStatusResponseAsync(
+            context,
+            currentStatus,
+            previousVisitStatus,
+            previousPresenceStatus,
+            previousStateVersion,
+            reason,
+            notes,
+            operatorAccess,
+            actorUserId,
+            updatedByName,
+            nowUtc,
+            ct);
+    }
+
+    private async Task<UpdateQueueStatusResponseDto> BuildStatusResponseAsync(
+        QueueEntryContext context,
+        string previousStatus,
+        string? previousVisitStatus,
+        string previousPresenceStatus,
+        int previousStateVersion,
+        string? reason,
+        string? notes,
+        OperatorAccessContext operatorAccess,
+        long actorUserId,
+        string updatedByName,
+        DateTime nowUtc,
+        CancellationToken ct)
+    {
+        var queueEntry = context.QueueEntry;
+        var visit = context.Visit;
+        var currentStatus = NormalizeCurrentQueueStatus(queueEntry.Status);
+        var nextAllowedTargets = GetAllowedTargetStatuses(currentStatus, visit);
         var statusHistory = await LoadStatusHistoryAsync(queueEntry.Id, ct);
         var queueNumber = queueEntry.QueueNumber is > 0 ? queueEntry.QueueNumber.Value : 1;
         var ticketNo = FormatTicketNo(queueNumber, context.Room?.RoomCode);
@@ -361,13 +711,13 @@ public sealed class QueueStatusService : IQueueStatusService
             QueueNumber: queueNumber,
             TicketNo: ticketNo,
             QueueType: string.IsNullOrWhiteSpace(queueEntry.QueueType) ? "EXAMINATION" : queueEntry.QueueType.ToUpperInvariant(),
-            PreviousStatus: currentStatus,
-            CurrentStatus: targetStatus,
+            PreviousStatus: previousStatus,
+            CurrentStatus: currentStatus,
             PreviousVisitStatus: previousVisitStatus,
             VisitStatus: visit?.Status,
             PreviousPresenceStatus: previousPresenceStatus,
             PresenceStatus: queueEntry.PresenceStatus ?? "PRESENT",
-            Priority: queueEntry.ManualPriority ?? "NORMAL",
+            Priority: ClinicalQueueRules.NormalizeStoredPriority(queueEntry.ManualPriority),
             ArrivalClass: string.IsNullOrWhiteSpace(queueEntry.ArrivalClass) ? "ON_TIME_OR_GRACE" : queueEntry.ArrivalClass.ToUpperInvariant(),
             PreviousStateVersion: previousStateVersion,
             StateVersion: queueEntry.StateVersion ?? (previousStateVersion + 1),
@@ -378,8 +728,8 @@ public sealed class QueueStatusService : IQueueStatusService
             StartedAt: queueEntry.StartedAt,
             CompletedAt: queueEntry.CompletedAt,
             BlockedReason: queueEntry.BlockedReason,
-            Reason: effectiveReason,
-            Notes: trimmedNotes,
+            Reason: reason,
+            Notes: notes,
             UpdatedByUserId: actorUserId,
             UpdatedByStaffCode: operatorAccess.ActorStaff?.StaffCode,
             UpdatedByName: updatedByName,
@@ -387,58 +737,6 @@ public sealed class QueueStatusService : IQueueStatusService
             AllowedTargetStatuses: nextAllowedTargets,
             StatusHistory: statusHistory);
     }
-
-    private static (long? Id, string? Code) ParseIdentifier(string? idOrCode)
-    {
-        if (string.IsNullOrWhiteSpace(idOrCode))
-        {
-            throw new ValidationException("Mã định danh lượt xếp hàng không hợp lệ.");
-        }
-
-        var trimmed = idOrCode.Trim();
-        if (trimmed.StartsWith('#'))
-        {
-            trimmed = trimmed[1..].TrimStart();
-        }
-
-        if (trimmed.Length >= 3 &&
-            (trimmed.StartsWith("q-", StringComparison.OrdinalIgnoreCase) ||
-             trimmed.StartsWith("q_", StringComparison.OrdinalIgnoreCase)))
-        {
-            var suffix = trimmed[2..];
-            if (suffix.All(char.IsAsciiDigit) ||
-                (suffix.StartsWith('-') && suffix.Length > 1 && suffix[1..].All(char.IsAsciiDigit)))
-            {
-                trimmed = suffix;
-            }
-        }
-
-        if (string.IsNullOrEmpty(trimmed) || trimmed.Length > 40)
-        {
-            throw new ValidationException("Mã định danh lượt xếp hàng không hợp lệ.");
-        }
-
-        if (trimmed.All(char.IsAsciiDigit) ||
-            (trimmed.StartsWith('-') && trimmed.Length > 1 && trimmed[1..].All(char.IsAsciiDigit)))
-        {
-            if (!long.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out var numericId) ||
-                numericId <= 0)
-            {
-                throw new ValidationException("ID lượt xếp hàng phải lớn hơn 0.");
-            }
-
-            return (numericId, null);
-        }
-
-        if (trimmed.StartsWith('-') ||
-            !trimmed.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '-' || ch == '_'))
-        {
-            throw new ValidationException("Mã định danh lượt xếp hàng không hợp lệ.");
-        }
-
-        return (null, trimmed.ToUpperInvariant());
-    }
-
     private static string ResolveAndValidateTargetStatus(UpdateQueueStatusRequest request)
     {
         var hasTarget = !string.IsNullOrWhiteSpace(request.TargetStatus);
@@ -460,9 +758,14 @@ public sealed class QueueStatusService : IQueueStatusService
         }
 
         var resolved = normalizedTarget ?? normalizedStatus!;
+        if (resolved == "CANCELLED")
+        {
+            throw new ValidationException("Vui lòng sử dụng chức năng Hủy lượt (POST /api/v1/queue-entries/{idOrCode}/cancel) để hủy lượt xếp hàng.");
+        }
+
         if (!ValidTargetStatuses.Contains(resolved))
         {
-            throw new ValidationException("Trạng thái hàng đợi không hợp lệ. Chỉ chấp nhận: WAITING, READY, CALLED, IN_PROGRESS, COMPLETED, SKIPPED, CANCELLED.");
+            throw new ValidationException("Trạng thái hàng đợi không hợp lệ. Chỉ chấp nhận: WAITING, READY, CALLED, IN_PROGRESS, COMPLETED, SKIPPED.");
         }
 
         return resolved;
@@ -501,22 +804,6 @@ public sealed class QueueStatusService : IQueueStatusService
         if (!ValidPresenceStatuses.Contains(normalized))
         {
             throw new ValidationException("Trạng thái hiện diện không hợp lệ. Chỉ chấp nhận: PRESENT, NOT_ARRIVED, LEFT.");
-        }
-
-        return normalized;
-    }
-
-    private static string? NormalizeAndValidatePriority(string? rawPriority)
-    {
-        if (string.IsNullOrWhiteSpace(rawPriority))
-        {
-            return null;
-        }
-
-        var normalized = AppointmentBookingRules.NormalizeStatusKey(rawPriority);
-        if (!ValidPriorityValues.Contains(normalized))
-        {
-            throw new ValidationException("Mức độ ưu tiên không hợp lệ. Chỉ chấp nhận: NORMAL, URGENT, ELDERLY, PREGNANT, RETURN_RESULT.");
         }
 
         return normalized;
@@ -561,7 +848,6 @@ public sealed class QueueStatusService : IQueueStatusService
         Visit? visit,
         string targetStatus,
         string? requestedPresence,
-        string? requestedPriority,
         string? effectiveBlockedReason,
         int previousStateVersion,
         DateTime nowLocal)
@@ -574,16 +860,9 @@ public sealed class QueueStatusService : IQueueStatusService
             ? "EXAMINATION"
             : queueEntry.QueueType.ToUpperInvariant();
         queueEntry.ArrivalClass ??= "ON_TIME_OR_GRACE";
-
-        if (requestedPriority is not null)
-        {
-            queueEntry.ManualPriority = requestedPriority;
-        }
-        else
-        {
-            queueEntry.ManualPriority ??= "NORMAL";
-        }
-
+        queueEntry.ManualPriority ??= ClinicalQueueRules.PriorityNormal;
+        var isReturnConsultation = ClinicalQueueRules.ResolveQueueType(queueEntry.QueueType, visit?.Status) ==
+                                   ClinicalQueueRules.QueueTypeReturnConsultation;
         switch (targetStatus)
         {
             case "WAITING":
@@ -603,7 +882,7 @@ public sealed class QueueStatusService : IQueueStatusService
 
                 if (visit is not null)
                 {
-                    visit.Status = "WAITING";
+                    visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "WAITING";
                 }
 
                 break;
@@ -617,7 +896,7 @@ public sealed class QueueStatusService : IQueueStatusService
                 queueEntry.BlockedReason = null;
                 if (visit is not null)
                 {
-                    visit.Status = "WAITING";
+                    visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "WAITING";
                 }
 
                 break;
@@ -636,7 +915,7 @@ public sealed class QueueStatusService : IQueueStatusService
                         : queueEntry.PresenceStatus.ToUpperInvariant());
                 if (visit is not null)
                 {
-                    visit.Status = "CALLED";
+                    visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "CALLED";
                 }
 
                 break;
@@ -681,7 +960,7 @@ public sealed class QueueStatusService : IQueueStatusService
                         : (string.IsNullOrWhiteSpace(queueEntry.PresenceStatus) ? "NOT_ARRIVED" : queueEntry.PresenceStatus.ToUpperInvariant()));
                 if (visit is not null)
                 {
-                    visit.Status = "WAITING";
+                    visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "WAITING";
                 }
 
                 break;
@@ -814,6 +1093,7 @@ public sealed class QueueStatusService : IQueueStatusService
         var hasDoctorRole = actorRoleCodes.Any(code =>
             string.Equals(code, "DOCTOR", StringComparison.OrdinalIgnoreCase));
 
+        IReadOnlyList<string> resolvedPermissionCodes = [];
         if (!isSystemAdmin && actorRoleIds.Count > 0)
         {
             var rolePermissionIds = await _db.RolePermissions
@@ -831,6 +1111,7 @@ public sealed class QueueStatusService : IQueueStatusService
                     .Select(p => p.Code)
                     .ToListAsync(ct);
 
+                resolvedPermissionCodes = permissionCodes;
                 if (permissionCodes.Count > 0)
                 {
                     var hasPermission = permissionCodes.Any(code =>
@@ -886,7 +1167,27 @@ public sealed class QueueStatusService : IQueueStatusService
             ActorHospitalId: actorStaff?.HospitalId,
             ActorStaff: actorStaff,
             ActorDoctor: actorDoctor,
-            ActorUser: actorUser);
+            ActorUser: actorUser,
+            RoleCodes: actorRoleCodes,
+            PermissionCodes: resolvedPermissionCodes);
+    }
+
+    private static void EnsureQueueManagerAccess(OperatorAccessContext operatorAccess, string forbiddenRoleMessage)
+    {
+        var hasManagerRole = operatorAccess.RoleCodes.Any(code =>
+            QueueManagerRoles.Any(allowed => string.Equals(code, allowed, StringComparison.OrdinalIgnoreCase)));
+
+        if (!hasManagerRole)
+        {
+            throw new ForbiddenException(forbiddenRoleMessage);
+        }
+
+        if (!operatorAccess.IsSystemAdmin &&
+            !operatorAccess.PermissionCodes.Any(code =>
+                string.Equals(code, "QUEUE_MANAGE", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ForbiddenException("Vai trò hiện tại chưa được cấp quyền quản lý hàng đợi (QUEUE_MANAGE).");
+        }
     }
 
     private async Task<QueueEntryContext> ResolveQueueEntryContextAsync(
@@ -1062,11 +1363,9 @@ public sealed class QueueStatusService : IQueueStatusService
 
         return entries.FirstOrDefault(q =>
                    q.VisitId == visit.Id &&
-                   (string.IsNullOrWhiteSpace(q.QueueType) ||
-                    string.Equals(q.QueueType.Trim(), "EXAMINATION", StringComparison.OrdinalIgnoreCase)))
+                   ClinicalQueueRules.IsClinicalExaminationQueueType(q.QueueType))
                ?? entries.FirstOrDefault(q =>
-                   string.IsNullOrWhiteSpace(q.QueueType) ||
-                   string.Equals(q.QueueType.Trim(), "EXAMINATION", StringComparison.OrdinalIgnoreCase))
+                   ClinicalQueueRules.IsClinicalExaminationQueueType(q.QueueType))
                ?? entries.FirstOrDefault();
     }
 
@@ -1091,7 +1390,7 @@ public sealed class QueueStatusService : IQueueStatusService
         var queueEntryIdStr = queueEntryId.ToString(CultureInfo.InvariantCulture);
         var auditLogs = await _db.AuditLogs
             .AsNoTracking()
-            .Where(a => a.Action == QueueStatusUpdateAction && a.EntityId == queueEntryIdStr)
+            .Where(a => (a.Action == QueueStatusUpdateAction || a.Action == QueueEntryCancelAction) && a.EntityId == queueEntryIdStr)
             .OrderByDescending(a => a.OccurredAt)
             .ThenByDescending(a => a.Id)
             .ToListAsync(ct);
@@ -1152,23 +1451,15 @@ public sealed class QueueStatusService : IQueueStatusService
         return $"{prefix}{queueNumber:D3}";
     }
 
-    private static IPAddress? ParseIpAddress(string? ipAddress)
-    {
-        if (string.IsNullOrWhiteSpace(ipAddress))
-        {
-            return null;
-        }
-
-        return IPAddress.TryParse(ipAddress.Trim(), out var parsed) ? parsed : null;
-    }
-
     private sealed record OperatorAccessContext(
         bool IsSystemAdmin,
         bool IsDoctorOnly,
         long? ActorHospitalId,
         Staff? ActorStaff,
         Doctor? ActorDoctor,
-        User ActorUser);
+        User ActorUser,
+        IReadOnlyList<string> RoleCodes,
+        IReadOnlyList<string> PermissionCodes);
 
     private sealed record QueueEntryContext(
         long HospitalId,
@@ -1200,5 +1491,21 @@ public sealed class QueueStatusService : IQueueStatusService
         long? UpdatedByUserId,
         string? UpdatedByStaffCode,
         string? UpdatedByName,
+        DateTime UpdatedAtUtc);
+
+    private sealed record QueuePriorityChangeAuditPayload(
+        long QueueEntryId,
+        long? VisitId,
+        string? VisitCode,
+        string PreviousPriority,
+        string UpdatedPriority,
+        bool VerificationRequired,
+        bool VerificationConfirmed,
+        int PreviousStateVersion,
+        int UpdatedStateVersion,
+        string Reason,
+        long UpdatedByUserId,
+        string? UpdatedByStaffCode,
+        string UpdatedByName,
         DateTime UpdatedAtUtc);
 }
