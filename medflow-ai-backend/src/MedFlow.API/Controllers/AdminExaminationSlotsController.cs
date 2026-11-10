@@ -1,8 +1,9 @@
+using System.Security.Claims;
 using MedFlow.Application.DTOs.ExaminationSlots;
 using MedFlow.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 namespace MedFlow.API.Controllers;
 
 [ApiController]
@@ -137,5 +138,91 @@ public sealed class AdminExaminationSlotsController : ControllerBase
             });
         }
     }
+
+    /// <summary>POST /api/v1/admin/examination-slots/{idOrCode}/close — Đóng khung giờ khám và xử lý cảnh báo với các booking phụ thuộc.</summary>
+    [HttpPost("{idOrCode}/close")]
+    [HttpPatch("{idOrCode}/close")]
+    [HttpPut("{idOrCode}/close")]
+    [ProducesResponseType<CloseExaminationSlotResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<CloseExaminationSlotResponseDto>> CloseExaminationSlot(
+        [FromRoute] string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CloseExaminationSlotRequest? request = null,
+        CancellationToken ct = default)
+    {
+        var result = await _service.CloseExaminationSlotAsync(
+            GetUserId(),
+            idOrCode,
+            request ?? new CloseExaminationSlotRequest(),
+            GetIp(),
+            ct);
+        return Ok(result);
+    }
+
+    /// <summary>POST /api/v1/admin/examination-slots/batch-close — Đóng hàng loạt khung giờ khám được chọn.</summary>
+    [HttpPost("batch-close")]
+    [HttpPost("close-batch")]
+    [ProducesResponseType<BatchCloseExaminationSlotsResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<BatchCloseExaminationSlotsResponseDto>> BatchCloseExaminationSlots(
+        [FromBody] BatchCloseExaminationSlotsRequest request,
+        CancellationToken ct = default)
+    {
+        var result = await _service.BatchCloseExaminationSlotsAsync(
+            GetUserId(),
+            request,
+            GetIp(),
+            ct);
+        return Ok(result);
+    }
+
+    /// <summary>POST /api/v1/admin/examination-slots/{idOrCode}/reopen — Mở lại khung giờ khám đã đóng.</summary>
+    [HttpPost("{idOrCode}/reopen")]
+    [HttpPatch("{idOrCode}/reopen")]
+    [HttpPut("{idOrCode}/reopen")]
+    [ProducesResponseType<CloseExaminationSlotResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<CloseExaminationSlotResponseDto>> ReopenExaminationSlot(
+        [FromRoute] string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] ReopenExaminationSlotRequest? request = null,
+        CancellationToken ct = default)
+    {
+        var result = await _service.ReopenExaminationSlotAsync(
+            GetUserId(),
+            idOrCode,
+            request,
+            GetIp(),
+            ct);
+        return Ok(result);
+    }
+
+    private long GetUserId()
+    {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue("sub");
+
+        if (string.IsNullOrWhiteSpace(sub) || !long.TryParse(sub, out var userId))
+        {
+            throw new UnauthorizedAccessException("Token không hợp lệ.");
+        }
+
+        return userId;
+    }
+
+    private string? GetIp() =>
+        HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
+        ?? HttpContext.Connection.RemoteIpAddress?.ToString();
 }
 

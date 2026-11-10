@@ -16,5 +16,25 @@ public interface IExaminationSlotAdminService
         long id,
         UpdateExaminationSlotRequest request,
         CancellationToken ct = default);
+
+    Task<CloseExaminationSlotResponseDto> CloseExaminationSlotAsync(
+        long? actorUserId,
+        string idOrCode,
+        CloseExaminationSlotRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
+
+    Task<BatchCloseExaminationSlotsResponseDto> BatchCloseExaminationSlotsAsync(
+        long? actorUserId,
+        BatchCloseExaminationSlotsRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
+
+    Task<CloseExaminationSlotResponseDto> ReopenExaminationSlotAsync(
+        long? actorUserId,
+        string idOrCode,
+        ReopenExaminationSlotRequest? request = null,
+        string? ipAddress = null,
+        CancellationToken ct = default);
 }
 
