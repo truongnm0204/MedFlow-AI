@@ -5,6 +5,7 @@ using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Application.Services.Reception;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -175,8 +176,13 @@ public sealed class VisitTicketService : IVisitTicketService
                 .FirstOrDefaultAsync(d => d.Id == visit.AssignedDoctorId.Value, ct);
         }
 
+        var walkInMetadata = visit.AppointmentId.HasValue
+            ? null
+            : await CreateWalkInVisitService.LoadWalkInAuditMetadataStaticAsync(_db, visit.Id, ct);
+
         var associatedHospitalIds = new long?[]
         {
+            walkInMetadata?.HospitalId,
             room?.HospitalId,
             room?.Department?.HospitalId,
             doctor?.HospitalId,
@@ -341,6 +347,7 @@ public sealed class VisitTicketService : IVisitTicketService
         {
             var fallbackDeptId = room.DepartmentId
                 ?? appointment?.Slot?.Service?.DepartmentId
+                ?? walkInMetadata?.DepartmentId
                 ?? doctor.Staff?.DepartmentId;
 
             if (fallbackDeptId.HasValue)
@@ -364,6 +371,13 @@ public sealed class VisitTicketService : IVisitTicketService
         }
 
         var service = appointment?.Slot?.Service;
+        if (service is null && walkInMetadata?.ServiceId.HasValue == true)
+        {
+            service = await _db.Services
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == walkInMetadata.ServiceId.Value, ct);
+        }
+
         if (service is null)
         {
             var targetSpecialtyId = specialty?.Id ?? doctor.SpecialtyId;

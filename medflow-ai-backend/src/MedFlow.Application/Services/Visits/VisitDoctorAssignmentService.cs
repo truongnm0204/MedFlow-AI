@@ -6,6 +6,7 @@ using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Policies;
+using MedFlow.Application.Services.Reception;
 using MedFlow.Application.Services.Visits.Queueing;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
@@ -148,8 +149,12 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
 
         var existingQueueEntry = await FindExistingExaminationQueueEntryAsync(visit, asNoTracking: true, ct);
 
+        var walkInMetadata = visit.AppointmentId.HasValue
+            ? null
+            : await CreateWalkInVisitService.LoadWalkInAuditMetadataStaticAsync(_db, visit.Id, ct);
+
         var requiredService = await ResolveRequiredServiceAsync(
-            serviceId,
+            serviceId ?? walkInMetadata?.ServiceId,
             normalizedServiceCode,
             appointment,
             existingQueueEntry,
@@ -173,6 +178,7 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
 
         var requiredDepartmentId = explicitDepartment?.Id
             ?? requiredService?.DepartmentId
+            ?? walkInMetadata?.DepartmentId
             ?? currentRoom?.DepartmentId
             ?? currentDoctor?.Staff?.DepartmentId;
 
@@ -1208,6 +1214,11 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
                 .Where(s => s.Id == visit.CheckedInByStaffId.Value)
                 .Select(s => s.HospitalId)
                 .FirstOrDefaultAsync(ct);
+        }
+        if (!hospitalId.HasValue && !visit.AppointmentId.HasValue)
+        {
+            var walkInMetadata = await CreateWalkInVisitService.LoadWalkInAuditMetadataStaticAsync(_db, visit.Id, ct);
+            hospitalId = walkInMetadata.HospitalId;
         }
 
         return hospitalId;
