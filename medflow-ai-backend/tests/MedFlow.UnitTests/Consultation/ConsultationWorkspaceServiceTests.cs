@@ -2352,4 +2352,359 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
         await Assert.ThrowsAsync<ValidationException>(
             () => _service.SearchIcd10CodesAsync(3, query: "<script>", primaryOnly: false, limit: 10));
     }
+
+    // -------------------------------------------------------------------------
+    // 8. CompleteVisit (UC38 / #118)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task CompleteVisit_InProgressVisitWithRecordedDiagnosis_FinalizesMedicalRecordCompletesVisitAndQueueAndWritesAudit()
+    {
+        var opened = await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        Assert.Equal("OPENED", opened.ActionOutcome);
+        var recordId = opened.ClinicalContext.MedicalRecordId!.Value;
+
+        await _service.RecordClinicalExaminationAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordClinicalExaminationRequest(
+                PresentingComplaint: "Đau vùng thượng vị sau ăn",
+                BpSystolicMmhg: 120,
+                BpDiastolicMmhg: 78,
+                PulseBpm: 72,
+                TemperatureC: 36.7m,
+                ClinicalFindings: "Bụng mềm, ấn tức nhẹ thượng vị"));
+
+        var dxResult = await _service.RecordDiagnosisAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordDiagnosisRequest(
+                Diagnoses:
+                [
+                    new RecordDiagnosisItemRequest(
+                        Code: "K29.5",
+                        IsPrimary: true,
+                        ClinicalDiagnosis: "Viêm dạ dày mạn tính đợt cấp",
+                        Status: "PRELIMINARY"),
+                    new RecordDiagnosisItemRequest(
+                        Code: "K76.0",
+                        IsPrimary: false,
+                        ClinicalDiagnosis: "Gan nhiễm mỡ độ I",
+                        Status: "PRELIMINARY"),
+                ],
+                ClinicalConclusion: "Viêm dạ dày mạn tính đợt cấp kèm gan nhiễm mỡ độ I",
+                IsConfirmed: false,
+                ExpectedStateVersion: 3,
+                ExpectedRevisionNo: 2));
+
+        Assert.Equal(3, dxResult.ClinicalContext.CurrentRevisionNo);
+        Assert.All(dxResult.ClinicalContext.Diagnoses, d => Assert.Equal("PRELIMINARY", d.Status));
+
+        var completed = await _service.CompleteVisitAsync(
+            actorUserId: 3,
+            visitIdOrCode: "VIS-202610-0011",
+            request: new CompleteVisitRequest(
+                ClinicalConclusion: "Viêm dạ dày mạn tính đợt cấp đã ổn định, điều trị ngoại trú 14 ngày",
+                DischargeInstructions: "Ăn chín uống sôi, kiêng rượu bia và đồ chua cay",
+                FollowUpInstructions: "Tái khám tại Phòng 101 sau 2 tuần",
+                FollowUpDate: new DateOnly(2026, 11, 5),
+                WarningSigns: "Nôn ra máu, đi ngoài phân đen hoặc đau bụng dữ dội",
+                CompletionNote: "Hoàn tất khám và cấp toa ngoại trú",
+                ConfirmNoPrescription: true,
+                ExpectedStateVersion: 3,
+                ExpectedRevisionNo: 3),
+            ipAddress: "127.0.0.1");
+
+        Assert.Equal("VISIT_COMPLETED", completed.ActionOutcome);
+        Assert.Equal("COMPLETED", completed.WorkspaceState);
+        Assert.False(completed.CanEditClinical);
+        Assert.Equal("Hồ sơ bệnh án đã được khóa hoàn tất (FINALIZED).", completed.ReadOnlyReason);
+
+        Assert.Equal("COMPLETED", completed.Visit.Status);
+        Assert.Equal(new DateTime(2026, 10, 22, 9, 0, 0), completed.Visit.CompletedAt);
+        Assert.NotNull(completed.Queue);
+        Assert.Equal("COMPLETED", completed.Queue!.Status);
+        Assert.Equal("09:00", completed.Queue.CompletedAt);
+        Assert.Equal(4, completed.Queue.StateVersion);
+
+        Assert.Equal("FINALIZED", completed.ClinicalContext.MedicalRecordStatus);
+        Assert.Equal(new DateTime(2026, 10, 22, 9, 0, 0), completed.ClinicalContext.FinalizedAt);
+        Assert.Equal(4, completed.ClinicalContext.CurrentRevisionNo);
+        Assert.True(completed.ClinicalContext.IsConfirmed);
+        Assert.Equal(
+            "Viêm dạ dày mạn tính đợt cấp đã ổn định, điều trị ngoại trú 14 ngày",
+            completed.ClinicalContext.ClinicalConclusion);
+
+        Assert.Equal(2, completed.ClinicalContext.Diagnoses.Count);
+        Assert.All(completed.ClinicalContext.Diagnoses, d =>
+        {
+            Assert.Equal("CONFIRMED", d.Status);
+            Assert.NotNull(d.ConfirmedAt);
+        });
+
+        var editActions = completed.AllowedActions.Where(a => a.Id != "view-medical-history");
+        Assert.All(editActions, a =>
+        {
+            Assert.False(a.Enabled);
+            Assert.False(string.IsNullOrWhiteSpace(a.DisabledReason));
+        });
+
+        var dbVisit = await _db.Visits.FirstAsync(v => v.Id == 11);
+        Assert.Equal("COMPLETED", dbVisit.Status);
+        Assert.NotNull(dbVisit.CompletedAt);
+        Assert.Equal(1L, dbVisit.CompletedByDoctorId);
+
+        var dbRecord = await _db.MedicalRecords.FirstAsync(m => m.Id == recordId);
+        Assert.Equal("FINALIZED", dbRecord.Status);
+        Assert.NotNull(dbRecord.FinalizedAt);
+
+        var audit = await _db.AuditLogs.SingleOrDefaultAsync(a =>
+            a.Action == "VISIT_COMPLETED" &&
+            a.EntityId == "VIS-202610-0011");
+        Assert.NotNull(audit);
+        Assert.Equal(3, audit!.ActorUserId);
+        Assert.Equal(1, audit.HospitalId);
+        Assert.Equal("VISIT", audit.EntityType);
+        Assert.Equal("Hoàn tất khám và cấp toa ngoại trú", audit.Reason);
+
+        using var changeDoc = System.Text.Json.JsonDocument.Parse(audit.ChangeData!);
+        Assert.Equal("FINALIZED", changeDoc.RootElement.GetProperty("medicalRecordStatus").GetString());
+        Assert.Equal("K29.5", changeDoc.RootElement.GetProperty("primaryIcd10Code").GetString());
+        Assert.Equal("2026-11-05", changeDoc.RootElement.GetProperty("followUpDate").GetString());
+        Assert.True(changeDoc.RootElement.GetProperty("confirmNoPrescription").GetBoolean());
+    }
+
+    [Fact]
+    public async Task CompleteVisit_WithDraftPrescriptionAndNoBody_PromotesPrescriptionToIssuedAndFinalizesVisit()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        await _service.RecordDiagnosisAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordDiagnosisRequest(
+                PrimaryIcd10Code: "K29.5",
+                ClinicalConclusion: "Viêm dạ dày mạn tính, kê đơn điều trị ngoại trú"));
+
+        _db.Prescriptions.Add(new Prescription
+        {
+            Id = 50,
+            PrescriptionCode = "RX-202610-0050",
+            VisitId = 11,
+            PrescribingDoctorId = 1,
+            FulfillmentChoice = "HOSPITAL",
+            Status = "DRAFT",
+            CreatedAt = new DateTime(2026, 10, 22, 8, 55, 0),
+        });
+        _db.PrescriptionItems.Add(new PrescriptionItem
+        {
+            Id = 501,
+            PrescriptionId = 50,
+            MedicineId = 1,
+            PrescribedQuantity = 14,
+        });
+        await _db.SaveChangesAsync();
+
+        var completed = await _service.CompleteVisitAsync(3, "q-011", request: null);
+
+        Assert.Equal("VISIT_COMPLETED", completed.ActionOutcome);
+        Assert.Equal("COMPLETED", completed.WorkspaceState);
+        Assert.Equal("FINALIZED", completed.ClinicalContext.MedicalRecordStatus);
+        Assert.Equal(2, completed.ClinicalContext.CurrentRevisionNo);
+        Assert.True(completed.ClinicalContext.IsConfirmed);
+        Assert.Equal(1, completed.ClinicalContext.PrescriptionSummary.TotalPrescriptions);
+        Assert.Equal("ISSUED", completed.ClinicalContext.PrescriptionSummary.LatestPrescriptionStatus);
+
+        var dbRx = await _db.Prescriptions.FirstAsync(p => p.Id == 50);
+        Assert.Equal("ISSUED", dbRx.Status);
+        Assert.NotNull(dbRx.IssuedAt);
+    }
+
+    [Fact]
+    public async Task CompleteVisit_MissingPrimaryDiagnosisOrEmptyDraftPrescription_ThrowsConflictException()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        // Missing primary diagnosis right after OpenWorkspace -> 409
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CompleteVisitAsync(3, "VIS-202610-0011"));
+
+        var dbVisitBefore = await _db.Visits.FirstAsync(v => v.Id == 11);
+        Assert.Equal("IN_PROGRESS", dbVisitBefore.Status);
+        Assert.Null(dbVisitBefore.CompletedAt);
+
+        // Record diagnosis, then add an empty DRAFT prescription (0 items) -> 409
+        await _service.RecordDiagnosisAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordDiagnosisRequest(
+                PrimaryIcd10Code: "K29.5",
+                ClinicalConclusion: "Viêm dạ dày mạn tính"));
+
+        _db.Prescriptions.Add(new Prescription
+        {
+            Id = 51,
+            PrescriptionCode = "RX-202610-0051",
+            VisitId = 11,
+            PrescribingDoctorId = 1,
+            Status = "DRAFT",
+            CreatedAt = new DateTime(2026, 10, 22, 8, 56, 0),
+        });
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CompleteVisitAsync(3, "VIS-202610-0011"));
+    }
+
+    [Fact]
+    public async Task CompleteVisit_WhenDiagnosticQueueOrOrderPending_ThrowsConflictException()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        await _service.RecordDiagnosisAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordDiagnosisRequest(
+                PrimaryIcd10Code: "K29.5",
+                ClinicalConclusion: "Viêm dạ dày mạn tính"));
+
+        // Create a non-mandatory diagnostic order (status = ORDERED, queue = WAITING)
+        await _service.CreateDiagnosticOrderAsync(
+            3,
+            "VIS-202610-0011",
+            new CreateDiagnosticOrderRequest(
+                ServiceId: 5,
+                Instruction: "Kiểm tra công thức máu",
+                RequiredForConclusion: false));
+
+        // Even if non-mandatory for diagnosis, CompleteVisit must reject while diagnostic step is still open
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CompleteVisitAsync(3, "VIS-202610-0011"));
+
+        // Complete both diagnostic queue entry and diagnostic order -> CompleteVisit succeeds
+        var diagOrder = await _db.DiagnosticOrders.SingleAsync(o => o.VisitId == 11);
+        diagOrder.Status = "COMPLETED";
+        var diagQueue = await _db.QueueEntries.SingleAsync(q => q.Id == diagOrder.QueueEntryId);
+        diagQueue.Status = "COMPLETED";
+        diagQueue.CompletedAt = new DateTime(2026, 10, 22, 9, 5, 0);
+        await _db.SaveChangesAsync();
+
+        var completed = await _service.CompleteVisitAsync(3, "VIS-202610-0011");
+        Assert.Equal("VISIT_COMPLETED", completed.ActionOutcome);
+        Assert.Equal("COMPLETED", completed.Visit.Status);
+    }
+
+    [Fact]
+    public async Task CompleteVisit_InvalidInputs_ThrowsValidationException()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CompleteVisitAsync(
+                3,
+                "VIS-202610-0011",
+                new CompleteVisitRequest(ExpectedStateVersion: 0)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CompleteVisitAsync(
+                3,
+                "VIS-202610-0011",
+                new CompleteVisitRequest(ExpectedRevisionNo: 0)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CompleteVisitAsync(
+                3,
+                "VIS-202610-0011",
+                new CompleteVisitRequest(ClinicalConclusion: "AB")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CompleteVisitAsync(
+                3,
+                "VIS-202610-0011",
+                new CompleteVisitRequest(ClinicalConclusion: "Kết luận <script>")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CompleteVisitAsync(
+                3,
+                "VIS-202610-0011",
+                new CompleteVisitRequest(DischargeInstructions: "Dặn dò <script>")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CompleteVisitAsync(
+                3,
+                "VIS-202610-0011",
+                new CompleteVisitRequest(FollowUpDate: new DateOnly(2026, 10, 22))));
+    }
+
+    [Fact]
+    public async Task CompleteVisit_UnauthorizedOrForbiddenDoctor_ThrowsAndDoesNotMutateVisitOrAudit()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        await _service.RecordDiagnosisAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordDiagnosisRequest(
+                PrimaryIcd10Code: "K29.5",
+                ClinicalConclusion: "Viêm dạ dày mạn tính"));
+
+        var baselineAudits = await _db.AuditLogs.CountAsync(a => a.Action == "VISIT_COMPLETED");
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => _service.CompleteVisitAsync(0, "VIS-202610-0011"));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.CompleteVisitAsync(6, "VIS-202610-0011"));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.CompleteVisitAsync(3, "VIS-202610-0021"));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.CompleteVisitAsync(3, "VIS-202610-0002"));
+
+        var writePerm = await _db.RolePermissions
+            .FirstAsync(rp => rp.RoleId == 3 && rp.PermissionId == 1);
+        _db.RolePermissions.Remove(writePerm);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.CompleteVisitAsync(3, "VIS-202610-0011"));
+
+        var visit = await _db.Visits.FirstAsync(v => v.Id == 11);
+        var record = await _db.MedicalRecords.FirstAsync(m => m.VisitId == 11);
+        Assert.Equal("IN_PROGRESS", visit.Status);
+        Assert.Null(visit.CompletedAt);
+        Assert.Equal("DRAFT", record.Status);
+        Assert.Equal(baselineAudits, await _db.AuditLogs.CountAsync(a => a.Action == "VISIT_COMPLETED"));
+    }
+
+    [Fact]
+    public async Task CompleteVisit_WhenVisitNotInProgressOrConcurrencyMismatch_ThrowsConflictException()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        await _service.RecordDiagnosisAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordDiagnosisRequest(
+                PrimaryIcd10Code: "K29.5",
+                ClinicalConclusion: "Viêm dạ dày mạn tính"));
+
+        // ExpectedStateVersion mismatch -> 409
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CompleteVisitAsync(
+                3,
+                "VIS-202610-0011",
+                new CompleteVisitRequest(ExpectedStateVersion: 99)));
+
+        // ExpectedRevisionNo mismatch -> 409
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CompleteVisitAsync(
+                3,
+                "VIS-202610-0011",
+                new CompleteVisitRequest(ExpectedRevisionNo: 99)));
+
+        // First CompleteVisit succeeds
+        await _service.CompleteVisitAsync(3, "VIS-202610-0011");
+
+        // Second CompleteVisit on already COMPLETED visit -> 409
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CompleteVisitAsync(3, "VIS-202610-0011"));
+    }
 }
