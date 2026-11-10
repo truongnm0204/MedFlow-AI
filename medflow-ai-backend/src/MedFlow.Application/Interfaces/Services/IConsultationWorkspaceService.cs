@@ -48,4 +48,11 @@ public interface IConsultationWorkspaceService
         bool primaryOnly = false,
         int limit = 50,
         CancellationToken ct = default);
+
+    Task<ConsultationWorkspaceResponseDto> CompleteVisitAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        CompleteVisitRequest? request = null,
+        string? ipAddress = null,
+        CancellationToken ct = default);
 }

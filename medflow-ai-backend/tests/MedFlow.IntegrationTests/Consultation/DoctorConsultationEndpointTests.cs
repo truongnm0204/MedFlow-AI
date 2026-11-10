@@ -20,6 +20,8 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
     private const string DiagnosisRoute = "/api/v1/doctor/consultation/VIS-202610-0001/diagnosis";
     private const string DiagnosisAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/diagnosis";
     private const string Icd10SearchRoute = "/api/v1/doctor/icd10-codes";
+    private const string CompleteVisitRoute = "/api/v1/doctor/consultation/VIS-202610-0001/complete";
+    private const string CompleteVisitAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/complete-visit";
     private readonly TestWebAppFactory _factory;
 
     public DoctorConsultationEndpointTests(TestWebAppFactory factory)
@@ -477,6 +479,103 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
         Assert.Equal(HttpStatusCode.Forbidden, crossDoctorResponse.StatusCode);
 
         var completedVisitResponse = await PostWithTokenAsync(DiagnosticOrdersRoute, token, body);
+        Assert.Equal(HttpStatusCode.Conflict, completedVisitResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CompleteVisit_Unauthenticated_Returns401()
+    {
+        using var postRequest = new HttpRequestMessage(HttpMethod.Post, CompleteVisitRoute);
+        var postResponse = await Client.SendAsync(postRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, postResponse.StatusCode);
+
+        using var putRequest = new HttpRequestMessage(HttpMethod.Put, CompleteVisitAliasRoute);
+        var putResponse = await Client.SendAsync(putRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, putResponse.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("PATIENT")]
+    [InlineData("RECEPTION")]
+    [InlineData("DIAGNOSTIC_STAFF")]
+    [InlineData("PHARMACY_STAFF")]
+    [InlineData("HOSPITAL_ADMIN")]
+    [InlineData("SYSTEM_ADMIN")]
+    public async Task CompleteVisit_ForbiddenRoles_Returns403(string role)
+    {
+        var token = GenerateToken(11, $"{role.ToLowerInvariant()}@medflow.test", role);
+        var body = new
+        {
+            clinicalConclusion = "Viêm dạ dày mạn tính đã điều trị ổn định",
+            dischargeInstructions = "Uống thuốc đúng giờ, tái khám sau 14 ngày",
+        };
+
+        var postResponse = await PostWithTokenAsync(CompleteVisitRoute, token, body);
+        Assert.Equal(HttpStatusCode.Forbidden, postResponse.StatusCode);
+
+        var putResponse = await PutWithTokenAsync(CompleteVisitAliasRoute, token, body);
+        Assert.Equal(HttpStatusCode.Forbidden, putResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CompleteVisit_InvalidPayload_Returns400()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+
+        var invalidStateVersionResponse = await PostWithTokenAsync(
+            CompleteVisitRoute,
+            token,
+            new { expectedStateVersion = 0 });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidStateVersionResponse.StatusCode);
+
+        var invalidRevisionResponse = await PutWithTokenAsync(
+            CompleteVisitAliasRoute,
+            token,
+            new { expectedRevisionNo = 0 });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidRevisionResponse.StatusCode);
+
+        var shortConclusionResponse = await PostWithTokenAsync(
+            CompleteVisitRoute,
+            token,
+            new { clinicalConclusion = "AB" });
+        Assert.Equal(HttpStatusCode.BadRequest, shortConclusionResponse.StatusCode);
+
+        var unsafeInstructionResponse = await PostWithTokenAsync(
+            CompleteVisitRoute,
+            token,
+            new { dischargeInstructions = "<script>alert(1)</script>" });
+        Assert.Equal(HttpStatusCode.BadRequest, unsafeInstructionResponse.StatusCode);
+
+        var pastFollowUpResponse = await PostWithTokenAsync(
+            CompleteVisitRoute,
+            token,
+            new { followUpDate = "2020-01-01" });
+        Assert.Equal(HttpStatusCode.BadRequest, pastFollowUpResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CompleteVisit_CrossDoctorAndCompletedSeededVisit_Returns403And409_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+        var body = new
+        {
+            clinicalConclusion = "Viêm dạ dày mạn tính ổn định",
+            dischargeInstructions = "Tái khám sau 14 ngày",
+        };
+
+        var crossDoctorResponse = await PostWithTokenAsync(
+            "/api/v1/doctor/consultation/VIS-202610-0002/complete",
+            token,
+            body);
+
+        if (crossDoctorResponse.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable)
+        {
+            return;
+        }
+
+        Assert.Equal(HttpStatusCode.Forbidden, crossDoctorResponse.StatusCode);
+
+        var completedVisitResponse = await PostWithTokenAsync(CompleteVisitRoute, token, body);
         Assert.Equal(HttpStatusCode.Conflict, completedVisitResponse.StatusCode);
     }
 }

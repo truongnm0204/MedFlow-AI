@@ -172,6 +172,39 @@ public sealed class DoctorConsultationController : ControllerBase
             primaryOnly,
             limit,
             ct));
+
+    /// <summary>
+    /// POST/PUT /api/v1/doctor/consultation/{idOrCode}/complete — Hoàn tất lượt khám ngoại trú và khóa hồ sơ bệnh án (UC38 / #118).
+    /// </summary>
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/complete")]
+    [HttpPut("/api/v1/doctor/consultation/{idOrCode}/complete")]
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/complete-visit")]
+    [HttpPut("/api/v1/doctor/consultation/{idOrCode}/complete-visit")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/complete")]
+    [HttpPut("/api/v1/doctor/visits/{idOrCode}/complete")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/complete-visit")]
+    [HttpPut("/api/v1/doctor/visits/{idOrCode}/complete-visit")]
+    [HttpPost("/api/v1/visits/{idOrCode}/complete")]
+    [HttpPut("/api/v1/visits/{idOrCode}/complete")]
+    [HttpPost("/api/v1/visits/{idOrCode}/complete-visit")]
+    [HttpPut("/api/v1/visits/{idOrCode}/complete-visit")]
+    [ProducesResponseType<ConsultationWorkspaceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ConsultationWorkspaceResponseDto>> CompleteVisit(
+        string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CompleteVisitRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.CompleteVisitAsync(
+            GetUserId(),
+            idOrCode,
+            request,
+            GetIp(),
+            ct));
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
