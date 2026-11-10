@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MedFlow.Application.DTOs.Consultation;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
@@ -33,6 +35,10 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
+
+    private static readonly Regex Icd10CodeRegex = new(
+        @"^[A-Z][0-9]{2}(\.[0-9A-Z]{1,4})?$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
@@ -522,6 +528,441 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
             ct);
     }
 
+    public async Task<IReadOnlyList<Icd10CatalogItemDto>> SearchIcd10CodesAsync(
+        long actorUserId,
+        string? query = null,
+        bool primaryOnly = false,
+        int limit = 50,
+        CancellationToken ct = default)
+    {
+        if (actorUserId <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        if (limit is < 1 or > 200)
+        {
+            throw new ValidationException("Giới hạn kết quả tra cứu ICD-10 (limit) phải nằm trong khoảng 1–200.");
+        }
+
+        string? trimmedQuery = null;
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            trimmedQuery = query.Trim();
+            if (trimmedQuery.Contains('<') || trimmedQuery.Contains('>'))
+            {
+                throw new ValidationException("Từ khóa tra cứu ICD-10 không được chứa ký tự < hoặc >.");
+            }
+
+            if (trimmedQuery.Length > 100)
+            {
+                throw new ValidationException("Từ khóa tra cứu ICD-10 tối đa 100 ký tự.");
+            }
+        }
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        await EnsureDoctorAccessAsync(actorUserId, nowUtc, requireWritePermission: false, ct);
+
+        List<Icd10Code> catalogRows;
+        try
+        {
+            catalogRows = await _db.Icd10Codes
+                .AsNoTracking()
+                .Where(c => c.IsSelectable != false && (!primaryOnly || c.NotPrimaryDx != true))
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+
+        IEnumerable<Icd10Code> filtered = catalogRows
+            .Where(c => !string.IsNullOrWhiteSpace(c.Code));
+
+        if (!string.IsNullOrWhiteSpace(trimmedQuery))
+        {
+            var normalizedQueryNoDiacritics = RemoveVietnameseDiacritics(trimmedQuery);
+            filtered = filtered
+                .Where(c =>
+                {
+                    var code = c.Code?.Trim() ?? string.Empty;
+                    var nameVi = c.NameVi?.Trim() ?? string.Empty;
+                    if (code.Contains(trimmedQuery, StringComparison.OrdinalIgnoreCase) ||
+                        nameVi.Contains(trimmedQuery, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+
+                    if (!string.IsNullOrEmpty(normalizedQueryNoDiacritics) && !string.IsNullOrEmpty(nameVi))
+                    {
+                        var nameNoDiacritics = RemoveVietnameseDiacritics(nameVi);
+                        return nameNoDiacritics.Contains(normalizedQueryNoDiacritics, StringComparison.OrdinalIgnoreCase);
+                    }
+
+                    return false;
+                })
+                .OrderBy(c =>
+                {
+                    var code = c.Code?.Trim() ?? string.Empty;
+                    if (string.Equals(code, trimmedQuery, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return 0;
+                    }
+
+                    if (code.StartsWith(trimmedQuery, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return 1;
+                    }
+
+                    if (code.Contains(trimmedQuery, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return 2;
+                    }
+
+                    return 3;
+                })
+                .ThenBy(c => c.Code, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(c => c.Id);
+        }
+        else
+        {
+            filtered = filtered
+                .OrderBy(c => c.Code, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(c => c.Id);
+        }
+
+        return filtered
+            .Take(limit)
+            .Select(c => new Icd10CatalogItemDto(
+                Id: c.Id,
+                Code: c.Code?.Trim() ?? string.Empty,
+                NameVi: c.NameVi?.Trim() ?? string.Empty,
+                CatalogVersion: c.CatalogVersion,
+                NodeType: c.NodeType,
+                IsSelectable: c.IsSelectable != false,
+                NotPrimaryDx: c.NotPrimaryDx == true))
+            .ToList();
+    }
+
+    public async Task<ConsultationWorkspaceResponseDto> RecordDiagnosisAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        RecordDiagnosisRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        if (actorUserId <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        var (numericId, code, isQueuePrefix) = ParseVisitOrQueueIdentifier(visitIdOrCode);
+        var validated = ValidateRecordDiagnosisRequest(request);
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+
+        var doctorAccess = await EnsureDoctorAccessAsync(actorUserId, nowUtc, requireWritePermission: true, ct);
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        var context = await ResolveAndAuthorizeVisitContextAsync(
+            doctorAccess,
+            numericId,
+            code,
+            isQueuePrefix,
+            visitIdOrCode,
+            ct);
+
+        var visit = context.Visit;
+        var activeEntry = context.ActiveClinicalEntry;
+        var visitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
+
+        if (visitStatus is "CANCELLED" or "NO_SHOW")
+        {
+            throw new ConflictException("Không thể ghi nhận chẩn đoán cho lượt khám đã hủy hoặc vắng mặt (NO_SHOW).");
+        }
+
+        if (visitStatus is "COMPLETED" or "DONE" ||
+            (activeEntry is not null && NormalizeQueueStatus(activeEntry.Status) == "COMPLETED"))
+        {
+            throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED), không thể chỉnh sửa chẩn đoán và kết luận trực tiếp.");
+        }
+
+        if (activeEntry is null || NormalizeQueueStatus(activeEntry.Status) == "CANCELLED")
+        {
+            throw new ConflictException("Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để ghi nhận chẩn đoán.");
+        }
+
+        var currentQueueStatus = NormalizeQueueStatus(activeEntry.Status);
+        var openDiagnosticCount = CountOpenDiagnosticEntries(context.AllVisitQueueEntries);
+
+        if (visitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" ||
+            (currentQueueStatus != "IN_PROGRESS" && openDiagnosticCount > 0))
+        {
+            throw new ConflictException(
+                "Bệnh nhân đang chờ kết quả cận lâm sàng. Vui lòng mở lại phiên khám (IN_PROGRESS) trước khi ghi nhận chẩn đoán.");
+        }
+
+        var policySet = await QueueOrderingPolicyLoader.LoadAsync(_db, doctorAccess.Hospital.Id, nowUtc, ct);
+        var servicePointIdForPolicy = activeEntry.CurrentServicePointId
+            ?? activeEntry.ServicePointId
+            ?? context.ServicePoint?.Id;
+        var policy = policySet.ForServicePoint(servicePointIdForPolicy);
+        var hasPendingMandatoryOrders = await HasPendingMandatoryDiagnosticOrdersAsync(visit.Id, ct);
+
+        if ((policy.FinalResultRequired && openDiagnosticCount > 0) || hasPendingMandatoryOrders)
+        {
+            throw new ConflictException(
+                "Chưa thể kết luận chẩn đoán khi kết quả cận lâm sàng bắt buộc chưa hoàn tất.");
+        }
+
+        if (currentQueueStatus != "IN_PROGRESS" ||
+            visitStatus is not ("IN_PROGRESS" or "IN_CONSULTATION" or "SERVING"))
+        {
+            var effectiveStatus = currentQueueStatus != "IN_PROGRESS" ? currentQueueStatus : visitStatus;
+            throw new ConflictException(
+                $"Lượt khám hiện đang ở trạng thái {effectiveStatus}. Vui lòng bắt đầu phiên khám lâm sàng (IN_PROGRESS) trước khi ghi nhận chẩn đoán.");
+        }
+
+        if (context.Room is not null &&
+            !string.Equals(context.Room.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException("Phòng khám của lượt khám hiện không hoạt động hoặc đang bảo trì.");
+        }
+
+        if (context.ServicePoint is not null && context.ServicePoint.IsActive == false)
+        {
+            throw new ConflictException("Điểm phục vụ của buồng khám hiện đang ngừng hoạt động.");
+        }
+
+        var currentStateVersion = activeEntry.StateVersion is > 0 ? activeEntry.StateVersion.Value : 1;
+        if (request.ExpectedStateVersion.HasValue &&
+            request.ExpectedStateVersion.Value != currentStateVersion)
+        {
+            throw new ConflictException(
+                "Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
+        }
+
+        var medicalRecord = await _db.MedicalRecords
+            .Where(m => m.VisitId == visit.Id)
+            .OrderByDescending(m => m.Id)
+            .FirstOrDefaultAsync(ct);
+
+        if (medicalRecord is not null &&
+            string.Equals(medicalRecord.Status?.Trim(), "FINALIZED", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException(
+                "Hồ sơ bệnh án đã được khóa hoàn tất (FINALIZED), không thể chỉnh sửa chẩn đoán.");
+        }
+
+        var latestRevision = medicalRecord is null
+            ? null
+            : await _db.MedicalRecordRevisions
+                .AsNoTracking()
+                .Where(r => r.MedicalRecordId == medicalRecord.Id)
+                .OrderByDescending(r => r.RevisionNo)
+                .ThenByDescending(r => r.Id)
+                .FirstOrDefaultAsync(ct);
+
+        var currentRevisionNo = latestRevision?.RevisionNo ?? 0;
+        if (request.ExpectedRevisionNo.HasValue &&
+            request.ExpectedRevisionNo.Value != currentRevisionNo)
+        {
+            throw new ConflictException(
+                "Hồ sơ khám lâm sàng đã có phiên bản mới hơn (revision_no mismatch). Vui lòng tải lại trước khi lưu.");
+        }
+
+        var resolvedItems = await ResolveAndValidateDiagnosisItemsAsync(validated, ct);
+
+        if (medicalRecord is null)
+        {
+            medicalRecord = new MedicalRecord
+            {
+                VisitId = visit.Id,
+                CreatedByDoctorId = doctorAccess.Doctor.Id,
+                Status = "DRAFT",
+                FinalizedAt = null,
+            };
+            _db.MedicalRecords.Add(medicalRecord);
+            await SaveChangesWithConcurrencyGuardAsync(ct);
+        }
+
+        var existingDiagnoses = await _db.VisitDiagnoses
+            .Where(d => d.VisitId == visit.Id)
+            .OrderByDescending(d => d.IsPrimary == true)
+            .ThenBy(d => d.Id)
+            .ToListAsync(ct);
+
+        var previousDiagnosesSnapshot = existingDiagnoses
+            .Select(d => new
+            {
+                id = d.Id,
+                icd10CodeId = d.Icd10CodeId,
+                code = d.CodeSnapshot,
+                name = d.NameSnapshot,
+                isPrimary = d.IsPrimary == true,
+                clinicalDiagnosis = d.ClinicalDiagnosis,
+                status = d.Status,
+            })
+            .ToList();
+
+        var matchedExisting = new HashSet<VisitDiagnosis>();
+
+        foreach (var resolved in resolvedItems)
+        {
+            var existing = existingDiagnoses.FirstOrDefault(d =>
+                !matchedExisting.Contains(d) &&
+                ((resolved.Icd10CodeId.HasValue && d.Icd10CodeId == resolved.Icd10CodeId.Value) ||
+                 (!string.IsNullOrWhiteSpace(d.CodeSnapshot) &&
+                  string.Equals(d.CodeSnapshot.Trim(), resolved.CodeSnapshot, StringComparison.OrdinalIgnoreCase))));
+
+            if (existing is not null)
+            {
+                matchedExisting.Add(existing);
+                existing.Icd10CodeId = resolved.Icd10CodeId;
+                existing.IsPrimary = resolved.IsPrimary;
+                existing.CodeSnapshot = resolved.CodeSnapshot;
+                existing.NameSnapshot = resolved.NameSnapshot;
+                existing.CatalogVersion = resolved.CatalogVersion;
+                existing.ClinicalDiagnosis = resolved.ClinicalDiagnosis;
+                existing.Status = resolved.Status;
+                existing.ConfirmedAt = string.Equals(resolved.Status, "CONFIRMED", StringComparison.OrdinalIgnoreCase)
+                    ? (existing.ConfirmedAt ?? nowLocal)
+                    : null;
+                existing.RecordedByDoctorId = doctorAccess.Doctor.Id;
+                existing.RecordedAt = nowLocal;
+            }
+            else
+            {
+                _db.VisitDiagnoses.Add(new VisitDiagnosis
+                {
+                    VisitId = visit.Id,
+                    Icd10CodeId = resolved.Icd10CodeId,
+                    IsPrimary = resolved.IsPrimary,
+                    CodeSnapshot = resolved.CodeSnapshot,
+                    NameSnapshot = resolved.NameSnapshot,
+                    CatalogVersion = resolved.CatalogVersion,
+                    ClinicalDiagnosis = resolved.ClinicalDiagnosis,
+                    Status = resolved.Status,
+                    ConfirmedAt = string.Equals(resolved.Status, "CONFIRMED", StringComparison.OrdinalIgnoreCase)
+                        ? nowLocal
+                        : null,
+                    RecordedByDoctorId = doctorAccess.Doctor.Id,
+                    RecordedAt = nowLocal,
+                });
+            }
+        }
+
+        var toRemove = existingDiagnoses.Where(d => !matchedExisting.Contains(d)).ToList();
+        if (toRemove.Count > 0)
+        {
+            _db.VisitDiagnoses.RemoveRange(toRemove);
+        }
+
+        var primaryDiagnosis = resolvedItems.First(i => i.IsPrimary);
+        var presentingComplaint = latestRevision?.PresentingComplaint
+            ?? visit.ReasonForVisit
+            ?? context.Appointment?.ReasonForVisit;
+        var symptomHistory = latestRevision?.SymptomHistory;
+        var relevantHistoryAllergies = latestRevision?.RelevantHistoryAllergies;
+        var vitalSignsJson = latestRevision?.VitalSigns;
+        var clinicalFindings = validated.ClinicalFindings ?? latestRevision?.ClinicalFindings;
+        var clinicalConclusion = validated.ClinicalConclusion
+            ?? latestRevision?.ClinicalConclusion
+            ?? primaryDiagnosis.ClinicalDiagnosis
+            ?? primaryDiagnosis.NameSnapshot;
+
+        var nextRevisionNo = currentRevisionNo + 1;
+        var isConfirmed = request.IsConfirmed ??
+            string.Equals(primaryDiagnosis.Status, "CONFIRMED", StringComparison.OrdinalIgnoreCase);
+
+        var newRevision = new MedicalRecordRevision
+        {
+            MedicalRecordId = medicalRecord.Id,
+            RevisionNo = nextRevisionNo,
+            PresentingComplaint = presentingComplaint,
+            SymptomHistory = symptomHistory,
+            RelevantHistoryAllergies = relevantHistoryAllergies,
+            VitalSigns = vitalSignsJson,
+            ClinicalFindings = clinicalFindings,
+            ClinicalConclusion = clinicalConclusion,
+            EditedByDoctorId = doctorAccess.Doctor.Id,
+            RecordedAt = nowLocal,
+            IsConfirmed = isConfirmed,
+            AmendmentReason = validated.AmendmentReason,
+        };
+        _db.MedicalRecordRevisions.Add(newRevision);
+
+        if (!string.Equals(visit.Status, "IN_PROGRESS", StringComparison.OrdinalIgnoreCase))
+        {
+            visit.Status = "IN_PROGRESS";
+        }
+
+        if (!string.Equals(activeEntry.Status, "IN_PROGRESS", StringComparison.OrdinalIgnoreCase))
+        {
+            activeEntry.Status = "IN_PROGRESS";
+        }
+
+        var changePayload = new
+        {
+            visitId = visit.Id,
+            visitCode = visit.VisitCode,
+            queueEntryId = activeEntry.Id,
+            medicalRecordId = medicalRecord.Id,
+            previousRevisionNo = currentRevisionNo > 0 ? (int?)currentRevisionNo : null,
+            revisionNo = nextRevisionNo,
+            isConfirmed,
+            primaryIcd10Code = primaryDiagnosis.CodeSnapshot,
+            diagnosisCount = resolvedItems.Count,
+            diagnoses = resolvedItems
+                .Select(i => new
+                {
+                    icd10CodeId = i.Icd10CodeId,
+                    code = i.CodeSnapshot,
+                    name = i.NameSnapshot,
+                    isPrimary = i.IsPrimary,
+                    clinicalDiagnosis = i.ClinicalDiagnosis,
+                    status = i.Status,
+                })
+                .ToList(),
+            previousDiagnoses = previousDiagnosesSnapshot,
+            clinicalConclusion,
+            differentialNotes = validated.DifferentialNotes,
+            lifestyleInstructions = validated.LifestyleInstructions,
+            warningSigns = validated.WarningSigns,
+            stateVersion = currentStateVersion,
+            ipAddress,
+        };
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actorUserId,
+            HospitalId = doctorAccess.Hospital.Id,
+            Action = "DIAGNOSIS_RECORDED",
+            EntityType = "MEDICAL_RECORD",
+            EntityId = medicalRecord.Id.ToString(CultureInfo.InvariantCulture),
+            Reason = validated.AmendmentReason ?? "Bác sĩ ghi nhận chẩn đoán ICD-10 và kết luận lâm sàng",
+            ChangeData = JsonSerializer.Serialize(changePayload, AuditJsonOptions),
+            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+            OccurredAt = nowUtc,
+        });
+
+        await SaveChangesWithConcurrencyGuardAsync(ct);
+
+        if (tx is not null)
+        {
+            await tx.CommitAsync(ct);
+        }
+
+        return await BuildWorkspaceResponseAsync(
+            doctorAccess,
+            context,
+            actionOutcome: "DIAGNOSIS_RECORDED",
+            nowUtc,
+            nowLocal,
+            ct);
+    }
+
     private static (long? NumericId, string? Code, bool IsQueuePrefix) ParseVisitOrQueueIdentifier(string? visitIdOrCode)
     {
         var (numericId, code) = QueueEntryRequestParsing.ParseIdentifier(visitIdOrCode);
@@ -705,6 +1146,393 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
             ClinicalFindings: clinicalFindings,
             ClinicalConclusion: clinicalConclusion,
             AmendmentReason: amendmentReason);
+    }
+
+    private static ValidatedDiagnosisInput ValidateRecordDiagnosisRequest(RecordDiagnosisRequest? request)
+    {
+        if (request is null)
+        {
+            throw new ValidationException("Dữ liệu ghi nhận chẩn đoán và kết luận lâm sàng không được để trống.");
+        }
+
+        if (request.ExpectedStateVersion is < 1)
+        {
+            throw new ValidationException("Phiên bản trạng thái (ExpectedStateVersion) phải lớn hơn hoặc bằng 1.");
+        }
+
+        if (request.ExpectedRevisionNo is < 1)
+        {
+            throw new ValidationException("Phiên bản bệnh án (ExpectedRevisionNo) phải lớn hơn hoặc bằng 1.");
+        }
+
+        if (request.ClinicalConclusion is not null &&
+            string.IsNullOrWhiteSpace(request.ClinicalConclusion) &&
+            request.ClinicalConclusion.Length > 0)
+        {
+            throw new ValidationException("Kết luận lâm sàng phải có tối thiểu 3 ký tự.");
+        }
+
+        var clinicalConclusion = ValidateClinicalTextField(
+            request.ClinicalConclusion,
+            "Kết luận lâm sàng",
+            2000);
+
+        if (clinicalConclusion is not null && clinicalConclusion.Length < 3)
+        {
+            throw new ValidationException("Kết luận lâm sàng phải có tối thiểu 3 ký tự.");
+        }
+
+        var clinicalFindings = ValidateClinicalTextField(
+            request.ClinicalFindings,
+            "Khám lâm sàng",
+            4000);
+        var differentialNotes = ValidateClinicalTextField(
+            request.DifferentialNotes,
+            "Ghi chú chẩn đoán phân biệt",
+            1000);
+        var lifestyleInstructions = ValidateClinicalTextField(
+            request.LifestyleInstructions,
+            "Dặn dò sinh hoạt",
+            1000);
+        var warningSigns = ValidateClinicalTextField(
+            request.WarningSigns,
+            "Dấu hiệu cảnh báo",
+            1000);
+        var amendmentReason = ValidateClinicalTextField(
+            request.AmendmentReason,
+            "Lý do cập nhật",
+            500);
+        var primaryClinicalDiagnosis = ValidateClinicalTextField(
+            request.PrimaryClinicalDiagnosis,
+            "Chẩn đoán lâm sàng chính",
+            500);
+
+        var defaultStatus = request.IsConfirmed == false ? "PRELIMINARY" : "CONFIRMED";
+        if (!string.IsNullOrWhiteSpace(request.DiagnosisStatus))
+        {
+            var normalizedReqStatus = request.DiagnosisStatus.Trim().ToUpperInvariant();
+            if (normalizedReqStatus is not ("PRELIMINARY" or "CONFIRMED"))
+            {
+                throw new ValidationException("Trạng thái chẩn đoán chỉ chấp nhận PRELIMINARY hoặc CONFIRMED.");
+            }
+
+            defaultStatus = normalizedReqStatus;
+        }
+
+        var rawItems = new List<RecordDiagnosisItemRequest>();
+        if (request.Diagnoses is not null && request.Diagnoses.Count > 0)
+        {
+            if (request.Diagnoses.Count == 1 && request.Diagnoses[0] is not null && request.Diagnoses[0].IsPrimary is null)
+            {
+                rawItems.Add(request.Diagnoses[0] with { IsPrimary = true });
+            }
+            else
+            {
+                rawItems.AddRange(request.Diagnoses);
+            }
+        }
+        else
+        {
+            if (request.PrimaryIcd10CodeId.HasValue || !string.IsNullOrWhiteSpace(request.PrimaryIcd10Code))
+            {
+                rawItems.Add(new RecordDiagnosisItemRequest(
+                    Icd10CodeId: request.PrimaryIcd10CodeId,
+                    Code: request.PrimaryIcd10Code,
+                    IsPrimary: true,
+                    ClinicalDiagnosis: primaryClinicalDiagnosis,
+                    Status: defaultStatus));
+            }
+
+            if (request.SecondaryIcd10CodeIds is not null)
+            {
+                foreach (var secId in request.SecondaryIcd10CodeIds)
+                {
+                    rawItems.Add(new RecordDiagnosisItemRequest(
+                        Icd10CodeId: secId,
+                        IsPrimary: false,
+                        Status: defaultStatus));
+                }
+            }
+
+            if (request.SecondaryIcd10Codes is not null)
+            {
+                foreach (var secCode in request.SecondaryIcd10Codes)
+                {
+                    if (!string.IsNullOrWhiteSpace(secCode))
+                    {
+                        rawItems.Add(new RecordDiagnosisItemRequest(
+                            Code: secCode,
+                            IsPrimary: false,
+                            Status: defaultStatus));
+                    }
+                }
+            }
+        }
+
+        if (rawItems.Count == 0)
+        {
+            throw new ValidationException("Vui lòng chọn ít nhất một chẩn đoán bệnh chính (ICD-10).");
+        }
+
+        if (rawItems.Count > 11)
+        {
+            throw new ValidationException("Tối đa 1 chẩn đoán chính và 10 chẩn đoán bệnh kèm theo.");
+        }
+
+        foreach (var item in rawItems)
+        {
+            if (item is null)
+            {
+                throw new ValidationException("Mục chẩn đoán không hợp lệ.");
+            }
+        }
+
+        var primaryCount = rawItems.Count(i => i.IsPrimary == true);
+        if (primaryCount == 0)
+        {
+            throw new ValidationException("Phải có đúng 1 chẩn đoán chính (isPrimary = true).");
+        }
+
+        if (primaryCount > 1)
+        {
+            throw new ValidationException("Chỉ được phép chọn tối đa 1 chẩn đoán chính (isPrimary = true).");
+        }
+
+        var seenIds = new HashSet<long>();
+        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var validatedItems = new List<ValidatedDiagnosisItemInput>(rawItems.Count);
+
+        foreach (var item in rawItems)
+        {
+            var rawCode = !string.IsNullOrWhiteSpace(item.Code) ? item.Code : item.Icd10Code;
+            var hasId = item.Icd10CodeId.HasValue;
+            var hasCode = !string.IsNullOrWhiteSpace(rawCode);
+
+            if (!hasId && !hasCode)
+            {
+                throw new ValidationException("Mỗi mục chẩn đoán phải có mã ICD-10 (code) hoặc ID danh mục (icd10CodeId).");
+            }
+
+            if (item.Icd10CodeId is <= 0)
+            {
+                throw new ValidationException("Mã định danh ICD-10 (icd10CodeId) phải lớn hơn 0.");
+            }
+
+            string? normalizedCode = null;
+            if (hasCode)
+            {
+                normalizedCode = rawCode!.Trim().ToUpperInvariant();
+                if (normalizedCode.Length > 20 || !Icd10CodeRegex.IsMatch(normalizedCode))
+                {
+                    throw new ValidationException($"Mã ICD-10 '{rawCode.Trim()}' không hợp lệ (ví dụ: K29.5, I10).");
+                }
+            }
+
+            if (hasId && !seenIds.Add(item.Icd10CodeId!.Value))
+            {
+                throw new ValidationException("Danh sách chẩn đoán không được chứa mã bệnh ICD-10 trùng lặp.");
+            }
+
+            if (normalizedCode is not null && !seenCodes.Add(normalizedCode))
+            {
+                throw new ValidationException("Danh sách chẩn đoán không được chứa mã bệnh ICD-10 trùng lặp.");
+            }
+
+            var itemName = ValidateClinicalTextField(item.Name, "Tên chẩn đoán ICD-10", 300);
+            var itemClinicalDiagnosis = ValidateClinicalTextField(item.ClinicalDiagnosis, "Chẩn đoán lâm sàng", 500);
+
+            var itemStatus = defaultStatus;
+            if (!string.IsNullOrWhiteSpace(item.Status))
+            {
+                var normalizedItemStatus = item.Status.Trim().ToUpperInvariant();
+                if (normalizedItemStatus is not ("PRELIMINARY" or "CONFIRMED"))
+                {
+                    throw new ValidationException("Trạng thái chẩn đoán chỉ chấp nhận PRELIMINARY hoặc CONFIRMED.");
+                }
+
+                itemStatus = normalizedItemStatus;
+            }
+
+            validatedItems.Add(new ValidatedDiagnosisItemInput(
+                Icd10CodeId: item.Icd10CodeId,
+                Code: normalizedCode,
+                Name: itemName,
+                IsPrimary: item.IsPrimary == true,
+                ClinicalDiagnosis: itemClinicalDiagnosis,
+                Status: itemStatus));
+        }
+
+        var orderedItems = validatedItems
+            .OrderByDescending(i => i.IsPrimary)
+            .ToList();
+
+        return new ValidatedDiagnosisInput(
+            Items: orderedItems,
+            PrimaryClinicalDiagnosis: primaryClinicalDiagnosis,
+            ClinicalConclusion: clinicalConclusion,
+            ClinicalFindings: clinicalFindings,
+            DifferentialNotes: differentialNotes,
+            LifestyleInstructions: lifestyleInstructions,
+            WarningSigns: warningSigns,
+            AmendmentReason: amendmentReason);
+    }
+
+    private async Task<List<ResolvedDiagnosisItem>> ResolveAndValidateDiagnosisItemsAsync(
+        ValidatedDiagnosisInput validated,
+        CancellationToken ct)
+    {
+        List<Icd10Code> catalogRows;
+        try
+        {
+            catalogRows = await _db.Icd10Codes
+                .AsNoTracking()
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            catalogRows = [];
+        }
+
+        var resolved = new List<ResolvedDiagnosisItem>(validated.Items.Count);
+        var hasCatalog = catalogRows.Count > 0;
+
+        var byId = hasCatalog
+            ? catalogRows.ToDictionary(c => c.Id)
+            : new Dictionary<long, Icd10Code>();
+
+        var byCode = hasCatalog
+            ? catalogRows
+                .Where(c => !string.IsNullOrWhiteSpace(c.Code))
+                .GroupBy(c => c.Code!.Trim().ToUpperInvariant(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, Icd10Code>(StringComparer.OrdinalIgnoreCase);
+
+        var seenIds = new HashSet<long>();
+        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var item in validated.Items)
+        {
+            long? resolvedId = item.Icd10CodeId;
+            string resolvedCode;
+            string resolvedName;
+            string resolvedVersion;
+
+            if (hasCatalog)
+            {
+                Icd10Code? matchedById = null;
+                Icd10Code? matchedByCode = null;
+
+                if (item.Icd10CodeId.HasValue &&
+                    !byId.TryGetValue(item.Icd10CodeId.Value, out matchedById))
+                {
+                    throw new ValidationException(
+                        $"Không tìm thấy mã bệnh ICD-10 có ID = {item.Icd10CodeId.Value} trong danh mục.");
+                }
+
+                if (!string.IsNullOrWhiteSpace(item.Code) &&
+                    !byCode.TryGetValue(item.Code, out matchedByCode))
+                {
+                    throw new ValidationException(
+                        $"Mã bệnh ICD-10 '{item.Code}' không tồn tại trong danh mục hệ thống.");
+                }
+
+                if (matchedById is not null &&
+                    matchedByCode is not null &&
+                    matchedById.Id != matchedByCode.Id)
+                {
+                    throw new ValidationException(
+                        $"Mã ICD-10 '{item.Code}' không khớp với ID danh mục {item.Icd10CodeId!.Value} ({matchedById.Code}).");
+                }
+
+                var matched = matchedById ?? matchedByCode!;
+                var matchedCode = matched.Code?.Trim().ToUpperInvariant() ?? item.Code ?? string.Empty;
+
+                if (matched.IsSelectable == false)
+                {
+                    throw new ValidationException(
+                        $"Mã ICD-10 '{matchedCode}' là nhóm chương/mục không được phép chọn trực tiếp (is_selectable = false).");
+                }
+
+                if (item.IsPrimary && matched.NotPrimaryDx == true)
+                {
+                    throw new ValidationException(
+                        $"Mã ICD-10 '{matchedCode}' không được phép chọn làm chẩn đoán chính (not_primary_dx = true).");
+                }
+
+                resolvedId = matched.Id;
+                resolvedCode = matchedCode;
+                resolvedName = !string.IsNullOrWhiteSpace(item.Name)
+                    ? item.Name
+                    : (matched.NameVi?.Trim() ?? matchedCode);
+                resolvedVersion = !string.IsNullOrWhiteSpace(matched.CatalogVersion)
+                    ? matched.CatalogVersion.Trim()
+                    : "ICD-10-VN";
+            }
+            else
+            {
+                resolvedCode = item.Code ?? $"ICD-{item.Icd10CodeId!.Value}";
+                resolvedName = item.Name ?? item.ClinicalDiagnosis ?? resolvedCode;
+                resolvedVersion = "DEMO-ICD10";
+            }
+
+            if (resolvedId.HasValue && !seenIds.Add(resolvedId.Value))
+            {
+                throw new ValidationException("Danh sách chẩn đoán không được chứa mã bệnh ICD-10 trùng lặp.");
+            }
+
+            if (!seenCodes.Add(resolvedCode))
+            {
+                throw new ValidationException("Danh sách chẩn đoán không được chứa mã bệnh ICD-10 trùng lặp.");
+            }
+
+            var clinicalDiagnosis = item.ClinicalDiagnosis;
+            if (item.IsPrimary && string.IsNullOrWhiteSpace(clinicalDiagnosis))
+            {
+                clinicalDiagnosis = validated.PrimaryClinicalDiagnosis
+                    ?? validated.ClinicalConclusion
+                    ?? resolvedName;
+            }
+
+            resolved.Add(new ResolvedDiagnosisItem(
+                Icd10CodeId: resolvedId,
+                CodeSnapshot: resolvedCode,
+                NameSnapshot: resolvedName,
+                CatalogVersion: resolvedVersion,
+                IsPrimary: item.IsPrimary,
+                ClinicalDiagnosis: clinicalDiagnosis,
+                Status: item.Status));
+        }
+
+        return resolved;
+    }
+
+    private static string RemoveVietnameseDiacritics(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var normalized = text.Normalize(NormalizationForm.FormD);
+        var sb = new StringBuilder(normalized.Length);
+
+        foreach (var ch in normalized)
+        {
+            var category = CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (category == UnicodeCategory.NonSpacingMark)
+            {
+                continue;
+            }
+
+            sb.Append(ch switch
+            {
+                'đ' => 'd',
+                'Đ' => 'D',
+                _ => ch,
+            });
+        }
+
+        return sb.ToString().Normalize(NormalizationForm.FormC);
     }
 
     private static string? ValidateClinicalTextField(
@@ -1368,7 +2196,11 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
             ?? context.ServicePoint?.Id;
         var policy = policySet.ForServicePoint(servicePointIdForPolicy);
 
-        var diagnosticSummary = BuildDiagnosticSummary(context.AllVisitQueueEntries, policy.FinalResultRequired);
+        var hasPendingMandatoryOrders = await HasPendingMandatoryDiagnosticOrdersAsync(visit.Id, ct);
+        var diagnosticSummary = BuildDiagnosticSummary(
+            context.AllVisitQueueEntries,
+            policy.FinalResultRequired,
+            hasPendingMandatoryOrders);
         var clinicalContext = await BuildClinicalContextAsync(
             visit,
             appointment,
@@ -2009,7 +2841,8 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
 
     private static ConsultationDiagnosticSummaryDto BuildDiagnosticSummary(
         IReadOnlyList<QueueEntry> allVisitQueueEntries,
-        bool finalResultRequired)
+        bool finalResultRequired,
+        bool hasPendingMandatoryOrders = false)
     {
         var diagnosticEntries = allVisitQueueEntries
             .Where(q =>
@@ -2021,7 +2854,7 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
         var completed = diagnosticEntries.Count(q =>
             q.CompletedAt.HasValue || NormalizeQueueStatus(q.Status) == "COMPLETED");
         var open = total - completed;
-        var allReady = !finalResultRequired || open == 0;
+        var allReady = (!finalResultRequired || open == 0) && !hasPendingMandatoryOrders;
 
         return new ConsultationDiagnosticSummaryDto(
             TotalQueueEntries: total,
@@ -2036,6 +2869,27 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
             string.Equals(q.QueueType, "DIAGNOSTIC", StringComparison.OrdinalIgnoreCase) &&
             !q.CompletedAt.HasValue &&
             NormalizeQueueStatus(q.Status) is not ("COMPLETED" or "CANCELLED"));
+
+    private async Task<bool> HasPendingMandatoryDiagnosticOrdersAsync(
+        long visitId,
+        CancellationToken ct)
+    {
+        try
+        {
+            var mandatoryOrders = await _db.DiagnosticOrders
+                .AsNoTracking()
+                .Where(o => o.VisitId == visitId && o.RequiredForConclusion == true)
+                .ToListAsync(ct);
+
+            return mandatoryOrders.Any(o =>
+                AppointmentBookingRules.NormalizeStatusKey(o.Status) is not
+                    ("COMPLETED" or "DONE" or "FINALIZED" or "VERIFIED" or "CANCELLED"));
+        }
+        catch (NotSupportedException)
+        {
+            return false;
+        }
+    }
 
     private static string ResolveWorkspaceState(
         Visit visit,
@@ -2326,4 +3180,31 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
         string? ClinicalFindings,
         string? ClinicalConclusion,
         string? AmendmentReason);
+
+    private sealed record ValidatedDiagnosisInput(
+        IReadOnlyList<ValidatedDiagnosisItemInput> Items,
+        string? PrimaryClinicalDiagnosis,
+        string? ClinicalConclusion,
+        string? ClinicalFindings,
+        string? DifferentialNotes,
+        string? LifestyleInstructions,
+        string? WarningSigns,
+        string? AmendmentReason);
+
+    private sealed record ValidatedDiagnosisItemInput(
+        long? Icd10CodeId,
+        string? Code,
+        string? Name,
+        bool IsPrimary,
+        string? ClinicalDiagnosis,
+        string Status);
+
+    private sealed record ResolvedDiagnosisItem(
+        long? Icd10CodeId,
+        string CodeSnapshot,
+        string NameSnapshot,
+        string CatalogVersion,
+        bool IsPrimary,
+        string? ClinicalDiagnosis,
+        string Status);
 }
