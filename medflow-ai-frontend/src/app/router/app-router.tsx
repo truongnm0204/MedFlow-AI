@@ -61,6 +61,7 @@ import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-a
 import { DoctorReviewDiagnosticsPage } from '@/features/doctor/pages/doctor-review-diagnostics-page';
 import { DiagnosticResultsTrackingPage } from '@/features/diagnostic/pages/diagnostic-results-tracking-page';
 import { PrepareMedicinesPage } from '@/features/pharmacy/pages/prepare-medicines-page';
+import { FefoBatchSelectionPage } from '@/features/pharmacy/pages/fefo-batch-selection-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
 import {
@@ -858,6 +859,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequirePharmacy>
               <PrepareMedicinesPage />
+            </RequirePharmacy>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy/fefo-batches"
+        element={
+          <RequireAuth>
+            <RequirePharmacy>
+              <FefoBatchSelectionPage />
             </RequirePharmacy>
           </RequireAuth>
         }
