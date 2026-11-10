@@ -11,6 +11,7 @@ import { Card, CardContent } from '@/shared/ui/card';
 import { Spinner } from '@/shared/ui/spinner';
 
 import { ConsultationAllowedActionsCard } from '../components/consultation-allowed-actions-card';
+import { ConsultationCompleteVisitPanel } from '../components/consultation-complete-visit-panel';
 import { ConsultationDiagnosisAndOrdersCard } from '../components/consultation-diagnosis-and-orders-card';
 import { ConsultationPatientHeaderCard } from '../components/consultation-patient-header-card';
 import { ConsultationQueueContextCard } from '../components/consultation-queue-context-card';
@@ -19,13 +20,18 @@ import { DoctorSidebar } from '../components/doctor-sidebar';
 import { CONSULTATION_QUICK_SWITCH_ITEMS } from '../data/consultation-workspace-mock';
 import { DOCTOR_WORKBENCH_META } from '../data/doctor-mock-data';
 import {
+  useCompleteVisit,
   useConsultationWorkspace,
+  useCreateDiagnosticOrder,
+  useDiagnosticOrderCatalog,
   useOpenConsultationWorkspace,
   useRecordClinicalExamination,
 } from '../hooks/use-consultation-workspace';
 import { consultationIdentifierSchema } from '../schemas/consultation-workspace.schema';
 import type {
+  CompleteVisitRequest,
   ConsultationWorkspaceActionDto,
+  CreateDiagnosticOrderRequest,
   RecordClinicalExaminationRequest,
 } from '../types/consultation-workspace.types';
 
@@ -50,13 +56,29 @@ export function DoctorConsultationWorkspacePage({
       ? true
       : hasPermission('MEDICAL_RECORD_WRITE');
 
+  const canOrderDiagnostics =
+    user === null && explicitPermissions === undefined ? true : hasPermission('DIAGNOSTIC_ORDER');
+
   const activeIdentifier = routeVisitIdOrCode?.trim() || DEFAULT_VISIT_CODE;
   const isClinicalRoute = location.pathname.endsWith('/clinical-examination');
+  const isDiagnosticOrderRoute =
+    location.pathname.endsWith('/diagnostic-orders') ||
+    location.pathname.endsWith('/diagnostic-order') ||
+    location.pathname.endsWith('/additional-diagnostic-orders') ||
+    location.pathname.endsWith('/additional-diagnostic-order');
+  const isCompleteVisitRoute =
+    location.pathname.endsWith('/complete') || location.pathname.endsWith('/complete-visit');
   const [lookupInput, setLookupInput] = useState(activeIdentifier);
   const [lookupValidationError, setLookupValidationError] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   const [recordError, setRecordError] = useState<string | null>(null);
+  const [diagnosticOrderError, setDiagnosticOrderError] = useState<string | null>(null);
+  const [completeVisitError, setCompleteVisitError] = useState<string | null>(null);
   const [isClinicalFormOpen, setIsClinicalFormOpen] = useState<boolean>(isClinicalRoute);
+  const [isDiagnosticOrderFormOpen, setIsDiagnosticOrderFormOpen] =
+    useState<boolean>(isDiagnosticOrderRoute);
+  const [isCompleteVisitFormOpen, setIsCompleteVisitFormOpen] =
+    useState<boolean>(isCompleteVisitRoute);
   const [selectedActionNotice, setSelectedActionNotice] = useState<string | null>(null);
 
   const resetTransientState = (nextIdentifier: string) => {
@@ -64,13 +86,20 @@ export function DoctorConsultationWorkspacePage({
     setLookupValidationError(null);
     setOpenError(null);
     setRecordError(null);
+    setDiagnosticOrderError(null);
+    setCompleteVisitError(null);
     setSelectedActionNotice(null);
   };
 
   const { data, isPending, isError, error, refetch } = useConsultationWorkspace(activeIdentifier);
+  const catalogQuery = useDiagnosticOrderCatalog(
+    activeIdentifier,
+    Boolean(data) && isDiagnosticOrderFormOpen,
+  );
   const openMutation = useOpenConsultationWorkspace();
   const recordMutation = useRecordClinicalExamination();
-
+  const createOrderMutation = useCreateDiagnosticOrder();
+  const completeVisitMutation = useCompleteVisit();
   const doctorDisplayName =
     data?.visit.assignedDoctorName?.trim() ||
     user?.fullName?.trim() ||
@@ -131,6 +160,51 @@ export function DoctorConsultationWorkspacePage({
     }
   };
 
+  const handleCreateDiagnosticOrder = async (
+    payload: CreateDiagnosticOrderRequest,
+  ): Promise<boolean> => {
+    setDiagnosticOrderError(null);
+    setOpenError(null);
+    setRecordError(null);
+    setSelectedActionNotice(null);
+
+    try {
+      await createOrderMutation.mutateAsync({
+        idOrCode: activeIdentifier,
+        payload,
+      });
+      setIsDiagnosticOrderFormOpen(false);
+      return true;
+    } catch (err) {
+      setDiagnosticOrderError(
+        getErrorMessage(err, 'Không thể tạo phiếu chỉ định cận lâm sàng cho lượt khám này.'),
+      );
+      return false;
+    }
+  };
+
+  const handleCompleteVisit = async (payload: CompleteVisitRequest): Promise<boolean> => {
+    setCompleteVisitError(null);
+    setOpenError(null);
+    setRecordError(null);
+    setDiagnosticOrderError(null);
+    setSelectedActionNotice(null);
+
+    try {
+      await completeVisitMutation.mutateAsync({
+        idOrCode: activeIdentifier,
+        payload,
+      });
+      setIsCompleteVisitFormOpen(false);
+      return true;
+    } catch (err) {
+      setCompleteVisitError(
+        getErrorMessage(err, 'Không thể hoàn tất lượt khám và khóa hồ sơ bệnh án cho ca khám này.'),
+      );
+      return false;
+    }
+  };
+
   const handleTriggerAction = (action: ConsultationWorkspaceActionDto) => {
     if (!action.enabled) return;
 
@@ -157,12 +231,68 @@ export function DoctorConsultationWorkspacePage({
       return;
     }
 
+    if (
+      action.id === 'create-diagnostic-order' ||
+      action.id === 'create-additional-diagnostic-order' ||
+      action.ucCode === 'UC34'
+    ) {
+      if (!canOrderDiagnostics || !data) {
+        return;
+      }
+      setDiagnosticOrderError(null);
+      setIsDiagnosticOrderFormOpen(true);
+      setSelectedActionNotice(
+        `Đang mở biểu mẫu "${action.label}" (${action.ucCode}) cho bệnh nhân ${data.patient.fullName} (${data.visit.visitCode}).`,
+      );
+      return;
+    }
+
+    if (action.id === 'complete-visit' || action.ucCode === 'UC38') {
+      if (!canWriteMedicalRecord || !data?.canEditClinical) {
+        return;
+      }
+      setCompleteVisitError(null);
+      setIsCompleteVisitFormOpen(true);
+      setSelectedActionNotice(
+        `Đang mở biểu mẫu "${action.label}" (${action.ucCode}) cho bệnh nhân ${data.patient.fullName} (${data.visit.visitCode}).`,
+      );
+      return;
+    }
+
     setSelectedActionNotice(
       `Đã chọn thao tác "${action.label}" (${action.ucCode}) cho bệnh nhân ${data?.patient.fullName ?? ''} (${data?.visit.visitCode ?? activeIdentifier}).`,
     );
   };
 
   const openAction = data?.allowedActions.find((a) => a.id === 'open-consultation');
+  const diagnosticOrderAction = data?.allowedActions.find(
+    (a) =>
+      a.id === 'create-diagnostic-order' ||
+      a.id === 'create-additional-diagnostic-order' ||
+      a.ucCode === 'UC34',
+  );
+  const completeVisitAction = data?.allowedActions.find(
+    (a) => a.id === 'complete-visit' || a.ucCode === 'UC38',
+  );
+  const canCreateDiagnosticOrder =
+    Boolean(diagnosticOrderAction?.enabled) ||
+    (data?.workspaceState === 'IN_PROGRESS' &&
+      data.clinicalContext.medicalRecordStatus !== 'FINALIZED');
+  const canCompleteVisit =
+    Boolean(completeVisitAction?.enabled) ||
+    (Boolean(data?.canEditClinical) &&
+      data?.workspaceState === 'IN_PROGRESS' &&
+      data.clinicalContext.medicalRecordStatus !== 'FINALIZED' &&
+      data.clinicalContext.diagnosticSummary.allMandatoryResultsReady);
+  const completeVisitDisabledReason =
+    completeVisitAction?.disabledReason ?? data?.readOnlyReason ?? null;
+  const diagnosticDisabledReason =
+    diagnosticOrderAction?.disabledReason ??
+    catalogQuery.data?.disabledReason ??
+    data?.readOnlyReason ??
+    null;
+  const effectiveDiagnosticOrders =
+    data?.clinicalContext.diagnosticOrders ?? catalogQuery.data?.existingOrders ?? [];
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
       <DoctorSidebar
@@ -380,6 +510,44 @@ export function DoctorConsultationWorkspacePage({
                       diagnoses={data.clinicalContext.diagnoses}
                       diagnosticSummary={data.clinicalContext.diagnosticSummary}
                       prescriptionSummary={data.clinicalContext.prescriptionSummary}
+                      diagnosticOrders={effectiveDiagnosticOrders}
+                      catalogServices={catalogQuery.data?.services ?? []}
+                      isCatalogLoading={catalogQuery.isPending}
+                      catalogError={
+                        catalogQuery.isError
+                          ? getErrorMessage(
+                              catalogQuery.error,
+                              'Không thể tải danh mục dịch vụ cận lâm sàng.',
+                            )
+                          : null
+                      }
+                      onRetryCatalog={() => void catalogQuery.refetch()}
+                      canCreateDiagnosticOrder={canCreateDiagnosticOrder}
+                      hasDiagnosticOrderPermission={canOrderDiagnostics}
+                      diagnosticDisabledReason={diagnosticDisabledReason}
+                      expectedStateVersion={data.queue?.stateVersion ?? null}
+                      isCreatingDiagnosticOrder={createOrderMutation.isPending}
+                      diagnosticOrderSubmitError={diagnosticOrderError}
+                      isDiagnosticOrderFormOpen={isDiagnosticOrderFormOpen}
+                      onToggleDiagnosticOrderForm={setIsDiagnosticOrderFormOpen}
+                      onSubmitDiagnosticOrder={handleCreateDiagnosticOrder}
+                      onClearDiagnosticOrderSubmitError={() => setDiagnosticOrderError(null)}
+                    />
+                    <ConsultationCompleteVisitPanel
+                      workspaceState={data.workspaceState}
+                      visit={data.visit}
+                      clinicalContext={data.clinicalContext}
+                      canCompleteVisit={canCompleteVisit}
+                      hasWritePermission={canWriteMedicalRecord}
+                      disabledReason={completeVisitDisabledReason}
+                      expectedStateVersion={data.queue?.stateVersion ?? null}
+                      expectedRevisionNo={data.clinicalContext.currentRevisionNo ?? null}
+                      isSubmitting={completeVisitMutation.isPending}
+                      submitError={completeVisitError}
+                      isFormOpen={isCompleteVisitFormOpen}
+                      onToggleForm={setIsCompleteVisitFormOpen}
+                      onSubmitCompleteVisit={handleCompleteVisit}
+                      onClearSubmitError={() => setCompleteVisitError(null)}
                     />
                   </div>
 
@@ -390,7 +558,10 @@ export function DoctorConsultationWorkspacePage({
                       selectedActionNotice={selectedActionNotice}
                       isOpening={openMutation.isPending}
                       isRecordingClinical={recordMutation.isPending}
+                      isCreatingDiagnosticOrder={createOrderMutation.isPending}
+                      isCompletingVisit={completeVisitMutation.isPending}
                       hasWritePermission={canWriteMedicalRecord}
+                      hasDiagnosticOrderPermission={canOrderDiagnostics}
                       onTriggerAction={handleTriggerAction}
                     />
                   </div>
