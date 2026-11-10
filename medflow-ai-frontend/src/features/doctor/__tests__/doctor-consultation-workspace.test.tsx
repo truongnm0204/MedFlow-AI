@@ -11,6 +11,7 @@ import { apiClient } from '@/shared/lib/axios';
 import {
   CONSULTATION_WORKSPACE_CALLED_MOCK,
   CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK,
+  completeMockVisit,
   createMockDiagnosticOrder,
   openMockConsultationWorkspace,
   recordMockClinicalExamination,
@@ -19,9 +20,12 @@ import {
 import { DoctorConsultationWorkspacePage } from '../pages/doctor-consultation-workspace-page';
 import {
   calculateClinicalBmi,
+  completeVisitSchema,
   consultationIdentifierSchema,
+  createCompleteVisitSchema,
   createDiagnosticOrderSchema,
   formatBloodPressureLabel,
+  isValidIsoCalendarDate,
   openConsultationWorkspaceSchema,
   recordClinicalExaminationSchema,
 } from '../schemas/consultation-workspace.schema';
@@ -923,5 +927,272 @@ describe('DoctorConsultationWorkspacePage (Issue #105 / UC31)', () => {
       screen.getAllByText('Tài khoản chưa được cấp quyền chỉ định cận lâm sàng (DIAGNOSTIC_ORDER).')
         .length,
     ).toBeGreaterThanOrEqual(1);
+  });
+
+  it('validates completeVisitSchema rules (clinicalConclusion bounds, text field limits, HTML char guard, followUpDate future check, and version bounds)', () => {
+    expect(isValidIsoCalendarDate('2026-11-14')).toBe(true);
+    expect(isValidIsoCalendarDate('2026-02-29')).toBe(false);
+    expect(isValidIsoCalendarDate('14-11-2026')).toBe(false);
+
+    const schemaWithRef = createCompleteVisitSchema('2026-11-07');
+
+    // Valid full payload with future followUpDate
+    expect(
+      schemaWithRef.safeParse({
+        clinicalConclusion: 'Cơn đau thắt ngực ổn định, điều trị ngoại trú theo phác đồ.',
+        dischargeInstructions: 'Uống thuốc đúng giờ, hạn chế gắng sức nặng và giảm muối.',
+        followUpInstructions: 'Tái khám chuyên khoa Tim mạch sau 7 ngày kèm xét nghiệm lipid máu.',
+        followUpDate: '2026-11-14',
+        warningSigns: 'Đau ngực kéo dài trên 15 phút, khó thở, vã mồ hôi lạnh.',
+        completionNote: 'Đã tư vấn kỹ cho bệnh nhân và người nhà.',
+        confirmNoPrescription: false,
+        expectedStateVersion: 3,
+        expectedRevisionNo: 1,
+      }).success,
+    ).toBe(true);
+
+    // Minimal / empty payload is valid (backend uses existing clinicalConclusion if omitted)
+    expect(completeVisitSchema.safeParse({}).success).toBe(true);
+
+    // clinicalConclusion < 3 chars when non-empty rejected
+    const shortConclusion = schemaWithRef.safeParse({
+      clinicalConclusion: 'AB',
+    });
+    expect(shortConclusion.success).toBe(false);
+    if (!shortConclusion.success) {
+      expect(shortConclusion.error.issues[0]?.message).toBe(
+        'Kết luận lâm sàng phải có ít nhất 3 ký tự.',
+      );
+    }
+
+    // clinicalConclusion > 2000 chars rejected
+    expect(
+      schemaWithRef.safeParse({
+        clinicalConclusion: 'a'.repeat(2001),
+      }).success,
+    ).toBe(false);
+
+    // Unsafe HTML characters rejected across fields
+    expect(
+      schemaWithRef.safeParse({
+        clinicalConclusion: 'Kết luận <script>alert(1)</script>',
+      }).success,
+    ).toBe(false);
+    expect(
+      schemaWithRef.safeParse({
+        dischargeInstructions: 'Hướng dẫn <b>unsafe</b>',
+      }).success,
+    ).toBe(false);
+
+    // Invalid ISO calendar date rejected
+    const invalidDate = schemaWithRef.safeParse({
+      followUpDate: '2026-02-30',
+    });
+    expect(invalidDate.success).toBe(false);
+    if (!invalidDate.success) {
+      expect(invalidDate.error.issues[0]?.message).toBe(
+        'Ngày hẹn tái khám không hợp lệ (định dạng YYYY-MM-DD).',
+      );
+    }
+
+    // followUpDate <= reference date rejected
+    const sameDayDate = schemaWithRef.safeParse({
+      followUpDate: '2026-11-07',
+    });
+    expect(sameDayDate.success).toBe(false);
+    if (!sameDayDate.success) {
+      expect(sameDayDate.error.issues[0]?.message).toBe(
+        'Ngày hẹn tái khám phải sau ngày khám hiện tại.',
+      );
+    }
+
+    // expectedStateVersion / expectedRevisionNo < 1 rejected
+    expect(
+      schemaWithRef.safeParse({
+        expectedStateVersion: 0,
+      }).success,
+    ).toBe(false);
+    expect(
+      schemaWithRef.safeParse({
+        expectedRevisionNo: 0,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('completes visit (UC38 / #117) on POST /doctor/consultation/:idOrCode/complete, locks medical record (FINALIZED), confirms diagnoses, and disables write actions', async () => {
+    authenticateAsDoctor();
+    vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+      data: CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK,
+    });
+
+    const completedResponse = completeMockVisit('VIS-2026-0212', {
+      clinicalConclusion:
+        'Cơn đau thắt ngực ổn định trên nền tăng huyết áp, đáp ứng điều trị nội khoa.',
+      dischargeInstructions: 'Dùng thuốc đều đặn mỗi sáng, kiêng rượu bia và thức ăn mặn.',
+      followUpInstructions: 'Tái khám phòng 102 sau 2 tuần để kiểm tra huyết áp và điện tim.',
+      followUpDate: '2099-12-31',
+      warningSigns: 'Đau ngực dữ dội lan lên cổ hàm, khó thở cấp.',
+      completionNote: 'Bệnh nhân ổn định, đồng ý phác đồ ngoại trú.',
+      confirmNoPrescription: false,
+      expectedStateVersion: 3,
+      expectedRevisionNo: 1,
+    });
+
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: completedResponse,
+    });
+
+    renderWithRouter('/doctor/consultation/VIS-2026-0212');
+
+    expect(await screen.findByRole('heading', { name: 'Nguyễn Văn An' })).toBeInTheDocument();
+    expect(screen.getByText('Đủ điều kiện hoàn tất')).toBeInTheDocument();
+
+    // Open UC38 form
+    fireEvent.click(screen.getByRole('button', { name: /Hoàn tất lượt khám \(UC38\)/ }));
+
+    expect(screen.getByRole('form', { name: 'Biểu mẫu hoàn tất lượt khám' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Kết luận lâm sàng cuối cùng'), {
+      target: {
+        value: 'Cơn đau thắt ngực ổn định trên nền tăng huyết áp, đáp ứng điều trị nội khoa.',
+      },
+    });
+    fireEvent.change(screen.getByLabelText('Hướng dẫn điều trị / dặn dò xuất viện'), {
+      target: { value: 'Dùng thuốc đều đặn mỗi sáng, kiêng rượu bia và thức ăn mặn.' },
+    });
+    fireEvent.change(screen.getByLabelText('Hướng dẫn tái khám'), {
+      target: { value: 'Tái khám phòng 102 sau 2 tuần để kiểm tra huyết áp và điện tim.' },
+    });
+    fireEvent.change(screen.getByLabelText('Ngày hẹn tái khám'), {
+      target: { value: '2099-12-31' },
+    });
+    fireEvent.change(screen.getByLabelText('Dấu hiệu cảnh báo cần tái khám ngay'), {
+      target: { value: 'Đau ngực dữ dội lan lên cổ hàm, khó thở cấp.' },
+    });
+    fireEvent.change(screen.getByLabelText('Ghi chú hoàn tất lượt khám'), {
+      target: { value: 'Bệnh nhân ổn định, đồng ý phác đồ ngoại trú.' },
+    });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Xác nhận hoàn tất & Khóa bệnh án \(UC38\)/ }),
+    );
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        '/doctor/consultation/VIS-2026-0212/complete',
+        expect.objectContaining({
+          clinicalConclusion:
+            'Cơn đau thắt ngực ổn định trên nền tăng huyết áp, đáp ứng điều trị nội khoa.',
+          dischargeInstructions: 'Dùng thuốc đều đặn mỗi sáng, kiêng rượu bia và thức ăn mặn.',
+          followUpInstructions: 'Tái khám phòng 102 sau 2 tuần để kiểm tra huyết áp và điện tim.',
+          followUpDate: '2099-12-31',
+          warningSigns: 'Đau ngực dữ dội lan lên cổ hàm, khó thở cấp.',
+          completionNote: 'Bệnh nhân ổn định, đồng ý phác đồ ngoại trú.',
+          confirmNoPrescription: false,
+          expectedStateVersion: 3,
+          expectedRevisionNo: 1,
+        }),
+      );
+    });
+
+    expect(
+      await screen.findByText(
+        /Đã hoàn tất lượt khám và khóa hồ sơ bệnh án \(FINALIZED\) cho bệnh nhân Nguyễn Văn An \(VIS-2026-0212\)/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Hồ sơ bệnh án đã khóa hoàn tất (FINALIZED)')).toBeInTheDocument();
+    expect(screen.getByText('Đã khóa bệnh án (FINALIZED)')).toBeInTheDocument();
+    expect(screen.getAllByText('Chẩn đoán xác định').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('1/7 khả dụng')).toBeInTheDocument();
+  });
+
+  it('auto-opens UC38 form on /complete route, blocks invalid client input, and surfaces HTTP 409 Conflict while preserving draft state', async () => {
+    authenticateAsDoctor();
+    vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+      data: CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK,
+    });
+
+    const conflictError = new AxiosError('conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
+      status: 409,
+      statusText: 'Conflict',
+      headers: {},
+      config: { headers: {} } as InternalAxiosRequestConfig,
+      data: {
+        detail:
+          'Trạng thái hàng đợi hoặc phiên bản bệnh án đã thay đổi bởi thao tác khác. Vui lòng tải lại trước khi hoàn tất lượt khám.',
+      },
+    });
+    const postSpy = vi.spyOn(apiClient, 'post').mockRejectedValueOnce(conflictError);
+
+    renderWithRouter('/doctor/consultation/VIS-2026-0212/complete');
+
+    expect(
+      await screen.findByRole('form', { name: 'Biểu mẫu hoàn tất lượt khám' }),
+    ).toBeInTheDocument();
+
+    // 1. Enter past follow-up date -> blocked client-side without calling API
+    fireEvent.change(screen.getByLabelText('Ngày hẹn tái khám'), {
+      target: { value: '2020-01-01' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: /Xác nhận hoàn tất & Khóa bệnh án \(UC38\)/ }),
+    );
+
+    expect(
+      await screen.findByText('Ngày hẹn tái khám phải sau ngày khám hiện tại.'),
+    ).toBeInTheDocument();
+    expect(postSpy).not.toHaveBeenCalled();
+
+    // 2. Fix follow-up date, enter discharge instructions, and submit -> surfaces HTTP 409 Conflict
+    fireEvent.change(screen.getByLabelText('Ngày hẹn tái khám'), {
+      target: { value: '2099-12-31' },
+    });
+    fireEvent.change(screen.getByLabelText('Hướng dẫn điều trị / dặn dò xuất viện'), {
+      target: { value: 'Theo dõi huyết áp tại nhà ngày 2 lần' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: /Xác nhận hoàn tất & Khóa bệnh án \(UC38\)/ }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Trạng thái hàng đợi hoặc phiên bản bệnh án đã thay đổi bởi thao tác khác. Vui lòng tải lại trước khi hoàn tất lượt khám.',
+      );
+    });
+
+    // Draft input is preserved after error
+    expect(screen.getByLabelText('Hướng dẫn điều trị / dặn dò xuất viện')).toHaveValue(
+      'Theo dõi huyết áp tại nhà ngày 2 lần',
+    );
+  });
+
+  it('hides UC38 complete visit controls when doctor lacks MEDICAL_RECORD_WRITE permission', async () => {
+    authenticateAsDoctor();
+    vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+      data: CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK,
+    });
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/doctor/consultation/VIS-2026-0212']}>
+          <DoctorConsultationWorkspacePage explicitPermissions={['DIAGNOSTIC_ORDER']} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Nguyễn Văn An' })).toBeInTheDocument();
+    expect(screen.getByText('Khóa quyền MEDICAL_RECORD_WRITE')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Hoàn tất lượt khám \(UC38\)/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText(
+        'Tài khoản chưa được cấp quyền ghi nhận hồ sơ bệnh án (MEDICAL_RECORD_WRITE).',
+      ).length,
+    ).toBeGreaterThanOrEqual(2);
   });
 });

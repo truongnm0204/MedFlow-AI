@@ -3,6 +3,7 @@ import {
   formatBloodPressureLabel,
 } from '../schemas/consultation-workspace.schema';
 import type {
+  CompleteVisitRequest,
   ConsultationDiagnosticOrderDto,
   ConsultationDiagnosticSummaryDto,
   ConsultationWorkspaceActionDto,
@@ -1404,5 +1405,78 @@ export function createMockDiagnosticOrder(
       nextDiagnosticSummary,
     ),
     createdDiagnosticOrders: createdOrders,
+  };
+}
+
+export function completeMockVisit(
+  idOrCode: string,
+  request?: CompleteVisitRequest,
+): ConsultationWorkspaceResponseDto {
+  const base = resolveMockConsultationWorkspace(idOrCode);
+  const currentStateVersion = base.queue?.stateVersion ?? 1;
+  const currentRevisionNo = base.clinicalContext.currentRevisionNo ?? 1;
+
+  const trimmedConclusion = request?.clinicalConclusion?.trim() || null;
+  const trimmedCompletionNote = request?.completionNote?.trim() || request?.notes?.trim() || null;
+  const hasRevisionUpdate = Boolean(trimmedConclusion || trimmedCompletionNote);
+  const nextRevisionNo = hasRevisionUpdate ? currentRevisionNo + 1 : currentRevisionNo;
+
+  const currentRxStatus = base.clinicalContext.prescriptionSummary.latestPrescriptionStatus;
+  const shouldPromotePrescription = currentRxStatus === 'DRAFT' || currentRxStatus === 'PENDING';
+
+  return {
+    ...base,
+    actionOutcome: 'VISIT_COMPLETED',
+    workspaceState: 'COMPLETED',
+    canEditClinical: false,
+    readOnlyReason: 'Hồ sơ bệnh án đã được khóa hoàn tất (FINALIZED).',
+    generatedAtUtc: '2026-11-07T02:45:00Z',
+    visit: {
+      ...base.visit,
+      status: 'COMPLETED',
+      statusLabel: 'Đã hoàn tất khám',
+      completedAt: '2026-11-07T08:30:00',
+    },
+    queue: base.queue
+      ? {
+          ...base.queue,
+          status: 'COMPLETED',
+          queueGroup: 'COMPLETED',
+          isEligible: false,
+          completedAt: '08:30',
+          stateVersion: currentStateVersion + 1,
+        }
+      : null,
+    clinicalContext: {
+      ...base.clinicalContext,
+      medicalRecordId: base.clinicalContext.medicalRecordId ?? 801,
+      medicalRecordStatus: 'FINALIZED',
+      finalizedAt: '2026-11-07T08:30:00',
+      currentRevisionNo: nextRevisionNo,
+      isConfirmed: true,
+      lastRecordedAt: '2026-11-07T08:30:00',
+      clinicalConclusion: trimmedConclusion ?? base.clinicalContext.clinicalConclusion,
+      amendmentReason: trimmedCompletionNote ?? base.clinicalContext.amendmentReason,
+      diagnoses: base.clinicalContext.diagnoses.map((diagnosis) => ({
+        ...diagnosis,
+        status: 'CONFIRMED',
+        confirmedAt: diagnosis.confirmedAt ?? '2026-11-07T08:30:00',
+      })),
+      prescriptionSummary: {
+        ...base.clinicalContext.prescriptionSummary,
+        latestPrescriptionStatus: shouldPromotePrescription
+          ? 'ISSUED'
+          : base.clinicalContext.prescriptionSummary.latestPrescriptionStatus,
+        latestIssuedAt: shouldPromotePrescription
+          ? '2026-11-07T08:30:00'
+          : base.clinicalContext.prescriptionSummary.latestIssuedAt,
+      },
+    },
+    allowedActions: buildAllowedActions(
+      'COMPLETED',
+      false,
+      true,
+      base.clinicalContext.diagnosticSummary,
+    ),
   };
 }
