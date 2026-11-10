@@ -50,6 +50,7 @@ import { HomePage } from '@/features/home/pages/home-page';
 import { HospitalAdminDashboardPage } from '@/features/hospital-admin/pages/hospital-admin-dashboard-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
+import { PrescriptionSearchPage } from '@/features/pharmacy/pages/prescription-search-page';
 import { AssignRoomPage } from '@/features/reception/pages/assign-room-page';
 import { VisitRoutingPage } from '@/features/reception/pages/visit-routing-page';
 import { ExaminationQueuePage } from '@/features/reception/pages/examination-queue-page';
@@ -452,6 +453,16 @@ export function AppRouter() {
           <RequireAuth>
             <RequirePharmacy>
               <PharmacyDashboardPage />
+            </RequirePharmacy>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy/prescriptions"
+        element={
+          <RequireAuth>
+            <RequirePharmacy>
+              <PrescriptionSearchPage />
             </RequirePharmacy>
           </RequireAuth>
         }
