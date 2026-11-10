@@ -63,7 +63,9 @@ export function DoctorConsultationWorkspacePage({
   const isClinicalRoute = location.pathname.endsWith('/clinical-examination');
   const isDiagnosticOrderRoute =
     location.pathname.endsWith('/diagnostic-orders') ||
-    location.pathname.endsWith('/diagnostic-order');
+    location.pathname.endsWith('/diagnostic-order') ||
+    location.pathname.endsWith('/additional-diagnostic-orders') ||
+    location.pathname.endsWith('/additional-diagnostic-order');
   const isCompleteVisitRoute =
     location.pathname.endsWith('/complete') || location.pathname.endsWith('/complete-visit');
   const [lookupInput, setLookupInput] = useState(activeIdentifier);
@@ -229,7 +231,11 @@ export function DoctorConsultationWorkspacePage({
       return;
     }
 
-    if (action.id === 'create-diagnostic-order' || action.ucCode === 'UC34') {
+    if (
+      action.id === 'create-diagnostic-order' ||
+      action.id === 'create-additional-diagnostic-order' ||
+      action.ucCode === 'UC34'
+    ) {
       if (!canOrderDiagnostics || !data) {
         return;
       }
@@ -260,7 +266,10 @@ export function DoctorConsultationWorkspacePage({
 
   const openAction = data?.allowedActions.find((a) => a.id === 'open-consultation');
   const diagnosticOrderAction = data?.allowedActions.find(
-    (a) => a.id === 'create-diagnostic-order' || a.ucCode === 'UC34',
+    (a) =>
+      a.id === 'create-diagnostic-order' ||
+      a.id === 'create-additional-diagnostic-order' ||
+      a.ucCode === 'UC34',
   );
   const completeVisitAction = data?.allowedActions.find(
     (a) => a.id === 'complete-visit' || a.ucCode === 'UC38',

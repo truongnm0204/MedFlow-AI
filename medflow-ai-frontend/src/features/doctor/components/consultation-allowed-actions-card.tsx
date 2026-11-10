@@ -59,7 +59,9 @@ export function ConsultationAllowedActionsCard({
               action.id === 'complete-visit' ||
               action.ucCode === 'UC38';
             const isDiagnosticOrderAction =
-              action.id === 'create-diagnostic-order' || action.ucCode === 'UC34';
+              action.id === 'create-diagnostic-order' ||
+              action.id === 'create-additional-diagnostic-order' ||
+              action.ucCode === 'UC34';
             const lacksWritePermission = isWriteAction && !hasWritePermission;
             const lacksDiagnosticOrderPermission =
               isDiagnosticOrderAction && !hasDiagnosticOrderPermission;

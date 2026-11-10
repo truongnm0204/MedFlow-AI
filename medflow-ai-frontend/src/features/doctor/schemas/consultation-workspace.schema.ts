@@ -364,6 +364,32 @@ export const createDiagnosticOrderSchema = z
 export type CreateDiagnosticOrderItemInput = z.infer<typeof createDiagnosticOrderItemSchema>;
 export type CreateDiagnosticOrderInput = z.infer<typeof createDiagnosticOrderSchema>;
 
+export const ADDITIONAL_DIAGNOSTIC_REASON_PRESETS = [
+  'Chỉ định bổ sung sau khi xem kết quả cận lâm sàng ban đầu',
+  'Diễn biến lâm sàng mới phát sinh trong phiên khám',
+  'Cần xét nghiệm/chẩn đoán hình ảnh chuyên sâu để chẩn đoán phân biệt',
+  'Theo dõi động học chỉ số cận lâm sàng bất thường',
+] as const;
+
+export interface FollowUpOrderContextSource {
+  orderCode: string;
+  serviceCode: string;
+  serviceName: string;
+  conclusion?: string | null;
+}
+
+export function buildFollowUpClinicalNoteFromOrder(source: FollowUpOrderContextSource): string {
+  const cleanOrderCode = source.orderCode.replace(/[<>]/g, '').trim();
+  const cleanServiceCode = source.serviceCode.replace(/[<>]/g, '').trim();
+  const cleanConclusion = source.conclusion?.replace(/[<>]/g, '').trim() ?? '';
+
+  const rawNote = cleanConclusion
+    ? `Chỉ định bổ sung sau kết quả ${cleanServiceCode} (${cleanOrderCode}): ${cleanConclusion}`
+    : `Chỉ định bổ sung sau kết quả ${cleanServiceCode} (${cleanOrderCode}) để làm rõ chẩn đoán lâm sàng.`;
+
+  return rawNote.length > 500 ? `${rawNote.slice(0, 497).trimEnd()}...` : rawNote;
+}
+
 export function getTodayLocalIso(): string {
   const now = new Date();
   const year = now.getFullYear();

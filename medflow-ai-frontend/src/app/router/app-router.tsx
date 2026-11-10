@@ -272,6 +272,46 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/doctor/consultation/:visitIdOrCode/additional-diagnostic-orders"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/additional-diagnostic-order"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/additional-diagnostic-orders"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/additional-diagnostic-order"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/doctor/consultation/:visitIdOrCode/complete"
         element={
           <RequireAuth>

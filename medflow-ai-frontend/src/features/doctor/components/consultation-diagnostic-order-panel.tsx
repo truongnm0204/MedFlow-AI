@@ -1,6 +1,7 @@
 import {
   CheckCircle2,
   ClipboardPlus,
+  FileCheck2,
   FlaskConical,
   Lock,
   Plus,
@@ -17,7 +18,11 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Spinner } from '@/shared/ui/spinner';
 
-import { createDiagnosticOrderSchema } from '../schemas/consultation-workspace.schema';
+import {
+  ADDITIONAL_DIAGNOSTIC_REASON_PRESETS,
+  buildFollowUpClinicalNoteFromOrder,
+  createDiagnosticOrderSchema,
+} from '../schemas/consultation-workspace.schema';
 import type {
   ConsultationDiagnosticOrderDto,
   CreateDiagnosticOrderRequest,
@@ -131,13 +136,23 @@ export function ConsultationDiagnosticOrderPanel({
     if (submitError && onClearSubmitError) onClearSubmitError();
   };
 
+  const hasExistingOrders = existingOrders.length > 0;
+  const completedOrdersCount = existingOrders.filter(
+    (o) => o.status === 'COMPLETED' || o.isResultFinalized,
+  ).length;
+  const pendingOrdersCount = existingOrders.filter(
+    (o) => o.status !== 'COMPLETED' && o.status !== 'CANCELLED' && !o.isResultFinalized,
+  ).length;
+
   const activeOrderServiceIds: Record<number, true> = {};
+  const completedOrderServiceIds: Record<number, true> = {};
   for (const order of existingOrders) {
     if (order.status !== 'COMPLETED' && order.status !== 'CANCELLED') {
       activeOrderServiceIds[order.serviceId] = true;
+    } else if (order.status === 'COMPLETED' || order.isResultFinalized) {
+      completedOrderServiceIds[order.serviceId] = true;
     }
   }
-
   const selectedByServiceId: Record<number, true> = {};
   for (const item of selectedItems) {
     selectedByServiceId[item.serviceId] = true;
@@ -227,6 +242,12 @@ export function ConsultationDiagnosticOrderPanel({
     setTransitionToAwaitingResults(false);
   };
 
+  const handleStartAdditionalFromOrder = (order: ConsultationDiagnosticOrderDto) => {
+    clearErrors();
+    setClinicalNote(buildFollowUpClinicalNoteFromOrder(order));
+    setFormOpen(true);
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setValidationError(null);
@@ -288,6 +309,12 @@ export function ConsultationDiagnosticOrderPanel({
           <Badge tone={existingOrders.length > 0 ? 'sky' : 'slate'}>
             {existingOrders.length} phiếu chỉ định
           </Badge>
+          {hasExistingOrders && completedOrdersCount > 0 && (
+            <Badge tone="emerald">{completedOrdersCount} đã có KQ</Badge>
+          )}
+          {hasExistingOrders && pendingOrdersCount > 0 && (
+            <Badge tone="amber">{pendingOrdersCount} đang chờ CLS</Badge>
+          )}
           {!hasOrderPermission ? (
             <Badge tone="amber">Thiếu quyền DIAGNOSTIC_ORDER</Badge>
           ) : isOrderable ? (
@@ -302,7 +329,13 @@ export function ConsultationDiagnosticOrderPanel({
               }}
             >
               <ClipboardPlus className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>{isFormOpen ? 'Đóng biểu mẫu UC34' : 'Chỉ định cận lâm sàng (UC34)'}</span>
+              <span>
+                {isFormOpen
+                  ? 'Đóng biểu mẫu UC34'
+                  : hasExistingOrders
+                    ? 'Chỉ định bổ sung cận lâm sàng (UC34)'
+                    : 'Chỉ định cận lâm sàng (UC34)'}
+              </span>
             </Button>
           ) : (
             <Badge tone="slate">
@@ -400,6 +433,46 @@ export function ConsultationDiagnosticOrderPanel({
                     <span>{order.instruction}</span>
                   </div>
                 )}
+                {(order.isResultFinalized ||
+                  Boolean(order.resultText) ||
+                  Boolean(order.conclusion)) && (
+                  <div className="rounded-lg bg-emerald-50/70 border border-emerald-200 px-3 py-2 space-y-1.5 text-[11px] text-ink">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5 font-bold text-emerald-900">
+                        <FileCheck2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                        <span>Kết quả cận lâm sàng đã trả</span>
+                        {(order.verifiedByStaffName || order.performedByStaffName) && (
+                          <span className="font-normal text-sub">
+                            • Duyệt bởi: {order.verifiedByStaffName ?? order.performedByStaffName}
+                          </span>
+                        )}
+                      </div>
+                      {isOrderable && (
+                        <button
+                          type="button"
+                          onClick={() => handleStartAdditionalFromOrder(order)}
+                          aria-label={`Chỉ định bổ sung từ kết quả ${order.serviceCode}`}
+                          className="inline-flex items-center gap-1 rounded-lg border border-primary/30 bg-white px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-primary/5 transition-colors"
+                        >
+                          <ClipboardPlus className="h-3 w-3" aria-hidden="true" />
+                          <span>Chỉ định bổ sung từ KQ này</span>
+                        </button>
+                      )}
+                    </div>
+                    {order.resultText && (
+                      <div>
+                        <span className="font-semibold text-navy">Mô tả / Chỉ số: </span>
+                        <span>{order.resultText}</span>
+                      </div>
+                    )}
+                    {order.conclusion && (
+                      <div>
+                        <span className="font-semibold text-navy">Kết luận CLS: </span>
+                        <span className="font-semibold text-emerald-900">{order.conclusion}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -416,11 +489,14 @@ export function ConsultationDiagnosticOrderPanel({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
             <div>
               <h5 className="text-xs font-bold text-navy">
-                Tạo phiếu chỉ định Cận lâm sàng mới (UC34)
+                {hasExistingOrders
+                  ? 'Tạo phiếu chỉ định Cận lâm sàng bổ sung (UC34)'
+                  : 'Tạo phiếu chỉ định Cận lâm sàng mới (UC34)'}
               </h5>
               <p className="text-[11px] text-sub">
-                Chọn từ 1 đến 10 dịch vụ cận lâm sàng. Mỗi dịch vụ sẽ tự động cấp số hàng đợi CLS
-                tại buồng thực hiện tương ứng.
+                {hasExistingOrders
+                  ? `Ca khám đã có ${existingOrders.length} phiếu chỉ định trước đó. Chọn thêm từ 1 đến 10 dịch vụ cận lâm sàng bổ sung sau khi xem kết quả hoặc diễn biến khám.`
+                  : 'Chọn từ 1 đến 10 dịch vụ cận lâm sàng. Mỗi dịch vụ sẽ tự động cấp số hàng đợi CLS tại buồng thực hiện tương ứng.'}
               </p>
             </div>
             {expectedStateVersion !== null && expectedStateVersion !== undefined && (
@@ -514,6 +590,8 @@ export function ConsultationDiagnosticOrderPanel({
                 const isSelected = Boolean(selectedByServiceId[svc.serviceId]);
                 const isAlreadyActive =
                   svc.hasActiveOrderInVisit || Boolean(activeOrderServiceIds[svc.serviceId]);
+                const hasCompletedInVisit =
+                  !isAlreadyActive && Boolean(completedOrderServiceIds[svc.serviceId]);
                 const isUnauthorized = !svc.isDoctorAuthorized;
                 const isDisabled = isAlreadyActive || isUnauthorized;
                 const catMeta = CATEGORY_META[svc.category] ?? {
@@ -563,6 +641,11 @@ export function ConsultationDiagnosticOrderPanel({
                         <span className="text-[11px] font-semibold text-rose-700 flex items-center gap-1">
                           <ShieldAlert className="h-3 w-3" aria-hidden="true" />
                           Chưa phân quyền BS
+                        </span>
+                      ) : hasCompletedInVisit ? (
+                        <span className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1">
+                          <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                          Đã có KQ • Có thể chỉ định lại
                         </span>
                       ) : (
                         <span className="text-[11px] text-sub">
@@ -712,11 +795,8 @@ export function ConsultationDiagnosticOrderPanel({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label
-                htmlFor="diag-clinical-note"
-                className="block text-xs font-semibold text-navy mb-1"
-              >
+            <div className="space-y-1.5">
+              <label htmlFor="diag-clinical-note" className="block text-xs font-semibold text-navy">
                 Ghi chú lâm sàng / Lý do chỉ định (tối đa 500 ký tự)
               </label>
               <input
@@ -728,9 +808,28 @@ export function ConsultationDiagnosticOrderPanel({
                   clearErrors();
                   setClinicalNote(e.target.value);
                 }}
-                placeholder="VD: Nghi ngờ hội chứng vành cấp, cần loại trừ nhồi máu cơ tim..."
+                placeholder="VD: Chỉ định bổ sung sau khi xem kết quả ECG, cần loại trừ nhồi máu cơ tim..."
                 className="w-full rounded-lg border border-border bg-white px-3 py-2 text-xs text-ink focus:border-primary focus:outline-none"
               />
+              <div
+                role="group"
+                aria-label="Gợi ý lý do chỉ định bổ sung"
+                className="flex flex-wrap items-center gap-1.5 pt-0.5"
+              >
+                {ADDITIONAL_DIAGNOSTIC_REASON_PRESETS.map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => {
+                      clearErrors();
+                      setClinicalNote(preset);
+                    }}
+                    className="rounded-md border border-border bg-white px-2 py-0.5 text-[11px] text-sub hover:border-primary/40 hover:text-navy transition-colors"
+                  >
+                    + {preset}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="flex items-end">
@@ -783,7 +882,11 @@ export function ConsultationDiagnosticOrderPanel({
               disabled={isSubmitting}
             >
               <ClipboardPlus className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Tạo phiếu chỉ định CLS (UC34)</span>
+              <span>
+                {hasExistingOrders
+                  ? 'Tạo phiếu chỉ định bổ sung CLS (UC34)'
+                  : 'Tạo phiếu chỉ định CLS (UC34)'}
+              </span>
             </Button>
           </div>
         </form>
