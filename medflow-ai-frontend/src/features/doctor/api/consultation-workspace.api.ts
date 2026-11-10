@@ -3,6 +3,7 @@ import axios from 'axios';
 import { apiClient } from '@/shared/lib/axios';
 
 import {
+  completeMockVisit,
   createMockDiagnosticOrder,
   openMockConsultationWorkspace,
   recordMockClinicalExamination,
@@ -10,6 +11,7 @@ import {
   resolveMockDiagnosticOrderCatalog,
 } from '../data/consultation-workspace-mock';
 import type {
+  CompleteVisitRequest,
   ConsultationWorkspaceResponseDto,
   CreateDiagnosticOrderRequest,
   DiagnosticOrderCatalogResponseDto,
@@ -167,4 +169,30 @@ export async function createDiagnosticOrder(
   }
 
   return createMockDiagnosticOrder(idOrCode, payload);
+}
+
+/**
+ * Hoàn tất lượt khám lâm sàng và khóa hồ sơ bệnh án (`POST /doctor/consultation/{idOrCode}/complete` — UC38 / #117).
+ */
+export async function completeVisit(
+  idOrCode: string,
+  payload?: CompleteVisitRequest,
+): Promise<ConsultationWorkspaceResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ConsultationWorkspaceResponseDto>(
+        `/doctor/consultation/${encoded}/complete`,
+        payload ?? {},
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return completeMockVisit(idOrCode, payload);
 }
