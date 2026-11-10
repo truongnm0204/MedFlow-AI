@@ -11,7 +11,8 @@ export type ConsultationActionOutcome =
   | 'OPENED'
   | 'ALREADY_IN_PROGRESS'
   | 'CLINICAL_EXAMINATION_RECORDED'
-  | 'DIAGNOSTIC_ORDER_CREATED';
+  | 'DIAGNOSTIC_ORDER_CREATED'
+  | 'VISIT_COMPLETED';
 
 export type ConsultationWorkspaceState =
   'WAITING' | 'CALLED' | 'IN_PROGRESS' | 'AWAITING_RESULTS' | 'RETURN_CONSULTATION' | 'COMPLETED';
@@ -322,4 +323,17 @@ export interface CreateDiagnosticOrderRequest {
   expectedStateVersion?: number | null;
   transitionToAwaitingResults?: boolean | null;
   clinicalNote?: string | null;
+}
+
+export interface CompleteVisitRequest {
+  clinicalConclusion?: string | null;
+  dischargeInstructions?: string | null;
+  followUpInstructions?: string | null;
+  followUpDate?: string | null;
+  warningSigns?: string | null;
+  notes?: string | null;
+  completionNote?: string | null;
+  confirmNoPrescription?: boolean | null;
+  expectedStateVersion?: number | null;
+  expectedRevisionNo?: number | null;
 }

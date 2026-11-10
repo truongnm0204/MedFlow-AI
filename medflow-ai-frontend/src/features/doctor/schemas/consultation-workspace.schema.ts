@@ -363,3 +363,96 @@ export const createDiagnosticOrderSchema = z
 
 export type CreateDiagnosticOrderItemInput = z.infer<typeof createDiagnosticOrderItemSchema>;
 export type CreateDiagnosticOrderInput = z.infer<typeof createDiagnosticOrderSchema>;
+
+export function getTodayLocalIso(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function isValidIsoCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const [yearStr, monthStr, dayStr] = value.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return false;
+  }
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
+export function createCompleteVisitSchema(referenceDateIso?: string) {
+  return z.object({
+    clinicalConclusion: z
+      .string()
+      .trim()
+      .max(2000, 'Kết luận lâm sàng tối đa 2000 ký tự.')
+      .refine(
+        (val) => !val.includes('<') && !val.includes('>'),
+        'Kết luận lâm sàng không được chứa ký tự < hoặc >.',
+      )
+      .refine(
+        (val) => val.length === 0 || val.length >= 3,
+        'Kết luận lâm sàng phải có ít nhất 3 ký tự.',
+      )
+      .nullable()
+      .optional(),
+    dischargeInstructions: clinicalTextFieldSchema('Hướng dẫn điều trị / dặn dò xuất viện', 2000),
+    followUpInstructions: clinicalTextFieldSchema('Hướng dẫn tái khám', 1000),
+    followUpDate: z
+      .string()
+      .trim()
+      .superRefine((val, ctx) => {
+        if (!val) {
+          return;
+        }
+        if (!isValidIsoCalendarDate(val)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Ngày hẹn tái khám không hợp lệ (định dạng YYYY-MM-DD).',
+          });
+          return;
+        }
+        const effectiveReferenceDate = referenceDateIso?.trim() || getTodayLocalIso();
+        if (val <= effectiveReferenceDate) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Ngày hẹn tái khám phải sau ngày khám hiện tại.',
+          });
+        }
+      })
+      .nullable()
+      .optional(),
+    warningSigns: clinicalTextFieldSchema('Dấu hiệu cảnh báo cần tái khám ngay', 1000),
+    notes: clinicalTextFieldSchema('Ghi chú hoàn tất lượt khám', 500),
+    completionNote: clinicalTextFieldSchema('Ghi chú hoàn tất lượt khám', 500),
+    confirmNoPrescription: z.boolean().nullable().optional(),
+    expectedStateVersion: z
+      .number()
+      .int('Phiên bản trạng thái phải là số nguyên.')
+      .min(1, 'Phiên bản trạng thái (ExpectedStateVersion) phải lớn hơn hoặc bằng 1.')
+      .nullable()
+      .optional(),
+    expectedRevisionNo: z
+      .number()
+      .int('Phiên bản bệnh án phải là số nguyên.')
+      .min(1, 'Phiên bản bệnh án (ExpectedRevisionNo) phải lớn hơn hoặc bằng 1.')
+      .nullable()
+      .optional(),
+  });
+}
+
+export const completeVisitSchema = createCompleteVisitSchema();
+
+export type CompleteVisitInput = z.infer<typeof completeVisitSchema>;
