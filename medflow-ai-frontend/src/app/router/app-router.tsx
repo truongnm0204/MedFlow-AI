@@ -38,10 +38,12 @@ import { LoginPage } from '@/features/auth/pages/login-page';
 import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
 import { DiagnosticDashboardPage } from '@/features/diagnostic/pages/diagnostic-dashboard-page';
+import { DiagnosticResultViewPage } from '@/features/diagnostic/pages/diagnostic-result-view-page';
 import { DoctorDashboardPage } from '@/features/doctor/pages/doctor-dashboard-page';
 import { DoctorAssignedQueuePage } from '@/features/doctor/pages/doctor-assigned-queue-page';
 import { DoctorConsultationWorkspacePage } from '@/features/doctor/pages/doctor-consultation-workspace-page';
 import { DoctorMedicalHistoryPage } from '@/features/doctor/pages/doctor-medical-history-page';
+import { DoctorDiagnosisPage } from '@/features/doctor/pages/doctor-diagnosis-page';
 import { FamilyProfileDetailPage } from '@/features/family/pages/family-profile-detail-page';
 import { FamilyProfileListPage } from '@/features/family/pages/family-profile-list-page';
 import { HomePage } from '@/features/home/pages/home-page';
@@ -56,6 +58,8 @@ import { PatientSearchPage } from '@/features/reception/pages/patient-search-pag
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
 import { WalkInVisitPage } from '@/features/reception/pages/walk-in-visit-page';
 import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
+import { DoctorReviewDiagnosticsPage } from '@/features/doctor/pages/doctor-review-diagnostics-page';
+import { DiagnosticResultsTrackingPage } from '@/features/diagnostic/pages/diagnostic-results-tracking-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
 import {
@@ -66,6 +70,7 @@ import {
   RequireDoctor,
   RequirePharmacy,
   RequireReception,
+  RequireRole,
   RequireSystemAdmin,
 } from './guards';
 
@@ -243,7 +248,127 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/doctor/diagnosis"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorDiagnosisPage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/diagnosis"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorDiagnosisPage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/doctor/visits/:visitIdOrCode/clinical-examination"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/diagnostic-orders"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/diagnostic-orders"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/additional-diagnostic-orders"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/additional-diagnostic-order"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/additional-diagnostic-orders"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/additional-diagnostic-order"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/complete"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/complete-visit"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/complete"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/complete-visit"
         element={
           <RequireAuth>
             <RequireDoctor>
@@ -298,6 +423,26 @@ export function AppRouter() {
           <RequireAuth>
             <RequireDiagnostic>
               <DiagnosticDashboardPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/results"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticResultViewPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/results/:orderIdOrCode"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticResultViewPage />
             </RequireDiagnostic>
           </RequireAuth>
         }
@@ -666,6 +811,36 @@ export function AppRouter() {
       <Route path="/patient/family" element={<FamilyProfileListPage />} />
       <Route path="/family/:memberId" element={<FamilyProfileDetailPage />} />
       <Route path="/patient/family/:memberId" element={<FamilyProfileDetailPage />} />
+      <Route
+        path="/doctor/diagnostic-results"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorReviewDiagnosticsPage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/diagnostic-results"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorReviewDiagnosticsPage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/results-tracking"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['DIAGNOSTIC_STAFF', 'DOCTOR']}>
+              <DiagnosticResultsTrackingPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );

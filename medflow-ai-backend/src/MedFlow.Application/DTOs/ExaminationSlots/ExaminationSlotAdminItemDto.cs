@@ -20,6 +20,11 @@ public sealed record ExaminationSlotAdminItemDto(
     string EndTime,
     string Status,
     string? Facility = null,
-    bool NeedsReview = false
+    bool NeedsReview = false,
+    string? ClosedAt = null,
+    string? CloseReason = null,
+    string? CloseReasonCode = null,
+    string? CloseNote = null,
+    string? AffectedBookingsAction = null
 );
 
