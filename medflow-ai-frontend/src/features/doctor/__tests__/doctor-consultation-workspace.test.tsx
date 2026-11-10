@@ -11,13 +11,16 @@ import { apiClient } from '@/shared/lib/axios';
 import {
   CONSULTATION_WORKSPACE_CALLED_MOCK,
   CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK,
+  createMockDiagnosticOrder,
   openMockConsultationWorkspace,
   recordMockClinicalExamination,
+  resolveMockDiagnosticOrderCatalog,
 } from '../data/consultation-workspace-mock';
 import { DoctorConsultationWorkspacePage } from '../pages/doctor-consultation-workspace-page';
 import {
   calculateClinicalBmi,
   consultationIdentifierSchema,
+  createDiagnosticOrderSchema,
   formatBloodPressureLabel,
   openConsultationWorkspaceSchema,
   recordClinicalExaminationSchema,
@@ -632,6 +635,293 @@ describe('DoctorConsultationWorkspacePage (Issue #105 / UC31)', () => {
       screen.getAllByText(
         'Tài khoản chưa được cấp quyền ghi nhận hồ sơ bệnh án (MEDICAL_RECORD_WRITE).',
       ).length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  it('validates createDiagnosticOrderSchema rules (1..10 items, duplicate guard, priority enum, instruction/clinicalNote limits, and HTML char guard)', () => {
+    // Valid multi-item payload
+    const validMulti = createDiagnosticOrderSchema.safeParse({
+      items: [
+        {
+          serviceId: 301,
+          serviceCode: 'CLS-XN-001',
+          priority: 'URGENT',
+          requiredForConclusion: true,
+          instruction: 'Lấy máu tĩnh mạch ống EDTA',
+        },
+        {
+          serviceId: 303,
+          serviceCode: 'CLS-CDHA-001',
+          priority: 'ROUTINE',
+          requiredForConclusion: false,
+          instruction: 'Chụp tư thế đứng thẳng',
+        },
+      ],
+      clinicalNote: 'Theo dõi hội chứng vành cấp',
+      transitionToAwaitingResults: false,
+      expectedStateVersion: 3,
+    });
+    expect(validMulti.success).toBe(true);
+    if (validMulti.success) {
+      expect(validMulti.data.items?.[1]?.priority).toBe('NORMAL');
+    }
+
+    // Empty payload rejected
+    const emptyOrder = createDiagnosticOrderSchema.safeParse({});
+    expect(emptyOrder.success).toBe(false);
+    if (!emptyOrder.success) {
+      expect(emptyOrder.error.issues[0]?.message).toBe(
+        'Vui lòng chọn ít nhất một dịch vụ cận lâm sàng để chỉ định.',
+      );
+    }
+
+    // Duplicate serviceId rejected
+    const duplicateOrder = createDiagnosticOrderSchema.safeParse({
+      items: [
+        { serviceId: 301, serviceCode: 'CLS-XN-001', priority: 'NORMAL' },
+        { serviceId: 301, serviceCode: 'CLS-XN-001', priority: 'URGENT' },
+      ],
+    });
+    expect(duplicateOrder.success).toBe(false);
+    if (!duplicateOrder.success) {
+      expect(duplicateOrder.error.issues[0]?.message).toBe(
+        'Không được chọn trùng lặp dịch vụ cận lâm sàng trong cùng một lần chỉ định.',
+      );
+    }
+
+    // Over 10 items rejected
+    const overLimitOrder = createDiagnosticOrderSchema.safeParse({
+      items: Array.from({ length: 11 }, (_, idx) => ({
+        serviceId: 300 + idx + 1,
+        serviceCode: `CLS-XN-0${idx + 1}`,
+      })),
+    });
+    expect(overLimitOrder.success).toBe(false);
+    if (!overLimitOrder.success) {
+      expect(overLimitOrder.error.issues[0]?.message).toBe(
+        'Mỗi lần chỉ định tối đa 10 dịch vụ cận lâm sàng.',
+      );
+    }
+
+    // Invalid priority rejected
+    expect(
+      createDiagnosticOrderSchema.safeParse({
+        items: [{ serviceId: 301, priority: 'SUPER_FAST' }],
+      }).success,
+    ).toBe(false);
+
+    // Unsafe HTML characters in instruction or clinicalNote rejected
+    expect(
+      createDiagnosticOrderSchema.safeParse({
+        items: [{ serviceId: 301, instruction: 'Chỉ dẫn <script>' }],
+      }).success,
+    ).toBe(false);
+    expect(
+      createDiagnosticOrderSchema.safeParse({
+        items: [{ serviceId: 301 }],
+        clinicalNote: 'Ghi chú <unsafe>',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('creates diagnostic orders (UC34 / #119) for laboratory and imaging services, assigns queue tickets, and locks conclusion actions while mandatory results are pending', async () => {
+    authenticateAsDoctor();
+    const catalogMock = resolveMockDiagnosticOrderCatalog('VIS-2026-0212');
+    const getSpy = vi
+      .spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK })
+      .mockResolvedValueOnce({ data: catalogMock });
+
+    const createdWorkspace = createMockDiagnosticOrder('VIS-2026-0212', {
+      items: [
+        {
+          serviceId: 302,
+          serviceCode: 'CLS-XN-002',
+          priority: 'STAT',
+          requiredForConclusion: true,
+          instruction: 'Cấp cứu lấy máu định lượng Troponin T hs ngay',
+        },
+        {
+          serviceId: 303,
+          serviceCode: 'CLS-CDHA-001',
+          priority: 'URGENT',
+          requiredForConclusion: true,
+          instruction: 'Chụp X-quang tim phổi thẳng tại giường/buồng 204',
+        },
+      ],
+      clinicalNote: 'Nghi ngờ hội chứng mạch vành cấp',
+      transitionToAwaitingResults: false,
+      expectedStateVersion: 3,
+    });
+
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: createdWorkspace,
+    });
+
+    renderWithRouter('/doctor/consultation/VIS-2026-0212');
+
+    expect(await screen.findByRole('heading', { name: 'Nguyễn Văn An' })).toBeInTheDocument();
+
+    // Open UC34 form
+    fireEvent.click(screen.getByRole('button', { name: /Chỉ định cận lâm sàng \(UC34\)/ }));
+
+    await waitFor(() => {
+      expect(getSpy).toHaveBeenCalledWith('/doctor/consultation/VIS-2026-0212/diagnostic-orders');
+    });
+
+    expect(
+      await screen.findByRole('form', { name: 'Biểu mẫu chỉ định cận lâm sàng' }),
+    ).toBeInTheDocument();
+
+    // Unauthorized service is disabled in catalog
+    const unauthorizedBtn = screen.getByRole('button', {
+      name: 'Chọn dịch vụ Chụp cắt lớp vi tính động mạch vành (MSCT)',
+    });
+    expect(unauthorizedBtn).toBeDisabled();
+    expect(screen.getByText('Chưa phân quyền BS')).toBeInTheDocument();
+
+    // Select Laboratory service (CLS-XN-002) and Imaging service (CLS-CDHA-001)
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Chọn dịch vụ Định lượng Troponin T hs (Máu)' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Chọn dịch vụ Chụp X-quang ngực thẳng kỹ thuật số' }),
+    );
+
+    expect(screen.getByText('Dịch vụ đã chọn trong phiếu (2/10)')).toBeInTheDocument();
+
+    // Configure priority and instructions
+    fireEvent.change(screen.getByLabelText('Mức độ ưu tiên CLS-XN-002'), {
+      target: { value: 'STAT' },
+    });
+    fireEvent.change(screen.getByLabelText('Chỉ dẫn cận lâm sàng CLS-XN-002'), {
+      target: { value: 'Cấp cứu lấy máu định lượng Troponin T hs ngay' },
+    });
+    fireEvent.change(screen.getByLabelText('Mức độ ưu tiên CLS-CDHA-001'), {
+      target: { value: 'URGENT' },
+    });
+    fireEvent.change(screen.getByLabelText('Chỉ dẫn cận lâm sàng CLS-CDHA-001'), {
+      target: { value: 'Chụp X-quang tim phổi thẳng tại giường/buồng 204' },
+    });
+    fireEvent.change(screen.getByLabelText('Ghi chú lâm sàng chỉ định'), {
+      target: { value: 'Nghi ngờ hội chứng mạch vành cấp' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Tạo phiếu chỉ định CLS \(UC34\)/ }));
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        '/doctor/consultation/VIS-2026-0212/diagnostic-orders',
+        expect.objectContaining({
+          items: [
+            {
+              serviceId: 302,
+              serviceCode: 'CLS-XN-002',
+              priority: 'STAT',
+              requiredForConclusion: true,
+              instruction: 'Cấp cứu lấy máu định lượng Troponin T hs ngay',
+            },
+            {
+              serviceId: 303,
+              serviceCode: 'CLS-CDHA-001',
+              priority: 'URGENT',
+              requiredForConclusion: true,
+              instruction: 'Chụp X-quang tim phổi thẳng tại giường/buồng 204',
+            },
+          ],
+          clinicalNote: 'Nghi ngờ hội chứng mạch vành cấp',
+          transitionToAwaitingResults: false,
+          expectedStateVersion: 3,
+        }),
+      );
+    });
+
+    expect(
+      await screen.findByText(
+        /Đã tạo phiếu chỉ định cận lâm sàng và xếp hàng đợi CLS cho bệnh nhân Nguyễn Văn An \(VIS-2026-0212\)/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('DIA-202611-0511')).toBeInTheDocument();
+    expect(screen.getByText('Số CLS: C001')).toBeInTheDocument();
+    expect(screen.getByText('Số CLS: C002')).toBeInTheDocument();
+    expect(screen.getByText('Chờ 2 kết quả CLS')).toBeInTheDocument();
+  });
+
+  it('auto-opens UC34 form on /diagnostic-orders route, blocks empty/unsafe client input, and surfaces HTTP 409 Conflict from backend', async () => {
+    authenticateAsDoctor();
+    const catalogMock = resolveMockDiagnosticOrderCatalog('VIS-2026-0212');
+    vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK })
+      .mockResolvedValueOnce({ data: catalogMock });
+
+    const conflictError = new AxiosError('conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
+      status: 409,
+      statusText: 'Conflict',
+      headers: {},
+      config: { headers: {} } as InternalAxiosRequestConfig,
+      data: {
+        detail:
+          "Dịch vụ cận lâm sàng 'Tổng phân tích tế bào máu ngoại vi (CBC)' (CLS-XN-001) đã có phiếu chỉ định đang chờ xử lý trong lượt khám này.",
+      },
+    });
+    const postSpy = vi.spyOn(apiClient, 'post').mockRejectedValueOnce(conflictError);
+
+    renderWithRouter('/doctor/consultation/VIS-2026-0212/diagnostic-orders');
+
+    expect(
+      await screen.findByRole('form', { name: 'Biểu mẫu chỉ định cận lâm sàng' }),
+    ).toBeInTheDocument();
+
+    // 1. Submit with 0 selected services -> blocked client-side
+    fireEvent.click(screen.getByRole('button', { name: /Tạo phiếu chỉ định CLS \(UC34\)/ }));
+    expect(
+      await screen.findByText('Vui lòng chọn ít nhất một dịch vụ cận lâm sàng để chỉ định.'),
+    ).toBeInTheDocument();
+    expect(postSpy).not.toHaveBeenCalled();
+
+    // 2. Select CBC service and submit -> surfaces HTTP 409 Conflict from backend
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Chọn dịch vụ Tổng phân tích tế bào máu ngoại vi (CBC)',
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Tạo phiếu chỉ định CLS \(UC34\)/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        "Dịch vụ cận lâm sàng 'Tổng phân tích tế bào máu ngoại vi (CBC)' (CLS-XN-001) đã có phiếu chỉ định đang chờ xử lý trong lượt khám này.",
+      );
+    });
+    // Draft selection is preserved when submission fails
+    expect(screen.getByText('Dịch vụ đã chọn trong phiếu (1/10)')).toBeInTheDocument();
+  });
+
+  it('hides UC34 diagnostic order controls when doctor lacks DIAGNOSTIC_ORDER permission', async () => {
+    authenticateAsDoctor();
+    vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+      data: CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK,
+    });
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/doctor/consultation/VIS-2026-0212']}>
+          <DoctorConsultationWorkspacePage explicitPermissions={['MEDICAL_RECORD_WRITE']} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Nguyễn Văn An' })).toBeInTheDocument();
+    expect(screen.getByText('Thiếu quyền DIAGNOSTIC_ORDER')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Chỉ định cận lâm sàng \(UC34\)/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText('Tài khoản chưa được cấp quyền chỉ định cận lâm sàng (DIAGNOSTIC_ORDER).')
+        .length,
     ).toBeGreaterThanOrEqual(1);
   });
 });

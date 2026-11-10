@@ -7,7 +7,11 @@ import type {
 import type { AssignedQueueType, VisitPriority } from './doctor.types';
 
 export type ConsultationActionOutcome =
-  'VIEWED' | 'OPENED' | 'ALREADY_IN_PROGRESS' | 'CLINICAL_EXAMINATION_RECORDED';
+  | 'VIEWED'
+  | 'OPENED'
+  | 'ALREADY_IN_PROGRESS'
+  | 'CLINICAL_EXAMINATION_RECORDED'
+  | 'DIAGNOSTIC_ORDER_CREATED';
 
 export type ConsultationWorkspaceState =
   'WAITING' | 'CALLED' | 'IN_PROGRESS' | 'AWAITING_RESULTS' | 'RETURN_CONSULTATION' | 'COMPLETED';
@@ -16,6 +20,12 @@ export type ConsultationMedicalRecordStatus = 'NOT_CREATED' | 'DRAFT' | 'FINALIZ
 
 export type ConsultationDiagnosisStatus = 'PRELIMINARY' | 'CONFIRMED';
 
+export type DiagnosticOrderPriority = 'NORMAL' | 'URGENT' | 'STAT';
+
+export type DiagnosticServiceCategory = 'LABORATORY' | 'IMAGING' | 'FUNCTIONAL';
+
+export type DiagnosticOrderItemStatus =
+  'ORDERED' | 'CONFIRMED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 export type ConsultationWorkspaceActionId =
   | 'open-consultation'
   | 'view-medical-history'
@@ -148,6 +158,75 @@ export interface ConsultationPrescriptionSummaryDto {
   itemCount: number;
 }
 
+export interface ConsultationDiagnosticOrderDto {
+  orderId: number;
+  orderCode: string;
+  visitId: number;
+  visitCode: string;
+  orderingDoctorId: number;
+  orderingDoctorCode: string;
+  orderingDoctorName: string;
+  serviceId: number;
+  serviceCode: string;
+  serviceName: string;
+  category: DiagnosticServiceCategory | (string & {});
+  unitPrice: number;
+  requiresResultVerification: boolean;
+  queueEntryId: number | null;
+  formattedQueueEntryId: string | null;
+  ticketNo: string | null;
+  queueNumber: number | null;
+  queueStatus: string | null;
+  servicePointId: number | null;
+  servicePointName: string | null;
+  roomId: number | null;
+  roomCode: string | null;
+  roomName: string | null;
+  priority: DiagnosticOrderPriority | (string & {});
+  status: DiagnosticOrderItemStatus | (string & {});
+  requiredForConclusion: boolean;
+  instruction: string | null;
+  orderedAt: string;
+  confirmedAt: string | null;
+  isResultFinalized: boolean;
+}
+
+export interface DiagnosticServiceCatalogItemDto {
+  serviceId: number;
+  serviceCode: string;
+  name: string;
+  description: string | null;
+  category: DiagnosticServiceCategory | (string & {});
+  departmentId: number | null;
+  departmentCode: string | null;
+  departmentName: string;
+  specialtyId: number | null;
+  specialtyCode: string | null;
+  specialtyName: string;
+  unitPrice: number;
+  requiresResultVerification: boolean;
+  isDoctorAuthorized: boolean;
+  servicePointId: number | null;
+  servicePointName: string | null;
+  roomId: number | null;
+  roomCode: string | null;
+  roomName: string | null;
+  hasActiveOrderInVisit: boolean;
+}
+
+export interface DiagnosticOrderCatalogResponseDto {
+  visitId: number;
+  visitCode: string;
+  visitStatus: string;
+  workspaceState: ConsultationWorkspaceState | (string & {});
+  canCreateDiagnosticOrder: boolean;
+  disabledReason: string | null;
+  generatedAtUtc: string;
+  diagnosticSummary: ConsultationDiagnosticSummaryDto;
+  services: DiagnosticServiceCatalogItemDto[];
+  existingOrders: ConsultationDiagnosticOrderDto[];
+}
+
 export interface ConsultationClinicalContextDto {
   medicalRecordId: number | null;
   medicalRecordStatus: ConsultationMedicalRecordStatus | (string & {});
@@ -165,6 +244,7 @@ export interface ConsultationClinicalContextDto {
   diagnoses: ConsultationDiagnosisItemDto[];
   diagnosticSummary: ConsultationDiagnosticSummaryDto;
   prescriptionSummary: ConsultationPrescriptionSummaryDto;
+  diagnosticOrders?: ConsultationDiagnosticOrderDto[] | null;
 }
 
 export interface ConsultationWorkspaceActionDto {
@@ -186,6 +266,7 @@ export interface ConsultationWorkspaceResponseDto {
   queue: ConsultationQueueContextDto | null;
   clinicalContext: ConsultationClinicalContextDto;
   allowedActions: ConsultationWorkspaceActionDto[];
+  createdDiagnosticOrders?: ConsultationDiagnosticOrderDto[] | null;
 }
 
 export interface OpenConsultationWorkspaceRequest {
@@ -221,4 +302,24 @@ export interface RecordClinicalExaminationRequest {
   isConfirmed?: boolean | null;
   expectedStateVersion?: number | null;
   expectedRevisionNo?: number | null;
+}
+
+export interface CreateDiagnosticOrderItemRequest {
+  serviceId?: number | null;
+  serviceCode?: string | null;
+  instruction?: string | null;
+  priority?: DiagnosticOrderPriority | (string & {}) | null;
+  requiredForConclusion?: boolean | null;
+}
+
+export interface CreateDiagnosticOrderRequest {
+  serviceId?: number | null;
+  serviceCode?: string | null;
+  instruction?: string | null;
+  priority?: DiagnosticOrderPriority | (string & {}) | null;
+  requiredForConclusion?: boolean | null;
+  items?: CreateDiagnosticOrderItemRequest[] | null;
+  expectedStateVersion?: number | null;
+  transitionToAwaitingResults?: boolean | null;
+  clinicalNote?: string | null;
 }
