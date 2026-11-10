@@ -64,6 +64,7 @@ import { PrepareMedicinesPage } from '@/features/pharmacy/pages/prepare-medicine
 import { FefoBatchSelectionPage } from '@/features/pharmacy/pages/fefo-batch-selection-page';
 import { DispenseConfirmPage } from '@/features/pharmacy/pages/dispense-confirm-page';
 import { DispensingResultPage } from '@/features/pharmacy/pages/dispensing-result-page';
+import { DoctorCreatePrescriptionPage } from '@/features/doctor/pages/doctor-create-prescription-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
 import {
@@ -912,6 +913,26 @@ export function AppRouter() {
             <RequirePharmacy>
               <DispensingResultPage />
             </RequirePharmacy>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/prescriptions/new"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorCreatePrescriptionPage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/prescription"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorCreatePrescriptionPage />
+            </RequireDoctor>
           </RequireAuth>
         }
       />
