@@ -3,22 +3,58 @@ import { FlaskConical, Pill, Stethoscope } from 'lucide-react';
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
+import { ConsultationDiagnosticOrderPanel } from './consultation-diagnostic-order-panel';
 import type {
   ConsultationDiagnosisItemDto,
+  ConsultationDiagnosticOrderDto,
   ConsultationDiagnosticSummaryDto,
   ConsultationPrescriptionSummaryDto,
+  CreateDiagnosticOrderRequest,
+  DiagnosticServiceCatalogItemDto,
 } from '../types/consultation-workspace.types';
 
 export interface ConsultationDiagnosisAndOrdersCardProps {
   diagnoses: ConsultationDiagnosisItemDto[];
   diagnosticSummary: ConsultationDiagnosticSummaryDto;
   prescriptionSummary: ConsultationPrescriptionSummaryDto;
+  diagnosticOrders?: ConsultationDiagnosticOrderDto[];
+  catalogServices?: DiagnosticServiceCatalogItemDto[];
+  isCatalogLoading?: boolean;
+  catalogError?: string | null;
+  onRetryCatalog?: () => void;
+  canCreateDiagnosticOrder?: boolean;
+  hasDiagnosticOrderPermission?: boolean;
+  diagnosticDisabledReason?: string | null;
+  expectedStateVersion?: number | null;
+  isCreatingDiagnosticOrder?: boolean;
+  diagnosticOrderSubmitError?: string | null;
+  isDiagnosticOrderFormOpen?: boolean;
+  onToggleDiagnosticOrderForm?: (open: boolean) => void;
+  onSubmitDiagnosticOrder?: (
+    payload: CreateDiagnosticOrderRequest,
+  ) => Promise<boolean | void> | boolean | void;
+  onClearDiagnosticOrderSubmitError?: () => void;
 }
 
 export function ConsultationDiagnosisAndOrdersCard({
   diagnoses,
   diagnosticSummary,
   prescriptionSummary,
+  diagnosticOrders = [],
+  catalogServices = [],
+  isCatalogLoading = false,
+  catalogError = null,
+  onRetryCatalog,
+  canCreateDiagnosticOrder = false,
+  hasDiagnosticOrderPermission = true,
+  diagnosticDisabledReason = null,
+  expectedStateVersion = null,
+  isCreatingDiagnosticOrder = false,
+  diagnosticOrderSubmitError = null,
+  isDiagnosticOrderFormOpen,
+  onToggleDiagnosticOrderForm,
+  onSubmitDiagnosticOrder,
+  onClearDiagnosticOrderSubmitError,
 }: ConsultationDiagnosisAndOrdersCardProps) {
   return (
     <Card>
@@ -145,6 +181,24 @@ export function ConsultationDiagnosisAndOrdersCard({
             )}
           </div>
         </div>
+
+        <ConsultationDiagnosticOrderPanel
+          existingOrders={diagnosticOrders}
+          catalogServices={catalogServices}
+          isCatalogLoading={isCatalogLoading}
+          catalogError={catalogError}
+          onRetryCatalog={onRetryCatalog}
+          canCreateOrder={canCreateDiagnosticOrder}
+          hasOrderPermission={hasDiagnosticOrderPermission}
+          disabledReason={diagnosticDisabledReason}
+          expectedStateVersion={expectedStateVersion}
+          isSubmitting={isCreatingDiagnosticOrder}
+          submitError={diagnosticOrderSubmitError}
+          isFormOpen={isDiagnosticOrderFormOpen}
+          onToggleForm={onToggleDiagnosticOrderForm}
+          onSubmitOrder={onSubmitDiagnosticOrder}
+          onClearSubmitError={onClearDiagnosticOrderSubmitError}
+        />
       </CardContent>
     </Card>
   );
