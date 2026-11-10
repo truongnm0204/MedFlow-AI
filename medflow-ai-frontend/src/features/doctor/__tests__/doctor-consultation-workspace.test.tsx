@@ -11,6 +11,7 @@ import { apiClient } from '@/shared/lib/axios';
 import {
   CONSULTATION_WORKSPACE_CALLED_MOCK,
   CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK,
+  CONSULTATION_WORKSPACE_RETURN_IN_PROGRESS_MOCK,
   completeMockVisit,
   createMockDiagnosticOrder,
   openMockConsultationWorkspace,
@@ -19,6 +20,8 @@ import {
 } from '../data/consultation-workspace-mock';
 import { DoctorConsultationWorkspacePage } from '../pages/doctor-consultation-workspace-page';
 import {
+  ADDITIONAL_DIAGNOSTIC_REASON_PRESETS,
+  buildFollowUpClinicalNoteFromOrder,
   calculateClinicalBmi,
   completeVisitSchema,
   consultationIdentifierSchema,
@@ -927,6 +930,174 @@ describe('DoctorConsultationWorkspacePage (Issue #105 / UC31)', () => {
       screen.getAllByText('Tài khoản chưa được cấp quyền chỉ định cận lâm sàng (DIAGNOSTIC_ORDER).')
         .length,
     ).toBeGreaterThanOrEqual(1);
+  });
+
+  it('creates additional diagnostic order (UC34 / #115) after reviewing completed ECG result on VIS-2026-0218, pre-fills follow-up clinicalNote, and re-locks conclusion actions', async () => {
+    expect(ADDITIONAL_DIAGNOSTIC_REASON_PRESETS.length).toBeGreaterThanOrEqual(4);
+    const sanitizedNote = buildFollowUpClinicalNoteFromOrder({
+      orderCode: 'DIA-202611-0505',
+      serviceCode: 'CLS-TDCN-001',
+      serviceName: 'Đo điện tâm đồ 12 chuyển đạo (ECG)',
+      conclusion: 'ST chênh xuống <V4-V6>, đề nghị xét nghiệm Troponin T hs',
+    });
+    expect(sanitizedNote).not.toContain('<');
+    expect(sanitizedNote).not.toContain('>');
+    expect(
+      createDiagnosticOrderSchema.safeParse({
+        items: [{ serviceId: 302 }],
+        clinicalNote: sanitizedNote,
+      }).success,
+    ).toBe(true);
+
+    authenticateAsDoctor();
+    const catalogMock = resolveMockDiagnosticOrderCatalog('VIS-2026-0218');
+    const getSpy = vi
+      .spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: CONSULTATION_WORKSPACE_RETURN_IN_PROGRESS_MOCK })
+      .mockResolvedValueOnce({ data: catalogMock });
+
+    const expectedFollowUpNote =
+      'Chỉ định bổ sung sau kết quả CLS-TDCN-001 (DIA-202611-0505): Theo dõi thiếu máu cơ tim dưới nội tâm mạc vùng trước bên, đề nghị định lượng Troponin T hs.';
+
+    const additionalCreatedWorkspace = createMockDiagnosticOrder('VIS-2026-0218', {
+      items: [
+        {
+          serviceId: 302,
+          serviceCode: 'CLS-XN-002',
+          priority: 'STAT',
+          requiredForConclusion: true,
+          instruction: 'Lấy máu khẩn định lượng Troponin T hs đối chiếu với ECG',
+        },
+      ],
+      clinicalNote: expectedFollowUpNote,
+      transitionToAwaitingResults: false,
+      expectedStateVersion: 4,
+    });
+
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: additionalCreatedWorkspace,
+    });
+
+    renderWithRouter('/doctor/consultation/VIS-2026-0218');
+
+    expect(await screen.findByRole('heading', { name: 'Lê Hoàng Nam' })).toBeInTheDocument();
+    expect(screen.getByText('1 phiếu chỉ định')).toBeInTheDocument();
+    expect(screen.getByText('1 đã có KQ')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Theo dõi thiếu máu cơ tim dưới nội tâm mạc vùng trước bên, đề nghị định lượng Troponin T hs.',
+      ),
+    ).toBeInTheDocument();
+
+    // Click "Chỉ định bổ sung từ KQ này" on the completed ECG order
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Chỉ định bổ sung từ kết quả CLS-TDCN-001' }),
+    );
+
+    await waitFor(() => {
+      expect(getSpy).toHaveBeenCalledWith('/doctor/consultation/VIS-2026-0218/diagnostic-orders');
+    });
+
+    expect(
+      await screen.findByText('Tạo phiếu chỉ định Cận lâm sàng bổ sung (UC34)'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Ghi chú lâm sàng chỉ định')).toHaveValue(expectedFollowUpNote);
+
+    // Completed service (CLS-TDCN-001) shows repeat-eligible badge
+    expect(screen.getByText('Đã có KQ • Có thể chỉ định lại')).toBeInTheDocument();
+
+    // Select additional Laboratory service (CLS-XN-002 Troponin T hs)
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Chọn dịch vụ Định lượng Troponin T hs (Máu)' }),
+    );
+    fireEvent.change(screen.getByLabelText('Mức độ ưu tiên CLS-XN-002'), {
+      target: { value: 'STAT' },
+    });
+    fireEvent.change(screen.getByLabelText('Chỉ dẫn cận lâm sàng CLS-XN-002'), {
+      target: { value: 'Lấy máu khẩn định lượng Troponin T hs đối chiếu với ECG' },
+    });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Tạo phiếu chỉ định bổ sung CLS \(UC34\)/ }),
+    );
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        '/doctor/consultation/VIS-2026-0218/diagnostic-orders',
+        expect.objectContaining({
+          items: [
+            {
+              serviceId: 302,
+              serviceCode: 'CLS-XN-002',
+              priority: 'STAT',
+              requiredForConclusion: true,
+              instruction: 'Lấy máu khẩn định lượng Troponin T hs đối chiếu với ECG',
+            },
+          ],
+          clinicalNote: expectedFollowUpNote,
+          transitionToAwaitingResults: false,
+          expectedStateVersion: 4,
+        }),
+      );
+    });
+
+    expect(screen.getByText('2 phiếu chỉ định')).toBeInTheDocument();
+    expect(screen.getByText('1 đang chờ CLS')).toBeInTheDocument();
+    expect(screen.getByText('Chờ 1 kết quả CLS')).toBeInTheDocument();
+    expect(screen.getByText('Số CLS: C002')).toBeInTheDocument();
+  });
+
+  it('auto-opens additional diagnostic order form on /additional-diagnostic-orders route, supports preset reason chips, and surfaces HTTP 409 Conflict', async () => {
+    authenticateAsDoctor();
+    const catalogMock = resolveMockDiagnosticOrderCatalog('VIS-2026-0218');
+    vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: CONSULTATION_WORKSPACE_RETURN_IN_PROGRESS_MOCK })
+      .mockResolvedValueOnce({ data: catalogMock });
+
+    const conflictError = new AxiosError('conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
+      status: 409,
+      statusText: 'Conflict',
+      headers: {},
+      config: { headers: {} } as InternalAxiosRequestConfig,
+      data: {
+        detail:
+          'Bệnh nhân đang chờ kết quả cận lâm sàng. Vui lòng mở lại phiên khám (IN_PROGRESS) trước khi chỉ định bổ sung.',
+      },
+    });
+    vi.spyOn(apiClient, 'post').mockRejectedValueOnce(conflictError);
+
+    renderWithRouter('/doctor/consultation/VIS-2026-0218/additional-diagnostic-orders');
+
+    expect(
+      await screen.findByText('Tạo phiếu chỉ định Cận lâm sàng bổ sung (UC34)'),
+    ).toBeInTheDocument();
+
+    // Click preset reason chip
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: '+ Chỉ định bổ sung sau khi xem kết quả cận lâm sàng ban đầu',
+      }),
+    );
+    expect(screen.getByLabelText('Ghi chú lâm sàng chỉ định')).toHaveValue(
+      'Chỉ định bổ sung sau khi xem kết quả cận lâm sàng ban đầu',
+    );
+
+    // Select X-ray service and submit -> surfaces HTTP 409 Conflict
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Chọn dịch vụ Chụp X-quang ngực thẳng kỹ thuật số',
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: /Tạo phiếu chỉ định bổ sung CLS \(UC34\)/ }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Bệnh nhân đang chờ kết quả cận lâm sàng. Vui lòng mở lại phiên khám (IN_PROGRESS) trước khi chỉ định bổ sung.',
+      );
+    });
+    expect(screen.getByText('Dịch vụ đã chọn trong phiếu (1/10)')).toBeInTheDocument();
   });
 
   it('validates completeVisitSchema rules (clinicalConclusion bounds, text field limits, HTML char guard, followUpDate future check, and version bounds)', () => {

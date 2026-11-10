@@ -32,6 +32,8 @@ export type ConsultationWorkspaceActionId =
   | 'view-medical-history'
   | 'record-clinical-examination'
   | 'create-diagnostic-order'
+  | 'create-additional-diagnostic-order'
+  | 'review-diagnostic-results'
   | 'record-diagnosis'
   | 'create-prescription'
   | 'complete-visit'
@@ -190,6 +192,15 @@ export interface ConsultationDiagnosticOrderDto {
   orderedAt: string;
   confirmedAt: string | null;
   isResultFinalized: boolean;
+  resultId?: number | null;
+  resultStatus?: string | null;
+  resultFinalizedAt?: string | null;
+  resultVersionNo?: number | null;
+  resultText?: string | null;
+  conclusion?: string | null;
+  reportFileUrl?: string | null;
+  performedByStaffName?: string | null;
+  verifiedByStaffName?: string | null;
 }
 
 export interface DiagnosticServiceCatalogItemDto {

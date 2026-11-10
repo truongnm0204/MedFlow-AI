@@ -123,6 +123,14 @@ export function useCreateDiagnosticOrder() {
         });
       }
       void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'consultation', normalized, 'diagnostic-results'],
+      });
+      if (data.visit?.visitCode) {
+        void queryClient.invalidateQueries({
+          queryKey: ['doctor', 'consultation', data.visit.visitCode, 'diagnostic-results'],
+        });
+      }
+      void queryClient.invalidateQueries({
         queryKey: ['doctor', 'assigned-queue'],
       });
       void queryClient.invalidateQueries({
