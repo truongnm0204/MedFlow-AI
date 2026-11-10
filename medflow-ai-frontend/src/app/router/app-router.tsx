@@ -63,6 +63,7 @@ import { DiagnosticResultsTrackingPage } from '@/features/diagnostic/pages/diagn
 import { PrepareMedicinesPage } from '@/features/pharmacy/pages/prepare-medicines-page';
 import { FefoBatchSelectionPage } from '@/features/pharmacy/pages/fefo-batch-selection-page';
 import { DispenseConfirmPage } from '@/features/pharmacy/pages/dispense-confirm-page';
+import { DispensingResultPage } from '@/features/pharmacy/pages/dispensing-result-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
 import {
@@ -890,6 +891,26 @@ export function AppRouter() {
           <RequireAuth>
             <RequirePharmacy>
               <DispenseConfirmPage />
+            </RequirePharmacy>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy/dispensing-result"
+        element={
+          <RequireAuth>
+            <RequirePharmacy>
+              <DispensingResultPage />
+            </RequirePharmacy>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy/dispensing/:dispenseCode"
+        element={
+          <RequireAuth>
+            <RequirePharmacy>
+              <DispensingResultPage />
             </RequirePharmacy>
           </RequireAuth>
         }
