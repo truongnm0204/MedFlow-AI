@@ -59,6 +59,8 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
         public DbSet<MedicalRecord> MedicalRecords => Set<MedicalRecord>();
         public DbSet<MedicalRecordRevision> MedicalRecordRevisions => Set<MedicalRecordRevision>();
         public DbSet<VisitDiagnosis> VisitDiagnoses => Set<VisitDiagnosis>();
+        public DbSet<Icd10Code> Icd10Codes => Set<Icd10Code>();
+        public DbSet<DiagnosticOrder> DiagnosticOrders => Set<DiagnosticOrder>();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
             => Database.BeginTransactionAsync(ct);
@@ -125,6 +127,8 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
             modelBuilder.Entity<MedicalRecord>().HasKey(m => m.Id);
             modelBuilder.Entity<MedicalRecordRevision>().HasKey(r => r.Id);
             modelBuilder.Entity<VisitDiagnosis>().HasKey(d => d.Id);
+            modelBuilder.Entity<Icd10Code>().HasKey(c => c.Id);
+            modelBuilder.Entity<DiagnosticOrder>().HasKey(o => o.Id);
             modelBuilder.Entity<Prescription>().HasKey(p => p.Id);
             modelBuilder.Entity<PrescriptionItem>().HasKey(i => i.Id);
             modelBuilder.Entity<AuditLog>(b =>
@@ -603,6 +607,68 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
             IsConfirmed = true,
             AmendmentReason = null,
         });
+
+        _db.Icd10Codes.AddRange(
+            new Icd10Code
+            {
+                Id = 1,
+                Code = "K29.5",
+                NameVi = "Viêm dạ dày mạn tính",
+                CatalogVersion = "DEMO-ICD10",
+                NodeType = "LEAF",
+                IsSelectable = true,
+                NotPrimaryDx = false,
+            },
+            new Icd10Code
+            {
+                Id = 2,
+                Code = "I10",
+                NameVi = "Tăng huyết áp vô căn (nguyên phát)",
+                CatalogVersion = "DEMO-ICD10",
+                NodeType = "LEAF",
+                IsSelectable = true,
+                NotPrimaryDx = false,
+            },
+            new Icd10Code
+            {
+                Id = 3,
+                Code = "K21.9",
+                NameVi = "Bệnh trào ngược dạ dày - thực quản không có viêm thực quản",
+                CatalogVersion = "DEMO-ICD10",
+                NodeType = "LEAF",
+                IsSelectable = true,
+                NotPrimaryDx = false,
+            },
+            new Icd10Code
+            {
+                Id = 4,
+                Code = "K76.0",
+                NameVi = "Gan nhiễm mỡ, không phân loại nơi khác",
+                CatalogVersion = "DEMO-ICD10",
+                NodeType = "LEAF",
+                IsSelectable = true,
+                NotPrimaryDx = false,
+            },
+            new Icd10Code
+            {
+                Id = 5,
+                Code = "K29",
+                NameVi = "Viêm dạ dày và tá tràng (Nhóm chương mục)",
+                CatalogVersion = "DEMO-ICD10",
+                NodeType = "CATEGORY",
+                IsSelectable = false,
+                NotPrimaryDx = false,
+            },
+            new Icd10Code
+            {
+                Id = 6,
+                Code = "B96.81",
+                NameVi = "Helicobacter pylori là nguyên nhân gây bệnh phân loại ở chương khác",
+                CatalogVersion = "DEMO-ICD10",
+                NodeType = "LEAF",
+                IsSelectable = true,
+                NotPrimaryDx = true,
+            });
 
         _db.VisitDiagnoses.Add(new VisitDiagnosis
         {
@@ -1361,5 +1427,417 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
                 3,
                 "VIS-202610-0011",
                 new RecordClinicalExaminationRequest(ClinicalFindings: "Bụng mềm")));
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. RecordDiagnosis & SearchIcd10Codes (UC36 / #112)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task RecordDiagnosis_InProgressVisitWithFlatFields_PersistsDiagnosesAppendsRevisionAndWritesAudit()
+    {
+        var opened = await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        Assert.Equal("OPENED", opened.ActionOutcome);
+        Assert.Equal(1, opened.ClinicalContext.CurrentRevisionNo);
+
+        var recordId = opened.ClinicalContext.MedicalRecordId!.Value;
+
+        var result = await _service.RecordDiagnosisAsync(
+            actorUserId: 3,
+            visitIdOrCode: "VIS-202610-0011",
+            request: new RecordDiagnosisRequest(
+                PrimaryIcd10Code: "K29.5",
+                PrimaryClinicalDiagnosis: "Viêm dạ dày mạn tính đợt cấp",
+                SecondaryIcd10Codes: ["K76.0", "B96.81"],
+                ClinicalConclusion: "Viêm dạ dày mạn tính đợt cấp có H. pylori (+) kèm gan nhiễm mỡ độ I",
+                DifferentialNotes: "Phân biệt loét hành tá tràng",
+                LifestyleInstructions: "Kiêng rượu bia, thức ăn chua cay, ăn đúng giờ",
+                WarningSigns: "Đau bụng dữ dội, nôn ra máu hoặc đi ngoài phân đen",
+                AmendmentReason: "Ghi nhận chẩn đoán xác định và kết luận",
+                IsConfirmed: true,
+                ExpectedStateVersion: 3,
+                ExpectedRevisionNo: 1),
+            ipAddress: "127.0.0.1");
+
+        Assert.Equal("DIAGNOSIS_RECORDED", result.ActionOutcome);
+        Assert.Equal("IN_PROGRESS", result.WorkspaceState);
+        Assert.True(result.CanEditClinical);
+        Assert.Equal(recordId, result.ClinicalContext.MedicalRecordId);
+        Assert.Equal(2, result.ClinicalContext.CurrentRevisionNo);
+        Assert.True(result.ClinicalContext.IsConfirmed);
+        Assert.Equal(
+            "Viêm dạ dày mạn tính đợt cấp có H. pylori (+) kèm gan nhiễm mỡ độ I",
+            result.ClinicalContext.ClinicalConclusion);
+        Assert.Equal("Ghi nhận chẩn đoán xác định và kết luận", result.ClinicalContext.AmendmentReason);
+
+        Assert.Equal(3, result.ClinicalContext.Diagnoses.Count);
+        var primaryDx = result.ClinicalContext.Diagnoses[0];
+        Assert.True(primaryDx.IsPrimary);
+        Assert.Equal(1L, primaryDx.Icd10CodeId);
+        Assert.Equal("K29.5", primaryDx.Code);
+        Assert.Equal("Viêm dạ dày mạn tính", primaryDx.Name);
+        Assert.Equal("Viêm dạ dày mạn tính đợt cấp", primaryDx.ClinicalDiagnosis);
+        Assert.Equal("CONFIRMED", primaryDx.Status);
+        Assert.NotNull(primaryDx.ConfirmedAt);
+
+        var secondaryCodes = result.ClinicalContext.Diagnoses
+            .Where(d => !d.IsPrimary)
+            .Select(d => d.Code)
+            .ToList();
+        Assert.Contains("K76.0", secondaryCodes);
+        Assert.Contains("B96.81", secondaryCodes);
+
+        var audit = await _db.AuditLogs.SingleOrDefaultAsync(a =>
+            a.Action == "DIAGNOSIS_RECORDED" &&
+            a.EntityId == recordId.ToString());
+        Assert.NotNull(audit);
+        Assert.Equal(3, audit!.ActorUserId);
+        Assert.Equal(1, audit.HospitalId);
+        Assert.Equal("MEDICAL_RECORD", audit.EntityType);
+        Assert.Equal("Ghi nhận chẩn đoán xác định và kết luận", audit.Reason);
+        using var changeDoc = System.Text.Json.JsonDocument.Parse(audit.ChangeData!);
+        Assert.Equal("K29.5", changeDoc.RootElement.GetProperty("primaryIcd10Code").GetString());
+        Assert.Equal("Phân biệt loét hành tá tràng", changeDoc.RootElement.GetProperty("differentialNotes").GetString());
+    }
+
+    [Fact]
+    public async Task RecordDiagnosis_StructuredDiagnosesAndSubsequentUpdate_SynchronizesVisitDiagnosesAndPreservesPriorVitals()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        await _service.RecordClinicalExaminationAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordClinicalExaminationRequest(
+                PresentingComplaint: "Đau thượng vị, ợ chua",
+                BpSystolicMmhg: 125,
+                BpDiastolicMmhg: 82,
+                PulseBpm: 74,
+                ClinicalFindings: "Ấn đau thượng vị nhẹ"));
+
+        var firstDx = await _service.RecordDiagnosisAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordDiagnosisRequest(
+                Diagnoses:
+                [
+                    new RecordDiagnosisItemRequest(
+                        Icd10CodeId: 1,
+                        Code: "K29.5",
+                        IsPrimary: true,
+                        ClinicalDiagnosis: "Theo dõi viêm dạ dày mạn tính",
+                        Status: "PRELIMINARY"),
+                    new RecordDiagnosisItemRequest(
+                        Icd10CodeId: 3,
+                        Code: "K21.9",
+                        IsPrimary: false,
+                        ClinicalDiagnosis: "Trào ngược dạ dày - thực quản",
+                        Status: "PRELIMINARY"),
+                ],
+                ClinicalConclusion: "Theo dõi viêm dạ dày mạn tính kèm trào ngược, chờ nội soi",
+                IsConfirmed: false,
+                ExpectedRevisionNo: 2));
+
+        Assert.Equal("DIAGNOSIS_RECORDED", firstDx.ActionOutcome);
+        Assert.Equal(3, firstDx.ClinicalContext.CurrentRevisionNo);
+        Assert.False(firstDx.ClinicalContext.IsConfirmed);
+        Assert.Equal(2, firstDx.ClinicalContext.Diagnoses.Count);
+        Assert.All(firstDx.ClinicalContext.Diagnoses, d =>
+        {
+            Assert.Equal("PRELIMINARY", d.Status);
+            Assert.Null(d.ConfirmedAt);
+        });
+        Assert.Equal(125, firstDx.ClinicalContext.VitalSigns.BpSystolicMmhg);
+        Assert.Equal("Ấn đau thượng vị nhẹ", firstDx.ClinicalContext.ClinicalFindings);
+
+        var retainedPrimaryId = firstDx.ClinicalContext.Diagnoses.Single(d => d.Code == "K29.5").Id;
+
+        var secondDx = await _service.RecordDiagnosisAsync(
+            3,
+            "q-011",
+            new RecordDiagnosisRequest(
+                Diagnoses:
+                [
+                    new RecordDiagnosisItemRequest(
+                        Code: "K29.5",
+                        IsPrimary: true,
+                        ClinicalDiagnosis: "Viêm dạ dày mạn tính đã xác định",
+                        Status: "CONFIRMED"),
+                    new RecordDiagnosisItemRequest(
+                        Code: "I10",
+                        IsPrimary: false,
+                        ClinicalDiagnosis: "Tăng huyết áp độ 1",
+                        Status: "CONFIRMED"),
+                ],
+                ClinicalConclusion: "Viêm dạ dày mạn tính kèm tăng huyết áp độ 1, điều trị nội khoa",
+                AmendmentReason: "Cập nhật chẩn đoán chính thức sau khi hội chẩn",
+                IsConfirmed: true,
+                ExpectedRevisionNo: 3));
+
+        Assert.Equal("DIAGNOSIS_RECORDED", secondDx.ActionOutcome);
+        Assert.Equal(4, secondDx.ClinicalContext.CurrentRevisionNo);
+        Assert.True(secondDx.ClinicalContext.IsConfirmed);
+        Assert.Equal(2, secondDx.ClinicalContext.Diagnoses.Count);
+
+        var updatedPrimary = secondDx.ClinicalContext.Diagnoses.Single(d => d.IsPrimary);
+        Assert.Equal(retainedPrimaryId, updatedPrimary.Id);
+        Assert.Equal("K29.5", updatedPrimary.Code);
+        Assert.Equal("Viêm dạ dày mạn tính đã xác định", updatedPrimary.ClinicalDiagnosis);
+        Assert.Equal("CONFIRMED", updatedPrimary.Status);
+        Assert.NotNull(updatedPrimary.ConfirmedAt);
+
+        var updatedSecondary = secondDx.ClinicalContext.Diagnoses.Single(d => !d.IsPrimary);
+        Assert.Equal("I10", updatedSecondary.Code);
+        Assert.Equal("Tăng huyết áp vô căn (nguyên phát)", updatedSecondary.Name);
+        Assert.DoesNotContain(secondDx.ClinicalContext.Diagnoses, d => d.Code == "K21.9");
+
+        var dbDiagnoses = await _db.VisitDiagnoses.Where(d => d.VisitId == 11).ToListAsync();
+        Assert.Equal(2, dbDiagnoses.Count);
+    }
+
+    [Fact]
+    public async Task RecordDiagnosis_InvalidPayloadOrIcd10Constraints_ThrowsValidationException()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        // Null request
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(3, "VIS-202610-0011", null!));
+
+        // Empty diagnosis items
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(ClinicalConclusion: "Chưa chọn mã ICD-10")));
+
+        // Missing primary diagnosis (all false)
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(
+                    Diagnoses:
+                    [
+                        new RecordDiagnosisItemRequest(Code: "K29.5", IsPrimary: false),
+                        new RecordDiagnosisItemRequest(Code: "I10", IsPrimary: false),
+                    ])));
+
+        // Multiple primary diagnoses
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(
+                    Diagnoses:
+                    [
+                        new RecordDiagnosisItemRequest(Code: "K29.5", IsPrimary: true),
+                        new RecordDiagnosisItemRequest(Code: "I10", IsPrimary: true),
+                    ])));
+
+        // Duplicate ICD-10 code (direct)
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(
+                    PrimaryIcd10Code: "K29.5",
+                    SecondaryIcd10Codes: ["k29.5"])));
+
+        // Duplicate ICD-10 code (by ID + code resolving to same entry)
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(
+                    Diagnoses:
+                    [
+                        new RecordDiagnosisItemRequest(Icd10CodeId: 1, IsPrimary: true),
+                        new RecordDiagnosisItemRequest(Code: "K29.5", IsPrimary: false),
+                    ])));
+
+        // Invalid ICD-10 code format
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(PrimaryIcd10Code: "INVALID_CODE")));
+
+        // Unknown ICD-10 code in catalog
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(PrimaryIcd10Code: "Z99.9")));
+
+        // Non-selectable ICD-10 category node (K29 has IsSelectable = false)
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(PrimaryIcd10Code: "K29")));
+
+        // NotPrimaryDx = true code used as primary diagnosis (B96.81)
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(PrimaryIcd10Code: "B96.81")));
+
+        // Invalid DiagnosisStatus
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(
+                    PrimaryIcd10Code: "K29.5",
+                    DiagnosisStatus: "INVALID_STATUS")));
+
+        // ClinicalConclusion with < or > or too short
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(
+                    PrimaryIcd10Code: "K29.5",
+                    ClinicalConclusion: "AB")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(
+                    PrimaryIcd10Code: "K29.5",
+                    ClinicalConclusion: "Viêm dạ dày <script>")));
+    }
+
+    [Fact]
+    public async Task RecordDiagnosis_UnauthorizedOrForbiddenDoctor_ThrowsAndDoesNotPersistDiagnosesOrAudit()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        var baselineDiagnoses = await _db.VisitDiagnoses.CountAsync();
+        var baselineRevisions = await _db.MedicalRecordRevisions.CountAsync();
+        var baselineAudits = await _db.AuditLogs.CountAsync(a => a.Action == "DIAGNOSIS_RECORDED");
+
+        var validRequest = new RecordDiagnosisRequest(
+            PrimaryIcd10Code: "K29.5",
+            ClinicalConclusion: "Viêm dạ dày mạn tính");
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => _service.RecordDiagnosisAsync(0, "VIS-202610-0011", validRequest));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.RecordDiagnosisAsync(6, "VIS-202610-0011", validRequest));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.RecordDiagnosisAsync(3, "VIS-202610-0021", validRequest));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.RecordDiagnosisAsync(3, "VIS-202610-0002", validRequest));
+
+        var writePerm = await _db.RolePermissions
+            .FirstAsync(rp => rp.RoleId == 3 && rp.PermissionId == 1);
+        _db.RolePermissions.Remove(writePerm);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.RecordDiagnosisAsync(3, "VIS-202610-0011", validRequest));
+
+        Assert.Equal(baselineDiagnoses, await _db.VisitDiagnoses.CountAsync());
+        Assert.Equal(baselineRevisions, await _db.MedicalRecordRevisions.CountAsync());
+        Assert.Equal(baselineAudits, await _db.AuditLogs.CountAsync(a => a.Action == "DIAGNOSIS_RECORDED"));
+    }
+
+    [Fact]
+    public async Task RecordDiagnosis_WhenMandatoryDiagnosticResultsPending_ThrowsConflictException()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        // Case 1: Open DIAGNOSTIC queue entry while FinalResultRequired policy is enabled (default true)
+        var diagQueue = new QueueEntry
+        {
+            Id = 901,
+            VisitId = 11,
+            ServicePointId = 1,
+            CurrentServicePointId = 1,
+            QueueDate = new DateOnly(2026, 10, 22),
+            QueueNumber = 50,
+            QueueType = "DIAGNOSTIC",
+            Status = "IN_PROGRESS",
+            PresenceStatus = "PRESENT",
+        };
+        _db.QueueEntries.Add(diagQueue);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(
+                    PrimaryIcd10Code: "K29.5",
+                    ClinicalConclusion: "Viêm dạ dày mạn tính")));
+
+        // Complete the diagnostic queue entry, but add a pending mandatory DiagnosticOrder
+        diagQueue.Status = "COMPLETED";
+        diagQueue.CompletedAt = new DateTime(2026, 10, 22, 9, 15, 0);
+        var mandatoryOrder = new DiagnosticOrder
+        {
+            Id = 501,
+            OrderCode = "CLS-202610-0501",
+            VisitId = 11,
+            OrderingDoctorId = 1,
+            ServiceId = 1,
+            RequiredForConclusion = true,
+            Status = "IN_PROGRESS",
+            OrderedAt = new DateTime(2026, 10, 22, 9, 5, 0),
+        };
+        _db.DiagnosticOrders.Add(mandatoryOrder);
+        await _db.SaveChangesAsync();
+
+        var workspaceWhileOrderPending = await _service.GetWorkspaceAsync(3, "VIS-202610-0011");
+        Assert.False(workspaceWhileOrderPending.ClinicalContext.DiagnosticSummary.AllMandatoryResultsReady);
+        Assert.False(workspaceWhileOrderPending.AllowedActions.Single(a => a.Id == "record-diagnosis").Enabled);
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(
+                    PrimaryIcd10Code: "K29.5",
+                    ClinicalConclusion: "Viêm dạ dày mạn tính")));
+
+        // Once the mandatory order is COMPLETED, RecordDiagnosis succeeds
+        mandatoryOrder.Status = "COMPLETED";
+        await _db.SaveChangesAsync();
+
+        var recorded = await _service.RecordDiagnosisAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordDiagnosisRequest(
+                PrimaryIcd10Code: "K29.5",
+                ClinicalConclusion: "Viêm dạ dày mạn tính sau khi có kết quả CLS"));
+        Assert.Equal("DIAGNOSIS_RECORDED", recorded.ActionOutcome);
+    }
+
+    [Fact]
+    public async Task SearchIcd10Codes_FiltersByQueryPrimaryOnlyAndSelectable()
+    {
+        var allSelectable = await _service.SearchIcd10CodesAsync(3, query: null, primaryOnly: false, limit: 50);
+        Assert.DoesNotContain(allSelectable, c => c.Code == "K29"); // IsSelectable = false excluded
+        Assert.Contains(allSelectable, c => c.Code == "B96.81");
+
+        var primaryOnlyList = await _service.SearchIcd10CodesAsync(3, query: null, primaryOnly: true, limit: 50);
+        Assert.DoesNotContain(primaryOnlyList, c => c.Code == "B96.81"); // NotPrimaryDx = true excluded
+        Assert.Contains(primaryOnlyList, c => c.Code == "K29.5");
+
+        var byDiacriticFreeQuery = await _service.SearchIcd10CodesAsync(3, query: "gan nhiem mo", primaryOnly: true, limit: 10);
+        var matched = Assert.Single(byDiacriticFreeQuery);
+        Assert.Equal("K76.0", matched.Code);
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.SearchIcd10CodesAsync(3, query: null, primaryOnly: false, limit: 0));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.SearchIcd10CodesAsync(3, query: "<script>", primaryOnly: false, limit: 10));
     }
 }
