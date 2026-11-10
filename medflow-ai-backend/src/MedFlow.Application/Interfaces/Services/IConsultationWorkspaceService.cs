@@ -23,6 +23,18 @@ public interface IConsultationWorkspaceService
         string? ipAddress = null,
         CancellationToken ct = default);
 
+    Task<DiagnosticOrderCatalogResponseDto> GetDiagnosticOrderCatalogAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        CancellationToken ct = default);
+
+    Task<ConsultationWorkspaceResponseDto> CreateDiagnosticOrderAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        CreateDiagnosticOrderRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
+
     Task<ConsultationWorkspaceResponseDto> RecordDiagnosisAsync(
         long actorUserId,
         string visitIdOrCode,

@@ -35,7 +35,7 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
         public DbSet<Patient> Patients => Set<Patient>();
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => Set<Doctor>();
-        public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => throw NotUsed();
+        public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => Set<DoctorServiceAuthorization>();
         public DbSet<ExaminationSlot> ExaminationSlots => Set<ExaminationSlot>();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
@@ -45,7 +45,7 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
         public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => Set<Service>();
-        public DbSet<ServicePrice> ServicePrices => throw NotUsed();
+        public DbSet<ServicePrice> ServicePrices => Set<ServicePrice>();
         public DbSet<HospitalPolicy> HospitalPolicies => Set<HospitalPolicy>();
         public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
@@ -61,6 +61,7 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
         public DbSet<VisitDiagnosis> VisitDiagnoses => Set<VisitDiagnosis>();
         public DbSet<Icd10Code> Icd10Codes => Set<Icd10Code>();
         public DbSet<DiagnosticOrder> DiagnosticOrders => Set<DiagnosticOrder>();
+        public DbSet<DiagnosticResult> DiagnosticResults => Set<DiagnosticResult>();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
             => Database.BeginTransactionAsync(ct);
@@ -69,8 +70,8 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
         {
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<ServicePrice>();
-            modelBuilder.Ignore<DoctorServiceAuthorization>();
+            modelBuilder.Entity<ServicePrice>().HasKey(sp => sp.Id);
+            modelBuilder.Entity<DoctorServiceAuthorization>().HasKey(a => new { a.DoctorId, a.ServiceId });
             modelBuilder.Ignore<PatientFamilyLink>();
             modelBuilder.Ignore<Payment>();
             modelBuilder.Ignore<Medicine>();
@@ -129,6 +130,7 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
             modelBuilder.Entity<VisitDiagnosis>().HasKey(d => d.Id);
             modelBuilder.Entity<Icd10Code>().HasKey(c => c.Id);
             modelBuilder.Entity<DiagnosticOrder>().HasKey(o => o.Id);
+            modelBuilder.Entity<DiagnosticResult>().HasKey(r => r.Id);
             modelBuilder.Entity<Prescription>().HasKey(p => p.Id);
             modelBuilder.Entity<PrescriptionItem>().HasKey(i => i.Id);
             modelBuilder.Entity<AuditLog>(b =>
@@ -222,7 +224,65 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
                 Name = "Khám Tim mạch",
                 ServiceType = "CONSULTATION",
                 IsActive = true,
+            },
+            new Service
+            {
+                Id = 5,
+                HospitalId = 1,
+                DepartmentId = 1,
+                SpecialtyId = 1,
+                ServiceCode = "DIA-CBC",
+                Name = "Công thức máu",
+                ServiceType = "DIAGNOSTIC",
+                RequiresResultVerification = true,
+                IsActive = true,
+            },
+            new Service
+            {
+                Id = 6,
+                HospitalId = 1,
+                DepartmentId = 1,
+                SpecialtyId = 1,
+                ServiceCode = "DIA-US",
+                Name = "Siêu âm bụng",
+                ServiceType = "DIAGNOSTIC",
+                RequiresResultVerification = true,
+                IsActive = true,
+            },
+            new Service
+            {
+                Id = 7,
+                HospitalId = 1,
+                DepartmentId = 2,
+                SpecialtyId = 2,
+                ServiceCode = "DIA-ECG",
+                Name = "Điện tâm đồ",
+                ServiceType = "DIAGNOSTIC",
+                RequiresResultVerification = true,
+                IsActive = true,
             });
+
+        _db.ServicePrices.AddRange(
+            new ServicePrice
+            {
+                Id = 5,
+                ServiceId = 5,
+                PriceAmount = 90000m,
+                EffectiveFrom = new DateTime(2026, 1, 1),
+            },
+            new ServicePrice
+            {
+                Id = 6,
+                ServiceId = 6,
+                PriceAmount = 180000m,
+                EffectiveFrom = new DateTime(2026, 1, 1),
+            });
+
+        _db.DoctorServiceAuthorizations.AddRange(
+            new DoctorServiceAuthorization { DoctorId = 1, ServiceId = 1, IsActive = true },
+            new DoctorServiceAuthorization { DoctorId = 1, ServiceId = 5, IsActive = true },
+            new DoctorServiceAuthorization { DoctorId = 1, ServiceId = 6, IsActive = true },
+            new DoctorServiceAuthorization { DoctorId = 2, ServiceId = 7, IsActive = true });
 
         _db.HospitalRooms.AddRange(
             new HospitalRoom
@@ -258,6 +318,30 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
                 Name = "Phòng khám Nội Hà Nội 201",
                 RoomType = "EXAMINATION",
                 Location = "Tầng 2",
+                Capacity = 20,
+                Status = "ACTIVE",
+            },
+            new HospitalRoom
+            {
+                Id = 5,
+                HospitalId = 1,
+                DepartmentId = 1,
+                RoomCode = "RM-205",
+                Name = "Phòng Xét nghiệm 205",
+                RoomType = "DIAGNOSTIC",
+                Location = "Tầng 2 - Khu CLS",
+                Capacity = 20,
+                Status = "ACTIVE",
+            },
+            new HospitalRoom
+            {
+                Id = 6,
+                HospitalId = 1,
+                DepartmentId = 1,
+                RoomCode = "RM-206",
+                Name = "Phòng Siêu âm 206",
+                RoomType = "DIAGNOSTIC",
+                Location = "Tầng 2 - Khu CLS",
                 Capacity = 20,
                 Status = "ACTIVE",
             });
@@ -371,6 +455,26 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
                 ServiceId = 1,
                 PointType = "EXAMINATION_ROOM",
                 Name = "Buồng khám Nội HN 201",
+                IsActive = true,
+            },
+            new QueueServicePoint
+            {
+                Id = 5,
+                HospitalId = 1,
+                RoomId = 5,
+                ServiceId = 5,
+                PointType = "DIAGNOSTIC",
+                Name = "Điểm Xét nghiệm 205",
+                IsActive = true,
+            },
+            new QueueServicePoint
+            {
+                Id = 6,
+                HospitalId = 1,
+                RoomId = 6,
+                ServiceId = 6,
+                PointType = "DIAGNOSTIC",
+                Name = "Điểm Siêu âm 206",
                 IsActive = true,
             });
 
@@ -1430,6 +1534,414 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
     }
 
     // -------------------------------------------------------------------------
+    // 7. Create Diagnostic Order & Catalog (UC34 / #120)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task CreateDiagnosticOrder_SingleOrderByServiceId_CreatesOrderAndQueueEntryAndUpdatesSummaryAndAudit()
+    {
+        var opened = await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        Assert.Equal("IN_PROGRESS", opened.WorkspaceState);
+        Assert.Equal(3, opened.Queue!.StateVersion);
+
+        var result = await _service.CreateDiagnosticOrderAsync(
+            3,
+            "VIS-202610-0011",
+            new CreateDiagnosticOrderRequest(
+                ServiceId: 5,
+                Instruction: "Nhịn ăn sáng trước khi lấy mẫu máu",
+                Priority: "URGENT",
+                RequiredForConclusion: true,
+                ExpectedStateVersion: 3,
+                ClinicalNote: "Nghi ngờ thiếu máu kèm viêm dạ dày"),
+            ipAddress: "127.0.0.1");
+
+        Assert.Equal("DIAGNOSTIC_ORDER_CREATED", result.ActionOutcome);
+        Assert.Equal("IN_PROGRESS", result.WorkspaceState);
+        Assert.True(result.CanEditClinical);
+        Assert.Equal(4, result.Queue!.StateVersion);
+
+        Assert.NotNull(result.CreatedDiagnosticOrders);
+        var createdDto = Assert.Single(result.CreatedDiagnosticOrders!);
+        Assert.Equal("DIA-202610-0001", createdDto.OrderCode);
+        Assert.Equal(11, createdDto.VisitId);
+        Assert.Equal("VIS-202610-0011", createdDto.VisitCode);
+        Assert.Equal(5, createdDto.ServiceId);
+        Assert.Equal("DIA-CBC", createdDto.ServiceCode);
+        Assert.Equal("Công thức máu", createdDto.ServiceName);
+        Assert.Equal("LABORATORY", createdDto.Category);
+        Assert.Equal(90000m, createdDto.UnitPrice);
+        Assert.Equal("URGENT", createdDto.Priority);
+        Assert.Equal("ORDERED", createdDto.Status);
+        Assert.True(createdDto.RequiredForConclusion);
+        Assert.Equal("Nhịn ăn sáng trước khi lấy mẫu máu", createdDto.Instruction);
+        Assert.Equal(1, createdDto.QueueNumber);
+        Assert.Equal("C001", createdDto.TicketNo);
+        Assert.Equal("WAITING", createdDto.QueueStatus);
+        Assert.Equal(5, createdDto.ServicePointId);
+        Assert.Equal("RM-205", createdDto.RoomCode);
+        Assert.False(createdDto.IsResultFinalized);
+
+        var summary = result.ClinicalContext.DiagnosticSummary;
+        Assert.Equal(1, summary.TotalQueueEntries);
+        Assert.Equal(1, summary.OpenQueueEntries);
+        Assert.Equal(0, summary.CompletedQueueEntries);
+        Assert.False(summary.AllMandatoryResultsReady);
+
+        Assert.NotNull(result.ClinicalContext.DiagnosticOrders);
+        Assert.Single(result.ClinicalContext.DiagnosticOrders!);
+
+        Assert.True(result.AllowedActions.Single(a => a.Id == "create-diagnostic-order").Enabled);
+        Assert.False(result.AllowedActions.Single(a => a.Id == "record-diagnosis").Enabled);
+        Assert.False(result.AllowedActions.Single(a => a.Id == "create-prescription").Enabled);
+        Assert.False(result.AllowedActions.Single(a => a.Id == "complete-visit").Enabled);
+
+        var dbOrder = await _db.DiagnosticOrders.SingleAsync(o => o.VisitId == 11);
+        Assert.Equal("DIA-202610-0001", dbOrder.OrderCode);
+        Assert.Equal("URGENT", dbOrder.Priority);
+        Assert.Equal("ORDERED", dbOrder.Status);
+        Assert.True(dbOrder.RequiredForConclusion);
+
+        var dbDiagQueue = await _db.QueueEntries.SingleAsync(q => q.Id == dbOrder.QueueEntryId);
+        Assert.Equal("DIAGNOSTIC", dbDiagQueue.QueueType);
+        Assert.Equal("WAITING", dbDiagQueue.Status);
+        Assert.Equal("NORMAL", dbDiagQueue.ManualPriority);
+        Assert.Equal(1, dbDiagQueue.QueueNumber);
+        Assert.Equal(5, dbDiagQueue.ServicePointId);
+
+        var audit = await _db.AuditLogs.SingleAsync(a => a.Action == "DIAGNOSTIC_ORDER_CREATED");
+        Assert.Equal("DIAGNOSTIC_ORDER", audit.EntityType);
+        Assert.Equal(dbOrder.Id.ToString(), audit.EntityId);
+        Assert.Equal("Nghi ngờ thiếu máu kèm viêm dạ dày", audit.Reason);
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticOrder_BatchItemsAndTransitionToAwaitingResults_TransitionsVisitAndCompletesClinicalQueueEntry()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        var result = await _service.CreateDiagnosticOrderAsync(
+            3,
+            "VIS-202610-0011",
+            new CreateDiagnosticOrderRequest(
+                Items:
+                [
+                    new CreateDiagnosticOrderItemRequest(
+                        ServiceCode: "dia-cbc",
+                        Instruction: "Xét nghiệm tổng phân tích tế bào máu",
+                        Priority: "NORMAL",
+                        RequiredForConclusion: true),
+                    new CreateDiagnosticOrderItemRequest(
+                        ServiceId: 6,
+                        Instruction: "Siêu âm ổ bụng tổng quát",
+                        Priority: "STAT",
+                        RequiredForConclusion: true),
+                ],
+                TransitionToAwaitingResults: true));
+
+        Assert.Equal("DIAGNOSTIC_ORDER_CREATED", result.ActionOutcome);
+        Assert.Equal("COMPLETED", result.WorkspaceState);
+        Assert.NotNull(result.CreatedDiagnosticOrders);
+        Assert.Equal(2, result.CreatedDiagnosticOrders!.Count);
+        Assert.Equal("LABORATORY", result.CreatedDiagnosticOrders[0].Category);
+        Assert.Equal("IMAGING", result.CreatedDiagnosticOrders[1].Category);
+        Assert.Equal(180000m, result.CreatedDiagnosticOrders[1].UnitPrice);
+        Assert.Equal("STAT", result.CreatedDiagnosticOrders[1].Priority);
+
+        var visit = await _db.Visits.FirstAsync(v => v.Id == 11);
+        Assert.Equal("AWAITING_RESULTS", visit.Status);
+
+        var clinicalQueue = await _db.QueueEntries.FirstAsync(q => q.Id == 11);
+        Assert.Equal("COMPLETED", clinicalQueue.Status);
+        Assert.NotNull(clinicalQueue.CompletedAt);
+        Assert.Equal(4, clinicalQueue.StateVersion);
+
+        Assert.Equal(2, result.ClinicalContext.DiagnosticSummary.TotalQueueEntries);
+        Assert.Equal(2, result.ClinicalContext.DiagnosticSummary.OpenQueueEntries);
+        Assert.False(result.ClinicalContext.DiagnosticSummary.AllMandatoryResultsReady);
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticOrder_NonMandatoryOrder_KeepsAllMandatoryResultsReadyTrue()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        var result = await _service.CreateDiagnosticOrderAsync(
+            3,
+            "VIS-202610-0011",
+            new CreateDiagnosticOrderRequest(
+                ServiceId: 5,
+                Instruction: "Kiểm tra bổ sung không bắt buộc trước kết luận",
+                Priority: "ROUTINE",
+                RequiredForConclusion: false));
+
+        Assert.Equal(1, result.ClinicalContext.DiagnosticSummary.TotalQueueEntries);
+        Assert.Equal(1, result.ClinicalContext.DiagnosticSummary.OpenQueueEntries);
+        Assert.True(result.ClinicalContext.DiagnosticSummary.AllMandatoryResultsReady);
+        Assert.True(result.AllowedActions.Single(a => a.Id == "record-diagnosis").Enabled);
+        Assert.True(result.AllowedActions.Single(a => a.Id == "create-prescription").Enabled);
+        Assert.True(result.AllowedActions.Single(a => a.Id == "complete-visit").Enabled);
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticOrder_InvalidInputs_ThrowsValidationException()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CreateDiagnosticOrderAsync(3, "VIS-202610-0011", null!));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest()));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 0)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceCode: "   ")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceCode: "<script>")));
+
+        // Non-DIAGNOSTIC service (ServiceId = 1 is CONSULTATION)
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 1)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 5, Priority: "SUPER_HIGH")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 5, Instruction: "<script>alert(1)</script>")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 5, Instruction: new string('A', 1001))));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(
+                    Items:
+                    [
+                        new CreateDiagnosticOrderItemRequest(ServiceId: 5),
+                        new CreateDiagnosticOrderItemRequest(ServiceCode: "DIA-CBC"),
+                    ])));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 5, ExpectedStateVersion: 0)));
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticOrder_UnauthorizedOrForbiddenDoctorOrService_ThrowsAndDoesNotPersist()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        var validRequest = new CreateDiagnosticOrderRequest(ServiceId: 5);
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => _service.CreateDiagnosticOrderAsync(0, "VIS-202610-0011", validRequest));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.CreateDiagnosticOrderAsync(6, "VIS-202610-0011", validRequest));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.CreateDiagnosticOrderAsync(3, "VIS-202610-0021", validRequest));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.CreateDiagnosticOrderAsync(3, "VIS-202610-0002", validRequest));
+
+        // Unauthorized diagnostic service (ServiceId = 7 is only authorized for Doctor 2)
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 7)));
+
+        // Remove DIAGNOSTIC_ORDER permission (PermissionId = 2)
+        var diagPerm = await _db.RolePermissions
+            .FirstAsync(rp => rp.RoleId == 3 && rp.PermissionId == 2);
+        _db.RolePermissions.Remove(diagPerm);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.CreateDiagnosticOrderAsync(3, "VIS-202610-0011", validRequest));
+
+        Assert.Equal(0, await _db.DiagnosticOrders.CountAsync());
+        Assert.Equal(0, await _db.AuditLogs.CountAsync(a => a.Action == "DIAGNOSTIC_ORDER_CREATED"));
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticOrder_NotFoundAndConflictGuards_ThrowExpectedExceptions()
+    {
+        var opened = await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        var recordId = opened.ClinicalContext.MedicalRecordId!.Value;
+
+        // Unknown service -> 404
+        await Assert.ThrowsAsync<NotFoundException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 999)));
+
+        // ExpectedStateVersion mismatch -> 409
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 5, ExpectedStateVersion: 99)));
+
+        // Inactive diagnostic service -> 409
+        var svc6 = await _db.Services.FirstAsync(s => s.Id == 6);
+        svc6.IsActive = false;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 6)));
+
+        svc6.IsActive = true;
+        var sp6 = await _db.QueueServicePoints.FirstAsync(sp => sp.Id == 6);
+        sp6.IsActive = false;
+        await _db.SaveChangesAsync();
+
+        // Inactive diagnostic service point -> 409
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 6)));
+
+        sp6.IsActive = true;
+        var room6 = await _db.HospitalRooms.FirstAsync(r => r.Id == 6);
+        room6.Status = "MAINTENANCE";
+        await _db.SaveChangesAsync();
+
+        // Inactive diagnostic room -> 409
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 6)));
+
+        room6.Status = "ACTIVE";
+        await _db.SaveChangesAsync();
+
+        // First order for Service 5 succeeds
+        await _service.CreateDiagnosticOrderAsync(
+            3,
+            "VIS-202610-0011",
+            new CreateDiagnosticOrderRequest(ServiceId: 5));
+
+        // Duplicate active order for Service 5 in same visit -> 409
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 5)));
+
+        // Finalized medical record -> 409
+        var record = await _db.MedicalRecords.FirstAsync(m => m.Id == recordId);
+        record.Status = "FINALIZED";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 6)));
+    }
+
+    [Theory]
+    [InlineData("CALLED")]
+    [InlineData("WAITING")]
+    [InlineData("COMPLETED")]
+    [InlineData("CANCELLED")]
+    [InlineData("AWAITING_RESULTS")]
+    public async Task CreateDiagnosticOrder_WhenVisitOrQueueNotInProgress_ThrowsConflictException(string status)
+    {
+        var visit = await _db.Visits.FirstAsync(v => v.Id == 11);
+        var entry = await _db.QueueEntries.FirstAsync(q => q.Id == 11);
+        visit.Status = status;
+        entry.Status = status == "AWAITING_RESULTS" ? "WAITING" : status;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 5)));
+    }
+
+    [Fact]
+    public async Task GetDiagnosticOrderCatalog_ReturnsHospitalScopedDiagnosticServicesWithAuthorizationPriceCategoryAndActiveOrders()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        await _service.CreateDiagnosticOrderAsync(
+            3,
+            "VIS-202610-0011",
+            new CreateDiagnosticOrderRequest(ServiceId: 5, Priority: "URGENT"));
+
+        var catalog = await _service.GetDiagnosticOrderCatalogAsync(3, "VIS-202610-0011");
+
+        Assert.Equal(11, catalog.VisitId);
+        Assert.Equal("VIS-202610-0011", catalog.VisitCode);
+        Assert.Equal("IN_PROGRESS", catalog.WorkspaceState);
+        Assert.True(catalog.CanCreateDiagnosticOrder);
+        Assert.Null(catalog.DisabledReason);
+        Assert.Equal(3, catalog.Services.Count);
+
+        var cbc = catalog.Services.Single(s => s.ServiceCode == "DIA-CBC");
+        Assert.Equal("LABORATORY", cbc.Category);
+        Assert.Equal(90000m, cbc.UnitPrice);
+        Assert.True(cbc.IsDoctorAuthorized);
+        Assert.True(cbc.HasActiveOrderInVisit);
+        Assert.Equal("RM-205", cbc.RoomCode);
+
+        var us = catalog.Services.Single(s => s.ServiceCode == "DIA-US");
+        Assert.Equal("IMAGING", us.Category);
+        Assert.Equal(180000m, us.UnitPrice);
+        Assert.True(us.IsDoctorAuthorized);
+        Assert.False(us.HasActiveOrderInVisit);
+        Assert.Equal("RM-206", us.RoomCode);
+
+        var ecg = catalog.Services.Single(s => s.ServiceCode == "DIA-ECG");
+        Assert.Equal("FUNCTIONAL", ecg.Category);
+        Assert.False(ecg.IsDoctorAuthorized);
+        Assert.False(ecg.HasActiveOrderInVisit);
+
+        var existingOrder = Assert.Single(catalog.ExistingOrders);
+        Assert.Equal("DIA-202610-0001", existingOrder.OrderCode);
+        Assert.Equal("DIA-CBC", existingOrder.ServiceCode);
+    }
+
     // 7. RecordDiagnosis & SearchIcd10Codes (UC36 / #112)
     // -------------------------------------------------------------------------
 

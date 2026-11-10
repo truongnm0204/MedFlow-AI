@@ -80,6 +80,50 @@ public sealed class DoctorConsultationController : ControllerBase
             ct));
 
     /// <summary>
+    /// GET /api/v1/doctor/consultation/{idOrCode}/diagnostic-orders — Xem danh mục dịch vụ cận lâm sàng và các phiếu chỉ định hiện có của lượt khám (UC34 / #120).
+    /// </summary>
+    [HttpGet("/api/v1/doctor/consultation/{idOrCode}/diagnostic-orders")]
+    [HttpGet("/api/v1/doctor/consultation/{idOrCode}/diagnostic-services")]
+    [HttpGet("/api/v1/doctor/visits/{idOrCode}/diagnostic-orders")]
+    [HttpGet("/api/v1/visits/{idOrCode}/diagnostic-orders")]
+    [ProducesResponseType<DiagnosticOrderCatalogResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<DiagnosticOrderCatalogResponseDto>> GetDiagnosticOrders(
+        string idOrCode,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.GetDiagnosticOrderCatalogAsync(GetUserId(), idOrCode, ct));
+
+    /// <summary>
+    /// POST /api/v1/doctor/consultation/{idOrCode}/diagnostic-orders — Tạo phiếu chỉ định cận lâm sàng và xếp hàng cận lâm sàng cho lượt khám (UC34 / #120).
+    /// </summary>
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/diagnostic-orders")]
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/diagnostic-order")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/diagnostic-orders")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/diagnostic-order")]
+    [HttpPost("/api/v1/visits/{idOrCode}/diagnostic-orders")]
+    [HttpPost("/api/v1/visits/{idOrCode}/diagnostic-order")]
+    [ProducesResponseType<ConsultationWorkspaceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ConsultationWorkspaceResponseDto>> CreateDiagnosticOrder(
+        string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CreateDiagnosticOrderRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.CreateDiagnosticOrderAsync(
+            GetUserId(),
+            idOrCode,
+            request!,
+            GetIp(),
+            ct));
+
+    /// <summary>
     /// POST/PUT /api/v1/doctor/consultation/{idOrCode}/diagnosis — Ghi nhận chẩn đoán ICD-10 và kết luận lâm sàng (UC36 / #112).
     /// </summary>
     [HttpPost("/api/v1/doctor/consultation/{idOrCode}/diagnosis")]
@@ -128,7 +172,6 @@ public sealed class DoctorConsultationController : ControllerBase
             primaryOnly,
             limit,
             ct));
-
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)

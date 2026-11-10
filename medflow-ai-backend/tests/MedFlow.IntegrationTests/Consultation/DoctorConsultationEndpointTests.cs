@@ -15,6 +15,8 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
     private const string OpenRoute = "/api/v1/doctor/consultation/VIS-202610-0001/open";
     private const string ClinicalExamRoute = "/api/v1/doctor/consultation/VIS-202610-0001/clinical-examination";
     private const string ClinicalExamAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/clinical-examination";
+    private const string DiagnosticOrdersRoute = "/api/v1/doctor/consultation/VIS-202610-0001/diagnostic-orders";
+    private const string DiagnosticOrdersAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/diagnostic-orders";
     private const string DiagnosisRoute = "/api/v1/doctor/consultation/VIS-202610-0001/diagnosis";
     private const string DiagnosisAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/diagnosis";
     private const string Icd10SearchRoute = "/api/v1/doctor/icd10-codes";
@@ -370,5 +372,111 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
 
         var searchResponse = await GetWithTokenAsync($"{Icd10SearchRoute}?q=K29&primaryOnly=true&limit=10", token);
         Assert.Equal(HttpStatusCode.OK, searchResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAndCreateDiagnosticOrders_Unauthenticated_Returns401()
+    {
+        var getResponse = await Client.GetAsync(DiagnosticOrdersRoute);
+        Assert.Equal(HttpStatusCode.Unauthorized, getResponse.StatusCode);
+
+        using var postRequest = new HttpRequestMessage(HttpMethod.Post, DiagnosticOrdersRoute);
+        var postResponse = await Client.SendAsync(postRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, postResponse.StatusCode);
+
+        using var aliasPostRequest = new HttpRequestMessage(HttpMethod.Post, DiagnosticOrdersAliasRoute);
+        var aliasPostResponse = await Client.SendAsync(aliasPostRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, aliasPostResponse.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("PATIENT")]
+    [InlineData("RECEPTION")]
+    [InlineData("DIAGNOSTIC_STAFF")]
+    [InlineData("PHARMACY_STAFF")]
+    [InlineData("HOSPITAL_ADMIN")]
+    [InlineData("SYSTEM_ADMIN")]
+    public async Task GetAndCreateDiagnosticOrders_ForbiddenRoles_Returns403(string role)
+    {
+        var token = GenerateToken(11, $"{role.ToLowerInvariant()}@medflow.test", role);
+        var body = new { serviceId = 5, priority = "NORMAL" };
+
+        var getResponse = await GetWithTokenAsync(DiagnosticOrdersRoute, token);
+        Assert.Equal(HttpStatusCode.Forbidden, getResponse.StatusCode);
+
+        var postResponse = await PostWithTokenAsync(DiagnosticOrdersRoute, token, body);
+        Assert.Equal(HttpStatusCode.Forbidden, postResponse.StatusCode);
+
+        var aliasPostResponse = await PostWithTokenAsync(DiagnosticOrdersAliasRoute, token, body);
+        Assert.Equal(HttpStatusCode.Forbidden, aliasPostResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticOrder_InvalidPayload_Returns400()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+
+        var emptyResponse = await PostWithTokenAsync(
+            DiagnosticOrdersRoute,
+            token,
+            new { clinicalNote = "Chỉ có ghi chú" });
+        Assert.Equal(HttpStatusCode.BadRequest, emptyResponse.StatusCode);
+
+        var invalidPriorityResponse = await PostWithTokenAsync(
+            DiagnosticOrdersAliasRoute,
+            token,
+            new
+            {
+                serviceId = 5,
+                priority = "INVALID_PRIORITY",
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidPriorityResponse.StatusCode);
+
+        var invalidStateVersionResponse = await PostWithTokenAsync(
+            DiagnosticOrdersRoute,
+            token,
+            new
+            {
+                serviceId = 5,
+                expectedStateVersion = 0,
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidStateVersionResponse.StatusCode);
+
+        var invalidInstructionResponse = await PostWithTokenAsync(
+            DiagnosticOrdersRoute,
+            token,
+            new
+            {
+                serviceId = 5,
+                instruction = "<script>alert(1)</script>",
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidInstructionResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAndCreateDiagnosticOrders_CrossDoctorAndCompletedSeededVisit_Returns403And409_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+        var body = new
+        {
+            serviceId = 5,
+            instruction = "Lấy mẫu máu lúc đói",
+            priority = "NORMAL",
+        };
+
+        var crossDoctorResponse = await PostWithTokenAsync(
+            "/api/v1/doctor/consultation/VIS-202610-0002/diagnostic-orders",
+            token,
+            body);
+
+        if (crossDoctorResponse.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable)
+        {
+            return;
+        }
+
+        Assert.Equal(HttpStatusCode.Forbidden, crossDoctorResponse.StatusCode);
+
+        var completedVisitResponse = await PostWithTokenAsync(DiagnosticOrdersRoute, token, body);
+        Assert.Equal(HttpStatusCode.Conflict, completedVisitResponse.StatusCode);
     }
 }
