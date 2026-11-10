@@ -9,15 +9,39 @@ public sealed record CreateDiagnosticOrderRequest(
     IReadOnlyList<CreateDiagnosticOrderItemRequest>? Items = null,
     int? ExpectedStateVersion = null,
     bool? TransitionToAwaitingResults = null,
-    string? ClinicalNote = null);
+    string? ClinicalNote = null,
+    bool? IsAdditionalOrder = null,
+    long? FollowUpToOrderId = null,
+    string? FollowUpToOrderCode = null,
+    string? AdditionalOrderReason = null,
+    string? ClinicalProgressionNote = null,
+    int? ExpectedRevisionNo = null);
 
 public sealed record CreateDiagnosticOrderItemRequest(
     long? ServiceId = null,
     string? ServiceCode = null,
     string? Instruction = null,
     string? Priority = null,
-    bool? RequiredForConclusion = null);
+    bool? RequiredForConclusion = null,
+    long? FollowUpToOrderId = null,
+    string? FollowUpToOrderCode = null,
+    string? AdditionalOrderReason = null);
 
+public sealed record CreateAdditionalDiagnosticOrderRequest(
+    long? ServiceId = null,
+    string? ServiceCode = null,
+    string? Instruction = null,
+    string? Priority = null,
+    bool? RequiredForConclusion = null,
+    IReadOnlyList<CreateDiagnosticOrderItemRequest>? Items = null,
+    int? ExpectedStateVersion = null,
+    int? ExpectedRevisionNo = null,
+    bool? TransitionToAwaitingResults = null,
+    string? ClinicalNote = null,
+    string? AdditionalOrderReason = null,
+    string? ClinicalProgressionNote = null,
+    long? FollowUpToOrderId = null,
+    string? FollowUpToOrderCode = null);
 public sealed record ConsultationDiagnosticOrderDto(
     long OrderId,
     string OrderCode,
@@ -57,7 +81,12 @@ public sealed record ConsultationDiagnosticOrderDto(
     string? Conclusion = null,
     string? ReportFileUrl = null,
     string? PerformedByStaffName = null,
-    string? VerifiedByStaffName = null);
+    string? VerifiedByStaffName = null,
+    bool IsAdditionalOrder = false,
+    int OrderSequenceNo = 1,
+    long? FollowUpToOrderId = null,
+    string? FollowUpToOrderCode = null,
+    string? AdditionalOrderReason = null);
 
 public sealed record DiagnosticServiceCatalogItemDto(
     long ServiceId,
@@ -79,7 +108,11 @@ public sealed record DiagnosticServiceCatalogItemDto(
     long? RoomId,
     string? RoomCode,
     string? RoomName,
-    bool HasActiveOrderInVisit);
+    bool HasActiveOrderInVisit,
+    bool HasCompletedOrderInVisit = false,
+    int PreviousOrderCountInVisit = 0,
+    string? LatestOrderCodeInVisit = null,
+    string? LatestOrderStatusInVisit = null);
 
 public sealed record DiagnosticOrderCatalogResponseDto(
     long VisitId,
@@ -91,4 +124,6 @@ public sealed record DiagnosticOrderCatalogResponseDto(
     DateTime GeneratedAtUtc,
     ConsultationDiagnosticSummaryDto DiagnosticSummary,
     IReadOnlyList<DiagnosticServiceCatalogItemDto> Services,
-    IReadOnlyList<ConsultationDiagnosticOrderDto> ExistingOrders);
+    IReadOnlyList<ConsultationDiagnosticOrderDto> ExistingOrders,
+    bool CanCreateAdditionalDiagnosticOrder = false,
+    int CompletedOrdersCount = 0);

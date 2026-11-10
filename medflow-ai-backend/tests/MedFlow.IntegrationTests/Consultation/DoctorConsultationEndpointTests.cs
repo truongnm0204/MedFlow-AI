@@ -27,6 +27,8 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
     private const string DiagnosticResultDetailRoute = "/api/v1/doctor/consultation/VIS-202610-0001/diagnostic-results/DIA-202610-0001";
     private const string ReviewDiagnosticResultsRoute = "/api/v1/doctor/consultation/VIS-202610-0001/diagnostic-results/review";
     private const string ReviewDiagnosticResultsAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/review-diagnostic-results";
+    private const string AdditionalDiagnosticOrdersRoute = "/api/v1/doctor/consultation/VIS-202610-0001/additional-diagnostic-orders";
+    private const string AdditionalDiagnosticOrdersAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/additional-diagnostic-orders";
     private readonly TestWebAppFactory _factory;
 
     public DoctorConsultationEndpointTests(TestWebAppFactory factory)
@@ -713,5 +715,108 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
             token,
             new { clinicalInterpretation = "Công thức máu bình thường" });
         Assert.Equal(HttpStatusCode.Conflict, completedVisitReviewResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateAdditionalDiagnosticOrder_NoToken_Returns401()
+    {
+        using var postRequest = new HttpRequestMessage(HttpMethod.Post, AdditionalDiagnosticOrdersRoute);
+        var postResponse = await Client.SendAsync(postRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, postResponse.StatusCode);
+
+        using var aliasRequest = new HttpRequestMessage(HttpMethod.Post, AdditionalDiagnosticOrdersAliasRoute);
+        var aliasResponse = await Client.SendAsync(aliasRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, aliasResponse.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("PATIENT")]
+    [InlineData("RECEPTION")]
+    [InlineData("DIAGNOSTIC_STAFF")]
+    [InlineData("PHARMACY_STAFF")]
+    [InlineData("HOSPITAL_ADMIN")]
+    [InlineData("SYSTEM_ADMIN")]
+    public async Task CreateAdditionalDiagnosticOrder_ForbiddenRoles_Returns403(string role)
+    {
+        var token = GenerateToken(11, $"{role.ToLowerInvariant()}@medflow.test", role);
+        var body = new
+        {
+            serviceCode = "DIA-US",
+            instruction = "Siêu âm ổ bụng bổ sung",
+            additionalOrderReason = "Cần kiểm tra bổ sung sau khi đọc kết quả xét nghiệm máu",
+        };
+
+        var postResponse = await PostWithTokenAsync(AdditionalDiagnosticOrdersRoute, token, body);
+        Assert.Equal(HttpStatusCode.Forbidden, postResponse.StatusCode);
+
+        var aliasResponse = await PostWithTokenAsync(AdditionalDiagnosticOrdersAliasRoute, token, body);
+        Assert.Equal(HttpStatusCode.Forbidden, aliasResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateAdditionalDiagnosticOrder_InvalidPayloads_Returns400()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+
+        var emptyResponse = await PostWithTokenAsync(
+            AdditionalDiagnosticOrdersRoute,
+            token,
+            new { });
+        Assert.Equal(HttpStatusCode.BadRequest, emptyResponse.StatusCode);
+
+        var invalidFollowUpIdResponse = await PostWithTokenAsync(
+            AdditionalDiagnosticOrdersRoute,
+            token,
+            new { serviceId = 6, followUpToOrderId = 0 });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidFollowUpIdResponse.StatusCode);
+
+        var unsafeReasonResponse = await PostWithTokenAsync(
+            AdditionalDiagnosticOrdersAliasRoute,
+            token,
+            new { serviceCode = "DIA-US", additionalOrderReason = "<script>alert(1)</script>" });
+        Assert.Equal(HttpStatusCode.BadRequest, unsafeReasonResponse.StatusCode);
+
+        var unsafeProgressionResponse = await PostWithTokenAsync(
+            AdditionalDiagnosticOrdersRoute,
+            token,
+            new { serviceCode = "DIA-US", clinicalProgressionNote = "<script>alert(1)</script>" });
+        Assert.Equal(HttpStatusCode.BadRequest, unsafeProgressionResponse.StatusCode);
+
+        var invalidRevisionResponse = await PostWithTokenAsync(
+            AdditionalDiagnosticOrdersRoute,
+            token,
+            new { serviceCode = "DIA-US", expectedRevisionNo = 0 });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidRevisionResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateAdditionalDiagnosticOrder_SeededVisits_Returns403And409_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+        var body = new
+        {
+            serviceCode = "DIA-US",
+            instruction = "Siêu âm ổ bụng bổ sung",
+            additionalOrderReason = "Kiểm tra bổ sung sau đọc kết quả",
+        };
+
+        var crossDoctorResponse = await PostWithTokenAsync(
+            "/api/v1/doctor/consultation/VIS-202610-0002/additional-diagnostic-orders",
+            token,
+            body);
+
+        if (crossDoctorResponse.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable)
+        {
+            return;
+        }
+
+        Assert.Equal(HttpStatusCode.Forbidden, crossDoctorResponse.StatusCode);
+
+        // VIS-202610-0001 is COMPLETED -> 409 Conflict
+        var completedVisitResponse = await PostWithTokenAsync(
+            AdditionalDiagnosticOrdersRoute,
+            token,
+            body);
+        Assert.Equal(HttpStatusCode.Conflict, completedVisitResponse.StatusCode);
     }
 }

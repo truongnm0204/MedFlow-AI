@@ -636,8 +636,42 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
             .Where(r => r.HospitalId == doctorAccess.Hospital.Id || r.HospitalId == null)
             .ToDictionaryAsync(r => r.Id, ct);
 
+        MedicalRecordRevision? latestCatalogRevision = null;
+        if (latestMedicalRecord is not null)
+        {
+            try
+            {
+                latestCatalogRevision = await _db.MedicalRecordRevisions
+                    .AsNoTracking()
+                    .Where(r => r.MedicalRecordId == latestMedicalRecord.Id)
+                    .OrderByDescending(r => r.RevisionNo)
+                    .ThenByDescending(r => r.Id)
+                    .FirstOrDefaultAsync(ct);
+            }
+            catch (NotSupportedException)
+            {
+                latestCatalogRevision = null;
+            }
+        }
+
+        var existingOrderDtos = await BuildDiagnosticOrderDtosAsync(
+            visit,
+            visitCode,
+            referenceDate,
+            context.AssignedDoctor,
+            context.AllVisitQueueEntries,
+            visitDiagnosticOrders,
+            nowLocal,
+            ct);
+
         var activeOrderServiceIds = visitDiagnosticOrders
-            .Where(o => o.ServiceId.HasValue && IsDiagnosticOrderActive(o, context.AllVisitQueueEntries))
+            .Where(o =>
+                o.ServiceId.HasValue &&
+                IsDiagnosticOrderActive(
+                    o,
+                    context.AllVisitQueueEntries,
+                    resultsBundle.FinalizedOrderIds,
+                    resultsBundle.UnfinalizedResultOrderIds))
             .Select(o => o.ServiceId!.Value)
             .ToHashSet();
 
@@ -663,6 +697,22 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                 ? rm
                 : null;
 
+            var serviceOrders = existingOrderDtos
+                .Where(o =>
+                    o.ServiceId == svc.Id &&
+                    !string.Equals(o.Status, "CANCELLED", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var hasCompletedOrderInVisit = serviceOrders.Any(o =>
+                o.IsResultFinalized ||
+                string.Equals(o.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(o.QueueStatus, "COMPLETED", StringComparison.OrdinalIgnoreCase));
+            var latestServiceOrder = serviceOrders.FirstOrDefault();
+            var latestOrderStatusInVisit = latestServiceOrder is null
+                ? null
+                : latestServiceOrder.IsResultFinalized
+                    ? "FINALIZED"
+                    : latestServiceOrder.Status;
+
             catalogItems.Add(new DiagnosticServiceCatalogItemDto(
                 ServiceId: svc.Id,
                 ServiceCode: svc.ServiceCode,
@@ -683,18 +733,22 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                 RoomId: diagRoom?.Id ?? diagSp?.RoomId,
                 RoomCode: diagRoom?.RoomCode,
                 RoomName: diagRoom?.Name,
-                HasActiveOrderInVisit: activeOrderServiceIds.Contains(svc.Id)));
+                HasActiveOrderInVisit: activeOrderServiceIds.Contains(svc.Id),
+                HasCompletedOrderInVisit: hasCompletedOrderInVisit,
+                PreviousOrderCountInVisit: serviceOrders.Count,
+                LatestOrderCodeInVisit: latestServiceOrder?.OrderCode,
+                LatestOrderStatusInVisit: latestOrderStatusInVisit));
         }
 
-        var existingOrderDtos = await BuildDiagnosticOrderDtosAsync(
-            visit,
-            visitCode,
-            referenceDate,
-            context.AssignedDoctor,
-            context.AllVisitQueueEntries,
-            visitDiagnosticOrders,
-            nowLocal,
-            ct);
+        var nonCancelledExistingOrders = existingOrderDtos
+            .Where(o => !string.Equals(o.Status, "CANCELLED", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var completedOrdersCount = nonCancelledExistingOrders.Count(o =>
+            o.IsResultFinalized ||
+            string.Equals(o.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(o.QueueStatus, "COMPLETED", StringComparison.OrdinalIgnoreCase));
+        var canCreateAdditionalDiagnosticOrder = canCreateDiagnosticOrder &&
+            (nonCancelledExistingOrders.Count > 0 || HasRecordedClinicalProgress(latestCatalogRevision));
 
         return new DiagnosticOrderCatalogResponseDto(
             VisitId: visit.Id,
@@ -706,15 +760,70 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
             GeneratedAtUtc: nowUtc,
             DiagnosticSummary: diagnosticSummary,
             Services: catalogItems,
-            ExistingOrders: existingOrderDtos);
+            ExistingOrders: existingOrderDtos,
+            CanCreateAdditionalDiagnosticOrder: canCreateAdditionalDiagnosticOrder,
+            CompletedOrdersCount: completedOrdersCount);
     }
 
-    public async Task<ConsultationWorkspaceResponseDto> CreateDiagnosticOrderAsync(
+    public Task<ConsultationWorkspaceResponseDto> CreateDiagnosticOrderAsync(
         long actorUserId,
         string visitIdOrCode,
         CreateDiagnosticOrderRequest request,
         string? ipAddress = null,
         CancellationToken ct = default)
+        => CreateDiagnosticOrderCoreAsync(
+            actorUserId,
+            visitIdOrCode,
+            request,
+            forceAdditionalInvocation: false,
+            ipAddress,
+            ct);
+
+    public Task<ConsultationWorkspaceResponseDto> CreateAdditionalDiagnosticOrderAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        CreateAdditionalDiagnosticOrderRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        if (request is null)
+        {
+            throw new ValidationException("Dữ liệu chỉ định cận lâm sàng bổ sung không được để trống.");
+        }
+
+        var mappedRequest = new CreateDiagnosticOrderRequest(
+            ServiceId: request.ServiceId,
+            ServiceCode: request.ServiceCode,
+            Instruction: request.Instruction,
+            Priority: request.Priority,
+            RequiredForConclusion: request.RequiredForConclusion,
+            Items: request.Items,
+            ExpectedStateVersion: request.ExpectedStateVersion,
+            TransitionToAwaitingResults: request.TransitionToAwaitingResults,
+            ClinicalNote: request.ClinicalNote,
+            IsAdditionalOrder: true,
+            FollowUpToOrderId: request.FollowUpToOrderId,
+            FollowUpToOrderCode: request.FollowUpToOrderCode,
+            AdditionalOrderReason: request.AdditionalOrderReason,
+            ClinicalProgressionNote: request.ClinicalProgressionNote,
+            ExpectedRevisionNo: request.ExpectedRevisionNo);
+
+        return CreateDiagnosticOrderCoreAsync(
+            actorUserId,
+            visitIdOrCode,
+            mappedRequest,
+            forceAdditionalInvocation: true,
+            ipAddress,
+            ct);
+    }
+
+    private async Task<ConsultationWorkspaceResponseDto> CreateDiagnosticOrderCoreAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        CreateDiagnosticOrderRequest request,
+        bool forceAdditionalInvocation,
+        string? ipAddress,
+        CancellationToken ct)
     {
         if (actorUserId <= 0)
         {
@@ -722,11 +831,17 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
         }
 
         var (numericId, code, isQueuePrefix) = ParseVisitOrQueueIdentifier(visitIdOrCode);
-        var validated = ValidateCreateDiagnosticOrderRequest(request);
+        var validated = ValidateCreateDiagnosticOrderRequest(request, forceAdditionalInvocation);
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
 
         var doctorAccess = await EnsureDoctorAccessAsync(actorUserId, nowUtc, PermissionDiagnosticOrder, ct);
+        if (validated.ClinicalProgressionNote is not null &&
+            !doctorAccess.Permissions.Contains(PermissionMedicalRecordWrite))
+        {
+            throw new ForbiddenException(
+                "Bác sĩ không có quyền cập nhật diễn biến hồ sơ bệnh án (MEDICAL_RECORD_WRITE).");
+        }
 
         await using var tx = await _db.BeginTransactionAsync(ct);
 
@@ -798,7 +913,11 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                 "Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
         }
 
-        var latestMedicalRecord = await TryLoadLatestMedicalRecordAsync(visit.Id, ct);
+        var latestMedicalRecord = await _db.MedicalRecords
+            .Where(m => m.VisitId == visit.Id)
+            .OrderByDescending(m => m.Id)
+            .FirstOrDefaultAsync(ct);
+
         if (latestMedicalRecord is not null &&
             string.Equals(latestMedicalRecord.Status?.Trim(), "FINALIZED", StringComparison.OrdinalIgnoreCase))
         {
@@ -808,15 +927,70 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
 
         if (latestMedicalRecord is null)
         {
-            await EnsureDraftMedicalRecordAsync(
+            var (ensuredRecord, _) = await EnsureDraftMedicalRecordAsync(
                 visit,
                 context.Appointment,
                 doctorAccess.Doctor.Id,
                 nowLocal,
                 ct);
+            latestMedicalRecord = ensuredRecord;
         }
 
+        MedicalRecordRevision? latestRevision = null;
+        if (latestMedicalRecord is not null)
+        {
+            try
+            {
+                latestRevision = await _db.MedicalRecordRevisions
+                    .Where(r => r.MedicalRecordId == latestMedicalRecord.Id)
+                    .OrderByDescending(r => r.RevisionNo)
+                    .ThenByDescending(r => r.Id)
+                    .FirstOrDefaultAsync(ct);
+            }
+            catch (NotSupportedException)
+            {
+                latestRevision = null;
+            }
+        }
+
+        var currentRevisionNo = latestRevision?.RevisionNo ?? 0;
+        if (validated.ExpectedRevisionNo.HasValue &&
+            validated.ExpectedRevisionNo.Value != currentRevisionNo)
+        {
+            throw new ConflictException(
+                $"Phiên bản hồ sơ bệnh án đã thay đổi (hiện tại: {currentRevisionNo}, yêu cầu: {validated.ExpectedRevisionNo.Value}). Vui lòng tải lại không gian khám.");
+        }
+
+        var queueDate = activeEntry.QueueDate ?? DateOnly.FromDateTime(nowLocal);
+        var visitCode = !string.IsNullOrWhiteSpace(visit.VisitCode)
+            ? visit.VisitCode.Trim()
+            : $"VIS-{queueDate:yyyyMM}-{visit.Id:D4}";
+
         var existingVisitOrders = await TryLoadVisitDiagnosticOrdersAsync(visit.Id, ct);
+        var resultsBundle = await LoadDiagnosticResultsBundleAsync(existingVisitOrders, ct);
+        var existingNonCancelledOrders = existingVisitOrders
+            .Where(o => AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED")
+            .OrderBy(o => o.OrderedAt ?? DateTime.MinValue)
+            .ThenBy(o => o.Id)
+            .ToList();
+
+        if (validated.IsAdditionalOrder)
+        {
+            var hasPriorOrders = existingNonCancelledOrders.Count > 0;
+            var hasClinicalProgress = HasRecordedClinicalProgress(latestRevision);
+            var hasRequestJustification =
+                !string.IsNullOrWhiteSpace(validated.AdditionalOrderReason) ||
+                !string.IsNullOrWhiteSpace(validated.ClinicalProgressionNote) ||
+                !string.IsNullOrWhiteSpace(validated.ClinicalNote) ||
+                validated.Items.Any(i => !string.IsNullOrWhiteSpace(i.AdditionalOrderReason));
+
+            if (!hasPriorOrders && !hasClinicalProgress && !hasRequestJustification)
+            {
+                throw new ConflictException(
+                    "Chưa thể tạo chỉ định cận lâm sàng bổ sung khi lượt khám chưa có chỉ định cận lâm sàng trước đó hoặc chưa ghi nhận diễn biến khám lâm sàng (UC33).");
+            }
+        }
+
         var hospitalDiagPoints = await TryLoadHospitalDiagnosticServicePointsAsync(doctorAccess.Hospital.Id, ct);
         var specialtiesById = await _db.Specialties
             .AsNoTracking()
@@ -827,6 +1001,46 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
 
         foreach (var item in validated.Items)
         {
+            DiagnosticOrder? followUpOrder = null;
+            if (item.FollowUpToOrderId.HasValue || item.FollowUpToOrderCode is not null)
+            {
+                DiagnosticOrder? byId = null;
+                DiagnosticOrder? byCode = null;
+
+                if (item.FollowUpToOrderId.HasValue)
+                {
+                    byId = existingVisitOrders.FirstOrDefault(o => o.Id == item.FollowUpToOrderId.Value)
+                        ?? throw new NotFoundException(
+                            "DiagnosticOrder",
+                            item.FollowUpToOrderId.Value.ToString(CultureInfo.InvariantCulture));
+                }
+
+                if (item.FollowUpToOrderCode is not null)
+                {
+                    byCode = existingVisitOrders.FirstOrDefault(o =>
+                            string.Equals(
+                                FormatOrderCode(o, queueDate),
+                                item.FollowUpToOrderCode,
+                                StringComparison.OrdinalIgnoreCase))
+                        ?? throw new NotFoundException("DiagnosticOrder", item.FollowUpToOrderCode);
+                }
+
+                if (byId is not null && byCode is not null && byId.Id != byCode.Id)
+                {
+                    throw new ValidationException(
+                        "Mã phiếu chỉ định gốc (FollowUpToOrderCode) không khớp với ID phiếu chỉ định gốc (FollowUpToOrderId).");
+                }
+
+                followUpOrder = byId ?? byCode;
+                if (followUpOrder is not null &&
+                    AppointmentBookingRules.NormalizeStatusKey(followUpOrder.Status) == "CANCELLED")
+                {
+                    var cancelledCode = FormatOrderCode(followUpOrder, queueDate);
+                    throw new ConflictException(
+                        $"Không thể tạo chỉ định bổ sung dựa trên phiếu chỉ định '{cancelledCode}' đã bị hủy.");
+                }
+            }
+
             Service? service = null;
             if (item.ServiceId.HasValue)
             {
@@ -907,12 +1121,49 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
 
             var hasOpenOrderForService = existingVisitOrders.Any(o =>
                 o.ServiceId == service.Id &&
-                IsDiagnosticOrderActive(o, context.AllVisitQueueEntries));
+                IsDiagnosticOrderActive(
+                    o,
+                    context.AllVisitQueueEntries,
+                    resultsBundle.FinalizedOrderIds,
+                    resultsBundle.UnfinalizedResultOrderIds));
 
             if (hasOpenOrderForService)
             {
                 throw new ConflictException(
                     $"Dịch vụ cận lâm sàng '{service.Name}' ({service.ServiceCode}) đã có phiếu chỉ định đang chờ xử lý trong lượt khám này.");
+            }
+
+            if (followUpOrder is null)
+            {
+                var completedSameServiceOrder = existingNonCancelledOrders
+                    .Where(o =>
+                        o.ServiceId == service.Id &&
+                        !IsDiagnosticOrderActive(
+                            o,
+                            context.AllVisitQueueEntries,
+                            resultsBundle.FinalizedOrderIds,
+                            resultsBundle.UnfinalizedResultOrderIds))
+                    .OrderByDescending(o => o.OrderedAt ?? DateTime.MinValue)
+                    .ThenByDescending(o => o.Id)
+                    .FirstOrDefault();
+
+                if (completedSameServiceOrder is not null)
+                {
+                    followUpOrder = completedSameServiceOrder;
+                }
+                else if (validated.IsAdditionalOrder)
+                {
+                    followUpOrder = existingNonCancelledOrders
+                        .Where(o =>
+                            !IsDiagnosticOrderActive(
+                                o,
+                                context.AllVisitQueueEntries,
+                                resultsBundle.FinalizedOrderIds,
+                                resultsBundle.UnfinalizedResultOrderIds))
+                        .OrderByDescending(o => o.OrderedAt ?? DateTime.MinValue)
+                        .ThenByDescending(o => o.Id)
+                        .FirstOrDefault();
+                }
             }
 
             QueueServicePoint? diagServicePoint = null;
@@ -963,13 +1214,42 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                 Category: category,
                 UnitPrice: unitPrice,
                 ServicePoint: diagServicePoint,
-                Room: diagRoom));
+                Room: diagRoom,
+                FollowUpOrder: followUpOrder));
         }
 
-        var queueDate = activeEntry.QueueDate ?? DateOnly.FromDateTime(nowLocal);
-        var visitCode = !string.IsNullOrWhiteSpace(visit.VisitCode)
-            ? visit.VisitCode.Trim()
-            : $"VIS-{queueDate:yyyyMM}-{visit.Id:D4}";
+        var finalRevisionNo = currentRevisionNo;
+        if (latestMedicalRecord is not null && validated.ClinicalProgressionNote is not null)
+        {
+            var presentingComplaint = latestRevision?.PresentingComplaint
+                ?? visit.ReasonForVisit
+                ?? context.Appointment?.ReasonForVisit;
+            var symptomHistory = latestRevision?.SymptomHistory;
+            var relevantHistoryAllergies = latestRevision?.RelevantHistoryAllergies;
+            var vitalSigns = latestRevision?.VitalSigns;
+            var clinicalConclusion = latestRevision?.ClinicalConclusion;
+
+            finalRevisionNo = currentRevisionNo + 1;
+            var newRevision = new MedicalRecordRevision
+            {
+                MedicalRecordId = latestMedicalRecord.Id,
+                RevisionNo = finalRevisionNo,
+                PresentingComplaint = presentingComplaint,
+                SymptomHistory = symptomHistory,
+                RelevantHistoryAllergies = relevantHistoryAllergies,
+                VitalSigns = vitalSigns,
+                ClinicalFindings = validated.ClinicalProgressionNote,
+                ClinicalConclusion = clinicalConclusion,
+                EditedByDoctorId = doctorAccess.Doctor.Id,
+                RecordedAt = nowLocal,
+                IsConfirmed = latestRevision?.IsConfirmed == true,
+                AmendmentReason = validated.AdditionalOrderReason
+                    ?? validated.ClinicalNote
+                    ?? "Bác sĩ ghi nhận diễn biến khám và chỉ định bổ sung cận lâm sàng",
+            };
+
+            _db.MedicalRecordRevisions.Add(newRevision);
+        }
 
         var doctorTitle = string.IsNullOrWhiteSpace(doctorAccess.Doctor.ProfessionalTitle)
             ? "BS"
@@ -980,9 +1260,14 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
         var nextStateVersion = currentStateVersion + 1;
         var createdQueueEntries = new List<QueueEntry>(resolvedItems.Count);
         var createdOrderDtos = new List<ConsultationDiagnosticOrderDto>(resolvedItems.Count);
+        var existingNonCancelledCount = existingNonCancelledOrders.Count;
+        var auditAction = validated.IsAdditionalOrder
+            ? "ADDITIONAL_DIAGNOSTIC_ORDER_CREATED"
+            : "DIAGNOSTIC_ORDER_CREATED";
 
-        foreach (var resolved in resolvedItems)
+        for (var index = 0; index < resolvedItems.Count; index++)
         {
+            var resolved = resolvedItems[index];
             var diagSpId = resolved.ServicePoint?.Id;
             var maxQueueNumber = await _db.QueueEntries
                 .AsNoTracking()
@@ -1038,6 +1323,17 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
 
             diagnosticOrder.OrderCode = $"DIA-{queueDate:yyyyMM}-{diagnosticOrder.Id:D4}";
             var ticketNo = $"C{nextQueueNumber:D3}";
+            var orderSequenceNo = existingNonCancelledCount + index + 1;
+            var isOrderAdditional = validated.IsAdditionalOrder ||
+                existingNonCancelledCount > 0 ||
+                resolved.FollowUpOrder is not null;
+            var followUpOrderId = resolved.FollowUpOrder?.Id;
+            var followUpOrderCode = resolved.FollowUpOrder is not null
+                ? FormatOrderCode(resolved.FollowUpOrder, queueDate)
+                : null;
+            var effectiveAdditionalReason = resolved.Item.AdditionalOrderReason
+                ?? validated.AdditionalOrderReason
+                ?? (isOrderAdditional ? validated.ClinicalNote : null);
 
             var changePayload = new
             {
@@ -1060,20 +1356,33 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                 diagnosticRoomCode = resolved.Room?.RoomCode,
                 diagnosticQueueNumber = nextQueueNumber,
                 diagnosticTicketNo = ticketNo,
+                isAdditionalOrder = isOrderAdditional,
+                orderSequenceNo,
+                followUpToOrderId = followUpOrderId,
+                followUpToOrderCode = followUpOrderCode,
+                additionalOrderReason = effectiveAdditionalReason,
+                clinicalProgressionNote = validated.ClinicalProgressionNote,
+                previousRevisionNo = currentRevisionNo > 0 ? (int?)currentRevisionNo : null,
+                revisionNo = finalRevisionNo > 0 ? (int?)finalRevisionNo : null,
                 transitionedToAwaitingResults = validated.TransitionToAwaitingResults,
                 stateVersion = nextStateVersion,
                 ipAddress,
             };
 
+            var auditReason = effectiveAdditionalReason
+                ?? validated.ClinicalNote
+                ?? (isOrderAdditional
+                    ? $"Bác sĩ chỉ định bổ sung cận lâm sàng: {resolved.Service.Name} ({resolved.Service.ServiceCode})"
+                    : $"Bác sĩ chỉ định cận lâm sàng: {resolved.Service.Name} ({resolved.Service.ServiceCode})");
+
             _db.AuditLogs.Add(new AuditLog
             {
                 ActorUserId = actorUserId,
                 HospitalId = doctorAccess.Hospital.Id,
-                Action = "DIAGNOSTIC_ORDER_CREATED",
+                Action = auditAction,
                 EntityType = "DIAGNOSTIC_ORDER",
                 EntityId = diagnosticOrder.Id.ToString(CultureInfo.InvariantCulture),
-                Reason = validated.ClinicalNote ??
-                    $"Bác sĩ chỉ định cận lâm sàng: {resolved.Service.Name} ({resolved.Service.ServiceCode})",
+                Reason = auditReason,
                 ChangeData = JsonSerializer.Serialize(changePayload, AuditJsonOptions),
                 IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
                 OccurredAt = nowUtc,
@@ -1109,7 +1418,12 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                 Instruction: diagnosticOrder.Instruction,
                 OrderedAt: nowLocal,
                 ConfirmedAt: null,
-                IsResultFinalized: false));
+                IsResultFinalized: false,
+                IsAdditionalOrder: isOrderAdditional,
+                OrderSequenceNo: orderSequenceNo,
+                FollowUpToOrderId: followUpOrderId,
+                FollowUpToOrderCode: followUpOrderCode,
+                AdditionalOrderReason: effectiveAdditionalReason));
         }
 
         activeEntry.StateVersion = nextStateVersion;
@@ -1145,7 +1459,7 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
         return await BuildWorkspaceResponseAsync(
             doctorAccess,
             refreshedContext,
-            actionOutcome: "DIAGNOSTIC_ORDER_CREATED",
+            actionOutcome: auditAction,
             nowUtc,
             nowLocal,
             ct,
@@ -2653,7 +2967,8 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
     }
 
     private static ValidatedCreateDiagnosticOrderInput ValidateCreateDiagnosticOrderRequest(
-        CreateDiagnosticOrderRequest? request)
+        CreateDiagnosticOrderRequest? request,
+        bool forceAdditionalInvocation = false)
     {
         if (request is null)
         {
@@ -2665,10 +2980,34 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
             throw new ValidationException("Phiên bản trạng thái (ExpectedStateVersion) phải lớn hơn hoặc bằng 1.");
         }
 
+        if (request.ExpectedRevisionNo is < 1)
+        {
+            throw new ValidationException("Phiên bản hồ sơ bệnh án (ExpectedRevisionNo) phải lớn hơn hoặc bằng 1.");
+        }
+
+        if (request.FollowUpToOrderId is <= 0)
+        {
+            throw new ValidationException("ID phiếu chỉ định gốc (FollowUpToOrderId) phải lớn hơn 0.");
+        }
+
+        var topFollowUpOrderCode = NormalizeOptionalOrderCode(
+            request.FollowUpToOrderCode,
+            "Mã phiếu chỉ định gốc (FollowUpToOrderCode)");
+
         var clinicalNote = ValidateClinicalTextField(
             request.ClinicalNote,
             "Ghi chú lâm sàng",
             500);
+
+        var additionalOrderReason = ValidateClinicalTextField(
+            request.AdditionalOrderReason,
+            "Lý do chỉ định bổ sung",
+            500);
+
+        var clinicalProgressionNote = ValidateClinicalTextField(
+            request.ClinicalProgressionNote,
+            "Diễn biến lâm sàng bổ sung",
+            2000);
 
         IReadOnlyList<CreateDiagnosticOrderItemRequest> rawItems;
         if (request.Items is { Count: > 0 })
@@ -2689,7 +3028,10 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                     ServiceCode: request.ServiceCode,
                     Instruction: request.Instruction,
                     Priority: request.Priority,
-                    RequiredForConclusion: request.RequiredForConclusion),
+                    RequiredForConclusion: request.RequiredForConclusion,
+                    FollowUpToOrderId: request.FollowUpToOrderId,
+                    FollowUpToOrderCode: request.FollowUpToOrderCode,
+                    AdditionalOrderReason: request.AdditionalOrderReason),
             ];
         }
         else
@@ -2737,6 +3079,25 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                 throw new ValidationException("Vui lòng cung cấp ID hoặc mã dịch vụ cận lâm sàng.");
             }
 
+            if (item.FollowUpToOrderId is <= 0)
+            {
+                throw new ValidationException("ID phiếu chỉ định gốc (FollowUpToOrderId) phải lớn hơn 0.");
+            }
+
+            var itemFollowUpOrderCode = NormalizeOptionalOrderCode(
+                item.FollowUpToOrderCode,
+                "Mã phiếu chỉ định gốc (FollowUpToOrderCode)");
+
+            var itemAdditionalReason = ValidateClinicalTextField(
+                item.AdditionalOrderReason,
+                "Lý do chỉ định bổ sung",
+                500);
+
+            var hasItemFollowUp = item.FollowUpToOrderId.HasValue || itemFollowUpOrderCode is not null;
+            var effectiveFollowUpId = hasItemFollowUp ? item.FollowUpToOrderId : request.FollowUpToOrderId;
+            var effectiveFollowUpCode = hasItemFollowUp ? itemFollowUpOrderCode : topFollowUpOrderCode;
+            var effectiveAdditionalReason = itemAdditionalReason ?? additionalOrderReason;
+
             var instruction = ValidateClinicalTextField(
                 item.Instruction,
                 "Chỉ dẫn cận lâm sàng",
@@ -2750,14 +3111,50 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                 ServiceCode: normalizedCode,
                 Instruction: instruction,
                 Priority: priority,
-                RequiredForConclusion: requiredForConclusion));
+                RequiredForConclusion: requiredForConclusion,
+                FollowUpToOrderId: effectiveFollowUpId,
+                FollowUpToOrderCode: effectiveFollowUpCode,
+                AdditionalOrderReason: effectiveAdditionalReason));
         }
+
+        var isAdditionalOrder = forceAdditionalInvocation ||
+            request.IsAdditionalOrder == true ||
+            request.FollowUpToOrderId.HasValue ||
+            topFollowUpOrderCode is not null ||
+            additionalOrderReason is not null ||
+            clinicalProgressionNote is not null ||
+            normalizedItems.Any(i =>
+                i.FollowUpToOrderId.HasValue ||
+                i.FollowUpToOrderCode is not null ||
+                i.AdditionalOrderReason is not null);
 
         return new ValidatedCreateDiagnosticOrderInput(
             Items: normalizedItems,
             ExpectedStateVersion: request.ExpectedStateVersion,
+            ExpectedRevisionNo: request.ExpectedRevisionNo,
             TransitionToAwaitingResults: request.TransitionToAwaitingResults == true,
-            ClinicalNote: clinicalNote);
+            ClinicalNote: clinicalNote,
+            IsAdditionalOrder: isAdditionalOrder,
+            AdditionalOrderReason: additionalOrderReason,
+            ClinicalProgressionNote: clinicalProgressionNote,
+            FollowUpToOrderId: request.FollowUpToOrderId,
+            FollowUpToOrderCode: topFollowUpOrderCode);
+    }
+
+    private static string? NormalizeOptionalOrderCode(string? rawOrderCode, string fieldLabel)
+    {
+        if (string.IsNullOrWhiteSpace(rawOrderCode))
+        {
+            return null;
+        }
+
+        var trimmed = rawOrderCode.Trim();
+        if (trimmed.Length > 40 || trimmed.Contains('<') || trimmed.Contains('>'))
+        {
+            throw new ValidationException($"{fieldLabel} không hợp lệ.");
+        }
+
+        return trimmed.ToUpperInvariant();
     }
 
     private static string NormalizeDiagnosticOrderPriority(string? rawPriority)
@@ -3731,7 +4128,14 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
         }
         else
         {
-            activeClinicalEntry = nonCancelledClinicalEntries.FirstOrDefault(q =>
+            var openClinicalEntries = nonCancelledClinicalEntries
+                .Where(q => NormalizeQueueStatus(q.Status) != "COMPLETED")
+                .ToList();
+
+            activeClinicalEntry = openClinicalEntries.FirstOrDefault(q =>
+                    ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation)
+                ?? openClinicalEntries.FirstOrDefault()
+                ?? nonCancelledClinicalEntries.FirstOrDefault(q =>
                     ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation)
                 ?? nonCancelledClinicalEntries.FirstOrDefault()
                 ?? explicitQueueEntry
@@ -4162,6 +4566,17 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
             o.IsResultFinalized &&
             !string.Equals(o.Status, "CANCELLED", StringComparison.OrdinalIgnoreCase)) == true) ||
             diagnosticSummary.CompletedQueueEntries > 0;
+        var hasRecordedClinicalProgress =
+            (clinicalContext.CurrentRevisionNo ?? 0) >= 2 ||
+            !string.IsNullOrWhiteSpace(clinicalContext.ClinicalFindings) ||
+            !string.IsNullOrWhiteSpace(clinicalContext.ClinicalConclusion) ||
+            !string.IsNullOrWhiteSpace(clinicalContext.SymptomHistory) ||
+            clinicalContext.VitalSigns.BpSystolicMmhg.HasValue ||
+            clinicalContext.VitalSigns.PulseBpm.HasValue ||
+            clinicalContext.VitalSigns.TemperatureC.HasValue ||
+            clinicalContext.VitalSigns.Spo2Percent.HasValue ||
+            clinicalContext.VitalSigns.HeightCm.HasValue ||
+            clinicalContext.VitalSigns.WeightKg.HasValue;
 
         var allowedActions = BuildAllowedActions(
             workspaceState,
@@ -4172,7 +4587,8 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
             hasPrescriptionIssue,
             diagnosticSummary,
             hasDiagnosticOrders,
-            hasReadyDiagnosticResults);
+            hasReadyDiagnosticResults,
+            hasRecordedClinicalProgress);
         var visitSummary = BuildVisitSummary(
             doctorAccess.Hospital,
             context,
@@ -4945,10 +5361,27 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
 
     private static bool IsDiagnosticOrderActive(
         DiagnosticOrder order,
-        IReadOnlyList<QueueEntry> allVisitQueueEntries)
+        IReadOnlyList<QueueEntry> allVisitQueueEntries,
+        IReadOnlySet<long>? finalizedOrderIds = null,
+        IReadOnlySet<long>? unfinalizedResultOrderIds = null)
     {
         var orderStatus = NormalizeQueueStatus(order.Status);
-        if (orderStatus is "COMPLETED" or "CANCELLED")
+        if (orderStatus == "CANCELLED")
+        {
+            return false;
+        }
+
+        if (unfinalizedResultOrderIds?.Contains(order.Id) == true)
+        {
+            return true;
+        }
+
+        if (IsOrderCompletedOrResultFinalized(order, finalizedOrderIds, unfinalizedResultOrderIds))
+        {
+            return false;
+        }
+
+        if (orderStatus == "COMPLETED")
         {
             return false;
         }
@@ -4966,6 +5399,25 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
 
         return true;
     }
+
+    private static bool HasRecordedClinicalProgress(MedicalRecordRevision? latestRevision)
+    {
+        if (latestRevision is null)
+        {
+            return false;
+        }
+
+        return latestRevision.RevisionNo >= 2 ||
+               !string.IsNullOrWhiteSpace(latestRevision.ClinicalFindings) ||
+               !string.IsNullOrWhiteSpace(latestRevision.ClinicalConclusion) ||
+               !string.IsNullOrWhiteSpace(latestRevision.VitalSigns) ||
+               !string.IsNullOrWhiteSpace(latestRevision.SymptomHistory);
+    }
+
+    private static string FormatOrderCode(DiagnosticOrder order, DateOnly referenceDate)
+        => !string.IsNullOrWhiteSpace(order.OrderCode)
+            ? order.OrderCode.Trim()
+            : $"DIA-{referenceDate:yyyyMM}-{order.Id:D4}";
 
     private async Task<bool> IsDoctorAuthorizedForServiceAsync(
         long doctorId,
@@ -5111,6 +5563,24 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
 
         var resultsBundle = await LoadDiagnosticResultsBundleAsync(visitDiagnosticOrders, ct);
 
+        var chronologicalNonCancelledOrders = visitDiagnosticOrders
+            .Where(o => AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED")
+            .OrderBy(o => o.OrderedAt ?? DateTime.MinValue)
+            .ThenBy(o => o.Id)
+            .ToList();
+
+        var sequenceByOrderId = new Dictionary<long, int>(chronologicalNonCancelledOrders.Count);
+        for (var i = 0; i < chronologicalNonCancelledOrders.Count; i++)
+        {
+            sequenceByOrderId[chronologicalNonCancelledOrders[i].Id] = i + 1;
+        }
+
+        var orderIdStrings = visitDiagnosticOrders
+            .Select(o => o.Id.ToString(CultureInfo.InvariantCulture))
+            .Distinct()
+            .ToList();
+        var auditMetadataByOrderId = await TryLoadDiagnosticOrderAuditMetadataAsync(orderIdStrings, ct);
+
         var dtos = new List<ConsultationDiagnosticOrderDto>(visitDiagnosticOrders.Count);
         foreach (var order in visitDiagnosticOrders)
         {
@@ -5150,9 +5620,7 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                 ? ResolveDiagnosticCategory(service, specialtiesById)
                 : "LABORATORY";
 
-            var orderCode = !string.IsNullOrWhiteSpace(order.OrderCode)
-                ? order.OrderCode.Trim()
-                : $"DIA-{referenceDate:yyyyMM}-{order.Id:D4}";
+            var orderCode = FormatOrderCode(order, referenceDate);
 
             var queueNumber = queueEntry?.QueueNumber;
             var ticketNo = queueNumber is > 0 ? $"C{queueNumber.Value:D3}" : null;
@@ -5188,6 +5656,13 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                                 resultsBundle.StaffById.TryGetValue(latestVersion.VerifiedByStaffId.Value, out var vStaff)
                 ? vStaff
                 : null;
+
+            auditMetadataByOrderId.TryGetValue(order.Id, out var auditMeta);
+            var orderSequenceNo = auditMeta?.OrderSequenceNo
+                ?? (sequenceByOrderId.TryGetValue(order.Id, out var computedSeq) ? computedSeq : 1);
+            var isAdditionalOrder = auditMeta is not null
+                ? auditMeta.IsAdditionalOrder
+                : orderSequenceNo > 1;
 
             dtos.Add(new ConsultationDiagnosticOrderDto(
                 OrderId: order.Id,
@@ -5228,10 +5703,121 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                 Conclusion: latestVersion?.Conclusion,
                 ReportFileUrl: latestVersion?.ReportFileUrl,
                 PerformedByStaffName: enteredStaff?.FullName ?? confirmedStaff?.FullName,
-                VerifiedByStaffName: verifiedStaff?.FullName ?? finalizedStaff?.FullName));
+                VerifiedByStaffName: verifiedStaff?.FullName ?? finalizedStaff?.FullName,
+                IsAdditionalOrder: isAdditionalOrder,
+                OrderSequenceNo: orderSequenceNo,
+                FollowUpToOrderId: auditMeta?.FollowUpToOrderId,
+                FollowUpToOrderCode: auditMeta?.FollowUpToOrderCode,
+                AdditionalOrderReason: auditMeta?.AdditionalOrderReason));
         }
 
         return dtos;
+    }
+
+    private async Task<Dictionary<long, DiagnosticOrderAuditMetadata>> TryLoadDiagnosticOrderAuditMetadataAsync(
+        IReadOnlyList<string> orderIdStrings,
+        CancellationToken ct)
+    {
+        var result = new Dictionary<long, DiagnosticOrderAuditMetadata>();
+        if (orderIdStrings.Count == 0)
+        {
+            return result;
+        }
+
+        try
+        {
+            var logs = await _db.AuditLogs
+                .AsNoTracking()
+                .Where(a =>
+                    a.EntityType == "DIAGNOSTIC_ORDER" &&
+                    a.EntityId != null &&
+                    orderIdStrings.Contains(a.EntityId) &&
+                    (a.Action == "ADDITIONAL_DIAGNOSTIC_ORDER_CREATED" || a.Action == "DIAGNOSTIC_ORDER_CREATED"))
+                .OrderByDescending(a => a.OccurredAt)
+                .ThenByDescending(a => a.Id)
+                .ToListAsync(ct);
+
+            foreach (var log in logs)
+            {
+                if (!long.TryParse(log.EntityId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var orderId) ||
+                    result.ContainsKey(orderId))
+                {
+                    continue;
+                }
+
+                var isAdditional = string.Equals(
+                    log.Action,
+                    "ADDITIONAL_DIAGNOSTIC_ORDER_CREATED",
+                    StringComparison.OrdinalIgnoreCase);
+                int? seqNo = null;
+                long? followUpId = null;
+                string? followUpCode = null;
+                string? additionalReason = null;
+
+                if (!string.IsNullOrWhiteSpace(log.ChangeData))
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(log.ChangeData);
+                        if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                        {
+                            var root = doc.RootElement;
+                            if (root.TryGetProperty("isAdditionalOrder", out var addProp) &&
+                                addProp.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                            {
+                                isAdditional = isAdditional || addProp.GetBoolean();
+                            }
+
+                            seqNo = TryGetInt(root, "orderSequenceNo");
+                            if (root.TryGetProperty("followUpToOrderId", out var fIdProp) &&
+                                fIdProp.ValueKind == JsonValueKind.Number &&
+                                fIdProp.TryGetInt64(out var parsedFollowUpId) &&
+                                parsedFollowUpId > 0)
+                            {
+                                followUpId = parsedFollowUpId;
+                            }
+
+                            if (root.TryGetProperty("followUpToOrderCode", out var fCodeProp) &&
+                                fCodeProp.ValueKind == JsonValueKind.String)
+                            {
+                                var rawCode = fCodeProp.GetString();
+                                if (!string.IsNullOrWhiteSpace(rawCode))
+                                {
+                                    followUpCode = rawCode.Trim();
+                                }
+                            }
+
+                            if (root.TryGetProperty("additionalOrderReason", out var reasonProp) &&
+                                reasonProp.ValueKind == JsonValueKind.String)
+                            {
+                                var rawReason = reasonProp.GetString();
+                                if (!string.IsNullOrWhiteSpace(rawReason))
+                                {
+                                    additionalReason = rawReason.Trim();
+                                }
+                            }
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                        // Ignore malformed JSON in historical audit logs
+                    }
+                }
+
+                result[orderId] = new DiagnosticOrderAuditMetadata(
+                    IsAdditionalOrder: isAdditional,
+                    OrderSequenceNo: seqNo,
+                    FollowUpToOrderId: followUpId,
+                    FollowUpToOrderCode: followUpCode,
+                    AdditionalOrderReason: additionalReason);
+            }
+        }
+        catch (NotSupportedException)
+        {
+            return result;
+        }
+
+        return result;
     }
 
     private async Task<IReadOnlyList<ConsultationDiagnosticResultItemDto>> BuildDiagnosticResultItemDtosAsync(
@@ -5940,7 +6526,8 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
         bool hasPrescriptionIssue,
         ConsultationDiagnosticSummaryDto diagnosticSummary,
         bool hasDiagnosticOrders = false,
-        bool hasReadyDiagnosticResults = false)
+        bool hasReadyDiagnosticResults = false,
+        bool hasRecordedClinicalProgress = false)
     {
         var canOpenConsultation = workspaceState == "CALLED" &&
             hasMedicalRecordWrite &&
@@ -5982,6 +6569,12 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                 ? "Bác sĩ không có quyền chỉ định cận lâm sàng (DIAGNOSTIC_ORDER)."
                 : clinicalDisabledReason ?? "Chỉ có thể chỉ định cận lâm sàng khi ca khám đang diễn ra (IN_PROGRESS).";
 
+        var canCreateAdditionalDiagnosticOrder = canCreateDiagnosticOrder &&
+            (hasDiagnosticOrders || hasRecordedClinicalProgress);
+        var additionalDiagnosticOrderDisabledReason = canCreateAdditionalDiagnosticOrder
+            ? null
+            : diagnosticOrderDisabledReason ??
+              "Chưa thể chỉ định bổ sung cận lâm sàng khi lượt khám chưa có chỉ định trước đó hoặc chưa ghi nhận diễn biến khám lâm sàng (UC33).";
 
         var canReviewDiagnosticResults = canEditClinical && hasReadyDiagnosticResults;
         var reviewDiagnosticResultsDisabledReason = canReviewDiagnosticResults
@@ -6041,6 +6634,12 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
                 UcCode: "UC34",
                 Enabled: canCreateDiagnosticOrder,
                 DisabledReason: diagnosticOrderDisabledReason),
+            new ConsultationWorkspaceActionDto(
+                Id: "create-additional-diagnostic-order",
+                Label: "Chỉ định bổ sung cận lâm sàng",
+                UcCode: "UC34",
+                Enabled: canCreateAdditionalDiagnosticOrder,
+                DisabledReason: additionalDiagnosticOrderDisabledReason),
             new ConsultationWorkspaceActionDto(
                 Id: "review-diagnostic-results",
                 Label: "Xem & đánh giá kết quả cận lâm sàng",
@@ -6169,15 +6768,24 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
     private sealed record ValidatedCreateDiagnosticOrderInput(
         IReadOnlyList<ValidatedDiagnosticOrderItemInput> Items,
         int? ExpectedStateVersion,
+        int? ExpectedRevisionNo,
         bool TransitionToAwaitingResults,
-        string? ClinicalNote);
+        string? ClinicalNote,
+        bool IsAdditionalOrder,
+        string? AdditionalOrderReason,
+        string? ClinicalProgressionNote,
+        long? FollowUpToOrderId,
+        string? FollowUpToOrderCode);
 
     private sealed record ValidatedDiagnosticOrderItemInput(
         long? ServiceId,
         string? ServiceCode,
         string? Instruction,
         string Priority,
-        bool RequiredForConclusion);
+        bool RequiredForConclusion,
+        long? FollowUpToOrderId,
+        string? FollowUpToOrderCode,
+        string? AdditionalOrderReason);
 
     private sealed record ResolvedDiagnosticOrderCreationItem(
         ValidatedDiagnosticOrderItemInput Item,
@@ -6185,8 +6793,15 @@ public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
         string Category,
         decimal UnitPrice,
         QueueServicePoint? ServicePoint,
-        HospitalRoom? Room);
+        HospitalRoom? Room,
+        DiagnosticOrder? FollowUpOrder);
 
+    private sealed record DiagnosticOrderAuditMetadata(
+        bool IsAdditionalOrder,
+        int? OrderSequenceNo,
+        long? FollowUpToOrderId,
+        string? FollowUpToOrderCode,
+        string? AdditionalOrderReason);
     private sealed record ValidatedDiagnosisInput(
         IReadOnlyList<ValidatedDiagnosisItemInput> Items,
         string? PrimaryClinicalDiagnosis,
