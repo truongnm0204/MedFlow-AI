@@ -10,7 +10,8 @@ public sealed record ConsultationWorkspaceResponseDto(
     ConsultationPatientSummaryDto Patient,
     ConsultationQueueContextDto? Queue,
     ConsultationClinicalContextDto ClinicalContext,
-    IReadOnlyList<ConsultationWorkspaceActionDto> AllowedActions);
+    IReadOnlyList<ConsultationWorkspaceActionDto> AllowedActions,
+    IReadOnlyList<ConsultationDiagnosticOrderDto>? CreatedDiagnosticOrders = null);
 
 public sealed record ConsultationVisitSummaryDto(
     long VisitId,
@@ -107,7 +108,8 @@ public sealed record ConsultationClinicalContextDto(
     string? AmendmentReason,
     IReadOnlyList<ConsultationDiagnosisItemDto> Diagnoses,
     ConsultationDiagnosticSummaryDto DiagnosticSummary,
-    ConsultationPrescriptionSummaryDto PrescriptionSummary);
+    ConsultationPrescriptionSummaryDto PrescriptionSummary,
+    IReadOnlyList<ConsultationDiagnosticOrderDto>? DiagnosticOrders = null);
 
 public sealed record ConsultationVitalSignsDto(
     int? BpSystolicMmhg,
