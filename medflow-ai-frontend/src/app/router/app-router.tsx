@@ -56,6 +56,7 @@ import { PatientSearchPage } from '@/features/reception/pages/patient-search-pag
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
 import { WalkInVisitPage } from '@/features/reception/pages/walk-in-visit-page';
 import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
+import { DoctorReviewDiagnosticsPage } from '@/features/doctor/pages/doctor-review-diagnostics-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
 import {
@@ -776,6 +777,26 @@ export function AppRouter() {
       <Route path="/patient/family" element={<FamilyProfileListPage />} />
       <Route path="/family/:memberId" element={<FamilyProfileDetailPage />} />
       <Route path="/patient/family/:memberId" element={<FamilyProfileDetailPage />} />
+      <Route
+        path="/doctor/diagnostic-results"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorReviewDiagnosticsPage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/diagnostic-results"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorReviewDiagnosticsPage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
