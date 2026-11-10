@@ -1,0 +1,85 @@
+namespace MedFlow.Application.DTOs.Consultation;
+
+public sealed record CreateDiagnosticOrderRequest(
+    long? ServiceId = null,
+    string? ServiceCode = null,
+    string? Instruction = null,
+    string? Priority = null,
+    bool? RequiredForConclusion = null,
+    IReadOnlyList<CreateDiagnosticOrderItemRequest>? Items = null,
+    int? ExpectedStateVersion = null,
+    bool? TransitionToAwaitingResults = null,
+    string? ClinicalNote = null);
+
+public sealed record CreateDiagnosticOrderItemRequest(
+    long? ServiceId = null,
+    string? ServiceCode = null,
+    string? Instruction = null,
+    string? Priority = null,
+    bool? RequiredForConclusion = null);
+
+public sealed record ConsultationDiagnosticOrderDto(
+    long OrderId,
+    string OrderCode,
+    long VisitId,
+    string VisitCode,
+    long OrderingDoctorId,
+    string OrderingDoctorCode,
+    string OrderingDoctorName,
+    long ServiceId,
+    string ServiceCode,
+    string ServiceName,
+    string Category,
+    decimal UnitPrice,
+    bool RequiresResultVerification,
+    long? QueueEntryId,
+    string? FormattedQueueEntryId,
+    string? TicketNo,
+    int? QueueNumber,
+    string? QueueStatus,
+    long? ServicePointId,
+    string? ServicePointName,
+    long? RoomId,
+    string? RoomCode,
+    string? RoomName,
+    string Priority,
+    string Status,
+    bool RequiredForConclusion,
+    string? Instruction,
+    DateTime OrderedAt,
+    DateTime? ConfirmedAt,
+    bool IsResultFinalized);
+
+public sealed record DiagnosticServiceCatalogItemDto(
+    long ServiceId,
+    string ServiceCode,
+    string Name,
+    string? Description,
+    string Category,
+    long? DepartmentId,
+    string? DepartmentCode,
+    string DepartmentName,
+    long? SpecialtyId,
+    string? SpecialtyCode,
+    string SpecialtyName,
+    decimal UnitPrice,
+    bool RequiresResultVerification,
+    bool IsDoctorAuthorized,
+    long? ServicePointId,
+    string? ServicePointName,
+    long? RoomId,
+    string? RoomCode,
+    string? RoomName,
+    bool HasActiveOrderInVisit);
+
+public sealed record DiagnosticOrderCatalogResponseDto(
+    long VisitId,
+    string VisitCode,
+    string VisitStatus,
+    string WorkspaceState,
+    bool CanCreateDiagnosticOrder,
+    string? DisabledReason,
+    DateTime GeneratedAtUtc,
+    ConsultationDiagnosticSummaryDto DiagnosticSummary,
+    IReadOnlyList<DiagnosticServiceCatalogItemDto> Services,
+    IReadOnlyList<ConsultationDiagnosticOrderDto> ExistingOrders);
