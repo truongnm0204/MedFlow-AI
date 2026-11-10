@@ -62,6 +62,7 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
         public DbSet<Icd10Code> Icd10Codes => Set<Icd10Code>();
         public DbSet<DiagnosticOrder> DiagnosticOrders => Set<DiagnosticOrder>();
         public DbSet<DiagnosticResult> DiagnosticResults => Set<DiagnosticResult>();
+        public DbSet<DiagnosticResultVersion> DiagnosticResultVersions => Set<DiagnosticResultVersion>();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
             => Database.BeginTransactionAsync(ct);
@@ -131,6 +132,7 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
             modelBuilder.Entity<Icd10Code>().HasKey(c => c.Id);
             modelBuilder.Entity<DiagnosticOrder>().HasKey(o => o.Id);
             modelBuilder.Entity<DiagnosticResult>().HasKey(r => r.Id);
+            modelBuilder.Entity<DiagnosticResultVersion>().HasKey(v => v.Id);
             modelBuilder.Entity<Prescription>().HasKey(p => p.Id);
             modelBuilder.Entity<PrescriptionItem>().HasKey(i => i.Id);
             modelBuilder.Entity<AuditLog>(b =>
@@ -2706,5 +2708,501 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
         // Second CompleteVisit on already COMPLETED visit -> 409
         await Assert.ThrowsAsync<ConflictException>(
             () => _service.CompleteVisitAsync(3, "VIS-202610-0011"));
+    }
+
+    // -------------------------------------------------------------------------
+    // 9. ReviewDiagnosticResults (UC35 / #114)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetDiagnosticResults_VisitWithFinalizedAndPendingOrders_ReturnsResultsVersionHistoryStaffAttributionAndFilters()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        _db.Staff.AddRange(
+            new Staff
+            {
+                Id = 10,
+                HospitalId = 1,
+                DepartmentId = 1,
+                StaffCode = "STF-CLS-01",
+                FullName = "KTV Lê Hoàng Nam",
+                Status = "ACTIVE",
+            },
+            new Staff
+            {
+                Id = 11,
+                HospitalId = 1,
+                DepartmentId = 1,
+                StaffCode = "STF-CLS-02",
+                FullName = "BS.CKI Phạm Minh Tuấn",
+                Status = "ACTIVE",
+            });
+        await _db.SaveChangesAsync();
+
+        await _service.CreateDiagnosticOrderAsync(
+            3,
+            "VIS-202610-0011",
+            new CreateDiagnosticOrderRequest(
+                Items:
+                [
+                    new CreateDiagnosticOrderItemRequest(
+                        ServiceId: 5,
+                        Instruction: "Xét nghiệm công thức máu lúc đói",
+                        Priority: "URGENT",
+                        RequiredForConclusion: true),
+                    new CreateDiagnosticOrderItemRequest(
+                        ServiceId: 6,
+                        Instruction: "Siêu âm ổ bụng tổng quát",
+                        Priority: "NORMAL",
+                        RequiredForConclusion: false),
+                ]));
+
+        var orders = await _db.DiagnosticOrders
+            .Where(o => o.VisitId == 11)
+            .OrderBy(o => o.Id)
+            .ToListAsync();
+        Assert.Equal(2, orders.Count);
+        var cbcOrder = orders.Single(o => o.ServiceId == 5);
+        var usOrder = orders.Single(o => o.ServiceId == 6);
+
+        cbcOrder.Status = "COMPLETED";
+        cbcOrder.ConfirmedByStaffId = 10;
+        cbcOrder.ConfirmedAt = new DateTime(2026, 10, 22, 8, 52, 0);
+
+        var cbcQueue = await _db.QueueEntries.SingleAsync(q => q.Id == cbcOrder.QueueEntryId);
+        cbcQueue.Status = "COMPLETED";
+        cbcQueue.CompletedAt = new DateTime(2026, 10, 22, 9, 0, 0);
+
+        var cbcResult = new DiagnosticResult
+        {
+            Id = 501,
+            DiagnosticOrderId = cbcOrder.Id,
+            Status = "FINALIZED",
+            FinalizedAt = new DateTime(2026, 10, 22, 9, 0, 0),
+            FinalizedByStaffId = 11,
+        };
+        _db.DiagnosticResults.Add(cbcResult);
+
+        _db.DiagnosticResultVersions.AddRange(
+            new DiagnosticResultVersion
+            {
+                Id = 601,
+                DiagnosticResultId = 501,
+                VersionNo = 1,
+                ResultText = "WBC 7.0 G/L, Hgb 136 g/L, PLT 240 G/L",
+                Conclusion = "Kết quả sơ bộ bình thường",
+                ReportFileUrl = null,
+                EnteredByStaffId = 10,
+                EnteredAt = new DateTime(2026, 10, 22, 8, 56, 0),
+                IsFinalized = false,
+            },
+            new DiagnosticResultVersion
+            {
+                Id = 602,
+                DiagnosticResultId = 501,
+                VersionNo = 2,
+                ResultText = "WBC 7.2 G/L, Hgb 138 g/L, PLT 245 G/L",
+                Conclusion = "Công thức máu trong giới hạn bình thường",
+                ReportFileUrl = "https://cdn.medflow.vn/reports/DIA-202610-0001-v2.pdf",
+                EnteredByStaffId = 10,
+                EnteredAt = new DateTime(2026, 10, 22, 8, 58, 0),
+                IsFinalized = true,
+                VerifiedByStaffId = 11,
+                VerifiedAt = new DateTime(2026, 10, 22, 9, 0, 0),
+                CorrectionReason = "Hiệu chỉnh chỉ số sau kiểm chuẩn máy huyết học",
+            });
+        await _db.SaveChangesAsync();
+
+        var response = await _service.GetDiagnosticResultsAsync(3, "VIS-202610-0011");
+
+        Assert.Equal(11, response.VisitId);
+        Assert.Equal("VIS-202610-0011", response.VisitCode);
+        Assert.Equal("IN_PROGRESS", response.WorkspaceState);
+        Assert.True(response.CanViewDiagnosticResults);
+        Assert.True(response.CanAcknowledgeDiagnosticResults);
+        Assert.Null(response.DisabledReason);
+        Assert.Equal(2, response.TotalOrdersCount);
+        Assert.Equal(1, response.ReadyResultsCount);
+        Assert.Equal(1, response.PendingResultsCount);
+        Assert.Equal(1, response.MandatoryOrdersCount);
+        Assert.Equal(1, response.MandatoryReadyCount);
+        Assert.Equal(0, response.MandatoryPendingCount);
+        Assert.Equal(2, response.Items.Count);
+
+        var cbcItem = Assert.Single(response.Items, i => i.OrderId == cbcOrder.Id);
+        Assert.Equal("LABORATORY", cbcItem.Category);
+        Assert.True(cbcItem.HasResult);
+        Assert.True(cbcItem.IsResultReady);
+        Assert.True(cbcItem.IsResultFinalized);
+        Assert.Equal(501, cbcItem.ResultId);
+        Assert.Equal("FINALIZED", cbcItem.ResultStatus);
+        Assert.Equal(2, cbcItem.LatestVersionNo);
+        Assert.Equal("WBC 7.2 G/L, Hgb 138 g/L, PLT 245 G/L", cbcItem.ResultText);
+        Assert.Equal("Công thức máu trong giới hạn bình thường", cbcItem.Conclusion);
+        Assert.Equal("https://cdn.medflow.vn/reports/DIA-202610-0001-v2.pdf", cbcItem.ReportFileUrl);
+        Assert.Equal("KTV Lê Hoàng Nam", cbcItem.EnteredByStaffName);
+        Assert.Equal("BS.CKI Phạm Minh Tuấn", cbcItem.VerifiedByStaffName);
+        Assert.Equal("Hiệu chỉnh chỉ số sau kiểm chuẩn máy huyết học", cbcItem.CorrectionReason);
+        Assert.Equal(2, cbcItem.Versions.Count);
+        Assert.Equal(2, cbcItem.Versions[0].VersionNo);
+        Assert.Equal(1, cbcItem.Versions[1].VersionNo);
+
+        var usItem = Assert.Single(response.Items, i => i.OrderId == usOrder.Id);
+        Assert.Equal("IMAGING", usItem.Category);
+        Assert.False(usItem.HasResult);
+        Assert.False(usItem.IsResultReady);
+        Assert.False(usItem.IsResultFinalized);
+        Assert.Equal("PENDING", usItem.ResultStatus);
+        Assert.Empty(usItem.Versions);
+
+        var readyOnlyResponse = await _service.GetDiagnosticResultsAsync(
+            3,
+            "VIS-202610-0011",
+            new GetDiagnosticResultsRequest(ReadyOnly: true));
+        Assert.Single(readyOnlyResponse.Items);
+        Assert.Equal(cbcOrder.Id, readyOnlyResponse.Items[0].OrderId);
+        Assert.Equal(2, readyOnlyResponse.TotalOrdersCount);
+
+        var imagingResponse = await _service.GetDiagnosticResultsAsync(
+            3,
+            "VIS-202610-0011",
+            new GetDiagnosticResultsRequest(Category: "IMAGING", Status: "PENDING"));
+        Assert.Single(imagingResponse.Items);
+        Assert.Equal(usOrder.Id, imagingResponse.Items[0].OrderId);
+
+        var detailByCode = await _service.GetDiagnosticResultByOrderAsync(
+            3,
+            "VIS-202610-0011",
+            cbcOrder.OrderCode!);
+        Assert.Equal(cbcOrder.Id, detailByCode.OrderId);
+        Assert.Equal(2, detailByCode.Versions.Count);
+
+        var detailById = await _service.GetDiagnosticResultByOrderAsync(
+            3,
+            "VIS-202610-0011",
+            cbcOrder.Id.ToString());
+        Assert.Equal(cbcOrder.OrderCode, detailById.OrderCode);
+    }
+
+    [Fact]
+    public async Task ReviewDiagnosticResults_InProgressVisitWithReadyResults_AppendsClinicalInterpretationRevisionIncrementsStateVersionAndWritesAudit()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        await _service.CreateDiagnosticOrderAsync(
+            3,
+            "VIS-202610-0011",
+            new CreateDiagnosticOrderRequest(
+                ServiceId: 5,
+                Instruction: "Công thức máu kiểm tra viêm",
+                Priority: "URGENT",
+                RequiredForConclusion: true));
+
+        var order = await _db.DiagnosticOrders.SingleAsync(o => o.VisitId == 11);
+        order.Status = "COMPLETED";
+        var diagQueue = await _db.QueueEntries.SingleAsync(q => q.Id == order.QueueEntryId);
+        diagQueue.Status = "COMPLETED";
+        diagQueue.CompletedAt = new DateTime(2026, 10, 22, 8, 58, 0);
+
+        _db.DiagnosticResults.Add(new DiagnosticResult
+        {
+            Id = 510,
+            DiagnosticOrderId = order.Id,
+            Status = "FINALIZED",
+            FinalizedAt = new DateTime(2026, 10, 22, 8, 58, 0),
+            FinalizedByStaffId = 1,
+        });
+        _db.DiagnosticResultVersions.Add(new DiagnosticResultVersion
+        {
+            Id = 610,
+            DiagnosticResultId = 510,
+            VersionNo = 1,
+            ResultText = "WBC 6.8 G/L, Hgb 140 g/L, PLT 255 G/L",
+            Conclusion = "Các chỉ số huyết học bình thường",
+            IsFinalized = true,
+            EnteredByStaffId = 1,
+            EnteredAt = new DateTime(2026, 10, 22, 8, 57, 0),
+            VerifiedByStaffId = 1,
+            VerifiedAt = new DateTime(2026, 10, 22, 8, 58, 0),
+        });
+        await _db.SaveChangesAsync();
+
+        var workspaceBefore = await _service.GetWorkspaceAsync(3, "VIS-202610-0011");
+        var reviewAction = Assert.Single(workspaceBefore.AllowedActions, a => a.Id == "review-diagnostic-results");
+        Assert.Equal("UC35", reviewAction.UcCode);
+        Assert.True(reviewAction.Enabled);
+        Assert.Null(reviewAction.DisabledReason);
+
+        var orderDtoBefore = Assert.Single(workspaceBefore.ClinicalContext.DiagnosticOrders!);
+        Assert.True(orderDtoBefore.IsResultFinalized);
+        Assert.Equal(510, orderDtoBefore.ResultId);
+        Assert.Equal("FINALIZED", orderDtoBefore.ResultStatus);
+        Assert.Equal("WBC 6.8 G/L, Hgb 140 g/L, PLT 255 G/L", orderDtoBefore.ResultText);
+        Assert.Equal("Các chỉ số huyết học bình thường", orderDtoBefore.Conclusion);
+
+        var stateVersionBefore = workspaceBefore.Queue!.StateVersion;
+        var revisionNoBefore = workspaceBefore.ClinicalContext.CurrentRevisionNo ?? 1;
+
+        var reviewed = await _service.ReviewDiagnosticResultsAsync(
+            3,
+            "VIS-202610-0011",
+            new ReviewDiagnosticResultsRequest(
+                OrderIds: [order.Id],
+                ClinicalInterpretation: "Công thức máu bình thường, loại trừ tình trạng nhiễm trùng cấp tính",
+                ClinicalConclusion: "Theo dõi viêm dạ dày mạn tính, đáp ứng tốt",
+                AmendmentReason: "Cập nhật nhận định sau khi có kết quả công thức máu",
+                ExpectedStateVersion: stateVersionBefore,
+                ExpectedRevisionNo: revisionNoBefore),
+            ipAddress: "127.0.0.1");
+
+        Assert.Equal("DIAGNOSTIC_RESULTS_REVIEWED", reviewed.ActionOutcome);
+        Assert.Equal("IN_PROGRESS", reviewed.WorkspaceState);
+        Assert.Equal(stateVersionBefore + 1, reviewed.Queue!.StateVersion);
+        Assert.Equal(revisionNoBefore + 1, reviewed.ClinicalContext.CurrentRevisionNo);
+        Assert.Equal(
+            "Công thức máu bình thường, loại trừ tình trạng nhiễm trùng cấp tính",
+            reviewed.ClinicalContext.ClinicalFindings);
+        Assert.Equal(
+            "Theo dõi viêm dạ dày mạn tính, đáp ứng tốt",
+            reviewed.ClinicalContext.ClinicalConclusion);
+        Assert.Equal(
+            "Cập nhật nhận định sau khi có kết quả công thức máu",
+            reviewed.ClinicalContext.AmendmentReason);
+
+        var audit = await _db.AuditLogs
+            .OrderByDescending(a => a.Id)
+            .FirstOrDefaultAsync(a => a.Action == "DIAGNOSTIC_RESULTS_REVIEWED");
+        Assert.NotNull(audit);
+        Assert.Equal(3, audit!.ActorUserId);
+        Assert.Equal("VISIT", audit.EntityType);
+        Assert.Equal("VIS-202610-0011", audit.EntityId);
+        Assert.Contains(order.OrderCode!, audit.ChangeData);
+    }
+
+    [Fact]
+    public async Task ReviewDiagnosticResults_WhenResultsPendingOrOrderNotFoundOrVisitNotInProgress_ThrowsExpectedExceptions()
+    {
+        // 1. Visit is CALLED (not IN_PROGRESS) -> 409 ConflictException
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.ReviewDiagnosticResultsAsync(3, "VIS-202610-0011"));
+
+        // 2. Open workspace, no diagnostic orders yet -> 409 ConflictException
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.ReviewDiagnosticResultsAsync(3, "VIS-202610-0011"));
+
+        // 3. Create order (still ORDERED / pending)
+        await _service.CreateDiagnosticOrderAsync(
+            3,
+            "VIS-202610-0011",
+            new CreateDiagnosticOrderRequest(
+                ServiceId: 5,
+                Instruction: "Công thức máu",
+                Priority: "NORMAL",
+                RequiredForConclusion: true));
+
+        var order = await _db.DiagnosticOrders.SingleAsync(o => o.VisitId == 11);
+
+        // Unknown OrderId or OrderCode -> 404 NotFoundException
+        await Assert.ThrowsAsync<NotFoundException>(
+            () => _service.GetDiagnosticResultByOrderAsync(3, "VIS-202610-0011", "DIA-202610-9999"));
+        await Assert.ThrowsAsync<NotFoundException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(OrderIds: [9999])));
+        await Assert.ThrowsAsync<NotFoundException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(OrderCodes: ["DIA-202610-9999"])));
+
+        // Order is still pending (no result) -> 409 ConflictException
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.ReviewDiagnosticResultsAsync(3, "VIS-202610-0011"));
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(OrderIds: [order.Id])));
+
+        // Add DRAFT (unfinalized) DiagnosticResult -> still not ready -> 409 ConflictException
+        _db.DiagnosticResults.Add(new DiagnosticResult
+        {
+            Id = 520,
+            DiagnosticOrderId = order.Id,
+            Status = "DRAFT",
+            FinalizedAt = null,
+        });
+        _db.DiagnosticResultVersions.Add(new DiagnosticResultVersion
+        {
+            Id = 620,
+            DiagnosticResultId = 520,
+            VersionNo = 1,
+            ResultText = "Kết quả nháp chưa duyệt",
+            IsFinalized = false,
+        });
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(OrderIds: [order.Id])));
+
+        // Finalize result -> now ready, test concurrency mismatches
+        var draftResult = await _db.DiagnosticResults.SingleAsync(r => r.Id == 520);
+        draftResult.Status = "FINALIZED";
+        draftResult.FinalizedAt = new DateTime(2026, 10, 22, 9, 2, 0);
+        var draftVer = await _db.DiagnosticResultVersions.SingleAsync(v => v.Id == 620);
+        draftVer.IsFinalized = true;
+        draftVer.VerifiedAt = new DateTime(2026, 10, 22, 9, 2, 0);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(ExpectedStateVersion: 99)));
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(ExpectedRevisionNo: 99)));
+
+        // Seeded COMPLETED visit VIS-202610-0001 -> 409 ConflictException on review
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.ReviewDiagnosticResultsAsync(3, "VIS-202610-0001"));
+    }
+
+    [Fact]
+    public async Task GetAndReviewDiagnosticResults_InvalidInputs_ThrowsValidationException()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.GetDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new GetDiagnosticResultsRequest(Category: "INVALID_CATEGORY")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.GetDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new GetDiagnosticResultsRequest(Status: "INVALID_STATUS")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.GetDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new GetDiagnosticResultsRequest(OrderId: 0)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.GetDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new GetDiagnosticResultsRequest(OrderCode: "<script>")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.GetDiagnosticResultByOrderAsync(3, "VIS-202610-0011", "0"));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(ExpectedStateVersion: 0)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(ExpectedRevisionNo: 0)));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(OrderIds: [0])));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(OrderIds: [1, 1])));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(OrderCodes: ["<script>"])));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(ClinicalInterpretation: "Nhận định <script>")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(ClinicalConclusion: "AB")));
+
+        await Assert.ThrowsAsync<ValidationException>(
+            () => _service.ReviewDiagnosticResultsAsync(
+                3,
+                "VIS-202610-0011",
+                new ReviewDiagnosticResultsRequest(AmendmentReason: "Lý do <script>")));
+    }
+
+    [Fact]
+    public async Task GetAndReviewDiagnosticResults_UnauthorizedOrForbiddenDoctor_ThrowsAndDoesNotMutateOrAudit()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+        var baselineAudits = await _db.AuditLogs.CountAsync(a => a.Action == "DIAGNOSTIC_RESULTS_REVIEWED");
+
+        // 401 on actorUserId <= 0
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => _service.GetDiagnosticResultsAsync(0, "VIS-202610-0011"));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => _service.GetDiagnosticResultByOrderAsync(0, "VIS-202610-0011", "DIA-202610-0001"));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => _service.ReviewDiagnosticResultsAsync(0, "VIS-202610-0011"));
+
+        // 403 on non-doctor role (user 6 = RECEPTION)
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetDiagnosticResultsAsync(6, "VIS-202610-0011"));
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.ReviewDiagnosticResultsAsync(6, "VIS-202610-0011"));
+
+        // 403 on cross-hospital visit (VIS-202610-0021)
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetDiagnosticResultsAsync(3, "VIS-202610-0021"));
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.ReviewDiagnosticResultsAsync(3, "VIS-202610-0021"));
+
+        // 403 on cross-doctor visit (VIS-202610-0002)
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetDiagnosticResultsAsync(3, "VIS-202610-0002"));
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.ReviewDiagnosticResultsAsync(3, "VIS-202610-0002"));
+
+        // Remove MEDICAL_RECORD_WRITE permission -> GetDiagnosticResults still allowed, ReviewDiagnosticResults throws 403
+        var writePerm = await _db.RolePermissions
+            .FirstAsync(rp => rp.RoleId == 3 && rp.PermissionId == 1);
+        _db.RolePermissions.Remove(writePerm);
+        await _db.SaveChangesAsync();
+
+        var readResponse = await _service.GetDiagnosticResultsAsync(3, "VIS-202610-0011");
+        Assert.True(readResponse.CanViewDiagnosticResults);
+        Assert.False(readResponse.CanAcknowledgeDiagnosticResults);
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.ReviewDiagnosticResultsAsync(3, "VIS-202610-0011"));
+
+        Assert.Equal(baselineAudits, await _db.AuditLogs.CountAsync(a => a.Action == "DIAGNOSTIC_RESULTS_REVIEWED"));
     }
 }

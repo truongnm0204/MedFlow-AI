@@ -48,7 +48,16 @@ public sealed record ConsultationDiagnosticOrderDto(
     string? Instruction,
     DateTime OrderedAt,
     DateTime? ConfirmedAt,
-    bool IsResultFinalized);
+    bool IsResultFinalized,
+    long? ResultId = null,
+    string? ResultStatus = null,
+    DateTime? ResultFinalizedAt = null,
+    int? ResultVersionNo = null,
+    string? ResultText = null,
+    string? Conclusion = null,
+    string? ReportFileUrl = null,
+    string? PerformedByStaffName = null,
+    string? VerifiedByStaffName = null);
 
 public sealed record DiagnosticServiceCatalogItemDto(
     long ServiceId,

@@ -123,6 +123,87 @@ public sealed class DoctorConsultationController : ControllerBase
             GetIp(),
             ct));
 
+
+    /// <summary>
+    /// GET /api/v1/doctor/consultation/{idOrCode}/diagnostic-results — Xem danh sách và lịch sử phiên bản kết quả cận lâm sàng của lượt khám (UC35 / #114).
+    /// </summary>
+    [HttpGet("/api/v1/doctor/consultation/{idOrCode}/diagnostic-results")]
+    [HttpGet("/api/v1/doctor/consultation/{idOrCode}/results")]
+    [HttpGet("/api/v1/doctor/visits/{idOrCode}/diagnostic-results")]
+    [HttpGet("/api/v1/visits/{idOrCode}/diagnostic-results")]
+    [ProducesResponseType<DiagnosticResultsReviewResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<DiagnosticResultsReviewResponseDto>> GetDiagnosticResults(
+        string idOrCode,
+        [FromQuery] string? category = null,
+        [FromQuery] string? status = null,
+        [FromQuery] bool readyOnly = false,
+        [FromQuery] long? orderId = null,
+        [FromQuery] string? orderCode = null,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.GetDiagnosticResultsAsync(
+            GetUserId(),
+            idOrCode,
+            new GetDiagnosticResultsRequest(category, status, readyOnly, orderId, orderCode),
+            ct));
+
+    /// <summary>
+    /// GET /api/v1/doctor/consultation/{idOrCode}/diagnostic-results/{orderIdOrCode} — Xem chi tiết kết quả cận lâm sàng theo mã hoặc ID phiếu chỉ định (UC35 / #114).
+    /// </summary>
+    [HttpGet("/api/v1/doctor/consultation/{idOrCode}/diagnostic-results/{orderIdOrCode}")]
+    [HttpGet("/api/v1/doctor/visits/{idOrCode}/diagnostic-results/{orderIdOrCode}")]
+    [HttpGet("/api/v1/visits/{idOrCode}/diagnostic-results/{orderIdOrCode}")]
+    [ProducesResponseType<ConsultationDiagnosticResultItemDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ConsultationDiagnosticResultItemDto>> GetDiagnosticResultByOrder(
+        string idOrCode,
+        string orderIdOrCode,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.GetDiagnosticResultByOrderAsync(
+            GetUserId(),
+            idOrCode,
+            orderIdOrCode,
+            ct));
+
+    /// <summary>
+    /// POST/PUT /api/v1/doctor/consultation/{idOrCode}/diagnostic-results/review — Xác nhận xem xét và ghi nhận nhận định lâm sàng đối với kết quả cận lâm sàng (UC35 / #114).
+    /// </summary>
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/diagnostic-results/review")]
+    [HttpPut("/api/v1/doctor/consultation/{idOrCode}/diagnostic-results/review")]
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/review-diagnostic-results")]
+    [HttpPut("/api/v1/doctor/consultation/{idOrCode}/review-diagnostic-results")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/diagnostic-results/review")]
+    [HttpPut("/api/v1/doctor/visits/{idOrCode}/diagnostic-results/review")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/review-diagnostic-results")]
+    [HttpPut("/api/v1/doctor/visits/{idOrCode}/review-diagnostic-results")]
+    [HttpPost("/api/v1/visits/{idOrCode}/diagnostic-results/review")]
+    [HttpPut("/api/v1/visits/{idOrCode}/diagnostic-results/review")]
+    [HttpPost("/api/v1/visits/{idOrCode}/review-diagnostic-results")]
+    [HttpPut("/api/v1/visits/{idOrCode}/review-diagnostic-results")]
+    [ProducesResponseType<ConsultationWorkspaceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ConsultationWorkspaceResponseDto>> ReviewDiagnosticResults(
+        string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] ReviewDiagnosticResultsRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.ReviewDiagnosticResultsAsync(
+            GetUserId(),
+            idOrCode,
+            request,
+            GetIp(),
+            ct));
     /// <summary>
     /// POST/PUT /api/v1/doctor/consultation/{idOrCode}/diagnosis — Ghi nhận chẩn đoán ICD-10 và kết luận lâm sàng (UC36 / #112).
     /// </summary>
