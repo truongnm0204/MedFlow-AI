@@ -10,7 +10,10 @@ export interface ConsultationAllowedActionsCardProps {
   selectedActionNotice: string | null;
   isOpening: boolean;
   isRecordingClinical?: boolean;
+  isCreatingDiagnosticOrder?: boolean;
+  isCompletingVisit?: boolean;
   hasWritePermission?: boolean;
+  hasDiagnosticOrderPermission?: boolean;
   onTriggerAction: (action: ConsultationWorkspaceActionDto) => void;
 }
 
@@ -19,7 +22,10 @@ export function ConsultationAllowedActionsCard({
   selectedActionNotice,
   isOpening,
   isRecordingClinical = false,
+  isCreatingDiagnosticOrder = false,
+  isCompletingVisit = false,
   hasWritePermission = true,
+  hasDiagnosticOrderPermission = true,
   onTriggerAction,
 }: ConsultationAllowedActionsCardProps) {
   return (
@@ -49,17 +55,29 @@ export function ConsultationAllowedActionsCard({
             const isWriteAction =
               action.id === 'open-consultation' ||
               action.id === 'record-clinical-examination' ||
-              action.ucCode === 'UC33';
+              action.ucCode === 'UC33' ||
+              action.id === 'complete-visit' ||
+              action.ucCode === 'UC38';
+            const isDiagnosticOrderAction =
+              action.id === 'create-diagnostic-order' ||
+              action.id === 'create-additional-diagnostic-order' ||
+              action.ucCode === 'UC34';
             const lacksWritePermission = isWriteAction && !hasWritePermission;
-            const isEffectiveEnabled = action.enabled && !lacksWritePermission;
+            const lacksDiagnosticOrderPermission =
+              isDiagnosticOrderAction && !hasDiagnosticOrderPermission;
+            const isEffectiveEnabled =
+              action.enabled && !lacksWritePermission && !lacksDiagnosticOrderPermission;
             const isActionDisabled =
               !isEffectiveEnabled ||
               (action.id === 'open-consultation' && isOpening) ||
-              (action.id === 'record-clinical-examination' && isRecordingClinical);
+              (action.id === 'record-clinical-examination' && isRecordingClinical) ||
+              (isDiagnosticOrderAction && isCreatingDiagnosticOrder) ||
+              ((action.id === 'complete-visit' || action.ucCode === 'UC38') && isCompletingVisit);
             const effectiveDisabledReason = lacksWritePermission
               ? 'Tài khoản chưa được cấp quyền ghi nhận hồ sơ bệnh án (MEDICAL_RECORD_WRITE).'
-              : action.disabledReason;
-
+              : lacksDiagnosticOrderPermission
+                ? 'Tài khoản chưa được cấp quyền chỉ định cận lâm sàng (DIAGNOSTIC_ORDER).'
+                : action.disabledReason;
             return (
               <div
                 key={action.id}

@@ -6,6 +6,7 @@ using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Policies;
+using MedFlow.Application.Services.Reception;
 using MedFlow.Application.Services.Visits.Queueing;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
@@ -202,7 +203,10 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
                 $"Khoa phòng '{room.Department.Name}' của buồng khám '{room.RoomCode}' đang tạm ngưng hoạt động.");
         }
 
-        var serviceDepartmentId = appointment?.Slot?.Service?.DepartmentId;
+        var walkInMetadata = visit.AppointmentId.HasValue
+            ? null
+            : await CreateWalkInVisitService.LoadWalkInAuditMetadataStaticAsync(_db, visit.Id, ct);
+        var serviceDepartmentId = appointment?.Slot?.Service?.DepartmentId ?? walkInMetadata?.DepartmentId;
         var doctorDepartmentId = assignedDoctor.Staff?.DepartmentId;
 
         if (serviceDepartmentId.HasValue &&
@@ -433,7 +437,12 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
         }
 
         var effectiveHospitalId = visitHospitalId ?? actor.ActorHospitalId;
-        var requiredDepartmentId = appointment?.Slot?.Service?.DepartmentId ?? assignedDoctor?.Staff?.DepartmentId;
+        var walkInMetadata = visit.AppointmentId.HasValue
+            ? null
+            : await CreateWalkInVisitService.LoadWalkInAuditMetadataStaticAsync(_db, visit.Id, ct);
+        var requiredDepartmentId = appointment?.Slot?.Service?.DepartmentId
+            ?? walkInMetadata?.DepartmentId
+            ?? assignedDoctor?.Staff?.DepartmentId;
         string? requiredDepartmentName = null;
         if (requiredDepartmentId.HasValue)
         {
@@ -815,6 +824,11 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
                 .Where(s => s.Id == visit.CheckedInByStaffId.Value)
                 .Select(s => s.HospitalId)
                 .FirstOrDefaultAsync(ct);
+        }
+        if (!hospitalId.HasValue && !visit.AppointmentId.HasValue)
+        {
+            var walkInMetadata = await CreateWalkInVisitService.LoadWalkInAuditMetadataStaticAsync(_db, visit.Id, ct);
+            hospitalId = walkInMetadata.HospitalId;
         }
 
         return hospitalId;
