@@ -58,6 +58,7 @@ import { ReceptionDashboardPage } from '@/features/reception/pages/reception-das
 import { WalkInVisitPage } from '@/features/reception/pages/walk-in-visit-page';
 import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
 import { DoctorReviewDiagnosticsPage } from '@/features/doctor/pages/doctor-review-diagnostics-page';
+import { DiagnosticResultsTrackingPage } from '@/features/diagnostic/pages/diagnostic-results-tracking-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
 import {
@@ -68,6 +69,7 @@ import {
   RequireDoctor,
   RequirePharmacy,
   RequireReception,
+  RequireRole,
   RequireSystemAdmin,
 } from './guards';
 
@@ -815,6 +817,16 @@ export function AppRouter() {
             <RequireDoctor>
               <DoctorReviewDiagnosticsPage />
             </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/results-tracking"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['DIAGNOSTIC_STAFF', 'DOCTOR']}>
+              <DiagnosticResultsTrackingPage />
+            </RequireRole>
           </RequireAuth>
         }
       />
