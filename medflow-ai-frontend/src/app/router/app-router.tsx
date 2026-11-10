@@ -273,6 +273,106 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/doctor/consultation/:visitIdOrCode/diagnostic-orders"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/diagnostic-orders"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/additional-diagnostic-orders"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/additional-diagnostic-order"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/additional-diagnostic-orders"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/additional-diagnostic-order"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/complete"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/consultation/:visitIdOrCode/complete-visit"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/complete"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/doctor/visits/:visitIdOrCode/complete-visit"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorConsultationWorkspacePage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/doctor/medical-history"
         element={
           <RequireAuth>
