@@ -17,6 +17,9 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
     private const string ClinicalExamAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/clinical-examination";
     private const string DiagnosticOrdersRoute = "/api/v1/doctor/consultation/VIS-202610-0001/diagnostic-orders";
     private const string DiagnosticOrdersAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/diagnostic-orders";
+    private const string DiagnosisRoute = "/api/v1/doctor/consultation/VIS-202610-0001/diagnosis";
+    private const string DiagnosisAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/diagnosis";
+    private const string Icd10SearchRoute = "/api/v1/doctor/icd10-codes";
     private readonly TestWebAppFactory _factory;
 
     public DoctorConsultationEndpointTests(TestWebAppFactory factory)
@@ -253,6 +256,122 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
 
         var completedVisitResponse = await PutWithTokenAsync(ClinicalExamRoute, token, body);
         Assert.Equal(HttpStatusCode.Conflict, completedVisitResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task RecordDiagnosisAndSearchIcd10_Unauthenticated_Returns401()
+    {
+        using var postRequest = new HttpRequestMessage(HttpMethod.Post, DiagnosisRoute);
+        var postResponse = await Client.SendAsync(postRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, postResponse.StatusCode);
+
+        using var putRequest = new HttpRequestMessage(HttpMethod.Put, DiagnosisAliasRoute);
+        var putResponse = await Client.SendAsync(putRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, putResponse.StatusCode);
+
+        using var getRequest = new HttpRequestMessage(HttpMethod.Get, Icd10SearchRoute);
+        var getResponse = await Client.SendAsync(getRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, getResponse.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("PATIENT")]
+    [InlineData("RECEPTION")]
+    [InlineData("DIAGNOSTIC_STAFF")]
+    [InlineData("PHARMACY_STAFF")]
+    [InlineData("HOSPITAL_ADMIN")]
+    [InlineData("SYSTEM_ADMIN")]
+    public async Task RecordDiagnosisAndSearchIcd10_ForbiddenRoles_Returns403(string role)
+    {
+        var token = GenerateToken(11, $"{role.ToLowerInvariant()}@medflow.test", role);
+        var body = new
+        {
+            primaryIcd10Code = "K29.5",
+            clinicalConclusion = "Viêm dạ dày mạn tính",
+        };
+
+        var postResponse = await PostWithTokenAsync(DiagnosisRoute, token, body);
+        Assert.Equal(HttpStatusCode.Forbidden, postResponse.StatusCode);
+
+        var putResponse = await PutWithTokenAsync(DiagnosisAliasRoute, token, body);
+        Assert.Equal(HttpStatusCode.Forbidden, putResponse.StatusCode);
+
+        var searchResponse = await GetWithTokenAsync(Icd10SearchRoute, token);
+        Assert.Equal(HttpStatusCode.Forbidden, searchResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task RecordDiagnosis_InvalidPayloadOrIcd10Format_Returns400()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+
+        var emptyResponse = await PostWithTokenAsync(
+            DiagnosisRoute,
+            token,
+            new { clinicalConclusion = "Chỉ có kết luận không có mã ICD-10" });
+        Assert.Equal(HttpStatusCode.BadRequest, emptyResponse.StatusCode);
+
+        var duplicateIcdResponse = await PutWithTokenAsync(
+            DiagnosisAliasRoute,
+            token,
+            new
+            {
+                primaryIcd10Code = "K29.5",
+                secondaryIcd10Codes = new[] { "K29.5" },
+                clinicalConclusion = "Viêm dạ dày mạn tính",
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, duplicateIcdResponse.StatusCode);
+
+        var invalidFormatResponse = await PostWithTokenAsync(
+            DiagnosisRoute,
+            token,
+            new
+            {
+                primaryIcd10Code = "BAD-ICD-CODE",
+                clinicalConclusion = "Viêm dạ dày mạn tính",
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidFormatResponse.StatusCode);
+
+        var invalidRevisionResponse = await PostWithTokenAsync(
+            DiagnosisRoute,
+            token,
+            new
+            {
+                primaryIcd10Code = "K29.5",
+                clinicalConclusion = "Viêm dạ dày mạn tính",
+                expectedRevisionNo = 0,
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidRevisionResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task RecordDiagnosisAndSearchIcd10_CrossDoctorCompletedVisitAndCatalogLookup_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+        var body = new
+        {
+            primaryIcd10Code = "K29.5",
+            secondaryIcd10Codes = new[] { "K76.0" },
+            clinicalConclusion = "Viêm dạ dày mạn tính kèm gan nhiễm mỡ",
+        };
+
+        var crossDoctorResponse = await PostWithTokenAsync(
+            "/api/v1/doctor/consultation/VIS-202610-0002/diagnosis",
+            token,
+            body);
+
+        if (crossDoctorResponse.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable)
+        {
+            return;
+        }
+
+        Assert.Equal(HttpStatusCode.Forbidden, crossDoctorResponse.StatusCode);
+
+        var completedVisitResponse = await PutWithTokenAsync(DiagnosisRoute, token, body);
+        Assert.Equal(HttpStatusCode.Conflict, completedVisitResponse.StatusCode);
+
+        var searchResponse = await GetWithTokenAsync($"{Icd10SearchRoute}?q=K29&primaryOnly=true&limit=10", token);
+        Assert.Equal(HttpStatusCode.OK, searchResponse.StatusCode);
     }
 
     [Fact]

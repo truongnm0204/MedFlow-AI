@@ -123,6 +123,55 @@ public sealed class DoctorConsultationController : ControllerBase
             GetIp(),
             ct));
 
+    /// <summary>
+    /// POST/PUT /api/v1/doctor/consultation/{idOrCode}/diagnosis — Ghi nhận chẩn đoán ICD-10 và kết luận lâm sàng (UC36 / #112).
+    /// </summary>
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/diagnosis")]
+    [HttpPut("/api/v1/doctor/consultation/{idOrCode}/diagnosis")]
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/diagnoses")]
+    [HttpPut("/api/v1/doctor/consultation/{idOrCode}/diagnoses")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/diagnosis")]
+    [HttpPut("/api/v1/doctor/visits/{idOrCode}/diagnosis")]
+    [HttpPost("/api/v1/visits/{idOrCode}/diagnosis")]
+    [HttpPut("/api/v1/visits/{idOrCode}/diagnosis")]
+    [ProducesResponseType<ConsultationWorkspaceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ConsultationWorkspaceResponseDto>> RecordDiagnosis(
+        string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] RecordDiagnosisRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.RecordDiagnosisAsync(
+            GetUserId(),
+            idOrCode,
+            request!,
+            GetIp(),
+            ct));
+
+    /// <summary>
+    /// GET /api/v1/doctor/icd10-codes — Tra cứu danh mục mã bệnh ICD-10 (UC36 / #112).
+    /// </summary>
+    [HttpGet("/api/v1/doctor/icd10-codes")]
+    [HttpGet("/api/v1/doctor/consultation/icd10-codes")]
+    [HttpGet("/api/v1/icd10-codes")]
+    [ProducesResponseType<IReadOnlyList<Icd10CatalogItemDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<IReadOnlyList<Icd10CatalogItemDto>>> SearchIcd10Codes(
+        [FromQuery] string? q = null,
+        [FromQuery] bool primaryOnly = false,
+        [FromQuery] int limit = 50,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.SearchIcd10CodesAsync(
+            GetUserId(),
+            q,
+            primaryOnly,
+            limit,
+            ct));
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)

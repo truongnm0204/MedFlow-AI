@@ -34,4 +34,18 @@ public interface IConsultationWorkspaceService
         CreateDiagnosticOrderRequest request,
         string? ipAddress = null,
         CancellationToken ct = default);
+
+    Task<ConsultationWorkspaceResponseDto> RecordDiagnosisAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        RecordDiagnosisRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
+
+    Task<IReadOnlyList<Icd10CatalogItemDto>> SearchIcd10CodesAsync(
+        long actorUserId,
+        string? query = null,
+        bool primaryOnly = false,
+        int limit = 50,
+        CancellationToken ct = default);
 }
