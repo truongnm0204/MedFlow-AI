@@ -3,6 +3,8 @@ using MedFlow.Application.DTOs.ExaminationSlots;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.ExaminationSlots;
 using MedFlow.Domain.Entities;
+using MedFlow.Domain.Enums;
+using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 
@@ -19,20 +21,20 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
 
         private static NotSupportedException NotUsed() => new("Not needed for ExaminationSlotAdminService unit tests.");
 
-        public DbSet<User> Users => throw NotUsed();
-        public DbSet<Role> Roles => throw NotUsed();
+        public DbSet<User> Users => Set<User>();
+        public DbSet<Role> Roles => Set<Role>();
         public DbSet<Permission> Permissions => throw NotUsed();
-        public DbSet<UserRole> UserRoles => throw NotUsed();
+        public DbSet<UserRole> UserRoles => Set<UserRole>();
         public DbSet<RolePermission> RolePermissions => throw NotUsed();
-        public DbSet<Patient> Patients => throw NotUsed();
+        public DbSet<Patient> Patients => Set<Patient>();
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => Set<Doctor>();
         public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => throw NotUsed();
         public DbSet<ExaminationSlot> ExaminationSlots => Set<ExaminationSlot>();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
-        public DbSet<AuditLog> AuditLogs => throw NotUsed();
-        public DbSet<Hospital> Hospitals => throw NotUsed();
+        public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+        public DbSet<Hospital> Hospitals => Set<Hospital>();
         public DbSet<Department> Departments => Set<Department>();
         public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => Set<Specialty>();
@@ -50,17 +52,11 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Ignore<User>();
-            modelBuilder.Ignore<Role>();
             modelBuilder.Ignore<Permission>();
-            modelBuilder.Ignore<UserRole>();
             modelBuilder.Ignore<RolePermission>();
-            modelBuilder.Ignore<Patient>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<AuditLog>();
-            modelBuilder.Ignore<Hospital>();
             modelBuilder.Ignore<ServicePrice>();
             modelBuilder.Ignore<HospitalPolicy>();
             modelBuilder.Ignore<PatientFamilyLink>();
@@ -68,6 +64,16 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             modelBuilder.Ignore<QueueEntry>();
             modelBuilder.Ignore<Payment>();
 
+            modelBuilder.Entity<User>(b => b.HasKey(u => u.Id));
+            modelBuilder.Entity<Role>(b => b.HasKey(r => r.Id));
+            modelBuilder.Entity<UserRole>(b => b.HasKey(ur => new { ur.UserId, ur.RoleId }));
+            modelBuilder.Entity<Patient>(b => b.HasKey(p => p.Id));
+            modelBuilder.Entity<Hospital>(b => b.HasKey(h => h.Id));
+            modelBuilder.Entity<AuditLog>(b =>
+            {
+                b.HasKey(a => a.Id);
+                b.Ignore(a => a.IpAddress);
+            });
             modelBuilder.Entity<Specialty>(b => b.HasKey(s => s.Id));
             modelBuilder.Entity<Department>(b => b.HasKey(d => d.Id));
             modelBuilder.Entity<Staff>(b => b.HasKey(s => s.Id));
@@ -99,6 +105,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             {
                 b.HasKey(a => a.Id);
                 b.HasOne(a => a.Slot).WithMany(s => s.Appointments).HasForeignKey(a => a.SlotId);
+                b.HasOne(a => a.Patient).WithMany().HasForeignKey(a => a.PatientId);
             });
         }
     }
@@ -135,22 +142,59 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
 
     private void SeedTestData()
     {
+        var hosp1 = new Hospital { Id = 1, HospitalCode = "MEDFLOW-01", Name = "MedFlow Cơ sở 1", IsActive = true };
+        var hosp2 = new Hospital { Id = 2, HospitalCode = "MEDFLOW-02", Name = "MedFlow Cơ sở 2", IsActive = true };
+        _db.Hospitals.AddRange(hosp1, hosp2);
+
+        var rolePatient = new Role { Id = 1, Code = "PATIENT", Name = "Bệnh nhân" };
+        var roleDoctor = new Role { Id = 2, Code = "DOCTOR", Name = "Bác sĩ" };
+        var roleHospAdmin = new Role { Id = 6, Code = "HOSPITAL_ADMIN", Name = "Quản trị bệnh viện" };
+        var roleSysAdmin = new Role { Id = 7, Code = "SYSTEM_ADMIN", Name = "Quản trị hệ thống" };
+        _db.Roles.AddRange(rolePatient, roleDoctor, roleHospAdmin, roleSysAdmin);
+
+        var userPatient = new User { Id = 1, Email = "patient01@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var userDoctor = new User { Id = 3, Email = "doctor01@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var userHospAdmin1 = new User { Id = 11, Email = "hospital_admin01@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var userHospAdmin2 = new User { Id = 12, Email = "hospital_admin02@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var userSysAdmin = new User { Id = 13, Email = "system_admin01@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var userInactiveAdmin = new User { Id = 15, Email = "inactive_admin@medflow.test", AccountStatus = AccountStatus.INACTIVE };
+        var userLockedAdmin = new User
+        {
+            Id = 16,
+            Email = "locked_admin@medflow.test",
+            AccountStatus = AccountStatus.ACTIVE,
+            LockedUntil = _baseDate.AddHours(2),
+        };
+        _db.Users.AddRange(userPatient, userDoctor, userHospAdmin1, userHospAdmin2, userSysAdmin, userInactiveAdmin, userLockedAdmin);
+
+        _db.UserRoles.AddRange(
+            new UserRole { UserId = 1, RoleId = 1 },
+            new UserRole { UserId = 3, RoleId = 2 },
+            new UserRole { UserId = 11, RoleId = 6 },
+            new UserRole { UserId = 12, RoleId = 6 },
+            new UserRole { UserId = 13, RoleId = 7 },
+            new UserRole { UserId = 15, RoleId = 6 },
+            new UserRole { UserId = 16, RoleId = 6 });
+
         var specEndocrine = new Specialty { Id = 1, Name = "Nội tiết" };
         var specCardio = new Specialty { Id = 2, Name = "Tim mạch" };
         _db.Specialties.AddRange(specEndocrine, specCardio);
 
-        var deptInternal = new Department { Id = 1, Name = "Khoa Nội", DepartmentCode = "K-NOI", IsActive = true };
-        var deptCardio = new Department { Id = 2, Name = "Khoa Tim mạch", DepartmentCode = "K-TIM", IsActive = true };
-        _db.Departments.AddRange(deptInternal, deptCardio);
+        var deptInternal = new Department { Id = 1, HospitalId = 1, Name = "Khoa Nội", DepartmentCode = "K-NOI", IsActive = true };
+        var deptCardio = new Department { Id = 2, HospitalId = 1, Name = "Khoa Tim mạch", DepartmentCode = "K-TIM", IsActive = true };
+        var deptHosp2 = new Department { Id = 3, HospitalId = 2, Name = "Khoa Nội Cơ sở 2", DepartmentCode = "K-NOI-2", IsActive = true };
+        _db.Departments.AddRange(deptInternal, deptCardio, deptHosp2);
 
-        var staff1 = new Staff { Id = 1, FullName = "BS. Nguyễn Thu Lan", StaffCode = "ST-001", Status = "ACTIVE" };
-        var staff2 = new Staff { Id = 2, FullName = "BS. Trần Hoài Nam", StaffCode = "ST-002", Status = "ACTIVE" };
-        _db.Staff.AddRange(staff1, staff2);
+        var staff1 = new Staff { Id = 1, HospitalId = 1, DepartmentId = 1, FullName = "BS. Nguyễn Thu Lan", StaffCode = "ST-001", Status = "ACTIVE" };
+        var staff2 = new Staff { Id = 2, HospitalId = 1, DepartmentId = 2, FullName = "BS. Trần Hoài Nam", StaffCode = "ST-002", Status = "ACTIVE" };
+        var staffAdmin1 = new Staff { Id = 11, UserId = 11, HospitalId = 1, DepartmentId = 1, FullName = "QLBV Cơ sở 1", StaffCode = "ST-ADM-01", Status = "ACTIVE" };
+        var staffAdmin2 = new Staff { Id = 12, UserId = 12, HospitalId = 2, DepartmentId = 3, FullName = "QLBV Cơ sở 2", StaffCode = "ST-ADM-02", Status = "ACTIVE" };
+        var staffSysAdmin = new Staff { Id = 13, UserId = 13, HospitalId = 1, DepartmentId = 1, FullName = "QTHT", StaffCode = "ST-SYS-01", Status = "ACTIVE" };
+        _db.Staff.AddRange(staff1, staff2, staffAdmin1, staffAdmin2, staffSysAdmin);
 
-        var doc1 = new Doctor { Id = 1, StaffId = 1, SpecialtyId = 1, DoctorCode = "DOC-001", IsActive = true };
-        var doc2 = new Doctor { Id = 2, StaffId = 2, SpecialtyId = 2, DoctorCode = "DOC-002", IsActive = true };
+        var doc1 = new Doctor { Id = 1, HospitalId = 1, StaffId = 1, SpecialtyId = 1, DoctorCode = "DOC-001", IsActive = true };
+        var doc2 = new Doctor { Id = 2, HospitalId = 1, StaffId = 2, SpecialtyId = 2, DoctorCode = "DOC-002", IsActive = true };
         _db.Doctors.AddRange(doc1, doc2);
-
         var srvEndocrine = new Service
         {
             Id = 1,
@@ -173,8 +217,8 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         };
         _db.Services.AddRange(srvEndocrine, srvCardio);
 
-        var room102 = new HospitalRoom { Id = 1, RoomCode = "PK-102", Name = "Phòng khám 102", DepartmentId = 1, Status = "ACTIVE", Capacity = 10 };
-        var room108 = new HospitalRoom { Id = 2, RoomCode = "PK-108", Name = "Phòng khám 108", DepartmentId = 2, Status = "ACTIVE", Capacity = 10 };
+        var room102 = new HospitalRoom { Id = 1, HospitalId = 1, RoomCode = "PK-102", Name = "Phòng khám 102", DepartmentId = 1, Status = "ACTIVE", Capacity = 10 };
+        var room108 = new HospitalRoom { Id = 2, HospitalId = 1, RoomCode = "PK-108", Name = "Phòng khám 108", DepartmentId = 2, Status = "ACTIVE", Capacity = 10 };
         _db.HospitalRooms.AddRange(room102, room108);
 
         // Slots:
@@ -247,16 +291,19 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
 
         // Appointments:
         // Slot 1: 2 BOOKED + 1 CANCELLED -> Active: 2
-        var appt1 = new Appointment { Id = 1, SlotId = 1, Status = "BOOKED" };
-        var appt2 = new Appointment { Id = 2, SlotId = 1, Status = "CHECKED_IN" };
-        var appt3 = new Appointment { Id = 3, SlotId = 1, Status = "CANCELLED" };
+        var pat1 = new Patient { Id = 1, PatientCode = "PAT-0001", FullName = "Nguyễn Văn An", Status = "ACTIVE" };
+        var pat2 = new Patient { Id = 2, PatientCode = "PAT-0002", FullName = "Trần Thị Bình", Status = "ACTIVE" };
+        _db.Patients.AddRange(pat1, pat2);
+
+        var appt1 = new Appointment { Id = 1, AppointmentCode = "APT-202610-0001", PatientId = 1, SlotId = 1, Status = "BOOKED" };
+        var appt2 = new Appointment { Id = 2, AppointmentCode = "APT-202610-0002", PatientId = 2, SlotId = 1, Status = "CHECKED_IN" };
+        var appt3 = new Appointment { Id = 3, AppointmentCode = "APT-202610-0003", PatientId = 1, SlotId = 1, Status = "CANCELLED" };
 
         // Slot 2: 2 BOOKED -> Active: 2 (Capacity = 2 -> FULL)
-        var appt4 = new Appointment { Id = 4, SlotId = 2, Status = "BOOKED" };
-        var appt5 = new Appointment { Id = 5, SlotId = 2, Status = "BOOKED" };
+        var appt4 = new Appointment { Id = 4, AppointmentCode = "APT-202610-0004", PatientId = 1, SlotId = 2, Status = "BOOKED" };
+        var appt5 = new Appointment { Id = 5, AppointmentCode = "APT-202610-0005", PatientId = 2, SlotId = 2, Status = "BOOKED" };
 
         _db.Appointments.AddRange(appt1, appt2, appt3, appt4, appt5);
-
         _db.SaveChanges();
     }
 
@@ -1090,5 +1137,389 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         Assert.Equal("2026-10-27", result.Date);
         Assert.Equal("08:00", result.StartTime);
         Assert.Equal("08:30", result.EndTime);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Close / Batch-Close / Reopen Examination Slot Tests (M2-216)
+    // ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CloseExaminationSlot_NullRequest_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CloseExaminationSlotAsync(11, "1", null!));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("0")]
+    [InlineData("-5")]
+    [InlineData("INVALID-CODE")]
+    public async Task CloseExaminationSlot_InvalidSlotIdentifier_ThrowsValidationException(string idOrCode)
+    {
+        var req = new CloseExaminationSlotRequest(ReasonCode: "DOCTOR_UNAVAILABLE");
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CloseExaminationSlotAsync(11, idOrCode, req));
+    }
+
+    [Fact]
+    public async Task CloseExaminationSlot_NonExistentSlot_ThrowsNotFoundException()
+    {
+        var req = new CloseExaminationSlotRequest(ReasonCode: "DOCTOR_UNAVAILABLE");
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.CloseExaminationSlotAsync(11, "9999", req));
+    }
+
+    [Fact]
+    public async Task CloseExaminationSlot_InvalidReasonCode_ThrowsValidationException()
+    {
+        var req = new CloseExaminationSlotRequest(ReasonCode: "UNKNOWN_REASON");
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CloseExaminationSlotAsync(11, "4", req));
+        Assert.Contains("Mã lý do đóng khung giờ không hợp lệ", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("abc")]
+    public async Task CloseExaminationSlot_ReasonOtherWithShortNote_ThrowsValidationException(string? shortNote)
+    {
+        var req = new CloseExaminationSlotRequest(
+            ReasonCode: "OTHER",
+            Note: shortNote);
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CloseExaminationSlotAsync(11, "4", req));
+        Assert.Contains("tối thiểu 5 ký tự", ex.Message);
+    }
+
+    [Fact]
+    public async Task CloseExaminationSlot_InvalidAffectedBookingsAction_ThrowsValidationException()
+    {
+        var req = new CloseExaminationSlotRequest(
+            ReasonCode: "DOCTOR_UNAVAILABLE",
+            AffectedBookingsAction: "DELETE_ALL");
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CloseExaminationSlotAsync(11, "4", req));
+        Assert.Contains("KEEP_EXISTING hoặc RESCHEDULE_REQUIRED", ex.Message);
+    }
+
+    [Fact]
+    public async Task CloseExaminationSlot_AlreadyClosedSlot_ThrowsConflictException()
+    {
+        // Slot 3 is already CLOSED
+        var req = new CloseExaminationSlotRequest(ReasonCode: "DOCTOR_UNAVAILABLE");
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CloseExaminationSlotAsync(11, "SLT-003", req));
+        Assert.Contains("đã ở trạng thái đóng", ex.Message);
+    }
+
+    [Fact]
+    public async Task CloseExaminationSlot_EmptySlot_ClosesCleanlyAndWritesAuditLogAndReconstructsMetadata()
+    {
+        // Slot 4 has 0 appointments
+        var req = new CloseExaminationSlotRequest(
+            ReasonCode: "EQUIPMENT_MAINTENANCE",
+            Note: "Bảo trì máy siêu âm định kỳ",
+            NotifyDoctor: true,
+            NotifyPatients: false);
+
+        var response = await _service.CloseExaminationSlotAsync(11, "SLT-004", req, "127.0.0.1");
+
+        Assert.True(response.Success);
+        Assert.Equal(4, response.Id);
+        Assert.Equal("SLT-004", response.Code);
+        Assert.Equal("CLOSED", response.Status);
+        Assert.False(response.HasDependentBookings);
+        Assert.Equal(0, response.AffectedBookingsCount);
+        Assert.Equal("EQUIPMENT_MAINTENANCE", response.CloseReasonCode);
+        Assert.Contains("Bảo trì máy siêu âm định kỳ", response.CloseReason);
+        Assert.Equal("KEEP_EXISTING", response.AffectedBookingsAction);
+        Assert.NotNull(response.ClosedAt);
+
+        var auditLog = await _db.AuditLogs.FirstOrDefaultAsync(a =>
+            a.EntityType == ExaminationSlotAdminService.SlotAuditEntityType &&
+            a.EntityId == "4" &&
+            a.Action == ExaminationSlotAdminService.SlotClosedAuditAction);
+        Assert.NotNull(auditLog);
+        Assert.Equal(11, auditLog.ActorUserId);
+        Assert.Equal(1, auditLog.HospitalId);
+
+        // Verify metadata reconstruction on GetExaminationSlotListAsync
+        var listResponse = await _service.GetExaminationSlotListAsync(new GetExaminationSlotListRequest(Status: "CLOSED"));
+        var closedItem = Assert.Single(listResponse.Data, s => s.Id == 4);
+        Assert.Equal("CLOSED", closedItem.Status);
+        Assert.Equal("EQUIPMENT_MAINTENANCE", closedItem.CloseReasonCode);
+        Assert.Equal("Bảo trì máy siêu âm định kỳ", closedItem.CloseNote);
+        Assert.Equal("KEEP_EXISTING", closedItem.AffectedBookingsAction);
+        Assert.NotNull(closedItem.ClosedAt);
+    }
+
+    [Fact]
+    public async Task CloseExaminationSlot_WithDependentBookings_Unconfirmed_ThrowsConflictExceptionWithWarning()
+    {
+        // Slot 1 has 2 active bookings (appt 1 BOOKED, appt 2 CHECKED_IN) + 1 CANCELLED
+        var unconfirmedReq = new CloseExaminationSlotRequest(
+            ReasonCode: "DOCTOR_UNAVAILABLE",
+            ConfirmUnderstood: false,
+            AffectedBookingsAction: "KEEP_EXISTING");
+
+        var ex1 = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CloseExaminationSlotAsync(11, "1", unconfirmedReq));
+        Assert.Contains("2 lượt bệnh nhân đã đặt hẹn", ex1.Message);
+
+        // Also blocked if neither ConfirmUnderstood=true nor AffectedBookingsAction is supplied
+        var bareReq = new CloseExaminationSlotRequest(ReasonCode: "DOCTOR_UNAVAILABLE");
+        var ex2 = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CloseExaminationSlotAsync(11, "1", bareReq));
+        Assert.Contains("2 lượt bệnh nhân đã đặt hẹn", ex2.Message);
+
+        // Slot 1 remains OPEN in DB
+        var slot1 = await _db.ExaminationSlots.FindAsync(1L);
+        Assert.Equal("OPEN", slot1!.Status);
+    }
+
+    [Fact]
+    public async Task CloseExaminationSlot_WithDependentBookings_KeepExisting_ClosesSlotAndPreservesBookings()
+    {
+        var req = new CloseExaminationSlotRequest(
+            ReasonCode: "DOCTOR_UNAVAILABLE",
+            Note: "Bác sĩ hội chẩn viện",
+            AffectedBookingsAction: "KEEP_EXISTING",
+            ConfirmUnderstood: true);
+
+        var response = await _service.CloseExaminationSlotAsync(11, "SLT-001", req);
+
+        Assert.True(response.Success);
+        Assert.Equal("CLOSED", response.Status);
+        Assert.True(response.HasDependentBookings);
+        Assert.Equal(2, response.AffectedBookingsCount);
+        Assert.Equal("KEEP_EXISTING", response.AffectedBookingsAction);
+        Assert.NotNull(response.WarningMessage);
+        Assert.Contains("KEEP_EXISTING", response.WarningMessage);
+        Assert.NotNull(response.AffectedBookings);
+        Assert.Equal(2, response.AffectedBookings.Count);
+
+        var appt1 = await _db.Appointments.FindAsync(1L);
+        Assert.Equal("BOOKED", appt1!.Status);
+        Assert.Null(appt1.ReceptionNote);
+    }
+
+    [Fact]
+    public async Task CloseExaminationSlot_WithDependentBookings_RescheduleRequired_AnnotatesModifiableBookingsReceptionNote()
+    {
+        var req = new CloseExaminationSlotRequest(
+            ReasonCode: "OTHER",
+            Note: "Phòng khám khử khuẩn đột xuất",
+            AffectedBookingsAction: "RESCHEDULE_REQUIRED");
+
+        var response = await _service.CloseExaminationSlotAsync(11, "1", req);
+
+        Assert.True(response.Success);
+        Assert.Equal("CLOSED", response.Status);
+        Assert.True(response.HasDependentBookings);
+        Assert.Equal(2, response.AffectedBookingsCount);
+        Assert.Equal("RESCHEDULE_REQUIRED", response.AffectedBookingsAction);
+        Assert.NotNull(response.WarningMessage);
+        Assert.Contains("RESCHEDULE_REQUIRED", response.WarningMessage);
+
+        // Appt 1 (BOOKED) gets reception note marker
+        var appt1 = await _db.Appointments.FindAsync(1L);
+        Assert.Equal("BOOKED", appt1!.Status);
+        Assert.NotNull(appt1.ReceptionNote);
+        Assert.Contains("[RESCHEDULE_REQUIRED]", appt1.ReceptionNote);
+        Assert.Contains("Phòng khám khử khuẩn đột xuất", appt1.ReceptionNote);
+
+        // Appt 2 (CHECKED_IN) is not overwritten with reschedule marker; Appt 3 (CANCELLED) untouched
+        var appt2 = await _db.Appointments.FindAsync(2L);
+        Assert.Equal("CHECKED_IN", appt2!.Status);
+        Assert.Null(appt2.ReceptionNote);
+    }
+
+    [Fact]
+    public async Task CloseExaminationSlot_Layer2Authorization_EnforcesRoleStatusAndHospitalOwnership()
+    {
+        var req = new CloseExaminationSlotRequest(ReasonCode: "DOCTOR_UNAVAILABLE");
+
+        // Invalid userId <= 0 -> 401
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.CloseExaminationSlotAsync(0, "4", req));
+
+        // Non-existent user -> 404
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.CloseExaminationSlotAsync(9999, "4", req));
+
+        // Disabled admin account -> 403
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CloseExaminationSlotAsync(15, "4", req));
+
+        // Locked admin account -> 403
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CloseExaminationSlotAsync(16, "4", req));
+
+        // Non-admin role (PATIENT / DOCTOR) -> 403
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CloseExaminationSlotAsync(1, "4", req));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CloseExaminationSlotAsync(3, "4", req));
+
+        // Hospital Admin of Hospital 2 attempting to close Slot 4 of Hospital 1 -> 403
+        var crossHospEx = await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CloseExaminationSlotAsync(12, "4", req));
+        Assert.Contains("cơ sở y tế khác", crossHospEx.Message);
+
+        // System Admin (user 13) can close Slot 4 of Hospital 1 -> 200 OK
+        var sysAdminRes = await _service.CloseExaminationSlotAsync(13, "4", req);
+        Assert.Equal("CLOSED", sysAdminRes.Status);
+    }
+
+    [Fact]
+    public async Task BatchCloseExaminationSlots_ValidatesAndClosesMultipleSlots()
+    {
+        // Empty list -> 400
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.BatchCloseExaminationSlotsAsync(11, new BatchCloseExaminationSlotsRequest()));
+
+        // Slots 1 and 4: Slot 1 has 2 active bookings; without confirmation -> 409
+        var unconfirmedBatch = new BatchCloseExaminationSlotsRequest(
+            Ids: ["SLT-001", "SLT-004"],
+            ReasonCode: "SCHEDULE_ADJUSTMENT",
+            ConfirmUnderstood: false);
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.BatchCloseExaminationSlotsAsync(11, unconfirmedBatch));
+
+        // Confirmed batch close with RESCHEDULE_REQUIRED -> closes both slots
+        var confirmedBatch = new BatchCloseExaminationSlotsRequest(
+            Ids: ["SLT-001", "SLT-004"],
+            ReasonCode: "SCHEDULE_ADJUSTMENT",
+            Note: "Điều chỉnh lịch tuần tới",
+            AffectedBookingsAction: "RESCHEDULE_REQUIRED",
+            ConfirmUnderstood: true);
+
+        var batchResult = await _service.BatchCloseExaminationSlotsAsync(11, confirmedBatch);
+        Assert.True(batchResult.Success);
+        Assert.Equal(2, batchResult.Count);
+        Assert.Equal(2, batchResult.TotalAffectedBookings);
+        Assert.All(batchResult.Slots, s => Assert.Equal("CLOSED", s.Status));
+    }
+
+    [Fact]
+    public async Task ReopenExaminationSlot_ValidatesConflictsAndRestoresOpenOrFullStatus()
+    {
+        // Reopening an already OPEN slot (Slot 4) -> 409
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ReopenExaminationSlotAsync(11, "SLT-004"));
+
+        // Reopening Slot 3 (currently CLOSED, 0 bookings, capacity 5) -> becomes OPEN
+        var reopened3 = await _service.ReopenExaminationSlotAsync(
+            11,
+            "SLT-003",
+            new ReopenExaminationSlotRequest(Note: "Bác sĩ đã quay lại làm việc"));
+        Assert.True(reopened3.Success);
+        Assert.Equal("OPEN", reopened3.Status);
+        Assert.Null(reopened3.ClosedAt);
+        Assert.Null(reopened3.CloseReason);
+
+
+        var reopenAudit = await _db.AuditLogs.FirstOrDefaultAsync(a =>
+            a.EntityType == ExaminationSlotAdminService.SlotAuditEntityType &&
+            a.EntityId == "3" &&
+            a.Action == ExaminationSlotAdminService.SlotReopenedAuditAction);
+        Assert.NotNull(reopenAudit);
+        Assert.Contains("Bác sĩ đã quay lại làm việc", reopenAudit.Reason);
+        // Close Slot 2 (2 active bookings, capacity 2 -> FULL when active), then reopen -> becomes FULL
+        await _service.CloseExaminationSlotAsync(
+            11,
+            "SLT-002",
+            new CloseExaminationSlotRequest(
+                ReasonCode: "EMERGENCY",
+                AffectedBookingsAction: "KEEP_EXISTING",
+                ConfirmUnderstood: true));
+
+        var reopened2 = await _service.ReopenExaminationSlotAsync(11, "2");
+        Assert.Equal("FULL", reopened2.Status);
+    }
+
+    [Fact]
+    public async Task ReopenExaminationSlot_WhenOverlappingOpenSlotExists_ThrowsConflictException()
+    {
+        // Slot 3 is CLOSED at 2026-10-28 09:00 - 09:30 for Doctor 1, Room 1.
+        // Create a new OPEN slot at the same time for Doctor 1, Room 1 (allowed because Slot 3 is CLOSED).
+        var replacement = await _service.CreateExaminationSlotAsync(new CreateExaminationSlotRequest(
+            ServiceId: 1,
+            DoctorId: 1,
+            RoomId: 1,
+            Date: "2026-10-28",
+            StartTime: "09:00",
+            EndTime: "09:30",
+            Capacity: 6));
+        Assert.Equal("OPEN", replacement.Status);
+
+        // Attempting to reopen Slot 3 now conflicts with the replacement slot -> 409
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ReopenExaminationSlotAsync(11, "3"));
+        Assert.Contains("Xung đột lịch bác sĩ", ex.Message);
+    }
+
+    [Fact]
+    public async Task CloseAndReopenExaminationSlot_NoteExceedingMaxLength_AndInactiveDependenciesAndRoomConflict_AreEnforced()
+    {
+        var tooLongNote = new string('x', 501);
+
+        // Close with Note > 500 chars -> 400
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CloseExaminationSlotAsync(
+                11,
+                "4",
+                new CloseExaminationSlotRequest(ReasonCode: "DOCTOR_UNAVAILABLE", Note: tooLongNote)));
+
+        // Reopen with Note > 500 chars -> 400
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.ReopenExaminationSlotAsync(
+                11,
+                "3",
+                new ReopenExaminationSlotRequest(Note: tooLongNote)));
+
+        // Reopen when assigned Room is INACTIVE -> 409
+        var room1 = await _db.HospitalRooms.FindAsync(1L);
+        room1!.Status = "INACTIVE";
+        await _db.SaveChangesAsync();
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ReopenExaminationSlotAsync(11, "3"));
+        room1.Status = "ACTIVE";
+        await _db.SaveChangesAsync();
+
+        // Reopen when assigned Doctor is inactive -> 409
+        var doc1 = await _db.Doctors.FindAsync(1L);
+        doc1!.IsActive = false;
+        await _db.SaveChangesAsync();
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ReopenExaminationSlotAsync(11, "3"));
+        doc1.IsActive = true;
+        await _db.SaveChangesAsync();
+
+        // Reopen when assigned Service is inactive -> 409
+        var srv1 = await _db.Services.FindAsync(1L);
+        srv1!.IsActive = false;
+        await _db.SaveChangesAsync();
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ReopenExaminationSlotAsync(11, "3"));
+        srv1.IsActive = true;
+        await _db.SaveChangesAsync();
+
+        // Reopen when Room 1 is occupied by another doctor (Doctor 2) at 2026-10-28 09:00 - 09:30 -> 409 Room conflict
+        await _service.CreateExaminationSlotAsync(new CreateExaminationSlotRequest(
+            ServiceId: 2,
+            DoctorId: 2,
+            RoomId: 1,
+            Date: "2026-10-28",
+            StartTime: "09:00",
+            EndTime: "09:30",
+            Capacity: 6));
+
+        var roomConflictEx = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ReopenExaminationSlotAsync(11, "3"));
+        Assert.Contains("Xung đột buồng khám", roomConflictEx.Message);
     }
 }
