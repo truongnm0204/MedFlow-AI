@@ -125,6 +125,22 @@ public sealed partial class ExaminationQueueService
             ClinicalQueueRules.IsClinicalExaminationQueueType(q.QueueType) &&
             ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeExamination);
 
+        if (existingReturnEntry is not null &&
+            AppointmentBookingRules.NormalizeStatusKey(existingReturnEntry.Status) is "COMPLETED" or "DONE")
+        {
+            var normalizedVisitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
+            var hasSubsequentDiagnosticEntry = trackedEntries.Any(q =>
+                string.Equals(q.QueueType, "DIAGNOSTIC", StringComparison.OrdinalIgnoreCase) &&
+                q.Id > existingReturnEntry.Id);
+
+            if (normalizedVisitStatus is "AWAITING_RESULTS" or "AWAITING_DIAGNOSTIC" ||
+                hasSubsequentDiagnosticEntry)
+            {
+                existingExamEntry = existingReturnEntry;
+                existingReturnEntry = null;
+            }
+        }
+
         return (visit, existingReturnEntry, existingExamEntry);
     }
 

@@ -123,6 +123,34 @@ public sealed class DoctorConsultationController : ControllerBase
             GetIp(),
             ct));
 
+    /// <summary>
+    /// POST /api/v1/doctor/consultation/{idOrCode}/additional-diagnostic-orders — Tạo phiếu chỉ định cận lâm sàng bổ sung trong phiên khám hoặc khám lại (UC34 / #116 / M3-008).
+    /// </summary>
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/additional-diagnostic-orders")]
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/additional-diagnostic-order")]
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/diagnostic-orders/additional")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/additional-diagnostic-orders")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/additional-diagnostic-order")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/diagnostic-orders/additional")]
+    [HttpPost("/api/v1/visits/{idOrCode}/additional-diagnostic-orders")]
+    [HttpPost("/api/v1/visits/{idOrCode}/additional-diagnostic-order")]
+    [HttpPost("/api/v1/visits/{idOrCode}/diagnostic-orders/additional")]
+    [ProducesResponseType<ConsultationWorkspaceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ConsultationWorkspaceResponseDto>> CreateAdditionalDiagnosticOrder(
+        string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CreateAdditionalDiagnosticOrderRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.CreateAdditionalDiagnosticOrderAsync(
+            GetUserId(),
+            idOrCode,
+            request!,
+            GetIp(),
+            ct));
 
     /// <summary>
     /// GET /api/v1/doctor/consultation/{idOrCode}/diagnostic-results — Xem danh sách và lịch sử phiên bản kết quả cận lâm sàng của lượt khám (UC35 / #114).
