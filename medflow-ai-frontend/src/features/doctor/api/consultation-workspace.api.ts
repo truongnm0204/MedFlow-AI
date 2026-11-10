@@ -3,12 +3,16 @@ import axios from 'axios';
 import { apiClient } from '@/shared/lib/axios';
 
 import {
+  createMockDiagnosticOrder,
   openMockConsultationWorkspace,
   recordMockClinicalExamination,
   resolveMockConsultationWorkspace,
+  resolveMockDiagnosticOrderCatalog,
 } from '../data/consultation-workspace-mock';
 import type {
   ConsultationWorkspaceResponseDto,
+  CreateDiagnosticOrderRequest,
+  DiagnosticOrderCatalogResponseDto,
   OpenConsultationWorkspaceRequest,
   RecordClinicalExaminationRequest,
 } from '../types/consultation-workspace.types';
@@ -109,4 +113,58 @@ export async function recordClinicalExamination(
   }
 
   return recordMockClinicalExamination(idOrCode, payload);
+}
+
+/**
+ * Xem danh mục dịch vụ cận lâm sàng và các phiếu chỉ định hiện có của lượt khám
+ * (`GET /doctor/consultation/{idOrCode}/diagnostic-orders` — UC34 / #120).
+ */
+export async function fetchDiagnosticOrderCatalog(
+  idOrCode: string,
+): Promise<DiagnosticOrderCatalogResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const response = await apiClient.get<DiagnosticOrderCatalogResponseDto>(
+        `/doctor/consultation/${encoded}/diagnostic-orders`,
+      );
+      if (response?.data) {
+        return response.data;
+      }
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return resolveMockDiagnosticOrderCatalog(idOrCode);
+}
+
+/**
+ * Tạo phiếu chỉ định cận lâm sàng và xếp hàng cận lâm sàng cho lượt khám
+ * (`POST /doctor/consultation/{idOrCode}/diagnostic-orders` — UC34 / #120).
+ */
+export async function createDiagnosticOrder(
+  idOrCode: string,
+  payload: CreateDiagnosticOrderRequest,
+): Promise<ConsultationWorkspaceResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ConsultationWorkspaceResponseDto>(
+        `/doctor/consultation/${encoded}/diagnostic-orders`,
+        payload,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return createMockDiagnosticOrder(idOrCode, payload);
 }

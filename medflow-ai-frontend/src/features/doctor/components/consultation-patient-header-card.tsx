@@ -222,7 +222,8 @@ export function ConsultationPatientHeaderCard({
 
         {(actionOutcome === 'OPENED' ||
           actionOutcome === 'ALREADY_IN_PROGRESS' ||
-          actionOutcome === 'CLINICAL_EXAMINATION_RECORDED') && (
+          actionOutcome === 'CLINICAL_EXAMINATION_RECORDED' ||
+          actionOutcome === 'DIAGNOSTIC_ORDER_CREATED') && (
           <div role="status">
             <Alert tone="success">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -231,14 +232,18 @@ export function ConsultationPatientHeaderCard({
                     ? `Đã mở phiên khám lâm sàng cho bệnh nhân ${patient.fullName} (${visit.visitCode}) và khởi tạo hồ sơ bệnh án nháp.`
                     : actionOutcome === 'CLINICAL_EXAMINATION_RECORDED'
                       ? `Đã ghi nhận sinh hiệu và khám lâm sàng cho bệnh nhân ${patient.fullName} (${visit.visitCode}).`
-                      : `Ca khám ${visit.visitCode} đang ở trạng thái Đang khám lâm sàng (IN_PROGRESS).`}
+                      : actionOutcome === 'DIAGNOSTIC_ORDER_CREATED'
+                        ? `Đã tạo phiếu chỉ định cận lâm sàng và xếp hàng đợi CLS cho bệnh nhân ${patient.fullName} (${visit.visitCode}).`
+                        : `Ca khám ${visit.visitCode} đang ở trạng thái Đang khám lâm sàng (IN_PROGRESS).`}
                 </span>
                 <Badge tone="emerald">
                   {actionOutcome === 'OPENED'
                     ? 'Vừa bắt đầu khám'
                     : actionOutcome === 'CLINICAL_EXAMINATION_RECORDED'
                       ? 'Đã lưu khám lâm sàng'
-                      : 'Đang diễn ra'}
+                      : actionOutcome === 'DIAGNOSTIC_ORDER_CREATED'
+                        ? 'Đã chỉ định CLS'
+                        : 'Đang diễn ra'}
                 </Badge>
               </div>
             </Alert>

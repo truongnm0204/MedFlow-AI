@@ -3,10 +3,15 @@ import {
   formatBloodPressureLabel,
 } from '../schemas/consultation-workspace.schema';
 import type {
+  ConsultationDiagnosticOrderDto,
   ConsultationDiagnosticSummaryDto,
   ConsultationWorkspaceActionDto,
   ConsultationWorkspaceResponseDto,
   ConsultationWorkspaceState,
+  CreateDiagnosticOrderItemRequest,
+  CreateDiagnosticOrderRequest,
+  DiagnosticOrderCatalogResponseDto,
+  DiagnosticServiceCatalogItemDto,
   OpenConsultationWorkspaceRequest,
   RecordClinicalExaminationRequest,
 } from '../types/consultation-workspace.types';
@@ -300,6 +305,7 @@ export const CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK: ConsultationWorkspaceRespo
       latestIssuedAt: null,
       itemCount: 0,
     },
+    diagnosticOrders: [],
   },
   allowedActions: buildAllowedActions('IN_PROGRESS', true, false, READY_DIAGNOSTIC_SUMMARY),
 };
@@ -624,6 +630,72 @@ export const CONSULTATION_WORKSPACE_AWAITING_RESULTS_MOCK: ConsultationWorkspace
       latestIssuedAt: null,
       itemCount: 0,
     },
+    diagnosticOrders: [
+      {
+        orderId: 501,
+        orderCode: 'DIA-202611-0501',
+        visitId: 217,
+        visitCode: 'VIS-2026-0217',
+        orderingDoctorId: 1,
+        orderingDoctorCode: 'DOC-001',
+        orderingDoctorName: DOCTOR_WORKBENCH_META.defaultDoctorName,
+        serviceId: 304,
+        serviceCode: 'CLS-CDHA-002',
+        serviceName: 'Siêu âm ổ bụng tổng quát',
+        category: 'IMAGING',
+        unitPrice: 220000,
+        requiresResultVerification: true,
+        queueEntryId: 41,
+        formattedQueueEntryId: 'q-041',
+        ticketNo: 'C001',
+        queueNumber: 1,
+        queueStatus: 'WAITING',
+        servicePointId: 205,
+        servicePointName: 'Phòng Siêu âm Tổng quát 205',
+        roomId: 205,
+        roomCode: 'P.SA-205',
+        roomName: 'Phòng Siêu âm Tổng quát 205',
+        priority: 'URGENT',
+        status: 'ORDERED',
+        requiredForConclusion: true,
+        instruction: 'Nhịn ăn trước siêu âm 6 giờ, khảo sát kỹ vùng thượng vị và túi mật.',
+        orderedAt: '2026-11-07T07:59:00',
+        confirmedAt: null,
+        isResultFinalized: false,
+      },
+      {
+        orderId: 502,
+        orderCode: 'DIA-202611-0502',
+        visitId: 217,
+        visitCode: 'VIS-2026-0217',
+        orderingDoctorId: 1,
+        orderingDoctorCode: 'DOC-001',
+        orderingDoctorName: DOCTOR_WORKBENCH_META.defaultDoctorName,
+        serviceId: 301,
+        serviceCode: 'CLS-XN-001',
+        serviceName: 'Tổng phân tích tế bào máu ngoại vi (CBC)',
+        category: 'LABORATORY',
+        unitPrice: 120000,
+        requiresResultVerification: true,
+        queueEntryId: 40,
+        formattedQueueEntryId: 'q-040',
+        ticketNo: 'C002',
+        queueNumber: 2,
+        queueStatus: 'COMPLETED',
+        servicePointId: 201,
+        servicePointName: 'Quầy Xét nghiệm Huyết học - Sinh hóa',
+        roomId: 201,
+        roomCode: 'P.XN-201',
+        roomName: 'Phòng Xét nghiệm Huyết học - Sinh hóa 201',
+        priority: 'NORMAL',
+        status: 'COMPLETED',
+        requiredForConclusion: true,
+        instruction: 'Lấy máu tĩnh mạch ống EDTA.',
+        orderedAt: '2026-11-07T07:58:00',
+        confirmedAt: '2026-11-07T08:05:00',
+        isResultFinalized: true,
+      },
+    ],
   },
   allowedActions: buildAllowedActions('AWAITING_RESULTS', false, false, PENDING_DIAGNOSTIC_SUMMARY),
 };
@@ -740,6 +812,40 @@ export const CONSULTATION_WORKSPACE_COMPLETED_MOCK: ConsultationWorkspaceRespons
       latestIssuedAt: '2026-11-07T07:54:00',
       itemCount: 2,
     },
+    diagnosticOrders: [
+      {
+        orderId: 490,
+        orderCode: 'DIA-202611-0490',
+        visitId: 209,
+        visitCode: 'VIS-2026-0209',
+        orderingDoctorId: 1,
+        orderingDoctorCode: 'DOC-001',
+        orderingDoctorName: DOCTOR_WORKBENCH_META.defaultDoctorName,
+        serviceId: 301,
+        serviceCode: 'CLS-XN-001',
+        serviceName: 'Tổng phân tích tế bào máu ngoại vi (CBC)',
+        category: 'LABORATORY',
+        unitPrice: 120000,
+        requiresResultVerification: true,
+        queueEntryId: 38,
+        formattedQueueEntryId: 'q-038',
+        ticketNo: 'C001',
+        queueNumber: 1,
+        queueStatus: 'COMPLETED',
+        servicePointId: 201,
+        servicePointName: 'Quầy Xét nghiệm Huyết học - Sinh hóa',
+        roomId: 201,
+        roomCode: 'P.XN-201',
+        roomName: 'Phòng Xét nghiệm Huyết học - Sinh hóa 201',
+        priority: 'NORMAL',
+        status: 'COMPLETED',
+        requiredForConclusion: true,
+        instruction: 'Kiểm tra bilan mỡ máu và công thức máu.',
+        orderedAt: '2026-11-07T07:35:00',
+        confirmedAt: '2026-11-07T07:48:00',
+        isResultFinalized: true,
+      },
+    ],
   },
   allowedActions: buildAllowedActions('COMPLETED', false, true, COMPLETED_DIAGNOSTIC_SUMMARY),
 };
@@ -990,5 +1096,313 @@ export function recordMockClinicalExamination(
       false,
       base.clinicalContext.diagnosticSummary,
     ),
+  };
+}
+
+export const DIAGNOSTIC_SERVICE_CATALOG_MOCK: DiagnosticServiceCatalogItemDto[] = [
+  {
+    serviceId: 301,
+    serviceCode: 'CLS-XN-001',
+    name: 'Tổng phân tích tế bào máu ngoại vi (CBC)',
+    description: 'Đánh giá hồng cầu, bạch cầu, tiểu cầu bằng máy đếm laser tự động',
+    category: 'LABORATORY',
+    departmentId: 5,
+    departmentCode: 'DEP-XN',
+    departmentName: 'Khoa Xét nghiệm',
+    specialtyId: 5,
+    specialtyCode: 'SPC-XN',
+    specialtyName: 'Huyết học - Sinh hóa',
+    unitPrice: 120000,
+    requiresResultVerification: true,
+    isDoctorAuthorized: true,
+    servicePointId: 201,
+    servicePointName: 'Quầy Xét nghiệm Huyết học - Sinh hóa',
+    roomId: 201,
+    roomCode: 'P.XN-201',
+    roomName: 'Phòng Xét nghiệm Huyết học - Sinh hóa 201',
+    hasActiveOrderInVisit: false,
+  },
+  {
+    serviceId: 302,
+    serviceCode: 'CLS-XN-002',
+    name: 'Định lượng Troponin T hs (Máu)',
+    description: 'Xét nghiệm dấu ấn sinh học hoại tử cơ tim độ nhạy cao',
+    category: 'LABORATORY',
+    departmentId: 5,
+    departmentCode: 'DEP-XN',
+    departmentName: 'Khoa Xét nghiệm',
+    specialtyId: 5,
+    specialtyCode: 'SPC-XN',
+    specialtyName: 'Huyết học - Sinh hóa',
+    unitPrice: 280000,
+    requiresResultVerification: true,
+    isDoctorAuthorized: true,
+    servicePointId: 201,
+    servicePointName: 'Quầy Xét nghiệm Huyết học - Sinh hóa',
+    roomId: 201,
+    roomCode: 'P.XN-201',
+    roomName: 'Phòng Xét nghiệm Huyết học - Sinh hóa 201',
+    hasActiveOrderInVisit: false,
+  },
+  {
+    serviceId: 303,
+    serviceCode: 'CLS-CDHA-001',
+    name: 'Chụp X-quang ngực thẳng kỹ thuật số',
+    description: 'Khảo sát bóng tim, trường phổi và trung thất',
+    category: 'IMAGING',
+    departmentId: 6,
+    departmentCode: 'DEP-CDHA',
+    departmentName: 'Khoa Chẩn đoán hình ảnh',
+    specialtyId: 6,
+    specialtyCode: 'SPC-CDHA',
+    specialtyName: 'Chẩn đoán hình ảnh',
+    unitPrice: 180000,
+    requiresResultVerification: true,
+    isDoctorAuthorized: true,
+    servicePointId: 204,
+    servicePointName: 'Phòng Chẩn đoán hình ảnh X-quang 204',
+    roomId: 204,
+    roomCode: 'P.XQ-204',
+    roomName: 'Phòng X-quang kỹ thuật số 204',
+    hasActiveOrderInVisit: false,
+  },
+  {
+    serviceId: 304,
+    serviceCode: 'CLS-CDHA-002',
+    name: 'Siêu âm ổ bụng tổng quát',
+    description: 'Siêu âm gan, mật, tụy, lách, thận, bàng quang',
+    category: 'IMAGING',
+    departmentId: 6,
+    departmentCode: 'DEP-CDHA',
+    departmentName: 'Khoa Chẩn đoán hình ảnh',
+    specialtyId: 6,
+    specialtyCode: 'SPC-CDHA',
+    specialtyName: 'Chẩn đoán hình ảnh',
+    unitPrice: 220000,
+    requiresResultVerification: true,
+    isDoctorAuthorized: true,
+    servicePointId: 205,
+    servicePointName: 'Phòng Siêu âm Tổng quát 205',
+    roomId: 205,
+    roomCode: 'P.SA-205',
+    roomName: 'Phòng Siêu âm Tổng quát 205',
+    hasActiveOrderInVisit: false,
+  },
+  {
+    serviceId: 305,
+    serviceCode: 'CLS-TDCN-001',
+    name: 'Đo điện tâm đồ 12 chuyển đạo (ECG)',
+    description: 'Ghi hoạt động điện học của tim, phát hiện rối loạn nhịp và thiếu máu cơ tim',
+    category: 'FUNCTIONAL',
+    departmentId: 2,
+    departmentCode: 'DEP-NOI-01',
+    departmentName: DOCTOR_WORKBENCH_META.departmentName,
+    specialtyId: 1,
+    specialtyCode: 'SPC-NOI-TQ',
+    specialtyName: 'Nội tổng quát',
+    unitPrice: 150000,
+    requiresResultVerification: false,
+    isDoctorAuthorized: true,
+    servicePointId: 105,
+    servicePointName: 'Phòng Thăm dò chức năng Tim mạch 105',
+    roomId: 105,
+    roomCode: 'P.ECG-105',
+    roomName: 'Phòng Điện tâm đồ 105',
+    hasActiveOrderInVisit: false,
+  },
+  {
+    serviceId: 306,
+    serviceCode: 'CLS-CDHA-009',
+    name: 'Chụp cắt lớp vi tính động mạch vành (MSCT)',
+    description: 'Chụp CT 128 lát cắt có tiêm thuốc cản quang (cần phân quyền chuyên khoa sâu)',
+    category: 'IMAGING',
+    departmentId: 6,
+    departmentCode: 'DEP-CDHA',
+    departmentName: 'Khoa Chẩn đoán hình ảnh',
+    specialtyId: 6,
+    specialtyCode: 'SPC-CDHA',
+    specialtyName: 'Chẩn đoán hình ảnh',
+    unitPrice: 3200000,
+    requiresResultVerification: true,
+    isDoctorAuthorized: false,
+    servicePointId: 210,
+    servicePointName: 'Phòng Chụp CT-Scanner 210',
+    roomId: 210,
+    roomCode: 'P.CT-210',
+    roomName: 'Phòng Chụp CT-Scanner 210',
+    hasActiveOrderInVisit: false,
+  },
+];
+
+export function resolveMockDiagnosticOrderCatalog(
+  idOrCode: string,
+): DiagnosticOrderCatalogResponseDto {
+  const workspace = resolveMockConsultationWorkspace(idOrCode);
+  const existingOrders = workspace.clinicalContext.diagnosticOrders ?? [];
+  const activeServiceIds: Record<number, true> = {};
+
+  for (const order of existingOrders) {
+    if (order.status !== 'COMPLETED' && order.status !== 'CANCELLED') {
+      activeServiceIds[order.serviceId] = true;
+    }
+  }
+
+  const isRecordFinalized = workspace.clinicalContext.medicalRecordStatus === 'FINALIZED';
+  const canCreateDiagnosticOrder = workspace.workspaceState === 'IN_PROGRESS' && !isRecordFinalized;
+  const disabledReason = canCreateDiagnosticOrder
+    ? null
+    : (workspace.readOnlyReason ??
+      'Chỉ có thể chỉ định cận lâm sàng khi ca khám đang diễn ra (IN_PROGRESS).');
+
+  return {
+    visitId: workspace.visit.visitId,
+    visitCode: workspace.visit.visitCode,
+    visitStatus: workspace.visit.status,
+    workspaceState: workspace.workspaceState,
+    canCreateDiagnosticOrder,
+    disabledReason,
+    generatedAtUtc: '2026-11-07T02:35:00Z',
+    diagnosticSummary: structuredClone(workspace.clinicalContext.diagnosticSummary),
+    services: DIAGNOSTIC_SERVICE_CATALOG_MOCK.map((svc) => ({
+      ...svc,
+      hasActiveOrderInVisit: Boolean(activeServiceIds[svc.serviceId]),
+    })),
+    existingOrders: structuredClone(existingOrders),
+  };
+}
+
+export function createMockDiagnosticOrder(
+  idOrCode: string,
+  request: CreateDiagnosticOrderRequest,
+): ConsultationWorkspaceResponseDto {
+  const base = resolveMockConsultationWorkspace(idOrCode);
+  const existingOrders = base.clinicalContext.diagnosticOrders ?? [];
+
+  const rawItems: CreateDiagnosticOrderItemRequest[] =
+    request.items && request.items.length > 0
+      ? request.items
+      : [
+          {
+            serviceId: request.serviceId,
+            serviceCode: request.serviceCode,
+            instruction: request.instruction,
+            priority: request.priority,
+            requiredForConclusion: request.requiredForConclusion,
+          },
+        ];
+
+  const createdOrders: ConsultationDiagnosticOrderDto[] = rawItems.map((item, idx) => {
+    const matchedService =
+      DIAGNOSTIC_SERVICE_CATALOG_MOCK.find(
+        (s) =>
+          (item.serviceId !== null &&
+            item.serviceId !== undefined &&
+            s.serviceId === item.serviceId) ||
+          (item.serviceCode &&
+            s.serviceCode.toUpperCase() === item.serviceCode.trim().toUpperCase()),
+      ) ?? DIAGNOSTIC_SERVICE_CATALOG_MOCK[0];
+
+    const orderId = 510 + existingOrders.length + idx + 1;
+    const queueNumber = existingOrders.length + idx + 1;
+    const queueEntryId = 50 + queueNumber;
+    const rawPriority = item.priority?.trim().toUpperCase();
+    const normalizedPriority =
+      rawPriority === 'URGENT' ? 'URGENT' : rawPriority === 'STAT' ? 'STAT' : 'NORMAL';
+
+    return {
+      orderId,
+      orderCode: `DIA-202611-${String(orderId).padStart(4, '0')}`,
+      visitId: base.visit.visitId,
+      visitCode: base.visit.visitCode,
+      orderingDoctorId: base.visit.assignedDoctorId,
+      orderingDoctorCode: base.visit.assignedDoctorCode,
+      orderingDoctorName: base.visit.assignedDoctorName,
+      serviceId: matchedService.serviceId,
+      serviceCode: matchedService.serviceCode,
+      serviceName: matchedService.name,
+      category: matchedService.category,
+      unitPrice: matchedService.unitPrice,
+      requiresResultVerification: matchedService.requiresResultVerification,
+      queueEntryId,
+      formattedQueueEntryId: `q-${String(queueEntryId).padStart(3, '0')}`,
+      ticketNo: `C${String(queueNumber).padStart(3, '0')}`,
+      queueNumber,
+      queueStatus: 'WAITING',
+      servicePointId: matchedService.servicePointId,
+      servicePointName: matchedService.servicePointName,
+      roomId: matchedService.roomId,
+      roomCode: matchedService.roomCode,
+      roomName: matchedService.roomName,
+      priority: normalizedPriority,
+      status: 'ORDERED',
+      requiredForConclusion: item.requiredForConclusion ?? true,
+      instruction: item.instruction?.trim() || null,
+      orderedAt: '2026-11-07T08:20:00',
+      confirmedAt: null,
+      isResultFinalized: false,
+    };
+  });
+
+  const mergedOrders = [...createdOrders, ...existingOrders];
+  const openCount = mergedOrders.filter(
+    (o) => o.status !== 'COMPLETED' && o.status !== 'CANCELLED',
+  ).length;
+  const completedCount = mergedOrders.filter((o) => o.status === 'COMPLETED').length;
+  const hasOpenMandatory = mergedOrders.some(
+    (o) => o.requiredForConclusion && o.status !== 'COMPLETED' && o.status !== 'CANCELLED',
+  );
+
+  const nextDiagnosticSummary: ConsultationDiagnosticSummaryDto = {
+    totalQueueEntries: mergedOrders.length,
+    openQueueEntries: openCount,
+    completedQueueEntries: completedCount,
+    allMandatoryResultsReady: !hasOpenMandatory,
+    finalResultRequired: true,
+  };
+
+  const transitionToAwaiting = request.transitionToAwaitingResults === true;
+  const nextWorkspaceState: ConsultationWorkspaceState = transitionToAwaiting
+    ? 'AWAITING_RESULTS'
+    : 'IN_PROGRESS';
+  const nextCanEditClinical = !transitionToAwaiting;
+  const nextReadOnlyReason = transitionToAwaiting
+    ? 'Bệnh nhân đang chờ kết quả cận lâm sàng. Vui lòng gọi bệnh nhân vào khám lại sau khi có kết quả.'
+    : null;
+  const currentStateVersion = base.queue?.stateVersion ?? 1;
+
+  return {
+    ...base,
+    actionOutcome: 'DIAGNOSTIC_ORDER_CREATED',
+    workspaceState: nextWorkspaceState,
+    canEditClinical: nextCanEditClinical,
+    readOnlyReason: nextReadOnlyReason,
+    generatedAtUtc: '2026-11-07T02:40:00Z',
+    visit: {
+      ...base.visit,
+      status: transitionToAwaiting ? 'AWAITING_RESULTS' : 'IN_PROGRESS',
+      statusLabel: transitionToAwaiting ? 'Chờ kết quả cận lâm sàng' : 'Đang khám lâm sàng',
+    },
+    queue: base.queue
+      ? {
+          ...base.queue,
+          status: transitionToAwaiting ? 'COMPLETED' : 'IN_PROGRESS',
+          queueGroup: transitionToAwaiting ? 'COMPLETED' : 'IN_PROGRESS',
+          stateVersion: currentStateVersion + 1,
+        }
+      : null,
+    clinicalContext: {
+      ...base.clinicalContext,
+      medicalRecordId: base.clinicalContext.medicalRecordId ?? 801,
+      medicalRecordStatus: 'DRAFT',
+      diagnosticSummary: nextDiagnosticSummary,
+      diagnosticOrders: mergedOrders,
+    },
+    allowedActions: buildAllowedActions(
+      nextWorkspaceState,
+      nextCanEditClinical,
+      false,
+      nextDiagnosticSummary,
+    ),
+    createdDiagnosticOrders: createdOrders,
   };
 }

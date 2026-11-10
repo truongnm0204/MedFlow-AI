@@ -20,12 +20,15 @@ import { CONSULTATION_QUICK_SWITCH_ITEMS } from '../data/consultation-workspace-
 import { DOCTOR_WORKBENCH_META } from '../data/doctor-mock-data';
 import {
   useConsultationWorkspace,
+  useCreateDiagnosticOrder,
+  useDiagnosticOrderCatalog,
   useOpenConsultationWorkspace,
   useRecordClinicalExamination,
 } from '../hooks/use-consultation-workspace';
 import { consultationIdentifierSchema } from '../schemas/consultation-workspace.schema';
 import type {
   ConsultationWorkspaceActionDto,
+  CreateDiagnosticOrderRequest,
   RecordClinicalExaminationRequest,
 } from '../types/consultation-workspace.types';
 
@@ -50,13 +53,22 @@ export function DoctorConsultationWorkspacePage({
       ? true
       : hasPermission('MEDICAL_RECORD_WRITE');
 
+  const canOrderDiagnostics =
+    user === null && explicitPermissions === undefined ? true : hasPermission('DIAGNOSTIC_ORDER');
+
   const activeIdentifier = routeVisitIdOrCode?.trim() || DEFAULT_VISIT_CODE;
   const isClinicalRoute = location.pathname.endsWith('/clinical-examination');
+  const isDiagnosticOrderRoute =
+    location.pathname.endsWith('/diagnostic-orders') ||
+    location.pathname.endsWith('/diagnostic-order');
   const [lookupInput, setLookupInput] = useState(activeIdentifier);
   const [lookupValidationError, setLookupValidationError] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   const [recordError, setRecordError] = useState<string | null>(null);
+  const [diagnosticOrderError, setDiagnosticOrderError] = useState<string | null>(null);
   const [isClinicalFormOpen, setIsClinicalFormOpen] = useState<boolean>(isClinicalRoute);
+  const [isDiagnosticOrderFormOpen, setIsDiagnosticOrderFormOpen] =
+    useState<boolean>(isDiagnosticOrderRoute);
   const [selectedActionNotice, setSelectedActionNotice] = useState<string | null>(null);
 
   const resetTransientState = (nextIdentifier: string) => {
@@ -64,13 +76,18 @@ export function DoctorConsultationWorkspacePage({
     setLookupValidationError(null);
     setOpenError(null);
     setRecordError(null);
+    setDiagnosticOrderError(null);
     setSelectedActionNotice(null);
   };
 
   const { data, isPending, isError, error, refetch } = useConsultationWorkspace(activeIdentifier);
+  const catalogQuery = useDiagnosticOrderCatalog(
+    activeIdentifier,
+    Boolean(data) && isDiagnosticOrderFormOpen,
+  );
   const openMutation = useOpenConsultationWorkspace();
   const recordMutation = useRecordClinicalExamination();
-
+  const createOrderMutation = useCreateDiagnosticOrder();
   const doctorDisplayName =
     data?.visit.assignedDoctorName?.trim() ||
     user?.fullName?.trim() ||
@@ -131,6 +148,29 @@ export function DoctorConsultationWorkspacePage({
     }
   };
 
+  const handleCreateDiagnosticOrder = async (
+    payload: CreateDiagnosticOrderRequest,
+  ): Promise<boolean> => {
+    setDiagnosticOrderError(null);
+    setOpenError(null);
+    setRecordError(null);
+    setSelectedActionNotice(null);
+
+    try {
+      await createOrderMutation.mutateAsync({
+        idOrCode: activeIdentifier,
+        payload,
+      });
+      setIsDiagnosticOrderFormOpen(false);
+      return true;
+    } catch (err) {
+      setDiagnosticOrderError(
+        getErrorMessage(err, 'Không thể tạo phiếu chỉ định cận lâm sàng cho lượt khám này.'),
+      );
+      return false;
+    }
+  };
+
   const handleTriggerAction = (action: ConsultationWorkspaceActionDto) => {
     if (!action.enabled) return;
 
@@ -157,12 +197,38 @@ export function DoctorConsultationWorkspacePage({
       return;
     }
 
+    if (action.id === 'create-diagnostic-order' || action.ucCode === 'UC34') {
+      if (!canOrderDiagnostics || !data) {
+        return;
+      }
+      setDiagnosticOrderError(null);
+      setIsDiagnosticOrderFormOpen(true);
+      setSelectedActionNotice(
+        `Đang mở biểu mẫu "${action.label}" (${action.ucCode}) cho bệnh nhân ${data.patient.fullName} (${data.visit.visitCode}).`,
+      );
+      return;
+    }
+
     setSelectedActionNotice(
       `Đã chọn thao tác "${action.label}" (${action.ucCode}) cho bệnh nhân ${data?.patient.fullName ?? ''} (${data?.visit.visitCode ?? activeIdentifier}).`,
     );
   };
 
   const openAction = data?.allowedActions.find((a) => a.id === 'open-consultation');
+  const diagnosticOrderAction = data?.allowedActions.find(
+    (a) => a.id === 'create-diagnostic-order' || a.ucCode === 'UC34',
+  );
+  const canCreateDiagnosticOrder =
+    Boolean(diagnosticOrderAction?.enabled) ||
+    (data?.workspaceState === 'IN_PROGRESS' &&
+      data.clinicalContext.medicalRecordStatus !== 'FINALIZED');
+  const diagnosticDisabledReason =
+    diagnosticOrderAction?.disabledReason ??
+    catalogQuery.data?.disabledReason ??
+    data?.readOnlyReason ??
+    null;
+  const effectiveDiagnosticOrders =
+    data?.clinicalContext.diagnosticOrders ?? catalogQuery.data?.existingOrders ?? [];
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
       <DoctorSidebar
@@ -380,6 +446,28 @@ export function DoctorConsultationWorkspacePage({
                       diagnoses={data.clinicalContext.diagnoses}
                       diagnosticSummary={data.clinicalContext.diagnosticSummary}
                       prescriptionSummary={data.clinicalContext.prescriptionSummary}
+                      diagnosticOrders={effectiveDiagnosticOrders}
+                      catalogServices={catalogQuery.data?.services ?? []}
+                      isCatalogLoading={catalogQuery.isPending}
+                      catalogError={
+                        catalogQuery.isError
+                          ? getErrorMessage(
+                              catalogQuery.error,
+                              'Không thể tải danh mục dịch vụ cận lâm sàng.',
+                            )
+                          : null
+                      }
+                      onRetryCatalog={() => void catalogQuery.refetch()}
+                      canCreateDiagnosticOrder={canCreateDiagnosticOrder}
+                      hasDiagnosticOrderPermission={canOrderDiagnostics}
+                      diagnosticDisabledReason={diagnosticDisabledReason}
+                      expectedStateVersion={data.queue?.stateVersion ?? null}
+                      isCreatingDiagnosticOrder={createOrderMutation.isPending}
+                      diagnosticOrderSubmitError={diagnosticOrderError}
+                      isDiagnosticOrderFormOpen={isDiagnosticOrderFormOpen}
+                      onToggleDiagnosticOrderForm={setIsDiagnosticOrderFormOpen}
+                      onSubmitDiagnosticOrder={handleCreateDiagnosticOrder}
+                      onClearDiagnosticOrderSubmitError={() => setDiagnosticOrderError(null)}
                     />
                   </div>
 
@@ -390,7 +478,9 @@ export function DoctorConsultationWorkspacePage({
                       selectedActionNotice={selectedActionNotice}
                       isOpening={openMutation.isPending}
                       isRecordingClinical={recordMutation.isPending}
+                      isCreatingDiagnosticOrder={createOrderMutation.isPending}
                       hasWritePermission={canWriteMedicalRecord}
+                      hasDiagnosticOrderPermission={canOrderDiagnostics}
                       onTriggerAction={handleTriggerAction}
                     />
                   </div>

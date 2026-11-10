@@ -228,3 +228,138 @@ export function formatBloodPressureLabel(
   }
   return `${systolic}/${diastolic} mmHg`;
 }
+
+const VALID_DIAGNOSTIC_PRIORITIES: Record<string, true> = {
+  NORMAL: true,
+  STANDARD: true,
+  ROUTINE: true,
+  URGENT: true,
+  STAT: true,
+};
+
+export const diagnosticOrderPrioritySchema = z
+  .string()
+  .trim()
+  .refine(
+    (val) => val.length === 0 || Boolean(VALID_DIAGNOSTIC_PRIORITIES[val.toUpperCase()]),
+    'Mức độ ưu tiên chỉ định cận lâm sàng không hợp lệ. Chỉ chấp nhận NORMAL, URGENT hoặc STAT.',
+  )
+  .transform((val): 'NORMAL' | 'URGENT' | 'STAT' => {
+    const upper = val.trim().toUpperCase();
+    if (upper === 'URGENT') return 'URGENT';
+    if (upper === 'STAT') return 'STAT';
+    return 'NORMAL';
+  });
+
+const diagnosticServiceIdFieldSchema = z
+  .number()
+  .int('ID dịch vụ cận lâm sàng phải là số nguyên.')
+  .min(1, 'ID dịch vụ cận lâm sàng phải lớn hơn 0.')
+  .nullable()
+  .optional();
+
+const diagnosticServiceCodeFieldSchema = z
+  .string()
+  .trim()
+  .max(40, 'Mã dịch vụ cận lâm sàng không hợp lệ.')
+  .refine(
+    (val) => !val.includes('<') && !val.includes('>'),
+    'Mã dịch vụ cận lâm sàng không hợp lệ.',
+  )
+  .nullable()
+  .optional();
+
+export const createDiagnosticOrderItemSchema = z
+  .object({
+    serviceId: diagnosticServiceIdFieldSchema,
+    serviceCode: diagnosticServiceCodeFieldSchema,
+    instruction: clinicalTextFieldSchema('Chỉ dẫn cận lâm sàng', 1000),
+    priority: diagnosticOrderPrioritySchema.nullable().optional(),
+    requiredForConclusion: z.boolean().nullable().optional(),
+  })
+  .superRefine((item, ctx) => {
+    const hasServiceId = item.serviceId !== null && item.serviceId !== undefined;
+    const trimmedCode = item.serviceCode?.trim() ?? '';
+    const hasServiceCode = trimmedCode.length > 0;
+
+    if (!hasServiceId && !hasServiceCode) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['serviceId'],
+        message: 'Vui lòng cung cấp ID hoặc mã dịch vụ cận lâm sàng.',
+      });
+    }
+  });
+
+export const createDiagnosticOrderSchema = z
+  .object({
+    serviceId: diagnosticServiceIdFieldSchema,
+    serviceCode: diagnosticServiceCodeFieldSchema,
+    instruction: clinicalTextFieldSchema('Chỉ dẫn cận lâm sàng', 1000),
+    priority: diagnosticOrderPrioritySchema.nullable().optional(),
+    requiredForConclusion: z.boolean().nullable().optional(),
+    items: z
+      .array(createDiagnosticOrderItemSchema)
+      .max(10, 'Mỗi lần chỉ định tối đa 10 dịch vụ cận lâm sàng.')
+      .nullable()
+      .optional(),
+    expectedStateVersion: z
+      .number()
+      .int('Phiên bản trạng thái phải là số nguyên.')
+      .min(1, 'Phiên bản trạng thái (ExpectedStateVersion) phải lớn hơn hoặc bằng 1.')
+      .nullable()
+      .optional(),
+    transitionToAwaitingResults: z.boolean().nullable().optional(),
+    clinicalNote: clinicalTextFieldSchema('Ghi chú lâm sàng', 500),
+  })
+  .superRefine((data, ctx) => {
+    const hasItems = Boolean(data.items && data.items.length > 0);
+    const hasTopServiceId = data.serviceId !== null && data.serviceId !== undefined;
+    const hasTopServiceCode = Boolean(data.serviceCode && data.serviceCode.trim().length > 0);
+
+    if (!hasItems && !hasTopServiceId && !hasTopServiceCode) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['items'],
+        message: 'Vui lòng chọn ít nhất một dịch vụ cận lâm sàng để chỉ định.',
+      });
+      return;
+    }
+
+    if (data.items && data.items.length > 0) {
+      const seenIds = new Set<number>();
+      const seenCodes = new Set<string>();
+
+      data.items.forEach((item, index) => {
+        if (item.serviceId !== null && item.serviceId !== undefined) {
+          if (seenIds.has(item.serviceId)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['items', index, 'serviceId'],
+              message:
+                'Không được chọn trùng lặp dịch vụ cận lâm sàng trong cùng một lần chỉ định.',
+            });
+          } else {
+            seenIds.add(item.serviceId);
+          }
+        }
+
+        const codeKey = item.serviceCode?.trim().toUpperCase();
+        if (codeKey) {
+          if (seenCodes.has(codeKey)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['items', index, 'serviceCode'],
+              message:
+                'Không được chọn trùng lặp dịch vụ cận lâm sàng trong cùng một lần chỉ định.',
+            });
+          } else {
+            seenCodes.add(codeKey);
+          }
+        }
+      });
+    }
+  });
+
+export type CreateDiagnosticOrderItemInput = z.infer<typeof createDiagnosticOrderItemSchema>;
+export type CreateDiagnosticOrderInput = z.infer<typeof createDiagnosticOrderSchema>;
