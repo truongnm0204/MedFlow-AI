@@ -1,0 +1,27 @@
+namespace MedFlow.Application.DTOs.Reception;
+
+public sealed record CreateWalkInVisitRequest(
+    string? PatientId = null,
+    string? PatientCode = null,
+    string? DepartmentId = null,
+    string? DepartmentCode = null,
+    string? ServiceId = null,
+    string? ServiceCode = null,
+    string? ReasonForVisit = null,
+    IReadOnlyList<string>? Symptoms = null,
+    string? Priority = null,
+    string? ClinicalPriority = null,
+    bool? PriorityVerificationConfirmed = null,
+    string? PaymentMethod = null,
+    string? BloodPressure = null,
+    int? HeartRate = null,
+    double? Temperature = null,
+    bool? IsIdentityVerified = null,
+    bool? IdentityVerified = null,
+    bool? IsInsuranceVerified = null,
+    string? DoctorId = null,
+    string? DoctorCode = null,
+    string? ExaminationRoomId = null,
+    string? RoomId = null,
+    string? RoomCode = null,
+    string? Notes = null);

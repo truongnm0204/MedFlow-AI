@@ -1195,8 +1195,13 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
                 .FirstOrDefaultAsync(s => s.Id == visit.CheckedInByStaffId.Value, ct);
         }
 
+        var walkInMetadata = visit.AppointmentId.HasValue
+            ? null
+            : await CreateWalkInVisitService.LoadWalkInAuditMetadataStaticAsync(_db, visit.Id, ct);
+
         var associatedHospitalIds = new long?[]
         {
+            walkInMetadata?.HospitalId,
             room?.HospitalId,
             room?.Department?.HospitalId,
             doctor?.HospitalId,
@@ -1343,6 +1348,7 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
         {
             var fallbackDeptId = room?.DepartmentId
                 ?? slot?.Service?.DepartmentId
+                ?? walkInMetadata?.DepartmentId
                 ?? doctor?.Staff?.DepartmentId;
             if (fallbackDeptId.HasValue)
             {
@@ -1486,7 +1492,8 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
                 a.EntityType.ToUpper() == VisitEntityType &&
                 a.EntityId == visitIdText &&
                 a.Action != null &&
-                a.Action.ToUpper() == PatientCheckedInAction)
+                (a.Action.ToUpper() == PatientCheckedInAction ||
+                 a.Action.ToUpper() == CreateWalkInVisitService.WalkInVisitCreatedAction))
             .OrderByDescending(a => a.OccurredAt)
             .ThenByDescending(a => a.Id)
             .FirstOrDefaultAsync(ct);
