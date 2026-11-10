@@ -62,6 +62,7 @@ import { DoctorReviewDiagnosticsPage } from '@/features/doctor/pages/doctor-revi
 import { DiagnosticResultsTrackingPage } from '@/features/diagnostic/pages/diagnostic-results-tracking-page';
 import { PrepareMedicinesPage } from '@/features/pharmacy/pages/prepare-medicines-page';
 import { FefoBatchSelectionPage } from '@/features/pharmacy/pages/fefo-batch-selection-page';
+import { DispenseConfirmPage } from '@/features/pharmacy/pages/dispense-confirm-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
 import {
@@ -869,6 +870,26 @@ export function AppRouter() {
           <RequireAuth>
             <RequirePharmacy>
               <FefoBatchSelectionPage />
+            </RequirePharmacy>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy/dispense"
+        element={
+          <RequireAuth>
+            <RequirePharmacy>
+              <DispenseConfirmPage />
+            </RequirePharmacy>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy/prescriptions/:prescriptionCode/dispense"
+        element={
+          <RequireAuth>
+            <RequirePharmacy>
+              <DispenseConfirmPage />
             </RequirePharmacy>
           </RequireAuth>
         }
