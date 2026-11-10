@@ -60,6 +60,7 @@ import { WalkInVisitPage } from '@/features/reception/pages/walk-in-visit-page';
 import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
 import { DoctorReviewDiagnosticsPage } from '@/features/doctor/pages/doctor-review-diagnostics-page';
 import { DiagnosticResultsTrackingPage } from '@/features/diagnostic/pages/diagnostic-results-tracking-page';
+import { PrepareMedicinesPage } from '@/features/pharmacy/pages/prepare-medicines-page';
 import { NotFoundPage } from '@/shared/components/layout/not-found-page';
 
 import {
@@ -838,6 +839,26 @@ export function AppRouter() {
             <RequireRole allowedRoles={['DIAGNOSTIC_STAFF', 'DOCTOR']}>
               <DiagnosticResultsTrackingPage />
             </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy/prepare"
+        element={
+          <RequireAuth>
+            <RequirePharmacy>
+              <PrepareMedicinesPage />
+            </RequirePharmacy>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy/prescriptions/:prescriptionCode/prepare"
+        element={
+          <RequireAuth>
+            <RequirePharmacy>
+              <PrepareMedicinesPage />
+            </RequirePharmacy>
           </RequireAuth>
         }
       />
