@@ -39,6 +39,7 @@ import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
 import { DiagnosticDashboardPage } from '@/features/diagnostic/pages/diagnostic-dashboard-page';
 import { DiagnosticOrderReviewPage } from '@/features/diagnostic/pages/diagnostic-order-review-page';
+import { DiagnosticWorklistPage } from '@/features/diagnostic/pages/diagnostic-worklist-page';
 import { DiagnosticResultViewPage } from '@/features/diagnostic/pages/diagnostic-result-view-page';
 import { DoctorDashboardPage } from '@/features/doctor/pages/doctor-dashboard-page';
 import { DoctorAssignedQueuePage } from '@/features/doctor/pages/doctor-assigned-queue-page';
@@ -430,6 +431,36 @@ export function AppRouter() {
           <RequireAuth>
             <RequireDiagnostic>
               <DiagnosticDashboardPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/worklist"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticWorklistPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/worklist/:orderIdOrCode"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticWorklistPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/orders/worklist"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticWorklistPage />
             </RequireDiagnostic>
           </RequireAuth>
         }
