@@ -39,6 +39,7 @@ import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
 import { DiagnosticDashboardPage } from '@/features/diagnostic/pages/diagnostic-dashboard-page';
 import { DiagnosticOrderReviewPage } from '@/features/diagnostic/pages/diagnostic-order-review-page';
+import { DiagnosticPatientReceivePage } from '@/features/diagnostic/pages/diagnostic-patient-receive-page';
 import { DiagnosticQueueManagePage } from '@/features/diagnostic/pages/diagnostic-queue-manage-page';
 import { DiagnosticWorklistPage } from '@/features/diagnostic/pages/diagnostic-worklist-page';
 import { DiagnosticResultViewPage } from '@/features/diagnostic/pages/diagnostic-result-view-page';
@@ -592,6 +593,96 @@ export function AppRouter() {
           <RequireAuth>
             <RequireDiagnostic>
               <DiagnosticQueueManagePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/orders/receive"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticPatientReceivePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/orders/receive-patient"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticPatientReceivePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/orders/:orderIdOrCode/receive"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticPatientReceivePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/orders/:orderIdOrCode/receive-patient"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticPatientReceivePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/receive-patient"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticPatientReceivePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/patients/receive"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticPatientReceivePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/patients/:orderIdOrCode/receive"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticPatientReceivePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/workbench/receive"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticPatientReceivePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/workbench/orders/:orderIdOrCode/receive"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticPatientReceivePage />
             </RequireDiagnostic>
           </RequireAuth>
         }

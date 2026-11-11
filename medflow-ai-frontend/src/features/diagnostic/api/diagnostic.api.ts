@@ -10,6 +10,12 @@ import {
   resolveMockDiagnosticOrdersForReview,
 } from '../data/diagnostic-order-review-mock';
 import {
+  receiveMockDiagnosticPatient,
+  receiveMockDiagnosticPatientsBatch,
+  resolveMockDiagnosticOrdersForReceive,
+  resolveMockDiagnosticPatientReceiveDetail,
+} from '../data/diagnostic-patient-receive-mock';
+import {
   callNextMockDiagnosticPatient,
   cancelMockDiagnosticQueueEntry,
   markMockDiagnosticMissedTurn,
@@ -34,12 +40,18 @@ import type {
   DiagnosticDashboardSummary,
   DiagnosticOrderReviewDetailResponseDto,
   DiagnosticOrderReviewListResponseDto,
+  DiagnosticPatientReceiveDetailResponseDto,
+  DiagnosticPatientReceiveListResponseDto,
   DiagnosticQueueBoardResponseDto,
   DiagnosticQueueEntryDetailResponseDto,
   DiagnosticQueueTurnActionRequest,
   GetDiagnosticOrdersForReviewParams,
+  GetDiagnosticOrdersForReceiveParams,
   GetDiagnosticQueueParams,
   ManageDiagnosticQueueActionResponseDto,
+  ReceiveDiagnosticPatientRequest,
+  ReceiveDiagnosticPatientResponseDto,
+  ReceiveDiagnosticPatientsBatchRequest,
   UpdateDiagnosticQueueStatusRequest,
 } from '../types/diagnostic.types';
 import type {
@@ -555,4 +567,104 @@ export async function cancelDiagnosticQueueEntry(
   }
 
   return cancelMockDiagnosticQueueEntry(idOrCode, payload);
+}
+
+/**
+ * Lấy danh sách phiếu chỉ định cận lâm sàng chờ tiếp nhận bệnh nhân tại điểm dịch vụ (`GET /diagnostic/orders/receive` — UC40 / #127).
+ */
+export async function fetchDiagnosticOrdersForReceive(
+  params?: GetDiagnosticOrdersForReceiveParams,
+): Promise<DiagnosticPatientReceiveListResponseDto> {
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.get<DiagnosticPatientReceiveListResponseDto>(
+        '/diagnostic/orders/receive',
+        params ? { params } : undefined,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return resolveMockDiagnosticOrdersForReceive(params);
+}
+
+/**
+ * Lấy chi tiết phiếu chỉ định CLS kèm bối cảnh lâm sàng & checklist tiếp nhận bệnh nhân (`GET /diagnostic/orders/{idOrCode}/receive` — UC40 / #127).
+ */
+export async function fetchDiagnosticPatientReceiveDetail(
+  idOrCode: string,
+): Promise<DiagnosticPatientReceiveDetailResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.get<DiagnosticPatientReceiveDetailResponseDto>(
+        `/diagnostic/orders/${encoded}/receive`,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return resolveMockDiagnosticPatientReceiveDetail(idOrCode);
+}
+
+/**
+ * Tiếp nhận bệnh nhân tại điểm dịch vụ cận lâm sàng, chuyển trạng thái hàng đợi sang READY (`POST /diagnostic/orders/{idOrCode}/receive` — UC40 / #127).
+ */
+export async function receiveDiagnosticPatient(
+  idOrCode: string,
+  payload?: ReceiveDiagnosticPatientRequest,
+): Promise<ReceiveDiagnosticPatientResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ReceiveDiagnosticPatientResponseDto>(
+        `/diagnostic/orders/${encoded}/receive`,
+        payload ?? {
+          isPatientPresent: true,
+          isIdentityVerified: true,
+          isPreparationVerified: true,
+        },
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return receiveMockDiagnosticPatient(idOrCode, payload);
+}
+
+/**
+ * Tiếp nhận bệnh nhân hàng loạt cho các phiếu chỉ định cận lâm sàng đã xác nhận (`POST /diagnostic/orders/receive` — UC40 / #127).
+ */
+export async function receiveDiagnosticPatientsBatch(
+  payload: ReceiveDiagnosticPatientsBatchRequest,
+): Promise<ReceiveDiagnosticPatientResponseDto> {
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ReceiveDiagnosticPatientResponseDto>(
+        '/diagnostic/orders/receive',
+        payload,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return receiveMockDiagnosticPatientsBatch(payload);
 }
