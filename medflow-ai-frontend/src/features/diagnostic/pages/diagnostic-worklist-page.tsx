@@ -261,6 +261,8 @@ export function DiagnosticWorklistPage() {
     setActiveNav(navId);
     if (navId === 'dashboard') {
       navigate('/diagnostic');
+    } else if (navId === 'queue') {
+      navigate('/diagnostic/queue');
     } else if (navId === 'results') {
       navigate('/diagnostic/results');
     }

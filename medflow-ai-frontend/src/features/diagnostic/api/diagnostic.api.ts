@@ -10,11 +10,23 @@ import {
   resolveMockDiagnosticOrdersForReview,
 } from '../data/diagnostic-order-review-mock';
 import {
+  callNextMockDiagnosticPatient,
+  cancelMockDiagnosticQueueEntry,
+  markMockDiagnosticMissedTurn,
+  resolveMockDiagnosticQueueBoard,
+  resolveMockDiagnosticQueueEntryDetail,
+  restoreMockDiagnosticSkippedTurn,
+  updateMockDiagnosticQueueStatus,
+} from '../data/diagnostic-queue-mock';
+import {
   resolveMockDiagnosticWorklist,
   resolveMockDiagnosticWorklistOrderDetail,
 } from '../data/diagnostic-worklist-mock';
 import { diagnosticOrderIdentifierSchema } from '../schemas/diagnostic-worklist-filter.schema';
 import type {
+  CallNextDiagnosticPatientRequest,
+  CallNextDiagnosticPatientResponseDto,
+  CancelDiagnosticQueueEntryRequest,
   ConfirmDiagnosticOrderRequest,
   ConfirmDiagnosticOrderResponseDto,
   ConfirmDiagnosticOrdersBatchRequest,
@@ -22,7 +34,13 @@ import type {
   DiagnosticDashboardSummary,
   DiagnosticOrderReviewDetailResponseDto,
   DiagnosticOrderReviewListResponseDto,
+  DiagnosticQueueBoardResponseDto,
+  DiagnosticQueueEntryDetailResponseDto,
+  DiagnosticQueueTurnActionRequest,
   GetDiagnosticOrdersForReviewParams,
+  GetDiagnosticQueueParams,
+  ManageDiagnosticQueueActionResponseDto,
+  UpdateDiagnosticQueueStatusRequest,
 } from '../types/diagnostic.types';
 import type {
   DiagnosticWorklistItemDto,
@@ -231,4 +249,310 @@ export async function confirmDiagnosticOrdersBatch(
   }
 
   return confirmMockDiagnosticOrdersBatch(payload);
+}
+
+/**
+ * Lấy bảng hàng đợi cận lâm sàng theo điểm phục vụ & phòng kỹ thuật (`GET /diagnostic/queue`) cho UC41 (#129 / #130).
+ */
+export async function fetchDiagnosticQueueBoard(
+  params?: GetDiagnosticQueueParams,
+): Promise<DiagnosticQueueBoardResponseDto> {
+  if (hasAccessToken()) {
+    try {
+      const hasParams = Boolean(params && Object.keys(params).length > 0);
+      const { data } = await apiClient.get<DiagnosticQueueBoardResponseDto>(
+        '/diagnostic/queue',
+        hasParams ? { params } : undefined,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackWorklistToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return resolveMockDiagnosticQueueBoard(params);
+}
+
+/**
+ * Lấy chi tiết một lượt xếp hàng cận lâm sàng & lịch sử chuyển trạng thái (`GET /diagnostic/queue/{idOrCode}`).
+ */
+export async function fetchDiagnosticQueueEntryDetail(
+  idOrCode: string,
+): Promise<DiagnosticQueueEntryDetailResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.get<DiagnosticQueueEntryDetailResponseDto>(
+        `/diagnostic/queue/${encoded}`,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackWorklistToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return resolveMockDiagnosticQueueEntryDetail(idOrCode);
+}
+
+/**
+ * Gọi bệnh nhân đủ điều kiện tiếp theo tại điểm phục vụ cận lâm sàng (`POST /diagnostic/queue/service-points/{servicePointId}/call-next`).
+ */
+export async function callNextDiagnosticPatient(
+  servicePointId: string,
+  payload?: CallNextDiagnosticPatientRequest,
+): Promise<CallNextDiagnosticPatientResponseDto> {
+  const encoded = encodeURIComponent(servicePointId.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<CallNextDiagnosticPatientResponseDto>(
+        `/diagnostic/queue/service-points/${encoded}/call-next`,
+        payload ?? {},
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackWorklistToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return callNextMockDiagnosticPatient(servicePointId, payload);
+}
+
+/**
+ * Cập nhật trạng thái lượt xếp hàng cận lâm sàng (`POST /diagnostic/queue/{idOrCode}/status`).
+ */
+export async function updateDiagnosticQueueStatus(
+  idOrCode: string,
+  payload: UpdateDiagnosticQueueStatusRequest,
+): Promise<ManageDiagnosticQueueActionResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+        `/diagnostic/queue/${encoded}/status`,
+        payload,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackWorklistToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return updateMockDiagnosticQueueStatus(idOrCode, payload);
+}
+
+/**
+ * Đánh dấu bệnh nhân sẵn sàng trong hàng đợi cận lâm sàng (`POST /diagnostic/queue/{idOrCode}/ready`).
+ */
+export async function markDiagnosticQueueReady(
+  idOrCode: string,
+  payload?: DiagnosticQueueTurnActionRequest,
+): Promise<ManageDiagnosticQueueActionResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+        `/diagnostic/queue/${encoded}/ready`,
+        payload ?? {},
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackWorklistToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return updateMockDiagnosticQueueStatus(idOrCode, {
+    targetStatus: 'READY',
+    presenceStatus: payload?.presenceStatus ?? 'PRESENT',
+    reason: payload?.reason,
+    notes: payload?.notes,
+    expectedStateVersion: payload?.expectedStateVersion,
+  });
+}
+
+/**
+ * Gọi trực tiếp một lượt xếp hàng cận lâm sàng cụ thể (`POST /diagnostic/queue/{idOrCode}/call`).
+ */
+export async function callDiagnosticQueueEntry(
+  idOrCode: string,
+  payload?: DiagnosticQueueTurnActionRequest,
+): Promise<ManageDiagnosticQueueActionResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+        `/diagnostic/queue/${encoded}/call`,
+        payload ?? {},
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackWorklistToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return updateMockDiagnosticQueueStatus(idOrCode, {
+    targetStatus: 'CALLED',
+    presenceStatus: payload?.presenceStatus ?? 'PRESENT',
+    reason: payload?.reason,
+    notes: payload?.notes,
+    expectedStateVersion: payload?.expectedStateVersion,
+  });
+}
+
+/**
+ * Bắt đầu thực hiện kỹ thuật cận lâm sàng (`POST /diagnostic/queue/{idOrCode}/start`).
+ */
+export async function startDiagnosticQueueExecution(
+  idOrCode: string,
+  payload?: DiagnosticQueueTurnActionRequest,
+): Promise<ManageDiagnosticQueueActionResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+        `/diagnostic/queue/${encoded}/start`,
+        payload ?? {},
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackWorklistToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return updateMockDiagnosticQueueStatus(idOrCode, {
+    targetStatus: 'IN_PROGRESS',
+    presenceStatus: 'PRESENT',
+    reason: payload?.reason,
+    notes: payload?.notes,
+    expectedStateVersion: payload?.expectedStateVersion,
+  });
+}
+
+/**
+ * Hoàn tất thực hiện lượt xếp hàng cận lâm sàng (`POST /diagnostic/queue/{idOrCode}/complete`).
+ */
+export async function completeDiagnosticQueueExecution(
+  idOrCode: string,
+  payload?: DiagnosticQueueTurnActionRequest,
+): Promise<ManageDiagnosticQueueActionResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+        `/diagnostic/queue/${encoded}/complete`,
+        payload ?? {},
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackWorklistToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return updateMockDiagnosticQueueStatus(idOrCode, {
+    targetStatus: 'COMPLETED',
+    presenceStatus: payload?.presenceStatus ?? 'PRESENT',
+    reason: payload?.reason,
+    notes: payload?.notes,
+    expectedStateVersion: payload?.expectedStateVersion,
+  });
+}
+
+/**
+ * Đánh dấu bệnh nhân vắng mặt / qua lượt (`POST /diagnostic/queue/{idOrCode}/missed-turn`).
+ */
+export async function markDiagnosticQueueMissedTurn(
+  idOrCode: string,
+  payload: DiagnosticQueueTurnActionRequest,
+): Promise<ManageDiagnosticQueueActionResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+        `/diagnostic/queue/${encoded}/missed-turn`,
+        payload,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackWorklistToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return markMockDiagnosticMissedTurn(idOrCode, payload);
+}
+
+/**
+ * Khôi phục lượt chờ cho bệnh nhân qua lượt đã quay lại (`POST /diagnostic/queue/{idOrCode}/restore-turn`).
+ */
+export async function restoreDiagnosticQueueTurn(
+  idOrCode: string,
+  payload?: DiagnosticQueueTurnActionRequest,
+): Promise<ManageDiagnosticQueueActionResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+        `/diagnostic/queue/${encoded}/restore-turn`,
+        payload ?? {},
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackWorklistToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return restoreMockDiagnosticSkippedTurn(idOrCode, payload);
+}
+
+/**
+ * Hủy lượt xếp hàng cận lâm sàng (`POST /diagnostic/queue/{idOrCode}/cancel`).
+ */
+export async function cancelDiagnosticQueueEntry(
+  idOrCode: string,
+  payload: CancelDiagnosticQueueEntryRequest,
+): Promise<ManageDiagnosticQueueActionResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+        `/diagnostic/queue/${encoded}/cancel`,
+        payload,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackWorklistToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return cancelMockDiagnosticQueueEntry(idOrCode, payload);
 }
