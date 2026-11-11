@@ -219,6 +219,13 @@ export function DiagnosticDashboardPage() {
                       <span className="font-semibold">{selectedActionLabel}</span>
                     </div>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => navigate('/diagnostic/orders')}
+                    className="w-full rounded-xl border border-primary bg-primary px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-dark"
+                  >
+                    Mở bàn xác nhận chỉ định (UC39)
+                  </button>
                 </CardContent>
               </Card>
 

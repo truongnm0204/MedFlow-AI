@@ -23,6 +23,7 @@ export interface UserDto {
   roles: string[];
   patientCode: string | null;
   staffCode?: string | null;
+  permissions?: string[];
 }
 
 export interface LoginResponse {

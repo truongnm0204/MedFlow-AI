@@ -31,6 +31,7 @@ export function DiagnosticResultViewPage() {
         departmentName={detail.roomName}
         onItemSelect={(item) => {
           if (item === 'dashboard') navigate('/diagnostic');
+          if (item === 'orders') navigate('/diagnostic/orders');
         }}
       />
 
