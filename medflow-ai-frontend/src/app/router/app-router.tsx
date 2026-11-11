@@ -39,6 +39,7 @@ import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
 import { DiagnosticDashboardPage } from '@/features/diagnostic/pages/diagnostic-dashboard-page';
 import { DiagnosticOrderReviewPage } from '@/features/diagnostic/pages/diagnostic-order-review-page';
+import { DiagnosticExecutionPage } from '@/features/diagnostic/pages/diagnostic-execution-page';
 import { DiagnosticPatientReceivePage } from '@/features/diagnostic/pages/diagnostic-patient-receive-page';
 import { DiagnosticQueueManagePage } from '@/features/diagnostic/pages/diagnostic-queue-manage-page';
 import { DiagnosticWorklistPage } from '@/features/diagnostic/pages/diagnostic-worklist-page';
@@ -463,6 +464,56 @@ export function AppRouter() {
           <RequireAuth>
             <RequireDiagnostic>
               <DiagnosticWorklistPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/execution"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticExecutionPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/execution/:orderIdOrCode"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticExecutionPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/orders/execution"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticExecutionPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/orders/:orderIdOrCode/execution"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticExecutionPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/workbench/execution"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticExecutionPage />
             </RequireDiagnostic>
           </RequireAuth>
         }
