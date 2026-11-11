@@ -1271,7 +1271,7 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
                 ResultText: latestVersion?.ResultText,
                 Conclusion: latestVersion?.Conclusion,
                 ReportFileUrl: latestVersion?.ReportFileUrl,
-                PerformedByStaffName: enteredStaff?.FullName ?? confirmedStaff?.FullName,
+                PerformedByStaffName: enteredStaff?.FullName ?? auditMeta?.PerformedByStaffName ?? confirmedStaff?.FullName,
                 VerifiedByStaffName: verifiedStaff?.FullName ?? finalizedStaff?.FullName,
                 IsAdditionalOrder: isAdditionalOrder,
                 OrderSequenceNo: orderSequenceNo,
@@ -1490,18 +1490,25 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
                     a.EntityType == "DIAGNOSTIC_ORDER" &&
                     a.EntityId != null &&
                     orderIdStrings.Contains(a.EntityId) &&
-                    (a.Action == "ADDITIONAL_DIAGNOSTIC_ORDER_CREATED" || a.Action == "DIAGNOSTIC_ORDER_CREATED"))
+                    (a.Action == "ADDITIONAL_DIAGNOSTIC_ORDER_CREATED" || a.Action == "DIAGNOSTIC_ORDER_CREATED" ||
+                     a.Action == "DIAGNOSTIC_SERVICE_EXECUTION_STARTED" || a.Action == "DIAGNOSTIC_SERVICE_EXECUTION_COMPLETED" ||
+                     a.Action == "DIAGNOSTIC_SERVICE_STATUS_UPDATED" || a.Action == "DIAGNOSTIC_SERVICE_EXECUTION_CANCELLED"))
                 .OrderByDescending(a => a.OccurredAt)
                 .ThenByDescending(a => a.Id)
                 .ToListAsync(ct);
 
+            var performedByStaffNameByOrderId = new Dictionary<long, string>();
+
             foreach (var log in logs)
             {
-                if (!long.TryParse(log.EntityId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var orderId) ||
-                    result.ContainsKey(orderId))
+                if (!long.TryParse(log.EntityId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var orderId))
                 {
                     continue;
                 }
+
+                var performedByStaffName = performedByStaffNameByOrderId.TryGetValue(orderId, out var prevName)
+                    ? prevName
+                    : null;
 
                 var isAdditional = string.Equals(
                     log.Action,
@@ -1511,7 +1518,6 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
                 long? followUpId = null;
                 string? followUpCode = null;
                 string? additionalReason = null;
-
                 if (!string.IsNullOrWhiteSpace(log.ChangeData))
                 {
                     try
@@ -1561,6 +1567,17 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
                                     additionalReason = rawReason.Trim();
                                 }
                             }
+
+                            if (performedByStaffName is null &&
+                                root.TryGetProperty("performedByStaffName", out var perfNameProp) &&
+                                perfNameProp.ValueKind == JsonValueKind.String)
+                            {
+                                var rawPerfName = perfNameProp.GetString();
+                                if (!string.IsNullOrWhiteSpace(rawPerfName))
+                                {
+                                    performedByStaffName = rawPerfName.Trim();
+                                }
+                            }
                         }
                     }
                     catch (JsonException)
@@ -1569,12 +1586,31 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
                     }
                 }
 
+                if (performedByStaffName is not null && !performedByStaffNameByOrderId.ContainsKey(orderId))
+                {
+                    performedByStaffNameByOrderId[orderId] = performedByStaffName;
+                }
+
+                if (result.ContainsKey(orderId))
+                {
+                    continue;
+                }
+
                 result[orderId] = new DiagnosticOrderAuditMetadata(
                     IsAdditionalOrder: isAdditional,
                     OrderSequenceNo: seqNo,
                     FollowUpToOrderId: followUpId,
                     FollowUpToOrderCode: followUpCode,
-                    AdditionalOrderReason: additionalReason);
+                    AdditionalOrderReason: additionalReason,
+                    PerformedByStaffName: performedByStaffName);
+            }
+
+            foreach (var kvp in performedByStaffNameByOrderId)
+            {
+                if (result.TryGetValue(kvp.Key, out var meta) && meta.PerformedByStaffName is null)
+                {
+                    result[kvp.Key] = meta with { PerformedByStaffName = kvp.Value };
+                }
             }
         }
         catch (NotSupportedException)
@@ -2487,5 +2523,6 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
         int? OrderSequenceNo,
         long? FollowUpToOrderId,
         string? FollowUpToOrderCode,
-        string? AdditionalOrderReason);
+        string? AdditionalOrderReason,
+        string? PerformedByStaffName);
 }
