@@ -861,7 +861,9 @@ public sealed class QueueStatusService : IQueueStatusService
             : queueEntry.QueueType.ToUpperInvariant();
         queueEntry.ArrivalClass ??= "ON_TIME_OR_GRACE";
         queueEntry.ManualPriority ??= ClinicalQueueRules.PriorityNormal;
-        var isReturnConsultation = ClinicalQueueRules.ResolveQueueType(queueEntry.QueueType, visit?.Status) ==
+        var isClinicalQueue = ClinicalQueueRules.IsClinicalExaminationQueueType(queueEntry.QueueType);
+        var isReturnConsultation = isClinicalQueue &&
+                                   ClinicalQueueRules.ResolveQueueType(queueEntry.QueueType, visit?.Status) ==
                                    ClinicalQueueRules.QueueTypeReturnConsultation;
         switch (targetStatus)
         {
@@ -880,7 +882,7 @@ public sealed class QueueStatusService : IQueueStatusService
                     queueEntry.BlockedReason = null;
                 }
 
-                if (visit is not null)
+                if (visit is not null && isClinicalQueue)
                 {
                     visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "WAITING";
                 }
@@ -894,7 +896,7 @@ public sealed class QueueStatusService : IQueueStatusService
                 queueEntry.CalledAt = null;
                 queueEntry.StartedAt = null;
                 queueEntry.BlockedReason = null;
-                if (visit is not null)
+                if (visit is not null && isClinicalQueue)
                 {
                     visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "WAITING";
                 }
@@ -913,7 +915,7 @@ public sealed class QueueStatusService : IQueueStatusService
                      queueEntry.PresenceStatus.Equals("LEFT", StringComparison.OrdinalIgnoreCase)
                         ? "PRESENT"
                         : queueEntry.PresenceStatus.ToUpperInvariant());
-                if (visit is not null)
+                if (visit is not null && isClinicalQueue)
                 {
                     visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "CALLED";
                 }
@@ -927,7 +929,7 @@ public sealed class QueueStatusService : IQueueStatusService
                 queueEntry.StartedAt = nowLocal;
                 queueEntry.PresenceStatus = "PRESENT";
                 queueEntry.BlockedReason = null;
-                if (visit is not null)
+                if (visit is not null && isClinicalQueue)
                 {
                     visit.Status = "IN_PROGRESS";
                 }
@@ -942,7 +944,7 @@ public sealed class QueueStatusService : IQueueStatusService
                 queueEntry.CompletedAt = nowLocal;
                 queueEntry.PresenceStatus = requestedPresence ?? "PRESENT";
                 queueEntry.BlockedReason = null;
-                if (visit is not null)
+                if (visit is not null && isClinicalQueue)
                 {
                     visit.Status = "COMPLETED";
                     visit.CompletedAt = nowLocal;
@@ -958,7 +960,7 @@ public sealed class QueueStatusService : IQueueStatusService
                     (string.Equals(queueEntry.PresenceStatus, "PRESENT", StringComparison.OrdinalIgnoreCase)
                         ? "LEFT"
                         : (string.IsNullOrWhiteSpace(queueEntry.PresenceStatus) ? "NOT_ARRIVED" : queueEntry.PresenceStatus.ToUpperInvariant()));
-                if (visit is not null)
+                if (visit is not null && isClinicalQueue)
                 {
                     visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "WAITING";
                 }
@@ -969,7 +971,7 @@ public sealed class QueueStatusService : IQueueStatusService
                 queueEntry.BlockedReason = effectiveBlockedReason;
                 queueEntry.CompletedAt = nowLocal;
                 queueEntry.PresenceStatus = requestedPresence ?? "LEFT";
-                if (visit is not null)
+                if (visit is not null && isClinicalQueue)
                 {
                     visit.Status = "CANCELLED";
                     visit.CompletedAt = nowLocal;
