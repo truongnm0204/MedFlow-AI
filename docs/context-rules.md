@@ -33,7 +33,7 @@ Muc tieu: dua dung thong tin vao context cho task hien tai, khong doc thua. Sacr
 | docs/system-architecture.md | Skip | Should | Must |
 | docs/backend-auth-architecture.md | Skip | Only if auth | Must |
 | docs/decisions/* | Skip | Should | Must |
-| database/medflow_schema_v1_2.sql | Skip | Only if DB | Must |
+| database/medflow_schema_v4_1.sql | Skip | Only if DB | Must |
 
 ### Implementation
 
@@ -56,7 +56,7 @@ Muc tieu: dua dung thong tin vao context cho task hien tai, khong doc thua. Sacr
 Cham vung nao → doc them:
 
 - **Auth/JWT/OTP/refresh** → `docs/backend-auth-architecture.md` + `.claude/rules/authorization-two-layers.md` + `.claude/rules/api-contract-and-errors.md`
-- **DB/migration/entity** → `database/medflow_schema_v1_2.sql` + `.claude/rules/ef-migration-and-schema.md` + `docs/decisions/`
+- **DB/migration/entity** → `database/medflow_schema_v4_1.sql` + `.claude/rules/ef-migration-and-schema.md` + `docs/decisions/`
 - **Frontend UI** → `docs/frontend-code-standards.md` + feature folder contract
 - **External provider** (SMTP, payment, API ngoai) → hard gate, doc config + audit pattern
 - **MCP tool tao file** → `.claude/rules/mcp-artifact-hygiene.md`
