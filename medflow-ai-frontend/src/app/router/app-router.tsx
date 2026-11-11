@@ -42,8 +42,8 @@ import { DiagnosticOrderReviewPage } from '@/features/diagnostic/pages/diagnosti
 import { DiagnosticExecutionPage } from '@/features/diagnostic/pages/diagnostic-execution-page';
 import { DiagnosticPatientReceivePage } from '@/features/diagnostic/pages/diagnostic-patient-receive-page';
 import { DiagnosticQueueManagePage } from '@/features/diagnostic/pages/diagnostic-queue-manage-page';
+import { DiagnosticResultEntryPage } from '@/features/diagnostic/pages/diagnostic-result-entry-page';
 import { DiagnosticWorklistPage } from '@/features/diagnostic/pages/diagnostic-worklist-page';
-import { DiagnosticResultViewPage } from '@/features/diagnostic/pages/diagnostic-result-view-page';
 import { DoctorDashboardPage } from '@/features/doctor/pages/doctor-dashboard-page';
 import { DoctorAssignedQueuePage } from '@/features/doctor/pages/doctor-assigned-queue-page';
 import { DoctorConsultationWorkspacePage } from '@/features/doctor/pages/doctor-consultation-workspace-page';
@@ -743,7 +743,7 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <RequireDiagnostic>
-              <DiagnosticResultViewPage />
+              <DiagnosticResultEntryPage />
             </RequireDiagnostic>
           </RequireAuth>
         }
@@ -753,7 +753,7 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <RequireDiagnostic>
-              <DiagnosticResultViewPage />
+              <DiagnosticResultEntryPage />
             </RequireDiagnostic>
           </RequireAuth>
         }

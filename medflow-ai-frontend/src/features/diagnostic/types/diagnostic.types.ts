@@ -89,3 +89,4 @@ export * from './diagnostic-order-review.types';
 export * from './diagnostic-queue.types';
 export * from './diagnostic-patient-receive.types';
 export * from './diagnostic-execution.types';
+export * from './diagnostic-result-entry.types';
