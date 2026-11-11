@@ -84,3 +84,5 @@ export interface DiagnosticDashboardSummary {
   staffProfile?: DiagnosticStaffProfile;
   generatedAtUtc?: string;
 }
+
+export * from './diagnostic-order-review.types';

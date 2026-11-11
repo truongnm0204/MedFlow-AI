@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
@@ -28,6 +29,7 @@ const FILTERS: { value: TrackingStatusFilter; label: string }[] = [
 
 export function DiagnosticResultsTrackingPage() {
   const user = useAuthStore((s) => s.user);
+  const navigate = useNavigate();
   const logout = useLogout();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<TrackingStatusFilter>('ALL');
@@ -55,7 +57,11 @@ export function DiagnosticResultsTrackingPage() {
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
       <DiagnosticSidebar
         activeItem={activeNav}
-        onItemSelect={setActiveNav}
+        onItemSelect={(item) => {
+          setActiveNav(item);
+          if (item === 'dashboard') navigate('/diagnostic');
+          if (item === 'orders') navigate('/diagnostic/orders');
+        }}
         staffName={displayName}
       />
 

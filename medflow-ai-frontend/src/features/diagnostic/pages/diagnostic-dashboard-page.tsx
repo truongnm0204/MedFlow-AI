@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-
+import { useNavigate } from 'react-router-dom';
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
@@ -39,6 +39,7 @@ const QUICK_ACTION_TO_NAV: Record<string, string> = {
 export function DiagnosticDashboardPage() {
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
+  const navigate = useNavigate();
   const { data, isError, error, refetch } = useDiagnosticDashboard(true);
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
   const [activeNav, setActiveNav] = useState('dashboard');
@@ -211,6 +212,13 @@ export function DiagnosticDashboardPage() {
                       <span className="font-semibold">{selectedActionLabel}</span>
                     </div>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => navigate('/diagnostic/orders')}
+                    className="w-full rounded-xl border border-primary bg-primary px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-dark"
+                  >
+                    Mở bàn xác nhận chỉ định (UC39)
+                  </button>
                 </CardContent>
               </Card>
 
