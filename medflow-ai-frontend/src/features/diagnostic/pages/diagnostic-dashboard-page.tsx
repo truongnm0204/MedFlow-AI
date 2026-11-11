@@ -60,9 +60,26 @@ export function DiagnosticDashboardPage() {
     data?.departmentName || data?.staffProfile?.departmentName || 'Xét nghiệm & CĐHA • Tầng 2';
 
   const handleQuickAction = (actionId: string) => {
-    setActiveNav(QUICK_ACTION_TO_NAV[actionId] ?? 'dashboard');
+    const navId = QUICK_ACTION_TO_NAV[actionId] ?? 'dashboard';
+    setActiveNav(navId);
     const matched = quickActions.find((item) => item.id === actionId);
     setSelectedActionLabel(matched?.label ?? null);
+    if (navId !== 'dashboard') {
+      handleSidebarNav(navId);
+    }
+  };
+
+  const handleSidebarNav = (navId: string) => {
+    setActiveNav(navId);
+    if (navId === 'orders') {
+      navigate('/diagnostic/orders');
+    } else if (navId === 'queue') {
+      navigate('/diagnostic/queue');
+    } else if (navId === 'execution') {
+      navigate('/diagnostic/execution');
+    } else if (navId === 'results') {
+      navigate('/diagnostic/results');
+    }
   };
 
   const filteredQueue = useMemo(() => {
@@ -79,7 +96,7 @@ export function DiagnosticDashboardPage() {
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
       <DiagnosticSidebar
         activeItem={activeNav}
-        onItemSelect={setActiveNav}
+        onItemSelect={handleSidebarNav}
         staffName={staffDisplayName}
         departmentName={departmentName}
       />

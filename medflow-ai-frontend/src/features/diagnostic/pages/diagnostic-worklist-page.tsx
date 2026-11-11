@@ -248,8 +248,7 @@ export function DiagnosticWorklistPage() {
       return;
     }
     if (actionId === 'update-execution') {
-      handleFilterChange({ status: 'IN_PROGRESS', page: 1 });
-      setActionBanner('Đang lọc danh sách ca cận lâm sàng đang thực hiện kỹ thuật (UC42).');
+      navigate('/diagnostic/execution');
       return;
     }
     if (actionId === 'enter-result') {
@@ -263,6 +262,8 @@ export function DiagnosticWorklistPage() {
       navigate('/diagnostic');
     } else if (navId === 'queue') {
       navigate('/diagnostic/queue');
+    } else if (navId === 'execution') {
+      navigate('/diagnostic/execution');
     } else if (navId === 'results') {
       navigate('/diagnostic/results');
     }

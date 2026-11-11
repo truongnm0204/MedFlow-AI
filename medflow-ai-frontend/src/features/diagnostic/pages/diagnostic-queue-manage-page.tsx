@@ -366,6 +366,8 @@ export function DiagnosticQueueManagePage() {
       navigate('/diagnostic/orders');
     } else if (navItem === 'queue') {
       navigate('/diagnostic/queue');
+    } else if (navItem === 'execution') {
+      navigate('/diagnostic/execution');
     } else if (navItem === 'results') {
       navigate('/diagnostic/results');
     }

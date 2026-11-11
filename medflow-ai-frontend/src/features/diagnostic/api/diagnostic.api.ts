@@ -10,6 +10,14 @@ import {
   resolveMockDiagnosticOrdersForReview,
 } from '../data/diagnostic-order-review-mock';
 import {
+  completeMockDiagnosticServiceExecution,
+  resolveMockDiagnosticExecutionDetail,
+  resolveMockDiagnosticExecutions,
+  startMockDiagnosticServiceExecution,
+  updateMockDiagnosticServiceStatus,
+  updateMockDiagnosticServiceStatusBatch,
+} from '../data/diagnostic-execution-mock';
+import {
   receiveMockDiagnosticPatient,
   receiveMockDiagnosticPatientsBatch,
   resolveMockDiagnosticOrdersForReceive,
@@ -45,14 +53,20 @@ import type {
   DiagnosticQueueBoardResponseDto,
   DiagnosticQueueEntryDetailResponseDto,
   DiagnosticQueueTurnActionRequest,
-  GetDiagnosticOrdersForReviewParams,
+  DiagnosticServiceExecutionDetailResponseDto,
+  DiagnosticServiceExecutionListResponseDto,
+  GetDiagnosticExecutionsParams,
   GetDiagnosticOrdersForReceiveParams,
+  GetDiagnosticOrdersForReviewParams,
   GetDiagnosticQueueParams,
   ManageDiagnosticQueueActionResponseDto,
   ReceiveDiagnosticPatientRequest,
   ReceiveDiagnosticPatientResponseDto,
   ReceiveDiagnosticPatientsBatchRequest,
   UpdateDiagnosticQueueStatusRequest,
+  UpdateDiagnosticServiceStatusBatchRequest,
+  UpdateDiagnosticServiceStatusRequest,
+  UpdateDiagnosticServiceStatusResponseDto,
 } from '../types/diagnostic.types';
 import type {
   DiagnosticWorklistItemDto,
@@ -667,4 +681,152 @@ export async function receiveDiagnosticPatientsBatch(
   }
 
   return receiveMockDiagnosticPatientsBatch(payload);
+}
+
+/**
+ * Lấy danh sách phiếu chỉ định cận lâm sàng theo trạng thái thực hiện kỹ thuật (`GET /diagnostic/orders/execution` — UC42 / #131).
+ */
+export async function fetchDiagnosticExecutions(
+  params?: GetDiagnosticExecutionsParams,
+): Promise<DiagnosticServiceExecutionListResponseDto> {
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.get<DiagnosticServiceExecutionListResponseDto>(
+        '/diagnostic/orders/execution',
+        params ? { params } : undefined,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return resolveMockDiagnosticExecutions(params);
+}
+
+/**
+ * Lấy chi tiết phiếu chỉ định CLS kèm bối cảnh lâm sàng & lịch sử chuyển trạng thái thực hiện (`GET /diagnostic/orders/{idOrCode}/execution` — UC42 / #131).
+ */
+export async function fetchDiagnosticExecutionDetail(
+  idOrCode: string,
+): Promise<DiagnosticServiceExecutionDetailResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.get<DiagnosticServiceExecutionDetailResponseDto>(
+        `/diagnostic/orders/${encoded}/execution`,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return resolveMockDiagnosticExecutionDetail(idOrCode);
+}
+
+/**
+ * Cập nhật trạng thái thực hiện kỹ thuật đơn lẻ (`POST /diagnostic/orders/{idOrCode}/execution-status` — UC42 / #131).
+ */
+export async function updateDiagnosticServiceStatus(
+  idOrCode: string,
+  payload: UpdateDiagnosticServiceStatusRequest,
+): Promise<UpdateDiagnosticServiceStatusResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<UpdateDiagnosticServiceStatusResponseDto>(
+        `/diagnostic/orders/${encoded}/execution-status`,
+        payload,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return updateMockDiagnosticServiceStatus(idOrCode, payload);
+}
+
+/**
+ * Bắt đầu thực hiện kỹ thuật (`POST /diagnostic/orders/{idOrCode}/start` — UC42 / #131).
+ */
+export async function startDiagnosticServiceExecution(
+  idOrCode: string,
+  payload?: UpdateDiagnosticServiceStatusRequest,
+): Promise<UpdateDiagnosticServiceStatusResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<UpdateDiagnosticServiceStatusResponseDto>(
+        `/diagnostic/orders/${encoded}/start`,
+        payload ?? { targetStatus: 'IN_PROGRESS' },
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return startMockDiagnosticServiceExecution(idOrCode, payload);
+}
+
+/**
+ * Hoàn tất thực hiện kỹ thuật (`POST /diagnostic/orders/{idOrCode}/complete` — UC42 / #131).
+ */
+export async function completeDiagnosticServiceExecution(
+  idOrCode: string,
+  payload?: UpdateDiagnosticServiceStatusRequest,
+): Promise<UpdateDiagnosticServiceStatusResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<UpdateDiagnosticServiceStatusResponseDto>(
+        `/diagnostic/orders/${encoded}/complete`,
+        payload ?? { targetStatus: 'COMPLETED' },
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return completeMockDiagnosticServiceExecution(idOrCode, payload);
+}
+
+/**
+ * Cập nhật trạng thái thực hiện kỹ thuật hàng loạt (`POST /diagnostic/orders/execution-status` — UC42 / #131).
+ */
+export async function updateDiagnosticServiceStatusBatch(
+  payload: UpdateDiagnosticServiceStatusBatchRequest,
+): Promise<UpdateDiagnosticServiceStatusResponseDto> {
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<UpdateDiagnosticServiceStatusResponseDto>(
+        '/diagnostic/orders/execution-status',
+        payload,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return updateMockDiagnosticServiceStatusBatch(payload);
 }
