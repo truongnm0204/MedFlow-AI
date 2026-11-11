@@ -39,7 +39,7 @@ public sealed class DiagnosticOrdersController : ControllerBase
     /// GET /api/v1/diagnostic/orders/{idOrCode}/review — Xem chi tiết phiếu chỉ định cận lâm sàng, thông tin lâm sàng &amp; điều kiện thực hiện (UC39 / #126).
     /// </summary>
     [HttpGet("/api/v1/diagnostic/orders/{idOrCode}/review")]
-    [HttpGet("/api/v1/diagnostic-orders/{idOrCode:regex(^(?!review$|receive$|receive-patient$).+)}")]
+    [HttpGet("/api/v1/diagnostic-orders/{idOrCode:regex(^(?!review$|receive$|receive-patient$|result$|results$|enter-result$).+)}")]
     [HttpGet("/api/v1/diagnostic-orders/{idOrCode}/review")]
     [HttpGet("/api/v1/diagnostic/workbench/orders/{idOrCode}")]
     [ProducesResponseType<DiagnosticOrderReviewDetailResponseDto>(StatusCodes.Status200OK)]
