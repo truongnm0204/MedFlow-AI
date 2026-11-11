@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-
+import { useNavigate } from 'react-router-dom';
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
@@ -37,6 +37,7 @@ const QUICK_ACTION_TO_NAV: Record<string, string> = {
 };
 
 export function DiagnosticDashboardPage() {
+  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
   const { data, isError, error, refetch } = useDiagnosticDashboard(true);
@@ -191,6 +192,13 @@ export function DiagnosticDashboardPage() {
                     <option value="IMAGING">Chẩn đoán hình ảnh</option>
                     <option value="FUNCTIONAL">Thăm dò chức năng</option>
                   </select>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/diagnostic/worklist')}
+                    className="h-8 rounded-lg bg-primary px-3 text-xs font-semibold text-white transition-colors hover:bg-primary-dark"
+                  >
+                    Mở danh sách công việc CLS
+                  </button>
                 </div>
               </CardHeader>
               <CardContent className="p-0 px-6 pb-4">
