@@ -18,6 +18,11 @@ import {
   updateMockDiagnosticServiceStatusBatch,
 } from '../data/diagnostic-execution-mock';
 import {
+  enterMockDiagnosticResult,
+  resolveMockDiagnosticOrdersForResultEntry,
+  resolveMockDiagnosticResultEntryDetail,
+} from '../data/diagnostic-result-entry-mock';
+import {
   receiveMockDiagnosticPatient,
   receiveMockDiagnosticPatientsBatch,
   resolveMockDiagnosticOrdersForReceive,
@@ -53,10 +58,15 @@ import type {
   DiagnosticQueueBoardResponseDto,
   DiagnosticQueueEntryDetailResponseDto,
   DiagnosticQueueTurnActionRequest,
+  DiagnosticResultEntryDetailResponseDto,
+  DiagnosticResultEntryListResponseDto,
   DiagnosticServiceExecutionDetailResponseDto,
   DiagnosticServiceExecutionListResponseDto,
+  EnterDiagnosticResultRequest,
+  EnterDiagnosticResultResponseDto,
   GetDiagnosticExecutionsParams,
   GetDiagnosticOrdersForReceiveParams,
+  GetDiagnosticOrdersForResultEntryParams,
   GetDiagnosticOrdersForReviewParams,
   GetDiagnosticQueueParams,
   ManageDiagnosticQueueActionResponseDto,
@@ -829,4 +839,80 @@ export async function updateDiagnosticServiceStatusBatch(
   }
 
   return updateMockDiagnosticServiceStatusBatch(payload);
+}
+
+/**
+ * Lấy danh sách phiếu chỉ định cận lâm sàng cần nhập / trả kết quả (`GET /diagnostic/results` — UC43 / #133).
+ * Fallback về mock khi backend chưa mở endpoint (404) hoặc offline/network error;
+ * các lỗi phân quyền/nghiệp vụ được rethrow để UI hiển thị trạng thái lỗi chính xác.
+ */
+export async function fetchDiagnosticOrdersForResultEntry(
+  params?: GetDiagnosticOrdersForResultEntryParams,
+): Promise<DiagnosticResultEntryListResponseDto> {
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.get<DiagnosticResultEntryListResponseDto>(
+        '/diagnostic/results',
+        params ? { params } : undefined,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return resolveMockDiagnosticOrdersForResultEntry(params);
+}
+
+/**
+ * Lấy chi tiết phiếu chỉ định CLS kèm bối cảnh lâm sàng, lịch sử phiên bản kết quả & checklist điều kiện nhập kết quả (`GET /diagnostic/results/{idOrCode}` — UC43 / #133).
+ */
+export async function fetchDiagnosticResultEntryDetail(
+  idOrCode: string,
+): Promise<DiagnosticResultEntryDetailResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.get<DiagnosticResultEntryDetailResponseDto>(
+        `/diagnostic/results/${encoded}`,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return resolveMockDiagnosticResultEntryDetail(idOrCode);
+}
+
+/**
+ * Nhân viên cận lâm sàng lưu / duyệt & trả kết quả cho phiếu chỉ định (`POST /diagnostic/orders/{idOrCode}/result` — UC43 / #133).
+ * Mutation không nuốt lỗi nghiệp vụ (400/403/409): chỉ fallback về mock khi backend chưa mở endpoint hoặc offline.
+ */
+export async function enterDiagnosticResult(
+  idOrCode: string,
+  payload: EnterDiagnosticResultRequest,
+): Promise<EnterDiagnosticResultResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<EnterDiagnosticResultResponseDto>(
+        `/diagnostic/orders/${encoded}/result`,
+        payload,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return enterMockDiagnosticResult(idOrCode, payload);
 }
