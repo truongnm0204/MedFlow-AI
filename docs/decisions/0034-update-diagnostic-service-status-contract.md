@@ -1,4 +1,4 @@
-# 0033 — Update Diagnostic Service Status API Contract & Execution Lifecycle (`#132` / `M3-024` / `UC42`)
+# 0034 — Update Diagnostic Service Status API Contract & Execution Lifecycle (`#132` / `M3-024` / `UC42`)
 
 - Ngay: 2026-11-11
 - Trang thai: accepted
