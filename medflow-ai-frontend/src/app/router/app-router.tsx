@@ -39,6 +39,7 @@ import { RegisterPage } from '@/features/auth/pages/register-page';
 import { VerifyOtpPage } from '@/features/auth/pages/verify-otp-page';
 import { DiagnosticDashboardPage } from '@/features/diagnostic/pages/diagnostic-dashboard-page';
 import { DiagnosticOrderReviewPage } from '@/features/diagnostic/pages/diagnostic-order-review-page';
+import { DiagnosticQueueManagePage } from '@/features/diagnostic/pages/diagnostic-queue-manage-page';
 import { DiagnosticWorklistPage } from '@/features/diagnostic/pages/diagnostic-worklist-page';
 import { DiagnosticResultViewPage } from '@/features/diagnostic/pages/diagnostic-result-view-page';
 import { DoctorDashboardPage } from '@/features/doctor/pages/doctor-dashboard-page';
@@ -521,6 +522,76 @@ export function AppRouter() {
           <RequireAuth>
             <RequireDiagnostic>
               <DiagnosticOrderReviewPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/queue"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticQueueManagePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/queue/:entryIdOrCode"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticQueueManagePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/queues"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticQueueManagePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/workbench/queue"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticQueueManagePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/workbench/queue/:entryIdOrCode"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticQueueManagePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/queue-entries"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticQueueManagePage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/queue-entries/:entryIdOrCode"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticQueueManagePage />
             </RequireDiagnostic>
           </RequireAuth>
         }

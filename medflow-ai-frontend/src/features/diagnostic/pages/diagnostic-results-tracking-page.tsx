@@ -61,6 +61,7 @@ export function DiagnosticResultsTrackingPage() {
           setActiveNav(item);
           if (item === 'dashboard') navigate('/diagnostic');
           if (item === 'orders') navigate('/diagnostic/orders');
+          if (item === 'queue') navigate('/diagnostic/queue');
         }}
         staffName={displayName}
       />

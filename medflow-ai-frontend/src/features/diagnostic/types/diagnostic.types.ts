@@ -86,3 +86,4 @@ export interface DiagnosticDashboardSummary {
 }
 
 export * from './diagnostic-order-review.types';
+export * from './diagnostic-queue.types';

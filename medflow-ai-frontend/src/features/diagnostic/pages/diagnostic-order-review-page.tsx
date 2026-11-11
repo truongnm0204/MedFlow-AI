@@ -245,6 +245,8 @@ export function DiagnosticOrderReviewPage() {
       navigate('/diagnostic/results');
     } else if (navItem === 'orders') {
       navigate('/diagnostic/orders');
+    } else if (navItem === 'queue') {
+      navigate('/diagnostic/queue');
     }
   };
 

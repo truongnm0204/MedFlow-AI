@@ -226,6 +226,13 @@ export function DiagnosticDashboardPage() {
                   >
                     Mở bàn xác nhận chỉ định (UC39)
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/diagnostic/queue')}
+                    className="w-full rounded-xl border border-border bg-white px-3 py-2 text-xs font-semibold text-navy transition-colors hover:bg-canvas"
+                  >
+                    Mở bảng điều phối hàng đợi CLS (UC41)
+                  </button>
                 </CardContent>
               </Card>
 
