@@ -42,7 +42,7 @@ public sealed class DiagnosticWorklistController : ControllerBase
     /// GET /api/v1/diagnostic/worklist/{orderIdOrCode} — Xem chi tiết một phiếu chỉ định Cận lâm sàng trong danh sách công việc (UC39).
     /// </summary>
     [HttpGet("worklist/{orderIdOrCode}")]
-    [HttpGet("orders/{orderIdOrCode:regex(^(?!worklist$).+)}")]
+    [HttpGet("orders/{orderIdOrCode:regex(^(?!worklist$|review$).+)}")]
     [HttpGet("/api/v1/diagnostic-worklist/{orderIdOrCode}")]
     [ProducesResponseType<DiagnosticWorklistItemDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
