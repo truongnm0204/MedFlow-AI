@@ -18,6 +18,7 @@ import {
   updateMockDiagnosticServiceStatusBatch,
 } from '../data/diagnostic-execution-mock';
 import {
+  amendMockDiagnosticResult,
   enterMockDiagnosticResult,
   resolveMockDiagnosticOrdersForResultEntry,
   resolveMockDiagnosticResultEntryDetail,
@@ -64,6 +65,7 @@ import type {
   DiagnosticServiceExecutionListResponseDto,
   EnterDiagnosticResultRequest,
   EnterDiagnosticResultResponseDto,
+  UpdateDiagnosticResultRequest,
   GetDiagnosticExecutionsParams,
   GetDiagnosticOrdersForReceiveParams,
   GetDiagnosticOrdersForResultEntryParams,
@@ -915,4 +917,31 @@ export async function enterDiagnosticResult(
   }
 
   return enterMockDiagnosticResult(idOrCode, payload);
+}
+
+/**
+ * Sửa kết quả cận lâm sàng đã khóa (`POST /diagnostic/orders/{idOrCode}/result/amend` — UC43 / #135).
+ * Không gọi Enter. 400/403/409 được rethrow; chỉ fallback mock khi endpoint chưa mở hoặc offline.
+ */
+export async function updateDiagnosticResult(
+  idOrCode: string,
+  payload: UpdateDiagnosticResultRequest,
+): Promise<EnterDiagnosticResultResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    try {
+      const { data } = await apiClient.post<EnterDiagnosticResultResponseDto>(
+        `/diagnostic/orders/${encoded}/result/amend`,
+        payload,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return amendMockDiagnosticResult(idOrCode, payload);
 }

@@ -7,6 +7,7 @@ import {
   History,
   Layers,
   Lock,
+  PencilLine,
   SendHorizonal,
   ShieldAlert,
   Stethoscope,
@@ -19,13 +20,17 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
-import { enterDiagnosticResultSchema } from '../schemas/diagnostic-result-entry.schema';
+import {
+  enterDiagnosticResultSchema,
+  updateDiagnosticResultSchema,
+} from '../schemas/diagnostic-result-entry.schema';
 import type {
   DiagnosticOrderClinicalSummaryDto,
   DiagnosticResultEntryItemDto,
   DiagnosticResultHistoryItemDto,
   DiagnosticResultVersionItemDto,
   EnterDiagnosticResultRequest,
+  UpdateDiagnosticResultRequest,
 } from '../types/diagnostic.types';
 
 interface DiagnosticResultEntryDetailPanelProps {
@@ -36,6 +41,7 @@ interface DiagnosticResultEntryDetailPanelProps {
   hasResultWritePermission: boolean;
   isSubmitting: boolean;
   onEnterResult: (orderCode: string, payload: EnterDiagnosticResultRequest) => void;
+  onUpdateResult: (orderCode: string, payload: UpdateDiagnosticResultRequest) => void;
 }
 
 const RESULT_ENTRY_ELIGIBILITY_CRITERIA: Array<{
@@ -375,8 +381,158 @@ function DiagnosticResultEntryForm({
 
       <p className="text-[10px] leading-relaxed text-sub">
         Phiên bản trạng thái hiện tại: <span className="font-mono">v{order.stateVersion}</span> •
-        Mọi lượt lưu tạo phiên bản kết quả mới; sau khi duyệt (FINALIZED) phiếu sẽ khóa — các chỉnh
-        sửa sau duyệt thuộc phạm vi UC45 (amendment).
+        Mọi lượt lưu tạo phiên bản kết quả mới. Sau khi duyệt, phiếu khóa nhập mới; sửa nội dung đã
+        khóa ngay trên phiếu này khi còn đủ điều kiện.
+      </p>
+    </div>
+  );
+}
+
+interface DiagnosticResultAmendFormProps {
+  order: DiagnosticResultEntryItemDto;
+  isSubmitting: boolean;
+  onUpdateResult: (orderCode: string, payload: UpdateDiagnosticResultRequest) => void;
+}
+
+function DiagnosticResultAmendForm({
+  order,
+  isSubmitting,
+  onUpdateResult,
+}: DiagnosticResultAmendFormProps) {
+  const [resultText, setResultText] = useState(order.resultText ?? '');
+  const [conclusion, setConclusion] = useState(order.conclusion ?? '');
+  const [reportFileUrl, setReportFileUrl] = useState(order.reportFileUrl ?? '');
+  const [reportFileUrlTouched, setReportFileUrlTouched] = useState(false);
+  const [correctionReason, setCorrectionReason] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const handleSubmit = () => {
+    setValidationError(null);
+
+    const candidatePayload = {
+      resultText,
+      conclusion,
+      reportFileUrl: reportFileUrlTouched ? reportFileUrl.trim() : undefined,
+      correctionReason,
+      expectedStateVersion: order.stateVersion,
+    };
+
+    const parsed = updateDiagnosticResultSchema.safeParse(candidatePayload);
+    if (!parsed.success) {
+      const firstIssue = parsed.error.issues[0];
+      setValidationError(
+        firstIssue?.message ??
+          'Dữ liệu sửa kết quả cận lâm sàng không hợp lệ. Vui lòng kiểm tra lại.',
+      );
+      return;
+    }
+
+    onUpdateResult(order.orderCode, {
+      orderId: order.orderId,
+      resultText: parsed.data.resultText,
+      conclusion: parsed.data.conclusion,
+      reportFileUrl: reportFileUrlTouched ? (parsed.data.reportFileUrl ?? '') : null,
+      correctionReason: parsed.data.correctionReason,
+      expectedStateVersion: parsed.data.expectedStateVersion,
+    });
+  };
+
+  return (
+    <div
+      className="space-y-3 rounded-xl border border-border bg-canvas p-3.5"
+      data-testid="result-amend-form"
+    >
+      <div className="font-bold text-navy">Sửa kết quả cận lâm sàng đã khóa</div>
+
+      {validationError && (
+        <Alert tone="error">
+          <span data-testid="result-form-validation-error">{validationError}</span>
+        </Alert>
+      )}
+
+      <div>
+        <label htmlFor="amend-result-text" className="block text-[11px] font-semibold text-navy">
+          Nội dung kết quả cận lâm sàng <span className="text-rose-600">*</span> (3–5000 ký tự)
+        </label>
+        <textarea
+          id="amend-result-text"
+          aria-label="Nội dung kết quả cận lâm sàng"
+          rows={5}
+          value={resultText}
+          disabled={isSubmitting}
+          onChange={(event) => setResultText(event.target.value)}
+          className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs text-ink placeholder:text-sub focus:border-primary focus:outline-none disabled:opacity-60"
+        />
+      </div>
+
+      <div>
+        <label
+          htmlFor="amend-result-conclusion"
+          className="block text-[11px] font-semibold text-navy"
+        >
+          Kết luận chẩn đoán cận lâm sàng <span className="text-rose-600">*</span> (3–2000 ký tự)
+        </label>
+        <textarea
+          id="amend-result-conclusion"
+          aria-label="Kết luận chẩn đoán cận lâm sàng"
+          rows={3}
+          value={conclusion}
+          disabled={isSubmitting}
+          onChange={(event) => setConclusion(event.target.value)}
+          className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs text-ink placeholder:text-sub focus:border-primary focus:outline-none disabled:opacity-60"
+        />
+      </div>
+
+      <div>
+        <label
+          htmlFor="amend-result-file-url"
+          className="block text-[11px] font-semibold text-navy"
+        >
+          Đường dẫn tệp kết quả đính kèm
+          <span className="font-normal text-sub"> (để nguyên = giữ file; xóa trắng = gỡ file)</span>
+        </label>
+        <input
+          id="amend-result-file-url"
+          type="url"
+          aria-label="Đường dẫn tệp kết quả đính kèm"
+          value={reportFileUrl}
+          disabled={isSubmitting}
+          onChange={(event) => {
+            setReportFileUrlTouched(true);
+            setReportFileUrl(event.target.value);
+          }}
+          placeholder="https://pacs.medflow.vn/report/CLS-2026-xxxx.pdf"
+          className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2.5 font-mono text-xs text-ink placeholder:text-sub focus:border-primary focus:outline-none disabled:opacity-60"
+        />
+      </div>
+
+      <div>
+        <label
+          htmlFor="amend-correction-reason"
+          className="block text-[11px] font-semibold text-navy"
+        >
+          Lý do sửa kết quả đã khóa <span className="text-rose-600">*</span> (5–500 ký tự)
+        </label>
+        <input
+          id="amend-correction-reason"
+          type="text"
+          aria-label="Lý do sửa kết quả đã khóa"
+          value={correctionReason}
+          disabled={isSubmitting}
+          onChange={(event) => setCorrectionReason(event.target.value)}
+          placeholder="Vd: đính chính số tiểu cầu sau khi chạy lại mẫu..."
+          className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2.5 text-xs text-ink placeholder:text-sub focus:border-primary focus:outline-none disabled:opacity-60"
+        />
+      </div>
+
+      <Button type="button" loading={isSubmitting} disabled={isSubmitting} onClick={handleSubmit}>
+        <PencilLine className="h-4 w-4" aria-hidden="true" />
+        <span>Sửa kết quả đã khóa</span>
+      </Button>
+
+      <p className="text-[10px] leading-relaxed text-sub">
+        Phiên bản trạng thái hiện tại: <span className="font-mono">v{order.stateVersion}</span> •
+        Lưu tạo phiên bản kết quả mới và tăng state version. Phiếu và lượt xếp hàng vẫn hoàn tất.
       </p>
     </div>
   );
@@ -390,6 +546,7 @@ export function DiagnosticResultEntryDetailPanel({
   hasResultWritePermission,
   isSubmitting,
   onEnterResult,
+  onUpdateResult,
 }: DiagnosticResultEntryDetailPanelProps) {
   if (!order) {
     return (
@@ -415,6 +572,8 @@ export function DiagnosticResultEntryDetailPanel({
     !isFinalized && order.canEnterResult && hasResultWritePermission && !isSubmitting;
   const canFinalizeResult =
     !isFinalized && order.canFinalizeResult && hasResultWritePermission && !isSubmitting;
+  const amendDisabledReason = order.amendDisabledReason ?? order.eligibility.amendDisabledReason;
+  const showAmendForm = isFinalized && order.canAmendResult && hasResultWritePermission;
   const versionList = versions && versions.length > 0 ? versions : (order.versions ?? []);
   const sortedVersions = [...versionList].sort((a, b) => b.versionNo - a.versionNo);
   const historyList = statusHistory ?? [];
@@ -617,7 +776,9 @@ export function DiagnosticResultEntryDetailPanel({
                     {order.finalizedByStaffName ?? 'nhân viên cận lâm sàng'}
                   </span>{' '}
                   lúc <span className="font-mono">{formatDateTime(order.resultFinalizedAt)}</span>.
-                  Các chỉnh sửa sau duyệt (amendment) thuộc phạm vi UC45.
+                  {order.canAmendResult
+                    ? ' Có thể sửa nội dung đã khóa. Phiếu và lượt xếp hàng vẫn hoàn tất.'
+                    : ' Không thể nhập mới.'}
                 </div>
               </div>
             </div>
@@ -720,6 +881,11 @@ export function DiagnosticResultEntryDetailPanel({
                       Lý do chỉnh sửa: {version.correctionReason}
                     </p>
                   )}
+                  <p className="mt-0.5 font-mono text-[10px] text-sub">
+                    {version.reportFileUrl
+                      ? `Tệp: ${version.reportFileUrl}`
+                      : 'Không có tệp đính kèm'}
+                  </p>
                 </li>
               ))}
             </ul>
@@ -775,15 +941,38 @@ export function DiagnosticResultEntryDetailPanel({
           </Alert>
         )}
 
-        {/* 8. Entry form */}
-        <DiagnosticResultEntryForm
-          key={`${order.orderCode}-${order.latestVersionNo ?? 0}-${order.stateVersion}`}
-          order={order}
-          canSubmitResult={canSubmitResult}
-          canFinalizeResult={canFinalizeResult}
-          isSubmitting={isSubmitting}
-          onEnterResult={onEnterResult}
-        />
+        {isFinalized && !order.canAmendResult && amendDisabledReason && (
+          <Alert tone="warning">
+            <div className="flex items-start gap-2" data-testid="result-amend-disabled-reason">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <div>
+                <div className="font-bold">Không thể sửa kết quả đã khóa</div>
+                <div className="mt-0.5 text-xs">{amendDisabledReason}</div>
+              </div>
+            </div>
+          </Alert>
+        )}
+
+        {/* 8. Entry or amend form */}
+        {showAmendForm ? (
+          <DiagnosticResultAmendForm
+            key={`${order.orderCode}-amend-${order.latestVersionNo ?? 0}-${order.stateVersion}`}
+            order={order}
+            isSubmitting={isSubmitting}
+            onUpdateResult={onUpdateResult}
+          />
+        ) : (
+          !isFinalized && (
+            <DiagnosticResultEntryForm
+              key={`${order.orderCode}-${order.latestVersionNo ?? 0}-${order.stateVersion}`}
+              order={order}
+              canSubmitResult={canSubmitResult}
+              canFinalizeResult={canFinalizeResult}
+              isSubmitting={isSubmitting}
+              onEnterResult={onEnterResult}
+            />
+          )
+        )}
       </CardContent>
     </Card>
   );

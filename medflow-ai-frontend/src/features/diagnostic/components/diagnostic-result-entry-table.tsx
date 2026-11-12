@@ -1,4 +1,12 @@
-import { AlertCircle, CheckCircle2, Eye, FileSignature, Layers, ShieldAlert } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Eye,
+  FileSignature,
+  Layers,
+  PencilLine,
+  ShieldAlert,
+} from 'lucide-react';
 
 import { Badge } from '@/shared/ui/badge';
 
@@ -246,6 +254,11 @@ export function DiagnosticResultEntryTable({
                         <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden="true" />
                         <span>Sẵn sàng nhập KQ</span>
                       </span>
+                    ) : item.canAmendResult ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700">
+                        <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+                        <span>Có thể sửa KQ đã khóa</span>
+                      </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sub">
                         <AlertCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -276,7 +289,7 @@ export function DiagnosticResultEntryTable({
                     type="button"
                     onClick={() => onSelectOrder(item)}
                     className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
-                      item.canEnterResult
+                      item.canEnterResult || item.canAmendResult
                         ? 'border-primary bg-primary text-white hover:bg-primary-dark'
                         : 'border-border bg-white text-navy hover:bg-canvas'
                     }`}
@@ -285,6 +298,11 @@ export function DiagnosticResultEntryTable({
                       <>
                         <FileSignature className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>Nhập KQ</span>
+                      </>
+                    ) : item.canAmendResult ? (
+                      <>
+                        <PencilLine className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Sửa KQ</span>
                       </>
                     ) : (
                       <>
