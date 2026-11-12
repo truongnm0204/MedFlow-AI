@@ -12,6 +12,10 @@ import {
   resolveMockConsultationWorkspace,
   resolveMockDiagnosticOrderCatalog,
 } from '../data/consultation-workspace-mock';
+import {
+  resolveMockDiagnosticResultsReview,
+  reviewMockDiagnosticResults,
+} from '../data/review-diagnostic-mock';
 import type {
   CompleteVisitRequest,
   ConsultationWorkspaceResponseDto,
@@ -23,6 +27,10 @@ import type {
   RecordDiagnosisRequest,
   SearchIcd10CodesParams,
 } from '../types/consultation-workspace.types';
+import type {
+  DiagnosticResultsReviewResponseDto,
+  ReviewDiagnosticResultsRequest,
+} from '../types/review-diagnostic.types';
 /** Chỉ fallback về mock khi offline/network error (endpoint thực tế đã có và trả 4xx cho lỗi nghiệp vụ). */
 function shouldFallbackToMock(error: unknown): boolean {
   if (!axios.isAxiosError(error)) return false;
@@ -244,4 +252,77 @@ export async function completeVisit(
   }
 
   return completeMockVisit(idOrCode, payload);
+}
+
+/**
+ * Xem kết quả cận lâm sàng của lượt khám để bác sĩ xác nhận đã xem xét
+ * (`GET /doctor/consultation/{idOrCode}/diagnostic-results` — UC35 / #113).
+ * Có `medflow.access_token` thì mọi lỗi HTTP và lỗi mạng đều throw. Không token mới dùng mock.
+ */
+export async function fetchDiagnosticResultsReview(
+  idOrCode: string,
+): Promise<DiagnosticResultsReviewResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    const { data } = await apiClient.get<DiagnosticResultsReviewResponseDto>(
+      `/doctor/consultation/${encoded}/diagnostic-results`,
+    );
+    return data;
+  }
+
+  return resolveMockDiagnosticResultsReview(idOrCode);
+}
+
+/**
+ * Ghi nhận bác sĩ đã xem xét kết quả cận lâm sàng
+ * (`POST /doctor/consultation/{idOrCode}/diagnostic-results/review` — UC35 / #113).
+ * Có `medflow.access_token` thì mọi lỗi HTTP và lỗi mạng đều throw. Không token mới dùng mock.
+ */
+export async function reviewDiagnosticResults(
+  idOrCode: string,
+  payload: ReviewDiagnosticResultsRequest,
+): Promise<ConsultationWorkspaceResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+  const body: Record<string, unknown> = {};
+
+  if (payload.orderIds && payload.orderIds.length > 0) {
+    body.orderIds = payload.orderIds;
+  }
+  if (payload.orderCodes && payload.orderCodes.length > 0) {
+    body.orderCodes = payload.orderCodes;
+  }
+
+  const clinicalInterpretation = payload.clinicalInterpretation?.trim();
+  if (clinicalInterpretation) {
+    body.clinicalInterpretation = clinicalInterpretation;
+  }
+  const reviewNote = payload.reviewNote?.trim();
+  if (reviewNote) {
+    body.reviewNote = reviewNote;
+  }
+  const clinicalConclusion = payload.clinicalConclusion?.trim();
+  if (clinicalConclusion) {
+    body.clinicalConclusion = clinicalConclusion;
+  }
+  const amendmentReason = payload.amendmentReason?.trim();
+  if (amendmentReason) {
+    body.amendmentReason = amendmentReason;
+  }
+  if (payload.expectedStateVersion !== undefined && payload.expectedStateVersion !== null) {
+    body.expectedStateVersion = payload.expectedStateVersion;
+  }
+  if (payload.expectedRevisionNo !== undefined && payload.expectedRevisionNo !== null) {
+    body.expectedRevisionNo = payload.expectedRevisionNo;
+  }
+
+  if (hasAccessToken()) {
+    const { data } = await apiClient.post<ConsultationWorkspaceResponseDto>(
+      `/doctor/consultation/${encoded}/diagnostic-results/review`,
+      body,
+    );
+    return data;
+  }
+
+  return reviewMockDiagnosticResults(idOrCode, payload);
 }

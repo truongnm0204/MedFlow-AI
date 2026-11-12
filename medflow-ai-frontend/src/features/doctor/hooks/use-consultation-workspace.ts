@@ -5,9 +5,11 @@ import {
   createDiagnosticOrder,
   fetchConsultationWorkspace,
   fetchDiagnosticOrderCatalog,
+  fetchDiagnosticResultsReview,
   openConsultationWorkspace,
   recordClinicalExamination,
   recordDiagnosis,
+  reviewDiagnosticResults,
   searchIcd10Codes,
 } from '../api/consultation-workspace.api';
 import type {
@@ -18,6 +20,7 @@ import type {
   RecordClinicalExaminationRequest,
   RecordDiagnosisRequest,
 } from '../types/consultation-workspace.types';
+import type { ReviewDiagnosticResultsRequest } from '../types/review-diagnostic.types';
 
 export function useConsultationWorkspace(idOrCode: string, enabled = true) {
   const normalized = idOrCode.trim();
@@ -223,6 +226,51 @@ export function useCompleteVisit() {
       });
       void queryClient.invalidateQueries({
         queryKey: ['pharmacy', 'dashboard'],
+      });
+    },
+  });
+}
+
+export function useDiagnosticResultsReview(idOrCode: string, enabled = true) {
+  const normalized = idOrCode.trim();
+  return useQuery({
+    queryKey: ['doctor', 'consultation', normalized, 'diagnostic-results'],
+    queryFn: () => fetchDiagnosticResultsReview(normalized),
+    enabled: enabled && normalized.length > 0,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+}
+
+export interface ReviewDiagnosticResultsVariables {
+  idOrCode: string;
+  payload: ReviewDiagnosticResultsRequest;
+}
+
+export function useReviewDiagnosticResults() {
+  const queryClient = useQueryClient();
+
+  return useMutation<ConsultationWorkspaceResponseDto, unknown, ReviewDiagnosticResultsVariables>({
+    mutationFn: ({ idOrCode, payload }) => reviewDiagnosticResults(idOrCode, payload),
+    onSuccess: (data, variables) => {
+      const normalized = variables.idOrCode.trim();
+      queryClient.setQueryData(['doctor', 'consultation', normalized], data);
+      if (data.visit?.visitCode) {
+        queryClient.setQueryData(['doctor', 'consultation', data.visit.visitCode], data);
+      }
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'consultation', normalized, 'diagnostic-results'],
+      });
+      if (data.visit?.visitCode) {
+        void queryClient.invalidateQueries({
+          queryKey: ['doctor', 'consultation', data.visit.visitCode, 'diagnostic-results'],
+        });
+      }
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'diagnostic-results', 'tracking'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'dashboard'],
       });
     },
   });
