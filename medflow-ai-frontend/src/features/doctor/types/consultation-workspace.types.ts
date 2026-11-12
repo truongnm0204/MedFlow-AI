@@ -12,6 +12,7 @@ export type ConsultationActionOutcome =
   | 'ALREADY_IN_PROGRESS'
   | 'CLINICAL_EXAMINATION_RECORDED'
   | 'DIAGNOSTIC_ORDER_CREATED'
+  | 'DIAGNOSIS_RECORDED'
   | 'VISIT_COMPLETED';
 
 export type ConsultationWorkspaceState =
@@ -345,6 +346,51 @@ export interface CompleteVisitRequest {
   notes?: string | null;
   completionNote?: string | null;
   confirmNoPrescription?: boolean | null;
+  expectedStateVersion?: number | null;
+  expectedRevisionNo?: number | null;
+}
+
+export interface Icd10CatalogItemDto {
+  id: number;
+  code: string;
+  nameVi: string;
+  catalogVersion: string | null;
+  nodeType: string | null;
+  isSelectable: boolean;
+  notPrimaryDx: boolean;
+}
+
+export interface SearchIcd10CodesParams {
+  q?: string;
+  primaryOnly?: boolean;
+  limit?: number;
+}
+
+export interface RecordDiagnosisItemRequest {
+  icd10CodeId?: number | null;
+  code?: string | null;
+  icd10Code?: string | null;
+  name?: string | null;
+  isPrimary?: boolean | null;
+  clinicalDiagnosis?: string | null;
+  status?: ConsultationDiagnosisStatus | null;
+}
+
+export interface RecordDiagnosisRequest {
+  diagnoses?: RecordDiagnosisItemRequest[] | null;
+  primaryIcd10CodeId?: number | null;
+  primaryIcd10Code?: string | null;
+  primaryClinicalDiagnosis?: string | null;
+  secondaryIcd10CodeIds?: number[] | null;
+  secondaryIcd10Codes?: string[] | null;
+  clinicalConclusion?: string | null;
+  clinicalFindings?: string | null;
+  differentialNotes?: string | null;
+  lifestyleInstructions?: string | null;
+  warningSigns?: string | null;
+  amendmentReason?: string | null;
+  diagnosisStatus?: ConsultationDiagnosisStatus | null;
+  isConfirmed?: boolean | null;
   expectedStateVersion?: number | null;
   expectedRevisionNo?: number | null;
 }

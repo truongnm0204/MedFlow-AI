@@ -259,6 +259,12 @@ export function DoctorConsultationWorkspacePage({
       return;
     }
 
+    if (action.id === 'record-diagnosis' || action.ucCode === 'UC36') {
+      if (!canWriteMedicalRecord || !data?.canEditClinical) return;
+      navigate(`/doctor/consultation/${encodeURIComponent(data.visit.visitCode)}/diagnosis`);
+      return;
+    }
+
     setSelectedActionNotice(
       `Đã chọn thao tác "${action.label}" (${action.ucCode}) cho bệnh nhân ${data?.patient.fullName ?? ''} (${data?.visit.visitCode ?? activeIdentifier}).`,
     );
