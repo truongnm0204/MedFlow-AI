@@ -1,4 +1,11 @@
-import type { ReviewDiagnosticData } from '../types/review-diagnostic.types';
+import type { ConsultationWorkspaceResponseDto } from '../types/consultation-workspace.types';
+import type {
+  ConsultationDiagnosticResultItemDto,
+  DiagnosticResultsReviewResponseDto,
+  ReviewDiagnosticResultsRequest,
+} from '../types/review-diagnostic.types';
+
+import { resolveMockConsultationWorkspace } from './consultation-workspace-mock';
 
 export const REVIEW_DIAGNOSTIC_STEPS = [
   'Tiếp nhận & Sinh hiệu',
@@ -10,117 +17,238 @@ export const REVIEW_DIAGNOSTIC_STEPS = [
 
 export const REVIEW_DIAGNOSTIC_ACTIVE_STEP = 4;
 
-export const REVIEW_DIAGNOSTIC_MOCK: ReviewDiagnosticData = {
-  patient: {
-    fullName: 'NGUYỄN VĂN AN',
-    patientCode: 'PAT-2024-0108',
+const ENDO_CONCLUSION =
+  'Viêm teo niêm mạc hang vị mức độ vừa, kèm loét hành tá tràng Forrest III. Clo-Test dương tính.';
+
+const ENDO_RESULT_TEXT = [
+  'Thực quản: niêm mạc hồng, không giãn tĩnh mạch, tâm vị đóng kín.',
+  'Dạ dày: niêm mạc thân vị phù nề nhẹ; hang vị sung huyết, teo niêm mạc từng đám.',
+  'Hành tá tràng: ổ loét đường kính khoảng 5mm, đáy phủ giả mạc trắng, không chảy máu.',
+  'Clo-Test HP: dương tính sau 15 phút.',
+].join('\n');
+
+const US_CONCLUSION = 'Gan nhiễm mỡ độ I. Túi mật, tụy, lách, hai thận chưa ghi nhận bất thường.';
+
+const US_RESULT_TEXT = [
+  'Gan: kích thước bình thường, echo dày nhẹ lan toả, bờ đều.',
+  'Túi mật: thành mỏng, không thấy sỏi. Đường mật trong và ngoài gan không giãn.',
+  'Tụy, lách, hai thận: kích thước và cấu trúc echo trong giới hạn bình thường.',
+  'Doppler tĩnh mạch cửa: dòng chảy hướng gan, vận tốc bình thường.',
+].join('\n');
+
+function buildMockResultItem(
+  overrides: Partial<ConsultationDiagnosticResultItemDto>,
+): ConsultationDiagnosticResultItemDto {
+  return {
+    orderId: 0,
+    orderCode: '',
+    visitId: 108,
     visitCode: 'VIS-2026-0415-0108',
-    allergies: ['Penicillin', 'NSAIDs'],
+    orderingDoctorId: 3,
+    orderingDoctorCode: 'DOC-003',
+    orderingDoctorName: 'BS. CKII Trần Quốc Tuấn',
+    serviceId: 0,
+    serviceCode: '',
+    serviceName: '',
+    category: 'IMAGING',
+    departmentId: null,
+    departmentCode: null,
+    departmentName: 'Khoa Nội Tổng Quát',
+    specialtyId: null,
+    specialtyCode: null,
+    specialtyName: 'Nội tổng quát',
+    unitPrice: 0,
+    requiresResultVerification: true,
+    priority: 'NORMAL',
+    orderStatus: 'ORDERED',
+    requiredForConclusion: false,
+    instruction: null,
+    orderedAt: '2026-04-15T07:30:00',
+    confirmedAt: null,
+    confirmedByStaffId: null,
+    confirmedByStaffCode: null,
+    confirmedByStaffName: null,
+    queueEntryId: null,
+    formattedQueueEntryId: null,
+    ticketNo: null,
+    queueNumber: null,
+    queueStatus: null,
+    servicePointId: null,
+    servicePointName: null,
+    roomId: null,
+    roomCode: null,
+    roomName: null,
+    roomLocation: null,
+    completedAt: null,
+    hasResult: false,
+    isResultReady: false,
+    isResultFinalized: false,
+    resultId: null,
+    resultStatus: 'PENDING',
+    resultFinalizedAt: null,
+    finalizedByStaffId: null,
+    finalizedByStaffCode: null,
+    finalizedByStaffName: null,
+    latestVersionNo: null,
+    resultText: null,
+    conclusion: null,
+    reportFileUrl: null,
+    enteredByStaffId: null,
+    enteredByStaffCode: null,
+    enteredByStaffName: null,
+    enteredAt: null,
+    verifiedByStaffId: null,
+    verifiedByStaffCode: null,
+    verifiedByStaffName: null,
+    verifiedAt: null,
+    correctionReason: null,
+    versions: [],
+    ...overrides,
+  };
+}
+
+export const REVIEW_DIAGNOSTIC_RESULTS_MOCK: DiagnosticResultsReviewResponseDto = {
+  visitId: 108,
+  visitCode: 'VIS-2026-0415-0108',
+  visitStatus: 'IN_PROGRESS',
+  visitStatusLabel: 'Đang khám',
+  workspaceState: 'IN_PROGRESS',
+  canViewDiagnosticResults: true,
+  canAcknowledgeDiagnosticResults: true,
+  disabledReason: null,
+  generatedAtUtc: '2026-04-15T03:00:00Z',
+  patient: {
+    patientId: 108,
+    patientCode: 'PAT-2024-0108',
+    fullName: 'NGUYỄN VĂN AN',
+    dateOfBirth: null,
+    birthYear: null,
+    age: null,
+    gender: null,
+    genderLabel: 'Nam',
+    phone: null,
+    email: null,
+    address: null,
+    bloodType: null,
+    allergiesSummary: 'Penicillin, NSAIDs',
   },
-  results: [
-    {
-      id: 'dia-endo-01',
-      orderIndex: 1,
+  diagnosticSummary: {
+    totalQueueEntries: 3,
+    openQueueEntries: 1,
+    completedQueueEntries: 2,
+    allMandatoryResultsReady: true,
+    finalResultRequired: true,
+  },
+  totalOrdersCount: 3,
+  readyResultsCount: 2,
+  pendingResultsCount: 1,
+  mandatoryOrdersCount: 1,
+  mandatoryReadyCount: 1,
+  mandatoryPendingCount: 0,
+  items: [
+    buildMockResultItem({
+      orderId: 9101,
+      orderCode: 'DIA-202604-9101',
+      serviceId: 9101,
       serviceCode: 'CLS-ENDO-01',
       serviceName: 'Nội soi thực quản - dạ dày - tá tràng ống mềm có tiền mê (kèm Clo-Test HP)',
-      performedBy: 'BS.CKI Hoàng Minh Hải',
-      signedAtLabel: '15/04/2026 09:42',
-      conclusionSummary:
-        'Viêm teo niêm mạc hang vị mức độ vừa, kèm loét hành tá tràng Forrest III. Clo-Test dương tính.',
-      alertTag: { label: 'HP DƯƠNG TÍNH (+)', tone: 'rose' },
-      labIndicators: [],
-      imageFrames: [
-        { id: 'endo-f1', caption: 'Thực quản 1/3 dưới - niêm mạc hồng nhạt' },
-        { id: 'endo-f2', caption: 'Thân vị - nếp niêm mạc phù nề' },
-        { id: 'endo-f3', caption: 'Hang vị - viêm teo niêm mạc' },
-        { id: 'endo-f4', caption: 'Hành tá tràng - ổ loét 5mm' },
+      category: 'IMAGING',
+      orderStatus: 'COMPLETED',
+      requiredForConclusion: true,
+      hasResult: true,
+      isResultReady: true,
+      isResultFinalized: true,
+      resultId: 9101,
+      resultStatus: 'VERIFIED',
+      resultFinalizedAt: '2026-04-15T09:42:00',
+      latestVersionNo: 1,
+      resultText: ENDO_RESULT_TEXT,
+      conclusion: ENDO_CONCLUSION,
+      enteredByStaffName: 'BS.CKI Hoàng Minh Hải',
+      enteredAt: '2026-04-15T09:42:00',
+      verifiedByStaffName: 'BS.CKI Hoàng Minh Hải',
+      verifiedAt: '2026-04-15T09:42:00',
+      versions: [
+        {
+          versionId: 1,
+          resultId: 9101,
+          versionNo: 1,
+          resultText: ENDO_RESULT_TEXT,
+          conclusion: ENDO_CONCLUSION,
+          reportFileUrl: null,
+          isFinalized: true,
+          enteredByStaffId: null,
+          enteredByStaffCode: null,
+          enteredByStaffName: 'BS.CKI Hoàng Minh Hải',
+          enteredAt: '2026-04-15T09:42:00',
+          verifiedByStaffId: null,
+          verifiedByStaffCode: null,
+          verifiedByStaffName: 'BS.CKI Hoàng Minh Hải',
+          verifiedAt: '2026-04-15T09:42:00',
+          correctionReason: null,
+        },
       ],
-      anatomicalDescription: [
-        'Thực quản: niêm mạc hồng, không giãn tĩnh mạch, tâm vị đóng kín.',
-        'Dạ dày: niêm mạc thân vị phù nề nhẹ; hang vị sung huyết, teo niêm mạc từng đám.',
-        'Hành tá tràng: ổ loét đường kính khoảng 5mm, đáy phủ giả mạc trắng, không chảy máu.',
-        'Clo-Test HP: dương tính sau 15 phút.',
-      ],
-      recommendation:
-        'Đề nghị điều trị tiệt trừ H. pylori phác đồ 14 ngày (lưu ý tiền sử dị ứng Penicillin) và tái nội soi kiểm tra sau 8 tuần.',
-      pdfFileName: 'KQ-CLS-ENDO-01.pdf',
-    },
-    {
-      id: 'dia-us-02',
-      orderIndex: 2,
+    }),
+    buildMockResultItem({
+      orderId: 9102,
+      orderCode: 'DIA-202604-9102',
+      serviceId: 9102,
       serviceCode: 'CLS-US-02',
       serviceName: 'Siêu âm ổ bụng tổng quát màu Doppler (4D)',
-      performedBy: 'ThS.BS Nguyễn Thu Trang',
-      signedAtLabel: '15/04/2026 08:55',
-      conclusionSummary:
-        'Gan nhiễm mỡ độ I. Túi mật, tụy, lách, hai thận chưa ghi nhận bất thường.',
-      labIndicators: [],
-      imageFrames: [
-        { id: 'us-f1', caption: 'Gan phải - mặt cắt dưới sườn' },
-        { id: 'us-f2', caption: 'Túi mật - thành mỏng, không sỏi' },
-        { id: 'us-f3', caption: 'Thận phải - mặt cắt dọc' },
-        { id: 'us-f4', caption: 'Doppler tĩnh mạch cửa' },
-      ],
-      anatomicalDescription: [
-        'Gan: kích thước bình thường, echo dày nhẹ lan toả, bờ đều.',
-        'Túi mật: thành mỏng, không thấy sỏi. Đường mật trong và ngoài gan không giãn.',
-        'Tụy, lách, hai thận: kích thước và cấu trúc echo trong giới hạn bình thường.',
-        'Doppler tĩnh mạch cửa: dòng chảy hướng gan, vận tốc bình thường.',
-      ],
-      recommendation: 'Điều chỉnh chế độ ăn, theo dõi men gan và siêu âm kiểm tra lại sau 6 tháng.',
-      pdfFileName: 'KQ-CLS-US-02.pdf',
-    },
-    {
-      id: 'dia-lab-01',
-      orderIndex: 3,
+      category: 'IMAGING',
+      orderStatus: 'COMPLETED',
+      hasResult: true,
+      isResultReady: true,
+      isResultFinalized: true,
+      resultId: 9102,
+      resultStatus: 'FINALIZED',
+      resultFinalizedAt: '2026-04-15T08:55:00',
+      resultText: US_RESULT_TEXT,
+      conclusion: US_CONCLUSION,
+      enteredByStaffName: 'ThS.BS Nguyễn Thu Trang',
+      enteredAt: '2026-04-15T08:55:00',
+    }),
+    buildMockResultItem({
+      orderId: 9103,
+      orderCode: 'DIA-202604-9103',
+      serviceId: 9103,
       serviceCode: 'CLS-LAB-01',
       serviceName: 'Tổng phân tích tế bào máu ngoại vi bằng laser (CBC 24 thông số)',
-      performedBy: 'ThS.BS Lê Quốc Bảo',
-      signedAtLabel: '15/04/2026 08:20',
-      conclusionSummary:
-        'Bạch cầu tăng nhẹ, các dòng hồng cầu và tiểu cầu trong giới hạn bình thường.',
-      labIndicators: [
-        {
-          code: 'WBC',
-          name: 'Bạch cầu',
-          value: '11.2',
-          unit: 'G/L',
-          referenceRange: '4.0 - 10.0',
-          flag: 'HIGH',
-        },
-        {
-          code: 'RBC',
-          name: 'Hồng cầu',
-          value: '4.8',
-          unit: 'T/L',
-          referenceRange: '4.2 - 5.8',
-          flag: 'NORMAL',
-        },
-        {
-          code: 'HGB',
-          name: 'Huyết sắc tố',
-          value: '142',
-          unit: 'g/L',
-          referenceRange: '130 - 175',
-          flag: 'NORMAL',
-        },
-        {
-          code: 'PLT',
-          name: 'Tiểu cầu',
-          value: '265',
-          unit: 'G/L',
-          referenceRange: '150 - 400',
-          flag: 'NORMAL',
-        },
-      ],
-      imageFrames: [],
-      anatomicalDescription: [
-        'Mẫu máu tĩnh mạch ống EDTA, phân tích bằng máy laser 24 thông số.',
-        'Dòng bạch cầu tăng nhẹ, công thức bạch cầu ưu thế trung tính.',
-      ],
-      recommendation:
-        'Đối chiếu với lâm sàng và kết quả nội soi; theo dõi công thức máu sau điều trị.',
-      pdfFileName: 'KQ-CLS-LAB-01.pdf',
-    },
+      category: 'LABORATORY',
+      orderStatus: 'IN_PROGRESS',
+      hasResult: false,
+      isResultReady: false,
+      isResultFinalized: false,
+      resultStatus: 'PENDING',
+      queueStatus: 'IN_PROGRESS',
+      roomName: 'Phòng Xét nghiệm 01',
+    }),
   ],
 };
+
+export function resolveMockDiagnosticResultsReview(
+  idOrCode: string,
+): DiagnosticResultsReviewResponseDto {
+  const visitCode = idOrCode.trim() || REVIEW_DIAGNOSTIC_RESULTS_MOCK.visitCode;
+  return {
+    ...REVIEW_DIAGNOSTIC_RESULTS_MOCK,
+    visitCode,
+    patient: { ...REVIEW_DIAGNOSTIC_RESULTS_MOCK.patient },
+    diagnosticSummary: { ...REVIEW_DIAGNOSTIC_RESULTS_MOCK.diagnosticSummary },
+    items: REVIEW_DIAGNOSTIC_RESULTS_MOCK.items.map((item) => ({
+      ...item,
+      visitCode,
+      versions: item.versions.map((version) => ({ ...version })),
+    })),
+  };
+}
+
+export function reviewMockDiagnosticResults(
+  idOrCode: string,
+  _request: ReviewDiagnosticResultsRequest,
+): ConsultationWorkspaceResponseDto {
+  return {
+    ...resolveMockConsultationWorkspace(idOrCode),
+    actionOutcome: 'DIAGNOSTIC_RESULTS_REVIEWED',
+  };
+}

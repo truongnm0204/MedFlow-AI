@@ -265,6 +265,12 @@ export function DoctorConsultationWorkspacePage({
       return;
     }
 
+    if (action.id === 'review-diagnostic-results' || action.ucCode === 'UC35') {
+      const targetVisit = data?.visit.visitCode ?? activeIdentifier;
+      navigate(`/doctor/consultation/${encodeURIComponent(targetVisit)}/diagnostic-results`);
+      return;
+    }
+
     setSelectedActionNotice(
       `Đã chọn thao tác "${action.label}" (${action.ucCode}) cho bệnh nhân ${data?.patient.fullName ?? ''} (${data?.visit.visitCode ?? activeIdentifier}).`,
     );
