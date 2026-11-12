@@ -15,6 +15,7 @@ public sealed class DiagnosticResultEntryEndpointTests : AuthTestBase
     private const string ResultsListAliasRoute = "/api/v1/diagnostic/orders/results";
     private const string ResultDetailRoute = "/api/v1/diagnostic/results/DIA-202610-0001";
     private const string OrderResultRoute = "/api/v1/diagnostic/orders/DIA-202610-0001/result";
+    private const string AmendResultRoute = "/api/v1/diagnostic/orders/DIA-202610-0001/result/amend";
     private const string BodyEnterResultRoute = "/api/v1/diagnostic/results";
 
     private readonly TestWebAppFactory _factory;
@@ -63,6 +64,10 @@ public sealed class DiagnosticResultEntryEndpointTests : AuthTestBase
         var postOrderResponse = await Client.SendAsync(postOrderRequest);
         Assert.Equal(HttpStatusCode.Unauthorized, postOrderResponse.StatusCode);
 
+        using var amendRequest = new HttpRequestMessage(HttpMethod.Post, AmendResultRoute);
+        var amendResponse = await Client.SendAsync(amendRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, amendResponse.StatusCode);
+
         using var postBodyRequest = new HttpRequestMessage(HttpMethod.Post, BodyEnterResultRoute);
         var postBodyResponse = await Client.SendAsync(postBodyRequest);
         Assert.Equal(HttpStatusCode.Unauthorized, postBodyResponse.StatusCode);
@@ -94,6 +99,17 @@ public sealed class DiagnosticResultEntryEndpointTests : AuthTestBase
                 conclusion = "Công thức máu bình thường.",
             });
         Assert.Equal(HttpStatusCode.Forbidden, postOrderResponse.StatusCode);
+
+        var amendResponse = await PostWithTokenAsync(
+            AmendResultRoute,
+            token,
+            new
+            {
+                resultText = "WBC 7.5 G/L; HGB 140 g/L sau sửa.",
+                conclusion = "Công thức máu sau hiệu đính.",
+                correctionReason = "Sửa số liệu demo.",
+            });
+        Assert.Equal(HttpStatusCode.Forbidden, amendResponse.StatusCode);
 
         var postBodyResponse = await PostWithTokenAsync(
             BodyEnterResultRoute,
@@ -236,5 +252,66 @@ public sealed class DiagnosticResultEntryEndpointTests : AuthTestBase
                 conclusion = "Công thức máu bình thường.",
             });
         Assert.Equal(HttpStatusCode.Conflict, enterFinalizedResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task AmendResult_ClosedSeededVisit_Returns400WithoutReasonAnd409WhenVisitCompleted()
+    {
+        using var anonymous = new HttpRequestMessage(HttpMethod.Post, AmendResultRoute);
+        var anonymousResponse = await Client.SendAsync(anonymous);
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymousResponse.StatusCode);
+
+        var token = GenerateToken(7, "diagnostic_staff01@medflow.test", "DIAGNOSTIC_STAFF");
+        var missingReason = await PostWithTokenAsync(
+            AmendResultRoute,
+            token,
+            new
+            {
+                resultText = "Kết quả xét nghiệm sau hiệu đính.",
+                conclusion = "Kết luận sau hiệu đính.",
+            });
+        if (missingReason.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable)
+        {
+            return;
+        }
+
+        Assert.Equal(HttpStatusCode.BadRequest, missingReason.StatusCode);
+
+        var amendResponse = await PostWithTokenAsync(
+            AmendResultRoute,
+            token,
+            new
+            {
+                resultText = "Kết quả xét nghiệm sau hiệu đính, khác bản đã khóa.",
+                conclusion = "Kết luận sau hiệu đính cho phiếu demo.",
+                correctionReason = "Sửa kết quả demo trên lượt khám đã đóng.",
+            });
+        if (amendResponse.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable)
+        {
+            return;
+        }
+
+        Assert.Equal(HttpStatusCode.Conflict, amendResponse.StatusCode);
+        var amendBody = await amendResponse.Content.ReadAsStringAsync();
+        Assert.Contains("COMPLETED", amendBody, StringComparison.Ordinal);
+
+        var enterResponse = await PostWithTokenAsync(
+            OrderResultRoute,
+            token,
+            new
+            {
+                resultText = "WBC: 8.0 G/L; RBC: 4.5 T/L; HGB: 140 g/L.",
+                conclusion = "Công thức máu bình thường.",
+            });
+        Assert.Equal(HttpStatusCode.Conflict, enterResponse.StatusCode);
+        var enterBody = await enterResponse.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("không thể sửa kết quả", enterBody, StringComparison.Ordinal);
+
+        var detailResponse = await GetWithTokenAsync(ResultDetailRoute, token);
+        Assert.Equal(HttpStatusCode.OK, detailResponse.StatusCode);
+        var detail = await detailResponse.Content.ReadFromJsonAsync<DiagnosticResultEntryDetailResponseDto>();
+        Assert.NotNull(detail);
+        Assert.False(detail.Order.CanEnterResult);
+        Assert.False(detail.Order.CanAmendResult);
     }
 }

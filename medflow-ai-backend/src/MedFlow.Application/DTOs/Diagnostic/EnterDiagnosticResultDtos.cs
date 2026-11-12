@@ -40,6 +40,16 @@ public sealed record EnterDiagnosticResultRequest(
     string? Notes = null,
     int? ExpectedStateVersion = null);
 
+public sealed record UpdateDiagnosticResultRequest(
+    long? OrderId = null,
+    string? OrderCode = null,
+    string? ResultText = null,
+    string? Conclusion = null,
+    string? ReportFileUrl = null,
+    string? CorrectionReason = null,
+    string? AmendmentReason = null,
+    int? ExpectedStateVersion = null);
+
 public sealed record DiagnosticResultEntryEligibilityDto(
     bool IsEligible,
     bool CanEnterResult,
@@ -54,7 +64,9 @@ public sealed record DiagnosticResultEntryEligibilityDto(
     bool IsDepartmentActive,
     bool IsServicePointActive,
     bool IsRoomActive,
-    bool HasResultWritePermission);
+    bool HasResultWritePermission,
+    bool CanAmendResult,
+    string? AmendDisabledReason);
 
 public sealed record DiagnosticResultVersionItemDto(
     long VersionId,
@@ -171,7 +183,9 @@ public sealed record DiagnosticResultEntryItemDto(
     bool CanFinalizeResult,
     string? DisabledReason,
     DiagnosticResultEntryEligibilityDto Eligibility,
-    IReadOnlyList<DiagnosticResultVersionItemDto> Versions);
+    IReadOnlyList<DiagnosticResultVersionItemDto> Versions,
+    bool CanAmendResult,
+    string? AmendDisabledReason);
 
 public sealed record DiagnosticResultEntrySummaryStatsDto(
     int TotalOrders,

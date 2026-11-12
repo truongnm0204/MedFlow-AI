@@ -20,4 +20,11 @@ public interface IDiagnosticResultEntryService
         EnterDiagnosticResultRequest? request = null,
         string? ipAddress = null,
         CancellationToken ct = default);
+
+    Task<EnterDiagnosticResultResponseDto> UpdateDiagnosticResultAsync(
+        long actorUserId,
+        string? orderIdOrCode,
+        UpdateDiagnosticResultRequest? request = null,
+        string? ipAddress = null,
+        CancellationToken ct = default);
 }
