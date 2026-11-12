@@ -136,7 +136,7 @@ export function ExaminationServiceListPage() {
   );
 
   return (
-    <AdminServicesShell>
+    <AdminServicesShell variant="examination">
       <main className="space-y-5 px-6 py-6">
         <ServiceMetrics services={services} />
 
