@@ -65,7 +65,7 @@ import { ReceptionDashboardPage } from '@/features/reception/pages/reception-das
 import { WalkInVisitPage } from '@/features/reception/pages/walk-in-visit-page';
 import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
 import { DoctorReviewDiagnosticsPage } from '@/features/doctor/pages/doctor-review-diagnostics-page';
-import { DiagnosticResultsTrackingPage } from '@/features/diagnostic/pages/diagnostic-results-tracking-page';
+import { DoctorDiagnosticResultsTrackingPage } from '@/features/doctor/pages/doctor-diagnostic-results-tracking-page';
 import { PrepareMedicinesPage } from '@/features/pharmacy/pages/prepare-medicines-page';
 import { FefoBatchSelectionPage } from '@/features/pharmacy/pages/fefo-batch-selection-page';
 import { DispenseConfirmPage } from '@/features/pharmacy/pages/dispense-confirm-page';
@@ -81,7 +81,6 @@ import {
   RequireDoctor,
   RequirePharmacy,
   RequireReception,
-  RequireRole,
   RequireSystemAdmin,
 } from './guards';
 
@@ -1139,6 +1138,16 @@ export function AppRouter() {
       <Route path="/family/:memberId" element={<FamilyProfileDetailPage />} />
       <Route path="/patient/family/:memberId" element={<FamilyProfileDetailPage />} />
       <Route
+        path="/doctor/diagnostic-results/tracking"
+        element={
+          <RequireAuth>
+            <RequireDoctor>
+              <DoctorDiagnosticResultsTrackingPage />
+            </RequireDoctor>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/doctor/diagnostic-results"
         element={
           <RequireAuth>
@@ -1155,16 +1164,6 @@ export function AppRouter() {
             <RequireDoctor>
               <DoctorReviewDiagnosticsPage />
             </RequireDoctor>
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/diagnostic/results-tracking"
-        element={
-          <RequireAuth>
-            <RequireRole allowedRoles={['DIAGNOSTIC_STAFF', 'DOCTOR']}>
-              <DiagnosticResultsTrackingPage />
-            </RequireRole>
           </RequireAuth>
         }
       />

@@ -161,6 +161,10 @@ export function DoctorDashboardPage() {
             navigate('/doctor/consultation');
             return;
           }
+          if (item === 'diagnostics') {
+            navigate('/doctor/diagnostic-results/tracking');
+            return;
+          }
           setActiveNav(item);
         }}
       />
