@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1365,5 +1365,27 @@ describe('DoctorConsultationWorkspacePage (Issue #105 / UC31)', () => {
         'Tài khoản chưa được cấp quyền ghi nhận hồ sơ bệnh án (MEDICAL_RECORD_WRITE).',
       ).length,
     ).toBeGreaterThanOrEqual(2);
+  });
+
+  it('navigates to the UC36 diagnosis screen from the allowed action', async () => {
+    authenticateAsDoctor();
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK,
+    });
+
+    renderWithRouter('/doctor/consultation/VIS-2026-0212');
+
+    expect(await screen.findByRole('heading', { name: 'Nguyễn Văn An' })).toBeInTheDocument();
+
+    const actionLabel = screen.getByText('Ghi nhận chẩn đoán & kết luận');
+    const actionRow = actionLabel.closest('div.rounded-xl');
+    expect(actionRow).not.toBeNull();
+    fireEvent.click(within(actionRow as HTMLElement).getByRole('button', { name: 'Thực hiện' }));
+
+    expect(
+      await screen.findByRole('heading', {
+        name: 'Chẩn đoán Bệnh ICD-10 & Kết luận lâm sàng (SCR-CON-04)',
+      }),
+    ).toBeInTheDocument();
   });
 });

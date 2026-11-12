@@ -56,6 +56,8 @@ export function ConsultationAllowedActionsCard({
               action.id === 'open-consultation' ||
               action.id === 'record-clinical-examination' ||
               action.ucCode === 'UC33' ||
+              action.id === 'record-diagnosis' ||
+              action.ucCode === 'UC36' ||
               action.id === 'complete-visit' ||
               action.ucCode === 'UC38';
             const isDiagnosticOrderAction =

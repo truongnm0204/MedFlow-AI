@@ -1,37 +1,6 @@
-export interface Icd10Option {
-  code: string;
-  nameVi: string;
-  nameEn: string;
-}
+import type { Icd10CatalogItemDto } from './consultation-workspace.types';
 
-export interface DiagnosisPatientSummary {
-  fullName: string;
-  gender: string;
-  ageLabel: string;
-  patientCode: string;
-  visitCode: string;
-  allergies: string;
-  chronicDisease: string;
-}
-
-export interface DiagnosisEvidenceItem {
-  id: string;
-  title: string;
-  result: string;
-  status: 'COMPLETED' | 'PENDING';
-}
-
-export interface DiagnosisEvidence {
-  symptomsSummary: string;
-  tests: DiagnosisEvidenceItem[];
-}
-
-export interface DiagnosisFollowUpForm {
-  enabled: boolean;
-  date: string;
-  time: string;
-  room: string;
-}
+export type Icd10Option = Pick<Icd10CatalogItemDto, 'code' | 'nameVi'>;
 
 export interface DiagnosisConclusionFormValues {
   primaryIcd10Code: string;
@@ -40,7 +9,6 @@ export interface DiagnosisConclusionFormValues {
   clinicalConclusion: string;
   lifestyleInstructions: string;
   warningSigns: string;
-  followUp: DiagnosisFollowUpForm;
 }
 
 export type DiagnosisConclusionFieldErrors = Partial<
@@ -50,16 +18,9 @@ export type DiagnosisConclusionFieldErrors = Partial<
     | 'differentialNotes'
     | 'clinicalConclusion'
     | 'lifestyleInstructions'
-    | 'warningSigns'
-    | 'followUpDate'
-    | 'followUpTime'
-    | 'followUpRoom',
+    | 'warningSigns',
     string
   >
 >;
 
-export interface DiagnosisConclusionContext {
-  patient: DiagnosisPatientSummary;
-  evidence: DiagnosisEvidence;
-  initialValues: DiagnosisConclusionFormValues;
-}
+export type DiagnosisSaveMode = 'draft' | 'confirm';

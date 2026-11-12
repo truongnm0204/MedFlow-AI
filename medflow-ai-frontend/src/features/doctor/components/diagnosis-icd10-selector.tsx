@@ -1,48 +1,45 @@
 import { Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import type { Icd10Option } from '../types/diagnosis-conclusion.types';
+import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { Spinner } from '@/shared/ui/spinner';
+
+import { useIcd10CatalogSearch } from '../hooks/use-consultation-workspace';
+import type { Icd10CatalogItemDto } from '../types/consultation-workspace.types';
 
 export interface DiagnosisIcd10SelectorProps {
   id: string;
   label: string;
-  options: Icd10Option[];
+  primaryOnly?: boolean;
   disabledCodes?: string[];
-  onSelect: (option: Icd10Option) => void;
+  onSelect: (option: Icd10CatalogItemDto) => void;
   placeholder?: string;
   error?: string;
-}
-
-function normalize(value: string): string {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g, 'd')
-    .toLowerCase();
 }
 
 export function DiagnosisIcd10Selector({
   id,
   label,
-  options,
+  primaryOnly = false,
   disabledCodes = [],
   onSelect,
   placeholder = 'Tìm mã hoặc tên bệnh ICD-10 (ví dụ: K29.5, viêm dạ dày)',
   error,
 }: DiagnosisIcd10SelectorProps) {
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [open, setOpen] = useState(false);
 
-  const matches = useMemo(() => {
-    const needle = normalize(query.trim());
-    return options.filter(
-      (option) =>
-        !needle || normalize(`${option.code} ${option.nameVi} ${option.nameEn}`).includes(needle),
-    );
-  }, [options, query]);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const search = useIcd10CatalogSearch({ q: debouncedQuery, primaryOnly }, open);
 
   const listId = `${id}-listbox`;
   const errorId = `${id}-error`;
+  const options = search.data ?? [];
 
   return (
     <div className="relative">
@@ -51,7 +48,7 @@ export function DiagnosisIcd10Selector({
       </label>
       <div className="relative">
         <Search
-          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-sub"
+          className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-sub"
           aria-hidden="true"
         />
         <input
@@ -74,7 +71,7 @@ export function DiagnosisIcd10Selector({
           onKeyDown={(event) => {
             if (event.key === 'Escape') setOpen(false);
           }}
-          className="w-full rounded-lg border border-border bg-white py-2 pl-9 pr-3 text-sm text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+          className="w-full rounded-lg border border-border bg-white py-2 pr-3 pl-9 text-sm text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
         />
       </div>
       {open && (
@@ -84,14 +81,26 @@ export function DiagnosisIcd10Selector({
           aria-label={`Kết quả ${label}`}
           className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-lg border border-border bg-white py-1 shadow-lg"
         >
-          {matches.length === 0 ? (
+          {search.isError ? (
+            <li role="alert" className="px-3 py-2 text-xs text-rose-600">
+              {getErrorMessage(search.error, 'Không tải được danh mục ICD-10.')}
+            </li>
+          ) : search.isLoading ? (
+            <li className="flex items-center gap-2 px-3 py-2 text-xs text-sub">
+              <Spinner className="h-3.5 w-3.5" />
+              Đang tìm mã ICD-10…
+            </li>
+          ) : options.length === 0 ? (
             <li className="px-3 py-2 text-xs text-sub">Không tìm thấy mã ICD-10 phù hợp.</li>
           ) : (
-            matches.map((option) => {
-              const disabled = disabledCodes.includes(option.code);
+            options.map((option) => {
+              const disabled =
+                disabledCodes.includes(option.code) ||
+                !option.isSelectable ||
+                (primaryOnly && option.notPrimaryDx);
               return (
                 <li
-                  key={option.code}
+                  key={`${option.id}-${option.code}`}
                   role="option"
                   aria-selected={false}
                   aria-disabled={disabled}
@@ -107,9 +116,7 @@ export function DiagnosisIcd10Selector({
                   }`}
                 >
                   <span className="font-bold text-navy">{option.code}</span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {option.nameVi} ({option.nameEn})
-                  </span>
+                  <span className="min-w-0 flex-1 truncate">{option.nameVi}</span>
                 </li>
               );
             })

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
   completeVisit,
@@ -7,6 +7,8 @@ import {
   fetchDiagnosticOrderCatalog,
   openConsultationWorkspace,
   recordClinicalExamination,
+  recordDiagnosis,
+  searchIcd10Codes,
 } from '../api/consultation-workspace.api';
 import type {
   CompleteVisitRequest,
@@ -14,6 +16,7 @@ import type {
   CreateDiagnosticOrderRequest,
   OpenConsultationWorkspaceRequest,
   RecordClinicalExaminationRequest,
+  RecordDiagnosisRequest,
 } from '../types/consultation-workspace.types';
 
 export function useConsultationWorkspace(idOrCode: string, enabled = true) {
@@ -86,6 +89,45 @@ export function useRecordClinicalExamination() {
       },
     },
   );
+}
+
+export interface RecordDiagnosisVariables {
+  idOrCode: string;
+  payload: RecordDiagnosisRequest;
+}
+
+export function useRecordDiagnosis() {
+  const queryClient = useQueryClient();
+
+  return useMutation<ConsultationWorkspaceResponseDto, unknown, RecordDiagnosisVariables>({
+    mutationFn: ({ idOrCode, payload }) => recordDiagnosis(idOrCode, payload),
+    onSuccess: (data, variables) => {
+      const normalized = variables.idOrCode.trim();
+      queryClient.setQueryData(['doctor', 'consultation', normalized], data);
+      if (data.visit?.visitCode) {
+        queryClient.setQueryData(['doctor', 'consultation', data.visit.visitCode], data);
+      }
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'medical-history'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'assigned-queue'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'dashboard'],
+      });
+    },
+  });
+}
+
+export function useIcd10CatalogSearch(params: { q: string; primaryOnly: boolean }, enabled = true) {
+  return useQuery({
+    queryKey: ['doctor', 'icd10-codes', params.q.trim(), params.primaryOnly],
+    queryFn: () => searchIcd10Codes({ q: params.q, primaryOnly: params.primaryOnly, limit: 20 }),
+    enabled,
+    staleTime: 5 * 60_000,
+    placeholderData: keepPreviousData,
+  });
 }
 
 export function useDiagnosticOrderCatalog(idOrCode: string, enabled = true) {
