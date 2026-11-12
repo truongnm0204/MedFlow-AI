@@ -244,6 +244,89 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             AvailableServicePoints: availableServicePoints);
     }
 
+    public async Task<DiagnosticResultViewListResponseDto> GetDiagnosticResultViewsAsync(
+        long actorUserId,
+        GetDiagnosticResultViewsRequest? request = null,
+        CancellationToken ct = default)
+    {
+        var effectiveRequest = request ?? new GetDiagnosticResultViewsRequest();
+        var filter = ValidateViewListFilter(effectiveRequest);
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var referenceDate = DateOnly.FromDateTime(nowLocal);
+
+        var staffAccess = await EnsureDiagnosticStaffAccessAsync(
+            actorUserId,
+            nowUtc,
+            requireResultWritePermission: false,
+            ct);
+        var hospitalId = staffAccess.Hospital.Id;
+
+        var allOrders = await TryLoadAllDiagnosticOrdersAsync(ct);
+        var lookupBundle = await LoadOrderLookupBundleAsync(allOrders, hospitalId, nowLocal, ct);
+
+        var hospitalOrders = allOrders
+            .Where(o => IsOrderInHospitalScope(o, hospitalId, lookupBundle))
+            .ToList();
+
+        var viewable = new List<DiagnosticResultViewItemDto>(hospitalOrders.Count);
+        foreach (var order in hospitalOrders)
+        {
+            var item = BuildResultEntryItemDto(
+                order,
+                staffAccess,
+                lookupBundle,
+                referenceDate,
+                nowLocal);
+            if (!item.HasResult)
+            {
+                continue;
+            }
+
+            viewable.Add(ProjectViewItem(item));
+        }
+
+        return new DiagnosticResultViewListResponseDto(
+            HospitalId: staffAccess.Hospital.Id,
+            HospitalCode: staffAccess.Hospital.HospitalCode,
+            HospitalName: staffAccess.Hospital.Name,
+            DepartmentId: staffAccess.Staff.DepartmentId,
+            DepartmentName: staffAccess.DepartmentName,
+            GeneratedAtUtc: nowUtc,
+            StaffProfile: staffAccess.Profile,
+            Summary: BuildViewSummary(viewable),
+            Items: ApplyViewFilters(viewable, filter));
+    }
+
+    public async Task<DiagnosticResultViewDetailResponseDto> GetDiagnosticResultViewByIdOrCodeAsync(
+        long actorUserId,
+        string orderIdOrCode,
+        CancellationToken ct = default)
+    {
+        var detail = await GetOrderResultByIdOrCodeAsync(actorUserId, orderIdOrCode, ct);
+        if (!detail.Order.HasResult)
+        {
+            throw new NotFoundException("Phiếu chỉ định chưa có kết quả cận lâm sàng.");
+        }
+
+        var versions = detail.Versions
+            .OrderBy(v => v.VersionNo)
+            .ThenBy(v => v.VersionId)
+            .ToList();
+
+        return new DiagnosticResultViewDetailResponseDto(
+            HospitalId: detail.HospitalId,
+            HospitalCode: detail.HospitalCode,
+            HospitalName: detail.HospitalName,
+            GeneratedAtUtc: detail.GeneratedAtUtc,
+            StaffProfile: detail.StaffProfile,
+            Item: ProjectViewItem(detail.Order),
+            ClinicalContext: detail.ClinicalContext,
+            Versions: versions,
+            StatusHistory: detail.StatusHistory);
+    }
+
     public async Task<EnterDiagnosticResultResponseDto> EnterDiagnosticResultAsync(
         long actorUserId,
         string? orderIdOrCode,
@@ -4002,6 +4085,243 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         return null;
     }
 
+    private static readonly HashSet<string> ValidViewResultStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "DRAFT",
+        "PRELIMINARY",
+        "PENDING_VERIFY",
+        "FINALIZED",
+        "VERIFIED",
+        "COMPLETED",
+        "CANCELLED",
+    };
+
+    private static ValidatedViewListFilter ValidateViewListFilter(GetDiagnosticResultViewsRequest request)
+    {
+        if (request.Limit is < 1 or > 100)
+        {
+            throw new ValidationException("Số lượng phiếu chỉ định cận lâm sàng hiển thị phải từ 1 đến 100.");
+        }
+
+        string? normalizedCategory = null;
+        if (!string.IsNullOrWhiteSpace(request.Category) &&
+            !string.Equals(request.Category.Trim(), "ALL", StringComparison.OrdinalIgnoreCase))
+        {
+            var trimmedCategory = request.Category.Trim();
+            if (!ValidCategories.Contains(trimmedCategory))
+            {
+                throw new ValidationException("Nhóm cận lâm sàng lọc không hợp lệ.");
+            }
+
+            normalizedCategory = trimmedCategory.ToUpperInvariant();
+        }
+
+        string? normalizedResultStatus = null;
+        if (!string.IsNullOrWhiteSpace(request.ResultStatus) &&
+            !string.Equals(request.ResultStatus.Trim(), "ALL", StringComparison.OrdinalIgnoreCase))
+        {
+            var trimmedResultStatus = request.ResultStatus.Trim();
+            if (!ValidViewResultStatuses.Contains(trimmedResultStatus))
+            {
+                throw new ValidationException("Trạng thái kết quả cận lâm sàng lọc không hợp lệ.");
+            }
+
+            normalizedResultStatus = trimmedResultStatus.ToUpperInvariant();
+        }
+
+        if (request.VisitId is <= 0)
+        {
+            throw new ValidationException("ID lượt khám (VisitId) phải lớn hơn 0.");
+        }
+
+        string? normalizedVisitCode = null;
+        if (!string.IsNullOrWhiteSpace(request.VisitCode))
+        {
+            normalizedVisitCode = request.VisitCode.Trim();
+            if (normalizedVisitCode.Length > 40 ||
+                normalizedVisitCode.Contains('<') ||
+                normalizedVisitCode.Contains('>'))
+            {
+                throw new ValidationException("Mã lượt khám lọc không hợp lệ.");
+            }
+        }
+
+        string? normalizedKeyword = null;
+        if (!string.IsNullOrWhiteSpace(request.Keyword))
+        {
+            normalizedKeyword = request.Keyword.Trim();
+            if (normalizedKeyword.Length > 100 ||
+                normalizedKeyword.Contains('<') ||
+                normalizedKeyword.Contains('>'))
+            {
+                throw new ValidationException("Từ khóa tìm kiếm phiếu chỉ định cận lâm sàng không hợp lệ.");
+            }
+        }
+
+        return new ValidatedViewListFilter(
+            ResultStatus: normalizedResultStatus,
+            Category: normalizedCategory,
+            Keyword: normalizedKeyword,
+            VisitId: request.VisitId,
+            VisitCode: normalizedVisitCode,
+            Limit: request.Limit);
+    }
+
+    private static DiagnosticResultViewItemDto ProjectViewItem(DiagnosticResultEntryItemDto item)
+        => new(
+            OrderId: item.OrderId,
+            OrderCode: item.OrderCode,
+            VisitId: item.VisitId,
+            VisitCode: item.VisitCode,
+            VisitStatus: item.VisitStatus,
+            Patient: item.Patient,
+            OrderingDoctorId: item.OrderingDoctorId,
+            OrderingDoctorCode: item.OrderingDoctorCode,
+            OrderingDoctorName: item.OrderingDoctorName,
+            ServiceId: item.ServiceId,
+            ServiceCode: item.ServiceCode,
+            ServiceName: item.ServiceName,
+            Category: item.Category,
+            UnitPrice: item.UnitPrice,
+            Priority: item.Priority,
+            OrderStatus: item.OrderStatus,
+            DepartmentName: item.DepartmentName,
+            RoomCode: item.RoomCode,
+            RoomName: item.RoomName,
+            ServicePointName: item.ServicePointName,
+            Instruction: item.Instruction,
+            OrderedAt: item.OrderedAt,
+            CompletedAt: item.CompletedAt,
+            ResultId: item.ResultId,
+            ResultStatus: item.ResultStatus,
+            IsResultFinalized: item.IsResultFinalized,
+            ResultFinalizedAt: item.ResultFinalizedAt,
+            FinalizedByStaffId: item.FinalizedByStaffId,
+            FinalizedByStaffCode: item.FinalizedByStaffCode,
+            FinalizedByStaffName: item.FinalizedByStaffName,
+            LatestVersionNo: item.LatestVersionNo,
+            ResultText: item.ResultText,
+            Conclusion: item.Conclusion,
+            Document: BuildDocument(item.ReportFileUrl),
+            EnteredByStaffId: item.EnteredByStaffId,
+            EnteredByStaffCode: item.EnteredByStaffCode,
+            EnteredByStaffName: item.EnteredByStaffName,
+            EnteredAt: item.EnteredAt,
+            VerifiedByStaffId: item.VerifiedByStaffId,
+            VerifiedByStaffCode: item.VerifiedByStaffCode,
+            VerifiedByStaffName: item.VerifiedByStaffName,
+            VerifiedAt: item.VerifiedAt,
+            CorrectionReason: item.CorrectionReason);
+
+    private static DiagnosticResultDocumentDto BuildDocument(string? reportFileUrl)
+    {
+        if (string.IsNullOrWhiteSpace(reportFileUrl))
+        {
+            return new DiagnosticResultDocumentDto(null, false, null);
+        }
+
+        var trimmed = reportFileUrl.Trim();
+        string? fileName = null;
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            var name = Path.GetFileName(uri.AbsolutePath);
+            if (!string.IsNullOrEmpty(name))
+            {
+                fileName = Uri.UnescapeDataString(name);
+            }
+        }
+
+        return new DiagnosticResultDocumentDto(trimmed, true, fileName);
+    }
+
+    private static DiagnosticResultViewSummaryDto BuildViewSummary(IReadOnlyList<DiagnosticResultViewItemDto> items)
+    {
+        var draftOrPreliminary = 0;
+        var pendingVerification = 0;
+        var finalizedOrVerified = 0;
+        var cancelled = 0;
+
+        foreach (var item in items)
+        {
+            if (item.ResultStatus is "DRAFT" or "PRELIMINARY")
+            {
+                draftOrPreliminary++;
+            }
+            else if (item.ResultStatus == "PENDING_VERIFY")
+            {
+                pendingVerification++;
+            }
+            else if (item.ResultStatus is "FINALIZED" or "VERIFIED")
+            {
+                finalizedOrVerified++;
+            }
+            else if (item.ResultStatus == "CANCELLED")
+            {
+                cancelled++;
+            }
+        }
+
+        return new DiagnosticResultViewSummaryDto(
+            TotalWithResult: items.Count,
+            DraftOrPreliminaryCount: draftOrPreliminary,
+            PendingVerificationCount: pendingVerification,
+            FinalizedOrVerifiedCount: finalizedOrVerified,
+            CancelledCount: cancelled);
+    }
+
+    private static IReadOnlyList<DiagnosticResultViewItemDto> ApplyViewFilters(
+        IReadOnlyList<DiagnosticResultViewItemDto> items,
+        ValidatedViewListFilter filter)
+    {
+        IEnumerable<DiagnosticResultViewItemDto> query = items;
+
+        if (filter.ResultStatus is not null)
+        {
+            query = string.Equals(filter.ResultStatus, "COMPLETED", StringComparison.OrdinalIgnoreCase)
+                ? query.Where(i => i.IsResultFinalized)
+                : query.Where(i => string.Equals(i.ResultStatus, filter.ResultStatus, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (filter.Category is not null)
+        {
+            query = query.Where(i => string.Equals(i.Category, filter.Category, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (filter.VisitId.HasValue)
+        {
+            query = query.Where(i => i.VisitId == filter.VisitId.Value);
+        }
+
+        if (filter.VisitCode is not null)
+        {
+            query = query.Where(i => string.Equals(i.VisitCode, filter.VisitCode, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (filter.Keyword is not null)
+        {
+            var kw = filter.Keyword;
+            query = query.Where(i =>
+                i.OrderCode.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                i.VisitCode.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                i.Patient.FullName.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                i.Patient.PatientCode.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                (i.Patient.Phone is not null && i.Patient.Phone.Contains(kw, StringComparison.OrdinalIgnoreCase)) ||
+                i.ServiceName.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                i.ServiceCode.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                i.OrderingDoctorName.Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                (i.ResultText is not null && i.ResultText.Contains(kw, StringComparison.OrdinalIgnoreCase)) ||
+                (i.Conclusion is not null && i.Conclusion.Contains(kw, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        return query
+            .OrderByDescending(i => i.EnteredAt.HasValue)
+            .ThenByDescending(i => i.EnteredAt)
+            .ThenByDescending(i => i.OrderId)
+            .Take(filter.Limit)
+            .ToList();
+    }
+
     private sealed record DiagnosticStaffAccessContext(
         Hospital Hospital,
         Staff Staff,
@@ -4016,6 +4336,14 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         long? VisitId,
         string? Code,
         string RawInput);
+
+    private sealed record ValidatedViewListFilter(
+        string? ResultStatus,
+        string? Category,
+        string? Keyword,
+        long? VisitId,
+        string? VisitCode,
+        int Limit);
 
     private sealed record ValidatedListFilter(
         string? Status,

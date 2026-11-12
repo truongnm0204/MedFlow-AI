@@ -40,6 +40,38 @@ public sealed class DiagnosticResultsController : ControllerBase
         => Ok(await _resultEntryService.GetOrdersForResultEntryAsync(GetUserId(), request, ct));
 
     /// <summary>
+    /// GET /api/v1/diagnostic/results/view — Danh sách kết quả cận lâm sàng đã có bản ghi (UC35 / #138).
+    /// </summary>
+    [HttpGet("/api/v1/diagnostic/results/view")]
+    [HttpGet("/api/v1/diagnostic-results/view")]
+    [ProducesResponseType<DiagnosticResultViewListResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<DiagnosticResultViewListResponseDto>> GetViews(
+        [FromQuery] GetDiagnosticResultViewsRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _resultEntryService.GetDiagnosticResultViewsAsync(GetUserId(), request, ct));
+
+    /// <summary>
+    /// GET /api/v1/diagnostic/results/{idOrCode}/view — Xem kết quả cận lâm sàng và tài liệu đã lưu (UC35 / #138).
+    /// </summary>
+    [HttpGet("/api/v1/diagnostic/results/{idOrCode}/view")]
+    [HttpGet("/api/v1/diagnostic-results/{idOrCode}/view")]
+    [HttpGet("/api/v1/diagnostic/orders/{idOrCode}/result/view")]
+    [HttpGet("/api/v1/diagnostic-orders/{idOrCode}/result/view")]
+    [ProducesResponseType<DiagnosticResultViewDetailResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<DiagnosticResultViewDetailResponseDto>> GetViewByIdOrCode(
+        string idOrCode,
+        CancellationToken ct = default)
+        => Ok(await _resultEntryService.GetDiagnosticResultViewByIdOrCodeAsync(GetUserId(), idOrCode, ct));
+
+    /// <summary>
     /// GET /api/v1/diagnostic/results/{idOrCode} — Xem chi tiết phiếu chỉ định, thông tin lâm sàng, lịch sử phiên bản &amp; kết quả cận lâm sàng (UC43 / #134).
     /// </summary>
     [HttpGet("/api/v1/diagnostic/results/{idOrCode}")]

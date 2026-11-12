@@ -14,6 +14,16 @@ public interface IDiagnosticResultEntryService
         string orderIdOrCode,
         CancellationToken ct = default);
 
+    Task<DiagnosticResultViewListResponseDto> GetDiagnosticResultViewsAsync(
+        long actorUserId,
+        GetDiagnosticResultViewsRequest? request = null,
+        CancellationToken ct = default);
+
+    Task<DiagnosticResultViewDetailResponseDto> GetDiagnosticResultViewByIdOrCodeAsync(
+        long actorUserId,
+        string orderIdOrCode,
+        CancellationToken ct = default);
+
     Task<EnterDiagnosticResultResponseDto> EnterDiagnosticResultAsync(
         long actorUserId,
         string? orderIdOrCode,
