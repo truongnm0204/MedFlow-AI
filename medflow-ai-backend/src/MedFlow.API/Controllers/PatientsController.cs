@@ -13,13 +13,16 @@ public sealed class PatientsController : ControllerBase
 {
     private readonly IPatientProfileService _profileService;
     private readonly IFamilyProfileService _familyProfileService;
+    private readonly IPatientDiagnosticResultService _diagnosticResultService;
 
     public PatientsController(
         IPatientProfileService profileService,
-        IFamilyProfileService familyProfileService)
+        IFamilyProfileService familyProfileService,
+        IPatientDiagnosticResultService diagnosticResultService)
     {
         _profileService = profileService;
         _familyProfileService = familyProfileService;
+        _diagnosticResultService = diagnosticResultService;
     }
 
     /// <summary>GET /api/v1/patients/me/profile — Xem thông tin hồ sơ cá nhân của bệnh nhân đang đăng nhập.</summary>
@@ -89,6 +92,30 @@ public sealed class PatientsController : ControllerBase
         var result = await _familyProfileService.UpdateFamilyMemberAsync(GetUserId(), identifier, request, ct);
         return Ok(result);
     }
+
+    /// <summary>GET /api/v1/patients/me/diagnostic-results — Xem các kết quả cận lâm sàng được công bố cho bệnh nhân đang đăng nhập.</summary>
+    [HttpGet("me/diagnostic-results")]
+    [ProducesResponseType<PatientDiagnosticResultListResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PatientDiagnosticResultListResponseDto>> GetMyDiagnosticResults(
+        [FromQuery] GetPatientDiagnosticResultsRequest? request,
+        CancellationToken ct)
+        => Ok(await _diagnosticResultService.GetMyResultsAsync(GetUserId(), request, ct));
+
+    /// <summary>GET /api/v1/patients/me/diagnostic-results/{idOrCode} — Xem chi tiết kết quả cận lâm sàng theo mã chỉ định.</summary>
+    [HttpGet("me/diagnostic-results/{idOrCode}")]
+    [ProducesResponseType<PatientDiagnosticResultDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PatientDiagnosticResultDetailDto>> GetMyDiagnosticResult(
+        string idOrCode,
+        CancellationToken ct)
+        => Ok(await _diagnosticResultService.GetMyResultAsync(GetUserId(), idOrCode, ct));
 
     /// <summary>DELETE /api/v1/patients/me/family-members/{identifier} — Gỡ liên kết hồ sơ người thân.</summary>
     [HttpDelete("me/family-members/{identifier}")]
