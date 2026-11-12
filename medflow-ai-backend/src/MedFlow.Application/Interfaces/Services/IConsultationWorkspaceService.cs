@@ -54,6 +54,11 @@ public interface IConsultationWorkspaceService
         string orderIdOrCode,
         CancellationToken ct = default);
 
+
+    Task<DiagnosticResultsTrackingResponseDto> GetDiagnosticResultsTrackingAsync(
+        long actorUserId,
+        GetDiagnosticResultsTrackingRequest? request = null,
+        CancellationToken ct = default);
     Task<ConsultationWorkspaceResponseDto> ReviewDiagnosticResultsAsync(
         long actorUserId,
         string visitIdOrCode,
