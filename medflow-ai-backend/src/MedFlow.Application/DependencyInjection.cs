@@ -29,6 +29,7 @@ public static class DependencyInjection
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IExaminationServiceCatalogService, ExaminationServiceCatalogService>();
         services.AddScoped<IExaminationServiceAdminService, ExaminationServiceAdminService>();
+        services.AddScoped<IDiagnosticServiceAdminService, DiagnosticServiceAdminService>();
         services.AddScoped<IDoctorAdminService, DoctorAdminService>();
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IDoctorCatalogService, DoctorCatalogService>();
