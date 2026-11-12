@@ -7,6 +7,7 @@ import { useAuthStore } from '@/features/auth/store/auth.store';
 import { apiClient } from '@/shared/lib/axios';
 
 import {
+  amendMockDiagnosticResult,
   enterMockDiagnosticResult,
   resetDiagnosticResultEntryMockState,
   resolveMockDiagnosticOrdersForResultEntry,
@@ -14,9 +15,32 @@ import {
 } from '../data/diagnostic-result-entry-mock';
 import { DiagnosticResultEntryPage } from '../pages/diagnostic-result-entry-page';
 import type {
+  DiagnosticResultEntryDetailResponseDto,
+  DiagnosticResultEntryItemDto,
+  DiagnosticResultEntryListResponseDto,
   EnterDiagnosticResultRequest,
   GetDiagnosticOrdersForResultEntryParams,
+  UpdateDiagnosticResultRequest,
 } from '../types/diagnostic.types';
+
+const AMEND_BLOCKED_REASON =
+  'Lượt khám đã hoàn tất (COMPLETED), không thể sửa kết quả cận lâm sàng đã khóa.';
+
+function blockAmendOn0041(order: DiagnosticResultEntryItemDto): DiagnosticResultEntryItemDto {
+  if (order.orderCode !== 'DIA-202610-0041') {
+    return order;
+  }
+  return {
+    ...order,
+    canAmendResult: false,
+    amendDisabledReason: AMEND_BLOCKED_REASON,
+    eligibility: {
+      ...order.eligibility,
+      canAmendResult: false,
+      amendDisabledReason: AMEND_BLOCKED_REASON,
+    },
+  };
+}
 
 function renderPage(initialEntry = '/diagnostic/results') {
   const qc = new QueryClient({
@@ -197,18 +221,19 @@ describe('DiagnosticResultEntryPage (UC43)', () => {
     });
   });
 
-  it('phieu da FINALIZED hien thi lock banner va vo hieu hoa hai nut submit', async () => {
+  it('phieu da FINALIZED mo form sua ket qua da khoa va giu nut nhap moi tat', async () => {
     renderPage();
 
     fireEvent.click(await screen.findByTestId('result-entry-order-row-DIA-202610-0041'));
 
     expect(await screen.findByTestId('result-finalized-lock-banner')).toBeInTheDocument();
-    expect(screen.getByTestId('result-entry-form')).toBeInTheDocument();
-
-    const saveButton = screen.getByRole('button', { name: /Lưu kết quả/i });
-    const finalizeButton = screen.getByRole('button', { name: /Duyệt & trả kết quả/i });
-    expect(saveButton).toBeDisabled();
-    expect(finalizeButton).toBeDisabled();
+    expect(screen.getByTestId('result-amend-form')).toBeInTheDocument();
+    expect(screen.queryByTestId('result-entry-form')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /DRAFT/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sửa kết quả đã khóa/i })).toBeEnabled();
+    expect(screen.getByTestId('result-entry-order-row-DIA-202610-0041')).toHaveTextContent(
+      'Sửa KQ',
+    );
   });
 
   it('goi GET /diagnostic/results, GET /diagnostic/results/{code} va POST /diagnostic/orders/{code}/result khi co token', async () => {
@@ -274,5 +299,189 @@ describe('DiagnosticResultEntryPage (UC43)', () => {
     const successBanner = await screen.findByTestId('result-entry-success');
     expect(successBanner).toHaveTextContent('RESULT_SAVED');
     expect(successBanner).toHaveTextContent('v1');
+  });
+
+  it('chan sua ket qua da khoa khi thieu ly do — khong tao version moi', async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByTestId('result-entry-order-row-DIA-202610-0041'));
+    await screen.findByTestId('result-amend-form');
+
+    fireEvent.change(screen.getByLabelText('Kết luận chẩn đoán cận lâm sàng'), {
+      target: { value: 'Giảm tiểu cầu nhẹ, đề nghị đếm lại sau 24 giờ.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Sửa kết quả đã khóa/i }));
+
+    expect(await screen.findByTestId('result-form-validation-error')).toHaveTextContent(
+      'Lý do sửa kết quả cận lâm sàng (CorrectionReason) phải có ít nhất 5 ký tự.',
+    );
+    expect(screen.queryByTestId('result-version-2')).not.toBeInTheDocument();
+  });
+
+  it('sua ket qua da khoa tao version moi, giu nguoi duyet goc va outcome AMENDED', async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByTestId('result-entry-order-row-DIA-202610-0041'));
+    await screen.findByTestId('result-amend-form');
+
+    fireEvent.change(screen.getByLabelText('Kết luận chẩn đoán cận lâm sàng'), {
+      target: { value: 'Giảm tiểu cầu nhẹ, đề nghị đếm lại tiểu cầu sau 24 giờ.' },
+    });
+    fireEvent.change(screen.getByLabelText('Lý do sửa kết quả đã khóa'), {
+      target: { value: 'Đính chính khuyến nghị theo mẫu chạy lại.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Sửa kết quả đã khóa/i }));
+
+    const successBanner = await screen.findByTestId('result-entry-success');
+    expect(successBanner).toHaveTextContent('DIAGNOSTIC_RESULT_AMENDED');
+    expect(successBanner).toHaveTextContent('v2');
+    expect(successBanner).toHaveTextContent('v7');
+
+    const lockBanner = screen.getByTestId('result-finalized-lock-banner');
+    expect(lockBanner).toHaveTextContent('CN. Lê Hoàng Minh');
+
+    const version2 = await screen.findByTestId('result-version-2');
+    expect(version2).toHaveTextContent('Đính chính khuyến nghị theo mẫu chạy lại.');
+    expect(version2).toHaveTextContent('Giảm tiểu cầu nhẹ, đề nghị đếm lại tiểu cầu sau 24 giờ.');
+
+    expect(screen.getByTestId('result-entry-order-row-DIA-202610-0041')).toHaveTextContent(
+      'Đã thẩm định',
+    );
+  });
+
+  it('tu choi sua khi noi dung va file khong doi', async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByTestId('result-entry-order-row-DIA-202610-0041'));
+    await screen.findByTestId('result-amend-form');
+
+    fireEvent.change(screen.getByLabelText('Lý do sửa kết quả đã khóa'), {
+      target: { value: 'Chỉ bổ sung lý do, không đổi nội dung.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Sửa kết quả đã khóa/i }));
+
+    expect(await screen.findByTestId('result-entry-error-banner')).toHaveTextContent(
+      'Không có thay đổi nội dung kết quả cận lâm sàng.',
+    );
+    expect(screen.queryByTestId('result-version-2')).not.toBeInTheDocument();
+  });
+
+  it('xoa trang duong dan tep thi version moi khong con file cu', async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByTestId('result-entry-order-row-DIA-202610-0041'));
+    await screen.findByTestId('result-amend-form');
+
+    fireEvent.change(screen.getByLabelText('Kết luận chẩn đoán cận lâm sàng'), {
+      target: { value: 'Giảm tiểu cầu nhẹ, theo dõi thêm sau 24 giờ.' },
+    });
+    fireEvent.change(screen.getByLabelText('Đường dẫn tệp kết quả đính kèm'), {
+      target: { value: '' },
+    });
+    fireEvent.change(screen.getByLabelText('Lý do sửa kết quả đã khóa'), {
+      target: { value: 'Gỡ file PDF đính kèm sai phiếu.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Sửa kết quả đã khóa/i }));
+
+    const version2 = await screen.findByTestId('result-version-2');
+    expect(version2).toHaveTextContent('Không có tệp đính kèm');
+    expect(version2).not.toHaveTextContent('cbc-DIA-202610-0041.pdf');
+  });
+
+  it('co token thi POST /result/amend va khong goi POST /result', async () => {
+    localStorage.setItem('medflow.access_token', 'valid-diagnostic-jwt-token');
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
+      if (url === '/diagnostic/results') {
+        return {
+          data: resolveMockDiagnosticOrdersForResultEntry(
+            config?.params as GetDiagnosticOrdersForResultEntryParams | undefined,
+          ),
+        };
+      }
+      if (typeof url === 'string' && url.startsWith('/diagnostic/results/')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return { data: resolveMockDiagnosticResultEntryDetail(code) };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    const postSpy = vi.spyOn(apiClient, 'post').mockImplementation(async (url, body) => {
+      if (typeof url === 'string' && url.endsWith('/result/amend')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return {
+          data: amendMockDiagnosticResult(code, body as UpdateDiagnosticResultRequest),
+        };
+      }
+      throw new Error(`Unexpected POST ${url}`);
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByTestId('result-entry-order-row-DIA-202610-0041'));
+    await screen.findByTestId('result-amend-form');
+
+    fireEvent.change(screen.getByLabelText('Kết luận chẩn đoán cận lâm sàng'), {
+      target: { value: 'Giảm tiểu cầu nhẹ, đếm lại sau 24 giờ.' },
+    });
+    fireEvent.change(screen.getByLabelText('Lý do sửa kết quả đã khóa'), {
+      target: { value: 'Sửa kết luận theo kết quả chạy lại.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Sửa kết quả đã khóa/i }));
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledTimes(1);
+      expect(postSpy).toHaveBeenCalledWith(
+        '/diagnostic/orders/DIA-202610-0041/result/amend',
+        expect.objectContaining({
+          orderId: 41,
+          conclusion: 'Giảm tiểu cầu nhẹ, đếm lại sau 24 giờ.',
+          correctionReason: 'Sửa kết luận theo kết quả chạy lại.',
+          reportFileUrl: null,
+          expectedStateVersion: 6,
+        }),
+      );
+    });
+
+    const calledUrls = postSpy.mock.calls.map((call) => call[0]);
+    expect(calledUrls.some((url) => typeof url === 'string' && url.endsWith('/result'))).toBe(
+      false,
+    );
+  });
+
+  it('an nut sua khi server tra canAmendResult false', async () => {
+    localStorage.setItem('medflow.access_token', 'valid-diagnostic-jwt-token');
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
+      if (url === '/diagnostic/results') {
+        const list = resolveMockDiagnosticOrdersForResultEntry(
+          config?.params as GetDiagnosticOrdersForResultEntryParams | undefined,
+        );
+        const blocked: DiagnosticResultEntryListResponseDto = {
+          ...list,
+          items: list.items.map(blockAmendOn0041),
+        };
+        return { data: blocked };
+      }
+      if (typeof url === 'string' && url.startsWith('/diagnostic/results/')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        const detail = resolveMockDiagnosticResultEntryDetail(code);
+        const blocked: DiagnosticResultEntryDetailResponseDto = {
+          ...detail,
+          order: blockAmendOn0041(detail.order),
+          versions: detail.versions,
+        };
+        return { data: blocked };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByTestId('result-entry-order-row-DIA-202610-0041'));
+
+    expect(await screen.findByTestId('result-amend-disabled-reason')).toHaveTextContent(
+      AMEND_BLOCKED_REASON,
+    );
+    expect(screen.queryByRole('button', { name: /Sửa kết quả đã khóa/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('result-amend-form')).not.toBeInTheDocument();
   });
 });

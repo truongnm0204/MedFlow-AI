@@ -4,10 +4,12 @@ import {
   enterDiagnosticResult,
   fetchDiagnosticOrdersForResultEntry,
   fetchDiagnosticResultEntryDetail,
+  updateDiagnosticResult,
 } from '../api/diagnostic.api';
 import type {
   EnterDiagnosticResultRequest,
   GetDiagnosticOrdersForResultEntryParams,
+  UpdateDiagnosticResultRequest,
 } from '../types/diagnostic-result-entry.types';
 
 export function useDiagnosticOrdersForResultEntry(
@@ -43,6 +45,27 @@ export function useEnterDiagnosticResult() {
       idOrCode: string;
       payload: EnterDiagnosticResultRequest;
     }) => enterDiagnosticResult(idOrCode, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['diagnostic', 'results'] });
+      void queryClient.invalidateQueries({ queryKey: ['diagnostic', 'worklist'] });
+      void queryClient.invalidateQueries({ queryKey: ['diagnostic', 'queue'] });
+      void queryClient.invalidateQueries({ queryKey: ['diagnostic', 'dashboard'] });
+      void queryClient.invalidateQueries({ queryKey: ['diagnostic', 'orders'] });
+    },
+  });
+}
+
+export function useUpdateDiagnosticResult() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      idOrCode,
+      payload,
+    }: {
+      idOrCode: string;
+      payload: UpdateDiagnosticResultRequest;
+    }) => updateDiagnosticResult(idOrCode, payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['diagnostic', 'results'] });
       void queryClient.invalidateQueries({ queryKey: ['diagnostic', 'worklist'] });

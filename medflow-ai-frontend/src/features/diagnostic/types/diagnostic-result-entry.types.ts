@@ -55,6 +55,18 @@ export interface EnterDiagnosticResultRequest {
   expectedStateVersion?: number | null;
 }
 
+/** Body của POST .../result/amend. Không gửi status, notes, isFinalized. */
+export interface UpdateDiagnosticResultRequest {
+  orderId?: number | null;
+  orderCode?: string | null;
+  resultText?: string | null;
+  conclusion?: string | null;
+  reportFileUrl?: string | null;
+  correctionReason?: string | null;
+  amendmentReason?: string | null;
+  expectedStateVersion?: number | null;
+}
+
 export interface DiagnosticResultEntryEligibilityDto {
   isEligible: boolean;
   canEnterResult: boolean;
@@ -70,6 +82,8 @@ export interface DiagnosticResultEntryEligibilityDto {
   isServicePointActive: boolean;
   isRoomActive: boolean;
   hasResultWritePermission: boolean;
+  canAmendResult: boolean;
+  amendDisabledReason?: string | null;
 }
 
 export interface DiagnosticResultVersionItemDto {
@@ -190,6 +204,8 @@ export interface DiagnosticResultEntryItemDto {
   disabledReason?: string | null;
   eligibility: DiagnosticResultEntryEligibilityDto;
   versions: DiagnosticResultVersionItemDto[];
+  canAmendResult: boolean;
+  amendDisabledReason?: string | null;
 }
 
 export interface DiagnosticResultEntrySummaryStatsDto {
