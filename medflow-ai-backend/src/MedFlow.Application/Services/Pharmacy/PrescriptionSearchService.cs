@@ -85,50 +85,19 @@ public sealed class PrescriptionSearchService : IPrescriptionSearchService
         }
 
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var (_, _, hospital) = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
-        var hospitalId = hospital.Id;
+        var hospitalId = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
 
+        var scopedPrescriptionIds = BuildScopedPrescriptionIds(hospitalId);
         var baseScopedQuery =
-            from p in _db.Prescriptions.AsNoTracking()
-            join v in _db.Visits on p.VisitId equals v.Id
-            join r in _db.HospitalRooms on v.ExaminationRoomId equals (long?)r.Id into rooms
-            from r in rooms.DefaultIfEmpty()
-            join d in _db.Doctors on v.AssignedDoctorId equals (long?)d.Id into docs
-            from d in docs.DefaultIfEmpty()
-            join pt in _db.Patients on v.PatientId equals (long?)pt.Id
-            where p.FulfillmentChoice != null &&
-                  (p.FulfillmentChoice!.ToUpper() == "HOSPITAL" || p.FulfillmentChoice!.ToUpper() == "HOSPITAL_PHARMACY")
-            where p.Status != null &&
-                  (p.Status!.ToUpper() == "ISSUED" || p.Status!.ToUpper() == "PREPARING" ||
-                   p.Status!.ToUpper() == "READY" || p.Status!.ToUpper() == "DISPENSED")
-            where v.Status != null &&
-                  v.Status!.ToUpper() == "COMPLETED"
-            where ((r != null && r.HospitalId == hospitalId) || (d != null && d.HospitalId == hospitalId))
-               && (v.ExaminationRoomId == null || (r != null && r.HospitalId == hospitalId))
-               && (v.AssignedDoctorId == null || (d != null && d.HospitalId == hospitalId))
-            where !_db.Prescriptions.Any(newer =>
-                      newer.ReplacesPrescriptionId == p.Id &&
-                      newer.Status != null &&
-                      (newer.Status!.ToUpper() == "ISSUED" ||
-                       newer.Status!.ToUpper() == "PREPARING" ||
-                       newer.Status!.ToUpper() == "READY" ||
-                       newer.Status!.ToUpper() == "DISPENSED"))
-            where !p.PrescribingDoctorId.HasValue ||
-                  _db.Doctors.Any(pd =>
-                      pd.Id == p.PrescribingDoctorId.GetValueOrDefault() &&
-                      pd.HospitalId == hospitalId)
-            where _db.PrescriptionItems.Any(pi => pi.PrescriptionId == p.Id)
-            where !_db.PrescriptionItems.Any(pi =>
-                pi.PrescriptionId == p.Id &&
-                (!pi.MedicineId.HasValue ||
-                 !_db.Medicines.Any(m =>
-                     m.Id == pi.MedicineId.Value &&
-                     m.HospitalId == hospitalId)))
+            from prescription in _db.Prescriptions.AsNoTracking()
+            join visit in _db.Visits on prescription.VisitId equals visit.Id
+            join patient in _db.Patients on visit.PatientId equals (long?)patient.Id
+            where scopedPrescriptionIds.Contains(prescription.Id)
             select new
             {
-                Prescription = p,
-                Visit = v,
-                Patient = pt,
+                Prescription = prescription,
+                Visit = visit,
+                Patient = patient,
             };
 
         if (!string.IsNullOrWhiteSpace(request.Query))
@@ -141,7 +110,7 @@ public sealed class PrescriptionSearchService : IPrescriptionSearchService
                 (x.Patient != null && x.Patient.FullName != null && x.Patient.FullName.ToUpper().Contains(q)));
         }
 
-        var candidateQuery = baseScopedQuery.Select(x => new
+        var dispenseQuery = baseScopedQuery.Select(x => new
         {
             x.Prescription,
             x.Visit,
@@ -155,43 +124,35 @@ public sealed class PrescriptionSearchService : IPrescriptionSearchService
             ItemCount = _db.PrescriptionItems.Count(pi => pi.PrescriptionId == x.Prescription.Id),
         });
 
-        if (!string.IsNullOrWhiteSpace(normalizedStatus))
+        var candidateQuery = dispenseQuery.Select(x => new
         {
-            if (normalizedStatus == "DISPENSED")
-            {
-                candidateQuery = candidateQuery.Where(x =>
-                    (x.Prescription.Status != null && x.Prescription.Status.ToUpper() == "DISPENSED") ||
-                    (x.LatestDispenseStatus != null && (x.LatestDispenseStatus.ToUpper() == "COMPLETED" || x.LatestDispenseStatus.ToUpper() == "DISPENSED")));
-            }
-            else if (normalizedStatus == "READY")
-            {
-                candidateQuery = candidateQuery.Where(x =>
-                    !((x.Prescription.Status != null && x.Prescription.Status.ToUpper() == "DISPENSED") ||
-                      (x.LatestDispenseStatus != null && (x.LatestDispenseStatus.ToUpper() == "COMPLETED" || x.LatestDispenseStatus.ToUpper() == "DISPENSED"))) &&
-                    ((x.Prescription.Status != null && x.Prescription.Status.ToUpper() == "READY") ||
-                     (x.LatestDispenseStatus != null && (x.LatestDispenseStatus.ToUpper() == "READY" || x.LatestDispenseStatus.ToUpper() == "PREPARED"))));
-            }
-            else if (normalizedStatus == "PREPARING")
-            {
-                candidateQuery = candidateQuery.Where(x =>
-                    !((x.Prescription.Status != null && x.Prescription.Status.ToUpper() == "DISPENSED") ||
-                      (x.LatestDispenseStatus != null && (x.LatestDispenseStatus.ToUpper() == "COMPLETED" || x.LatestDispenseStatus.ToUpper() == "DISPENSED"))) &&
-                    !((x.Prescription.Status != null && x.Prescription.Status.ToUpper() == "READY") ||
-                      (x.LatestDispenseStatus != null && (x.LatestDispenseStatus.ToUpper() == "READY" || x.LatestDispenseStatus.ToUpper() == "PREPARED"))) &&
-                    ((x.Prescription.Status != null && x.Prescription.Status.ToUpper() == "PREPARING") ||
-                     (x.LatestDispenseStatus != null && (x.LatestDispenseStatus.ToUpper() == "PREPARING" || x.LatestDispenseStatus.ToUpper() == "IN_PROGRESS"))));
-            }
-            else if (normalizedStatus == "PENDING")
-            {
-                candidateQuery = candidateQuery.Where(x =>
-                    !((x.Prescription.Status != null && x.Prescription.Status.ToUpper() == "DISPENSED") ||
-                      (x.LatestDispenseStatus != null && (x.LatestDispenseStatus.ToUpper() == "COMPLETED" || x.LatestDispenseStatus.ToUpper() == "DISPENSED"))) &&
-                    !((x.Prescription.Status != null && x.Prescription.Status.ToUpper() == "READY") ||
-                      (x.LatestDispenseStatus != null && (x.LatestDispenseStatus.ToUpper() == "READY" || x.LatestDispenseStatus.ToUpper() == "PREPARED"))) &&
-                    !((x.Prescription.Status != null && x.Prescription.Status.ToUpper() == "PREPARING") ||
-                      (x.LatestDispenseStatus != null && (x.LatestDispenseStatus.ToUpper() == "PREPARING" || x.LatestDispenseStatus.ToUpper() == "IN_PROGRESS"))));
-            }
-        }
+            x.Prescription,
+            x.Visit,
+            x.Patient,
+            x.LatestDispenseStatus,
+            x.ItemCount,
+            IsDispensed =
+                x.Prescription.Status != null && x.Prescription.Status.ToUpper() == "DISPENSED" ||
+                x.LatestDispenseStatus != null &&
+                (x.LatestDispenseStatus.ToUpper() == "COMPLETED" || x.LatestDispenseStatus.ToUpper() == "DISPENSED"),
+            IsReady =
+                x.Prescription.Status != null && x.Prescription.Status.ToUpper() == "READY" ||
+                x.LatestDispenseStatus != null &&
+                (x.LatestDispenseStatus.ToUpper() == "READY" || x.LatestDispenseStatus.ToUpper() == "PREPARED"),
+            IsPreparing =
+                x.Prescription.Status != null && x.Prescription.Status.ToUpper() == "PREPARING" ||
+                x.LatestDispenseStatus != null &&
+                (x.LatestDispenseStatus.ToUpper() == "PREPARING" || x.LatestDispenseStatus.ToUpper() == "IN_PROGRESS"),
+        });
+
+        candidateQuery = normalizedStatus switch
+        {
+            "DISPENSED" => candidateQuery.Where(x => x.IsDispensed),
+            "READY" => candidateQuery.Where(x => !x.IsDispensed && x.IsReady),
+            "PREPARING" => candidateQuery.Where(x => !x.IsDispensed && !x.IsReady && x.IsPreparing),
+            "PENDING" => candidateQuery.Where(x => !x.IsDispensed && !x.IsReady && !x.IsPreparing),
+            _ => candidateQuery,
+        };
 
         candidateQuery = candidateQuery
             .OrderByDescending(x => x.Prescription.IssuedAt ?? x.Prescription.CreatedAt)
@@ -222,37 +183,18 @@ public sealed class PrescriptionSearchService : IPrescriptionSearchService
 
         var items = pagedItems.Select(x =>
         {
-            var p = x.Prescription;
-            var v = x.Visit;
-            var pt = x.Patient;
+            var doctorId = x.Prescription.PrescribingDoctorId ?? x.Visit.AssignedDoctorId;
+            var doctor = doctorId.HasValue && doctorsById.TryGetValue(doctorId.Value, out var found)
+                ? found
+                : null;
 
-            var docId = p.PrescribingDoctorId ?? v.AssignedDoctorId;
-            Doctor? doctor = null;
-            if (docId.HasValue)
-            {
-                doctorsById.TryGetValue(docId.Value, out doctor);
-            }
-
-            var doctorName = FormatDoctorDisplayName(doctor);
-            var effectiveStatus = ResolveEffectiveStatus(p.Status, x.LatestDispenseStatus);
-
-            var prescriptionCode = p.PrescriptionCode ?? string.Empty;
-            var visitCode = v.VisitCode ?? string.Empty;
-            var patientCode = pt.PatientCode;
-            var patientName = pt.FullName;
-
-            return new PrescriptionSearchItemDto(
-                Id: p.Id,
-                PrescriptionCode: prescriptionCode,
-                VisitCode: visitCode,
-                PatientCode: patientCode,
-                PatientName: patientName,
-                Gender: pt.Gender,
-                DateOfBirth: pt.DateOfBirth,
-                DoctorName: doctorName,
-                Status: effectiveStatus,
-                IssuedAt: p.IssuedAt ?? p.CreatedAt,
-                ItemCount: x.ItemCount);
+            return MapPrescriptionItem(
+                x.Prescription,
+                x.Visit,
+                x.Patient,
+                doctor,
+                ResolveEffectiveStatus(x.Prescription.Status, x.LatestDispenseStatus),
+                x.ItemCount);
         }).ToList();
 
         var response = new PrescriptionSearchResponseDto(
@@ -310,55 +252,27 @@ public sealed class PrescriptionSearchService : IPrescriptionSearchService
         }
 
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var (_, _, hospital) = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
-        var hospitalId = hospital.Id;
+        var hospitalId = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
 
         var upperIdOrCode = trimmedIdOrCode.ToUpper();
 
+        var scopedPrescriptionIds = BuildScopedPrescriptionIds(hospitalId);
         var baseScopedQuery =
-            from p in _db.Prescriptions.AsNoTracking()
-            join v in _db.Visits on p.VisitId equals v.Id
-            join r in _db.HospitalRooms on v.ExaminationRoomId equals (long?)r.Id into rooms
-            from r in rooms.DefaultIfEmpty()
-            join d in _db.Doctors on v.AssignedDoctorId equals (long?)d.Id into docs
-            from d in docs.DefaultIfEmpty()
-            join pt in _db.Patients on v.PatientId equals (long?)pt.Id
-            where p.FulfillmentChoice != null &&
-                  (p.FulfillmentChoice!.ToUpper() == "HOSPITAL" || p.FulfillmentChoice!.ToUpper() == "HOSPITAL_PHARMACY")
-            where p.Status != null &&
-                  (p.Status!.ToUpper() == "ISSUED" || p.Status!.ToUpper() == "PREPARING" ||
-                   p.Status!.ToUpper() == "READY" || p.Status!.ToUpper() == "DISPENSED")
-            where v.Status != null &&
-                  v.Status!.ToUpper() == "COMPLETED"
-            where ((r != null && r.HospitalId == hospitalId) || (d != null && d.HospitalId == hospitalId))
-               && (v.ExaminationRoomId == null || (r != null && r.HospitalId == hospitalId))
-               && (v.AssignedDoctorId == null || (d != null && d.HospitalId == hospitalId))
-            where !_db.Prescriptions.Any(newer =>
-                      newer.ReplacesPrescriptionId == p.Id &&
-                      newer.Status != null &&
-                      (newer.Status!.ToUpper() == "ISSUED" ||
-                       newer.Status!.ToUpper() == "PREPARING" ||
-                       newer.Status!.ToUpper() == "READY" ||
-                       newer.Status!.ToUpper() == "DISPENSED"))
-            where !p.PrescribingDoctorId.HasValue ||
-                  _db.Doctors.Any(pd =>
-                      pd.Id == p.PrescribingDoctorId.GetValueOrDefault() &&
-                      pd.HospitalId == hospitalId)
-            where _db.PrescriptionItems.Any(pi => pi.PrescriptionId == p.Id)
-            where !_db.PrescriptionItems.Any(pi =>
-                pi.PrescriptionId == p.Id &&
-                (!pi.MedicineId.HasValue ||
-                 !_db.Medicines.Any(m =>
-                     m.Id == pi.MedicineId.Value &&
-                     m.HospitalId == hospitalId)))
-            where isNumeric
-                ? (p.Id == parsedId || (p.PrescriptionCode != null && p.PrescriptionCode!.ToUpper() == upperIdOrCode))
-                : (p.PrescriptionCode != null && p.PrescriptionCode!.ToUpper() == upperIdOrCode)
+            from prescription in _db.Prescriptions.AsNoTracking()
+            join visit in _db.Visits on prescription.VisitId equals visit.Id
+            join patient in _db.Patients on visit.PatientId equals (long?)patient.Id
+            where scopedPrescriptionIds.Contains(prescription.Id) &&
+                  (isNumeric
+                      ? prescription.Id == parsedId ||
+                        prescription.PrescriptionCode != null &&
+                        prescription.PrescriptionCode.ToUpper() == upperIdOrCode
+                      : prescription.PrescriptionCode != null &&
+                        prescription.PrescriptionCode.ToUpper() == upperIdOrCode)
             select new
             {
-                Prescription = p,
-                Visit = v,
-                Patient = pt,
+                Prescription = prescription,
+                Visit = visit,
+                Patient = patient,
             };
 
         var record = await baseScopedQuery.OrderByDescending(x => x.Prescription.Id).FirstOrDefaultAsync(ct);
@@ -390,75 +304,36 @@ public sealed class PrescriptionSearchService : IPrescriptionSearchService
                 .FirstOrDefaultAsync(d => d.Id == docId.Value && d.HospitalId == hospitalId, ct);
         }
 
-        var doctorName = FormatDoctorDisplayName(doctor);
-
-        var prescriptionItems = await _db.PrescriptionItems
-            .AsNoTracking()
-            .Where(pi => pi.PrescriptionId == pEntity.Id)
-            .OrderBy(pi => pi.Id)
+        var medicineDtos = await (
+            from item in _db.PrescriptionItems.AsNoTracking()
+            join medicine in _db.Medicines.AsNoTracking()
+                on item.MedicineId equals (long?)medicine.Id
+            where item.PrescriptionId == pEntity.Id &&
+                  medicine.HospitalId == hospitalId
+            orderby item.Id
+            select new PrescriptionSearchMedicineDto(
+                item.Id,
+                medicine.MedicineCode,
+                medicine.Name,
+                item.PrescribedQuantity,
+                medicine.DispensingUnit,
+                item.SingleDoseQuantity,
+                item.SingleDoseUnit,
+                item.DoseScheduleText,
+                item.Frequency,
+                item.DurationDays,
+                item.AdministrationRoute,
+                item.Instructions))
             .ToListAsync(ct);
 
-        var medicineIds = prescriptionItems
-            .Where(pi => pi.MedicineId.HasValue)
-            .Select(pi => pi.MedicineId!.Value)
-            .Distinct()
-            .ToList();
-
-        var medicines = medicineIds.Count > 0
-            ? await _db.Medicines
-                .AsNoTracking()
-                .Where(m => medicineIds.Contains(m.Id) && m.HospitalId == hospitalId)
-                .ToListAsync(ct)
-            : [];
-
-        var medicinesById = medicines.ToDictionary(m => m.Id);
-
-        var medicineDtos = prescriptionItems.Select(item =>
-        {
-            Medicine? med = null;
-            if (item.MedicineId.HasValue)
-            {
-                medicinesById.TryGetValue(item.MedicineId.Value, out med);
-            }
-
-            var medicineName = med?.Name ?? string.Empty;
-
-            return new PrescriptionSearchMedicineDto(
-                Id: item.Id,
-                MedicineCode: med?.MedicineCode,
-                MedicineName: medicineName,
-                PrescribedQuantity: item.PrescribedQuantity,
-                DispensingUnit: med?.DispensingUnit,
-                SingleDoseQuantity: item.SingleDoseQuantity,
-                SingleDoseUnit: item.SingleDoseUnit,
-                DoseScheduleText: item.DoseScheduleText,
-                Frequency: item.Frequency,
-                DurationDays: item.DurationDays,
-                AdministrationRoute: item.AdministrationRoute,
-                Instructions: item.Instructions);
-        }).ToList();
-
-        var prescriptionCode = pEntity.PrescriptionCode ?? string.Empty;
-        var visitCode = vEntity.VisitCode ?? string.Empty;
-        var patientCode = ptEntity.PatientCode;
-        var patientName = ptEntity.FullName;
-
-        var itemDto = new PrescriptionSearchItemDto(
-            Id: pEntity.Id,
-            PrescriptionCode: prescriptionCode,
-            VisitCode: visitCode,
-            PatientCode: patientCode,
-            PatientName: patientName,
-            Gender: ptEntity.Gender,
-            DateOfBirth: ptEntity.DateOfBirth,
-            DoctorName: doctorName,
-            Status: effectiveStatus,
-            IssuedAt: pEntity.IssuedAt ?? pEntity.CreatedAt,
-            ItemCount: prescriptionItems.Count);
-
-        var detailDto = new PrescriptionSearchDetailDto(
-            Prescription: itemDto,
-            Items: medicineDtos);
+        var itemDto = MapPrescriptionItem(
+            pEntity,
+            vEntity,
+            ptEntity,
+            doctor,
+            effectiveStatus,
+            medicineDtos.Count);
+        var detailDto = new PrescriptionSearchDetailDto(itemDto, medicineDtos);
 
         var changeData = JsonSerializer.Serialize(new
         {
@@ -484,7 +359,7 @@ public sealed class PrescriptionSearchService : IPrescriptionSearchService
         return detailDto;
     }
 
-    private async Task<(User ActorUser, Staff ActorStaff, Hospital Hospital)> ValidatePharmacyStaffAccessAsync(
+    private async Task<long> ValidatePharmacyStaffAccessAsync(
         long actorUserId,
         DateTime nowUtc,
         CancellationToken ct)
@@ -568,8 +443,69 @@ public sealed class PrescriptionSearchService : IPrescriptionSearchService
             }
         }
 
-        return (actorUser, actorStaff, hospital);
+        return hospitalId;
     }
+
+    private IQueryable<long> BuildScopedPrescriptionIds(long hospitalId) =>
+        from prescription in _db.Prescriptions.AsNoTracking()
+        join visit in _db.Visits on prescription.VisitId equals visit.Id
+        join room in _db.HospitalRooms on visit.ExaminationRoomId equals (long?)room.Id into rooms
+        from room in rooms.DefaultIfEmpty()
+        join assignedDoctor in _db.Doctors on visit.AssignedDoctorId equals (long?)assignedDoctor.Id into doctors
+        from assignedDoctor in doctors.DefaultIfEmpty()
+        join patient in _db.Patients on visit.PatientId equals (long?)patient.Id
+        where prescription.FulfillmentChoice != null &&
+              (prescription.FulfillmentChoice!.ToUpper() == "HOSPITAL" ||
+               prescription.FulfillmentChoice!.ToUpper() == "HOSPITAL_PHARMACY")
+        where prescription.Status != null &&
+              (prescription.Status!.ToUpper() == "ISSUED" ||
+               prescription.Status!.ToUpper() == "PREPARING" ||
+               prescription.Status!.ToUpper() == "READY" ||
+               prescription.Status!.ToUpper() == "DISPENSED")
+        where visit.Status != null && visit.Status!.ToUpper() == "COMPLETED"
+        where (room != null && room.HospitalId == hospitalId ||
+               assignedDoctor != null && assignedDoctor.HospitalId == hospitalId) &&
+              (visit.ExaminationRoomId == null || room != null && room.HospitalId == hospitalId) &&
+              (visit.AssignedDoctorId == null || assignedDoctor != null && assignedDoctor.HospitalId == hospitalId)
+        where !_db.Prescriptions.Any(replacement =>
+            replacement.ReplacesPrescriptionId == prescription.Id &&
+            replacement.Status != null &&
+            (replacement.Status!.ToUpper() == "ISSUED" ||
+             replacement.Status!.ToUpper() == "PREPARING" ||
+             replacement.Status!.ToUpper() == "READY" ||
+             replacement.Status!.ToUpper() == "DISPENSED"))
+        where !prescription.PrescribingDoctorId.HasValue ||
+              _db.Doctors.Any(prescribingDoctor =>
+                  prescribingDoctor.Id == prescription.PrescribingDoctorId.GetValueOrDefault() &&
+                  prescribingDoctor.HospitalId == hospitalId)
+        where _db.PrescriptionItems.Any(item => item.PrescriptionId == prescription.Id)
+        where !_db.PrescriptionItems.Any(item =>
+            item.PrescriptionId == prescription.Id &&
+            (!item.MedicineId.HasValue ||
+             !_db.Medicines.Any(medicine =>
+                 medicine.Id == item.MedicineId.Value &&
+                 medicine.HospitalId == hospitalId)))
+        select prescription.Id;
+
+    private static PrescriptionSearchItemDto MapPrescriptionItem(
+        Prescription prescription,
+        Visit visit,
+        Patient patient,
+        Doctor? doctor,
+        string status,
+        int itemCount) =>
+        new(
+            prescription.Id,
+            prescription.PrescriptionCode ?? string.Empty,
+            visit.VisitCode ?? string.Empty,
+            patient.PatientCode,
+            patient.FullName,
+            patient.Gender,
+            patient.DateOfBirth,
+            FormatDoctorDisplayName(doctor),
+            status,
+            prescription.IssuedAt ?? prescription.CreatedAt,
+            itemCount);
 
     private static string ResolveEffectiveStatus(string? rxStatus, string? dispStatus)
     {
