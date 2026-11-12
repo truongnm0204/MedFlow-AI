@@ -72,6 +72,13 @@ public interface IConsultationWorkspaceService
         string? ipAddress = null,
         CancellationToken ct = default);
 
+    Task<ConsultationWorkspaceResponseDto> CreatePrescriptionAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        CreatePrescriptionRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default);
+
     Task<IReadOnlyList<Icd10CatalogItemDto>> SearchIcd10CodesAsync(
         long actorUserId,
         string? query = null,

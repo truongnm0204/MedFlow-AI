@@ -4031,6 +4031,13 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 "Bác sĩ không có quyền chỉ định cận lâm sàng (DIAGNOSTIC_ORDER).");
         }
 
+        if (string.Equals(requiredPermission, PermissionPrescriptionIssue, StringComparison.OrdinalIgnoreCase) &&
+            !actorPermissions.Contains(PermissionPrescriptionIssue))
+        {
+            throw new ForbiddenException(
+                "Bác sĩ không có quyền kê đơn thuốc (PRESCRIPTION_ISSUE).");
+        }
+
         return new DoctorAccessContext(hospital, actorStaff, actorDoctor, actorPermissions);
     }
 

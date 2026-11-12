@@ -22,6 +22,8 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
     private const string Icd10SearchRoute = "/api/v1/doctor/icd10-codes";
     private const string CompleteVisitRoute = "/api/v1/doctor/consultation/VIS-202610-0001/complete";
     private const string CompleteVisitAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/complete-visit";
+    private const string PrescriptionRoute = "/api/v1/doctor/consultation/VIS-202610-0001/prescriptions";
+    private const string PrescriptionAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/prescriptions";
     private const string DiagnosticResultsRoute = "/api/v1/doctor/consultation/VIS-202610-0001/diagnostic-results";
     private const string DiagnosticResultsAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/diagnostic-results";
     private const string DiagnosticResultDetailRoute = "/api/v1/doctor/consultation/VIS-202610-0001/diagnostic-results/DIA-202610-0001";
@@ -487,6 +489,150 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
         Assert.Equal(HttpStatusCode.Forbidden, crossDoctorResponse.StatusCode);
 
         var completedVisitResponse = await PostWithTokenAsync(DiagnosticOrdersRoute, token, body);
+        Assert.Equal(HttpStatusCode.Conflict, completedVisitResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreatePrescription_Unauthenticated_Returns401()
+    {
+        using var postRequest = new HttpRequestMessage(HttpMethod.Post, PrescriptionRoute);
+        var postResponse = await Client.SendAsync(postRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, postResponse.StatusCode);
+
+        using var putRequest = new HttpRequestMessage(HttpMethod.Put, PrescriptionRoute);
+        var putResponse = await Client.SendAsync(putRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, putResponse.StatusCode);
+
+        using var singularRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/api/v1/doctor/consultation/VIS-202610-0001/prescription");
+        var singularResponse = await Client.SendAsync(singularRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, singularResponse.StatusCode);
+
+        using var aliasRequest = new HttpRequestMessage(HttpMethod.Put, PrescriptionAliasRoute);
+        var aliasResponse = await Client.SendAsync(aliasRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, aliasResponse.StatusCode);
+
+        using var rootRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/api/v1/visits/VIS-202610-0001/prescriptions");
+        var rootResponse = await Client.SendAsync(rootRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, rootResponse.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("PATIENT")]
+    [InlineData("RECEPTION")]
+    [InlineData("DIAGNOSTIC_STAFF")]
+    [InlineData("PHARMACY_STAFF")]
+    [InlineData("HOSPITAL_ADMIN")]
+    [InlineData("SYSTEM_ADMIN")]
+    public async Task CreatePrescription_ForbiddenRoles_Returns403(string role)
+    {
+        var token = GenerateToken(11, $"{role.ToLowerInvariant()}@medflow.test", role);
+        var body = new
+        {
+            items = new[]
+            {
+                new
+                {
+                    medicineCode = "MED-001",
+                    prescribedQuantity = 14,
+                    instructions = "Uống trước ăn 30 phút",
+                },
+            },
+        };
+
+        var postResponse = await PostWithTokenAsync(PrescriptionRoute, token, body);
+        Assert.Equal(HttpStatusCode.Forbidden, postResponse.StatusCode);
+
+        var aliasResponse = await PutWithTokenAsync(PrescriptionAliasRoute, token, body);
+        Assert.Equal(HttpStatusCode.Forbidden, aliasResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreatePrescription_InvalidPayload_Returns400()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+
+        var emptyItemsResponse = await PostWithTokenAsync(
+            PrescriptionRoute,
+            token,
+            new { items = Array.Empty<object>() });
+        Assert.Equal(HttpStatusCode.BadRequest, emptyItemsResponse.StatusCode);
+
+        var zeroQuantityResponse = await PostWithTokenAsync(
+            PrescriptionAliasRoute,
+            token,
+            new
+            {
+                items = new[]
+                {
+                    new
+                    {
+                        medicineCode = "MED-001",
+                        prescribedQuantity = 0,
+                        instructions = "Uống trước ăn",
+                    },
+                },
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, zeroQuantityResponse.StatusCode);
+
+        var unsafeInstructionsResponse = await PostWithTokenAsync(
+            PrescriptionRoute,
+            token,
+            new
+            {
+                items = new[]
+                {
+                    new
+                    {
+                        medicineId = 1,
+                        prescribedQuantity = 14,
+                        instructions = "<script>alert(1)</script>",
+                    },
+                },
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, unsafeInstructionsResponse.StatusCode);
+
+        var invalidStateVersionResponse = await PutWithTokenAsync(
+            PrescriptionRoute,
+            token,
+            new { expectedStateVersion = 0 });
+        Assert.Equal(HttpStatusCode.BadRequest, invalidStateVersionResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreatePrescription_CrossDoctorAndCompletedSeededVisit_Returns403And409_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+        var body = new
+        {
+            items = new[]
+            {
+                new
+                {
+                    medicineCode = "MED-001",
+                    prescribedQuantity = 14,
+                    doseScheduleText = "Uống 1 viên trước ăn sáng",
+                    instructions = "Uống trước ăn 30 phút",
+                },
+            },
+        };
+
+        var crossDoctorResponse = await PostWithTokenAsync(
+            "/api/v1/doctor/consultation/VIS-202610-0002/prescriptions",
+            token,
+            body);
+
+        if (crossDoctorResponse.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable)
+        {
+            return;
+        }
+
+        Assert.Equal(HttpStatusCode.Forbidden, crossDoctorResponse.StatusCode);
+
+        var completedVisitResponse = await PostWithTokenAsync(PrescriptionRoute, token, body);
         Assert.Equal(HttpStatusCode.Conflict, completedVisitResponse.StatusCode);
     }
 
