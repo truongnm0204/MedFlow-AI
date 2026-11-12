@@ -15,7 +15,9 @@ import type {
   DiagnosticServiceCatalogItemDto,
   OpenConsultationWorkspaceRequest,
   RecordClinicalExaminationRequest,
+  RecordDiagnosisRequest,
 } from '../types/consultation-workspace.types';
+import { ICD10_CATALOG_MOCK } from './diagnosis-conclusion-mock';
 import { DOCTOR_WORKBENCH_META } from './doctor-mock-data';
 
 function buildAllowedActions(
@@ -1681,6 +1683,55 @@ export function completeMockVisit(
       'COMPLETED',
       false,
       true,
+      base.clinicalContext.diagnosticSummary,
+    ),
+  };
+}
+
+export function recordMockDiagnosis(
+  idOrCode: string,
+  request: RecordDiagnosisRequest,
+): ConsultationWorkspaceResponseDto {
+  const base = resolveMockConsultationWorkspace(idOrCode);
+  const status =
+    request.diagnosisStatus ?? (request.isConfirmed === false ? 'PRELIMINARY' : 'CONFIRMED');
+  const requested = request.diagnoses ?? [];
+  const diagnoses = requested.map((item, index) => {
+    const code = (item.code ?? item.icd10Code ?? '').toUpperCase();
+    const catalogItem = ICD10_CATALOG_MOCK.find((entry) => entry.code.toUpperCase() === code);
+    const itemStatus = item.status ?? status;
+    return {
+      id: 9000 + index,
+      icd10CodeId: catalogItem?.id ?? item.icd10CodeId ?? null,
+      code,
+      name: catalogItem?.nameVi ?? item.name ?? '',
+      isPrimary: item.isPrimary === true || requested.length === 1,
+      clinicalDiagnosis: item.clinicalDiagnosis ?? null,
+      status: itemStatus,
+      confirmedAt: itemStatus === 'CONFIRMED' ? '2026-11-07T08:30:00' : null,
+      recordedAt: '2026-11-07T08:30:00',
+    };
+  });
+
+  return {
+    ...base,
+    actionOutcome: 'DIAGNOSIS_RECORDED',
+    workspaceState: 'IN_PROGRESS',
+    canEditClinical: true,
+    readOnlyReason: null,
+    generatedAtUtc: '2026-11-07T02:40:00Z',
+    clinicalContext: {
+      ...base.clinicalContext,
+      currentRevisionNo: (base.clinicalContext.currentRevisionNo ?? 1) + 1,
+      isConfirmed: request.isConfirmed ?? status === 'CONFIRMED',
+      clinicalConclusion:
+        request.clinicalConclusion?.trim() || base.clinicalContext.clinicalConclusion,
+      diagnoses,
+    },
+    allowedActions: buildAllowedActions(
+      'IN_PROGRESS',
+      true,
+      false,
       base.clinicalContext.diagnosticSummary,
     ),
   };

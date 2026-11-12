@@ -197,7 +197,9 @@ export function DoctorReviewDiagnosticsPage() {
           </div>
           <button
             type="button"
-            onClick={() => navigate(consultationPath)}
+            onClick={() =>
+              navigate(params.visitIdOrCode ? `${consultationPath}/diagnosis` : consultationPath)
+            }
             aria-label="Tiếp tục chẩn đoán và kết luận (SCR-CON-04)"
             className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-primary-dark"
           >

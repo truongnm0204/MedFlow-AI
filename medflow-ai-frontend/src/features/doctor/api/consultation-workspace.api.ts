@@ -2,11 +2,13 @@ import axios from 'axios';
 
 import { apiClient } from '@/shared/lib/axios';
 
+import { searchMockIcd10Codes } from '../data/diagnosis-conclusion-mock';
 import {
   completeMockVisit,
   createMockDiagnosticOrder,
   openMockConsultationWorkspace,
   recordMockClinicalExamination,
+  recordMockDiagnosis,
   resolveMockConsultationWorkspace,
   resolveMockDiagnosticOrderCatalog,
 } from '../data/consultation-workspace-mock';
@@ -15,8 +17,11 @@ import type {
   ConsultationWorkspaceResponseDto,
   CreateDiagnosticOrderRequest,
   DiagnosticOrderCatalogResponseDto,
+  Icd10CatalogItemDto,
   OpenConsultationWorkspaceRequest,
   RecordClinicalExaminationRequest,
+  RecordDiagnosisRequest,
+  SearchIcd10CodesParams,
 } from '../types/consultation-workspace.types';
 /** Chỉ fallback về mock khi offline/network error (endpoint thực tế đã có và trả 4xx cho lỗi nghiệp vụ). */
 function shouldFallbackToMock(error: unknown): boolean {
@@ -115,6 +120,50 @@ export async function recordClinicalExamination(
   }
 
   return recordMockClinicalExamination(idOrCode, payload);
+}
+
+/**
+ * Ghi nhận chẩn đoán ICD-10 và kết luận lâm sàng
+ * (`POST /doctor/consultation/{idOrCode}/diagnosis` — UC36 / #112).
+ * Có `medflow.access_token` thì mọi lỗi HTTP và lỗi mạng đều throw. Không token mới dùng mock.
+ */
+export async function recordDiagnosis(
+  idOrCode: string,
+  payload: RecordDiagnosisRequest,
+): Promise<ConsultationWorkspaceResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    const { data } = await apiClient.post<ConsultationWorkspaceResponseDto>(
+      `/doctor/consultation/${encoded}/diagnosis`,
+      payload,
+    );
+    return data;
+  }
+
+  return recordMockDiagnosis(idOrCode, payload);
+}
+
+/**
+ * Tìm mã ICD-10 (`GET /doctor/icd10-codes` — UC36 / #112).
+ * `q` tối đa 100 ký tự, `limit` 1–200. Danh mục không có `nameEn`.
+ * Có `medflow.access_token` thì mọi lỗi HTTP và lỗi mạng đều throw. Không token mới dùng mock.
+ */
+export async function searchIcd10Codes(
+  params: SearchIcd10CodesParams,
+): Promise<Icd10CatalogItemDto[]> {
+  if (hasAccessToken()) {
+    const { data } = await apiClient.get<Icd10CatalogItemDto[]>('/doctor/icd10-codes', {
+      params: {
+        q: params.q?.trim() || undefined,
+        primaryOnly: params.primaryOnly || undefined,
+        limit: params.limit ?? 20,
+      },
+    });
+    return data;
+  }
+
+  return searchMockIcd10Codes(params);
 }
 
 /**
