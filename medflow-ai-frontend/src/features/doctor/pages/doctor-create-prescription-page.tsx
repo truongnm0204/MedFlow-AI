@@ -1,140 +1,136 @@
-import {
-  ArrowLeft,
-  CheckCircle2,
-  ClipboardCheck,
-  Pill,
-  Printer,
-  Save,
-  ShieldAlert,
-  ShieldCheck,
-} from 'lucide-react';
+import { ArrowLeft, Pill, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
+import { useRoleAccess } from '@/features/auth/hooks/use-role-access';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
+import { Spinner } from '@/shared/ui/spinner';
 
 import { DoctorSidebar } from '../components/doctor-sidebar';
-import { PrescriptionDrugItemsTable } from '../components/prescription-drug-items-table';
-import { CREATE_PRESCRIPTION_CONTEXT_MOCK } from '../data/create-prescription-mock';
 import { DOCTOR_WORKBENCH_META } from '../data/doctor-mock-data';
-import { createPrescriptionSchema } from '../schemas/create-prescription.schema';
-import type {
-  PrescriptionCatalogOption,
-  PrescriptionDrugLineItem,
-} from '../types/create-prescription.types';
+import { useConsultationWorkspace, useSavePrescription } from '../hooks/use-consultation-workspace';
+import {
+  blankPrescriptionLine,
+  createPrescriptionFormSchema,
+  toCreatePrescriptionRequest,
+  type PrescriptionLineFormValues,
+} from '../schemas/create-prescription.schema';
+import type { PrescriptionFulfillmentChoice } from '../types/consultation-workspace.types';
 
-const RX_WORKFLOW_STEPS = [
-  'Tiền sử & Khảo sát',
-  'Khám lâm sàng',
-  'Chỉ định CLS',
-  'Kết quả CLS trả về',
-  'Chẩn đoán ICD-10',
-  'Kê đơn thuốc (SCR-RX-01)',
-] as const;
+const FULFILLMENT_OPTIONS: { value: PrescriptionFulfillmentChoice; label: string }[] = [
+  { value: 'HOSPITAL', label: 'Cấp thuốc tại bệnh viện' },
+  { value: 'HOSPITAL_PHARMACY', label: 'Nhà thuốc bệnh viện' },
+  { value: 'EXTERNAL_PHARMACY', label: 'Nhà thuốc ngoài' },
+];
 
-export function DoctorCreatePrescriptionPage() {
+export function DoctorCreatePrescriptionPage({
+  explicitPermissions,
+}: { explicitPermissions?: readonly string[] | null } = {}) {
   const params = useParams<{ visitIdOrCode?: string }>();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
+  const { hasPermission } = useRoleAccess(explicitPermissions);
+  const canIssuePrescription =
+    user === null && explicitPermissions === undefined ? true : hasPermission('PRESCRIPTION_ISSUE');
 
-  const ctx = CREATE_PRESCRIPTION_CONTEXT_MOCK;
-  const activeVisitCode = params.visitIdOrCode?.trim() || ctx.visitCode;
+  const visitIdOrCode = params.visitIdOrCode?.trim() ?? '';
+  const workspace = useConsultationWorkspace(visitIdOrCode, visitIdOrCode.length > 0);
+  const save = useSavePrescription();
+  const { data, isLoading, isError, error, refetch } = workspace;
 
-  const [items, setItems] = useState<PrescriptionDrugLineItem[]>(ctx.defaultItems);
-  const [doctorAdvice, setDoctorAdvice] = useState(ctx.defaultAdvice);
+  const [syncedVisitId, setSyncedVisitId] = useState<number | null>(null);
+  const [fulfillmentChoice, setFulfillmentChoice] =
+    useState<PrescriptionFulfillmentChoice>('HOSPITAL');
+  const [items, setItems] = useState<PrescriptionLineFormValues[]>([blankPrescriptionLine()]);
   const [notice, setNotice] = useState<{
     tone: 'error' | 'info' | 'success';
     message: string;
   } | null>(null);
-  const [isIssued, setIsIssued] = useState(false);
 
-  const doctorName = user?.fullName?.trim() || ctx.doctorName;
+  if (data && data.visit.visitId !== syncedVisitId) {
+    setSyncedVisitId(data.visit.visitId);
+    setItems([blankPrescriptionLine()]);
+    setFulfillmentChoice('HOSPITAL');
+    setNotice(null);
+  }
+
+  const doctorName = user?.fullName?.trim() || DOCTOR_WORKBENCH_META.defaultDoctorName;
   const roomLabel = `${DOCTOR_WORKBENCH_META.roomCode} • ${DOCTOR_WORKBENCH_META.departmentName}`;
+  const prescriptionAction = data?.allowedActions.find(
+    (action) => action.id === 'create-prescription' || action.ucCode === 'UC37',
+  );
+  const canSave = Boolean(data) && canIssuePrescription && Boolean(prescriptionAction?.enabled);
+  const readOnlyReason = !data
+    ? null
+    : !canIssuePrescription
+      ? 'Tài khoản không có quyền kê đơn thuốc (PRESCRIPTION_ISSUE).'
+      : !prescriptionAction?.enabled
+        ? (prescriptionAction?.disabledReason ??
+          data.readOnlyReason ??
+          'Lượt khám hiện không cho phép kê đơn thuốc.')
+        : null;
 
-  const handleQuantityChange = (itemId: string, nextQty: number) => {
-    setItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, quantity: nextQty } : it)));
-  };
+  const primaryDiagnosis =
+    data?.clinicalContext.diagnoses.find((item) => item.isPrimary) ??
+    data?.clinicalContext.diagnoses[0] ??
+    null;
+  const summary = data?.clinicalContext.prescriptionSummary;
+  const allergyText =
+    data?.patient.allergiesSummary?.trim() ||
+    data?.clinicalContext.relevantHistoryAllergies?.trim() ||
+    null;
+  const backTarget = visitIdOrCode
+    ? `/doctor/consultation/${encodeURIComponent(data?.visit.visitCode ?? visitIdOrCode)}`
+    : '/doctor/consultation';
 
-  const handleDosageChange = (itemId: string, nextDosage: string) => {
+  const updateLine = (index: number, patch: Partial<PrescriptionLineFormValues>) => {
     setItems((prev) =>
-      prev.map((it) => (it.id === itemId ? { ...it, dosageInstruction: nextDosage } : it)),
+      prev.map((line, lineIndex) => (lineIndex === index ? { ...line, ...patch } : line)),
     );
   };
 
-  const handleRemoveItem = (itemId: string) => {
-    setItems((prev) => prev.filter((it) => it.id !== itemId));
-  };
-
-  const handleAddCatalogItem = (option: PrescriptionCatalogOption) => {
-    if (option.isAllergyContraindicated) {
-      setNotice({
-        tone: 'error',
-        message: `CHẶN AN TOÀN: ${option.contraindicationReason ?? 'Thuốc thuộc nhóm dị ứng của bệnh nhân!'}`,
-      });
-      return;
-    }
-
-    const exists = items.some((i) => i.drugCode === option.drugCode);
-    if (exists) {
-      setNotice({
-        tone: 'info',
-        message: `Thuốc ${option.drugName} đã có trong danh sách đơn.`,
-      });
-      return;
-    }
-
-    setItems((prev) => [
-      ...prev,
-      {
-        id: `rx-${Date.now()}`,
-        drugCode: option.drugCode,
-        drugName: option.drugName,
-        activeIngredient: option.activeIngredient,
-        dosageForm: option.dosageForm,
-        unit: option.unit,
-        quantity: option.defaultQuantity,
-        unitPrice: option.unitPrice,
-        dosageInstruction: option.defaultDosage,
-        mealTiming: option.defaultMealTiming,
-      },
-    ]);
-    setNotice(null);
-  };
-
-  const handleIssuePrescription = () => {
-    const parsed = createPrescriptionSchema.safeParse({
-      items,
-      doctorAdvice,
-    });
-
+  const handleSave = async () => {
+    const parsed = createPrescriptionFormSchema.safeParse({ fulfillmentChoice, items });
     if (!parsed.success) {
       setNotice({
         tone: 'error',
-        message: parsed.error.issues[0]?.message || 'Thông tin đơn thuốc chưa hợp lệ.',
+        message: parsed.error.issues[0]?.message ?? 'Thông tin đơn thuốc chưa hợp lệ.',
       });
       return;
     }
 
-    setIsIssued(true);
-    setNotice({
-      tone: 'success',
-      message: `Đã ký số & phát hành Đơn thuốc điện tử ${ctx.rxCode} (Chuyển trực tiếp sang Nhà thuốc bệnh viện).`,
-    });
+    try {
+      const saved = await save.mutateAsync({
+        idOrCode: visitIdOrCode,
+        payload: toCreatePrescriptionRequest(parsed.data, {
+          expectedStateVersion: data?.queue?.stateVersion ?? null,
+          expectedRevisionNo: data?.clinicalContext.currentRevisionNo ?? null,
+        }),
+      });
+      const savedSummary = saved.clinicalContext.prescriptionSummary;
+      setNotice({
+        tone: 'success',
+        message: `Đã lưu đơn nháp ${savedSummary.latestPrescriptionCode ?? ''} (${savedSummary.itemCount} khoản thuốc). Đơn được phát hành khi hoàn tất lượt khám (UC38).`,
+      });
+    } catch (err) {
+      setNotice({
+        tone: 'error',
+        message: getErrorMessage(err, 'Không thể lưu đơn thuốc. Vui lòng thử lại.'),
+      });
+    }
   };
-
-  const totalUnits = items.reduce((sum, i) => sum + i.quantity, 0);
-  const totalAmount = items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
       <DoctorSidebar
-        activeItem="prescription"
+        activeItem="prescriptions"
         doctorName={doctorName}
         roomLabel={roomLabel}
         onItemSelect={(id) => {
@@ -148,24 +144,37 @@ export function DoctorCreatePrescriptionPage() {
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
-              onClick={() => navigate('/doctor/consultation')}
-              aria-label="Quay lại bàn làm việc bác sĩ"
+              onClick={() => navigate(backTarget)}
+              aria-label="Quay lại bàn khám lâm sàng"
               className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-navy transition-colors hover:bg-canvas"
             >
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             </button>
             <div className="min-w-0">
-              <h1 className="truncate text-sm font-bold text-navy flex items-center gap-2">
+              <h1 className="flex items-center gap-2 truncate text-sm font-bold text-navy">
                 <Pill className="h-4 w-4 text-primary" aria-hidden="true" />
-                <span>Kê Đơn thuốc Điện tử Ngoại trú (SCR-RX-01)</span>
+                <span>Kê đơn thuốc ngoại trú (SCR-RX-01)</span>
               </h1>
               <p className="truncate text-[11px] text-sub">
-                Lượt khám <span className="font-mono font-bold">{activeVisitCode}</span> • Mã đơn{' '}
-                <span className="font-mono font-bold text-primary">{ctx.rxCode}</span>
+                {data ? (
+                  <>
+                    Lượt khám <span className="font-mono font-bold">{data.visit.visitCode}</span>
+                    {' • '}
+                    Mã đơn{' '}
+                    <span className="font-mono font-bold text-primary">
+                      {summary?.latestPrescriptionCode ?? 'Chưa lưu'}
+                    </span>
+                  </>
+                ) : visitIdOrCode ? (
+                  <>
+                    Lượt khám <span className="font-mono font-bold">{visitIdOrCode}</span>
+                  </>
+                ) : (
+                  'Mở từ bàn khám lâm sàng (UC37)'
+                )}
               </p>
             </div>
           </div>
-
           <button
             type="button"
             onClick={() => logout.mutate()}
@@ -177,204 +186,209 @@ export function DoctorCreatePrescriptionPage() {
         </header>
 
         <main className="flex-1 space-y-5 overflow-y-auto p-6 pb-28">
-          {/* Patient Header & High Allergy Warning */}
-          <section
-            aria-label="Thông tin bệnh nhân và cảnh báo dị ứng"
-            className="rounded-2xl border border-border bg-white p-5 shadow-2xs space-y-3"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
+          {!visitIdOrCode ? (
+            <Card>
+              <CardHeader>
+                <h2 className="text-sm font-bold text-navy">Chưa chọn lượt khám để kê đơn</h2>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-sub">
+                  Mở đơn thuốc từ bàn khám lâm sàng bằng thao tác &quot;Kê đơn thuốc ngoại trú&quot;
+                  (UC37).
+                </p>
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  onClick={() => navigate('/doctor/consultation')}
+                >
+                  Đến bàn khám lâm sàng
+                </Button>
+              </CardContent>
+            </Card>
+          ) : isLoading ? (
+            <Card>
+              <CardContent>
+                <div role="status" className="flex items-center gap-3 py-4 text-sm text-sub">
+                  <Spinner />
+                  <span>Đang tải lượt khám để kê đơn…</span>
+                </div>
+              </CardContent>
+            </Card>
+          ) : isError ? (
+            <div className="space-y-3" data-testid="create-prescription-error">
+              <Alert tone="error">
+                {getErrorMessage(error, 'Không thể tải lượt khám để kê đơn.')}
+              </Alert>
+              <Button type="button" variant="secondary" size="sm" onClick={() => void refetch()}>
+                Thử lại
+              </Button>
+            </div>
+          ) : data ? (
+            <>
+              <section
+                aria-label="Thông tin bệnh nhân và đơn hiện có"
+                className="space-y-3 rounded-2xl border border-border bg-white p-5 shadow-2xs"
+              >
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-base font-bold text-navy">{ctx.patientName}</p>
+                  <p className="text-base font-bold text-navy">{data.patient.fullName}</p>
                   <span className="text-xs text-sub">
-                    • {ctx.gender}, {ctx.ageLabel}
+                    {data.patient.patientCode} • {data.patient.genderLabel}
+                    {data.patient.age !== null ? ` • ${data.patient.age} tuổi` : ''}
                   </span>
-                  <Badge tone={isIssued ? 'emerald' : 'sky'}>
-                    {isIssued ? 'Đã ký số phát hành' : 'Đang kê đơn thuốc (SCR-RX-01)'}
+                  <Badge tone={summary && summary.itemCount > 0 ? 'sky' : 'slate'}>
+                    {summary?.latestPrescriptionStatus ?? 'Chưa có đơn'}
                   </Badge>
                 </div>
-                <p className="mt-0.5 font-mono text-xs text-sub">
-                  Mã BN: <strong className="text-navy">{ctx.patientCode}</strong> • Chẩn đoán:{' '}
-                  <span className="font-sans font-semibold text-ink">{ctx.primaryDiagnosis}</span>
+                <p className="text-xs text-sub">
+                  Chẩn đoán chính:{' '}
+                  <strong className="text-navy">
+                    {primaryDiagnosis
+                      ? `${primaryDiagnosis.code} — ${primaryDiagnosis.name}`
+                      : 'Chưa ghi nhận'}
+                  </strong>
                 </p>
-              </div>
-              <Badge tone="emerald">100% Khám Ngoại trú Tự nguyện</Badge>
-            </div>
-
-            <div
-              role="note"
-              className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-2.5 text-xs text-rose-800 space-y-0.5"
-            >
-              <div className="flex items-center gap-2 font-bold">
-                <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" aria-hidden="true" />
-                <span>{ctx.allergyAlert}</span>
-              </div>
-              <p className="pl-6 font-semibold text-rose-700">{ctx.contraindications}</p>
-            </div>
-          </section>
-
-          {/* Stepper */}
-          <ol aria-label="Tiến trình khám ngoại trú" className="flex flex-wrap gap-2">
-            {RX_WORKFLOW_STEPS.map((label, idx) => {
-              const step = idx + 1;
-              const isActive = step === 6;
-              return (
-                <li
-                  key={label}
-                  aria-current={isActive ? 'step' : undefined}
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold ${
-                    isActive
-                      ? 'border-primary bg-primary text-white shadow-2xs'
-                      : 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                  }`}
-                >
-                  <span>{step}.</span>
-                  <span>{label}</span>
-                </li>
-              );
-            })}
-          </ol>
-
-          {notice && (
-            <div role="status" aria-live="polite">
-              <Alert tone={notice.tone}>{notice.message}</Alert>
-            </div>
-          )}
-
-          {/* Regimen Preset Highlight */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-3 text-xs">
-            <div className="flex items-center gap-2 font-bold text-navy">
-              <ClipboardCheck className="h-4 w-4 text-primary" aria-hidden="true" />
-              <span>
-                Đơn mẫu áp dụng: Phác đồ 4 thuốc diệt trừ H. pylori (Bismuth Quadruple - 14 ngày)
-              </span>
-            </div>
-            <Badge tone="sky">Thay thế nhóm Penicillin</Badge>
-          </div>
-
-          {/* Drug Items Table */}
-          <PrescriptionDrugItemsTable
-            items={items}
-            catalog={ctx.catalog}
-            onQuantityChange={handleQuantityChange}
-            onDosageChange={handleDosageChange}
-            onRemoveItem={handleRemoveItem}
-            onAddCatalogItem={handleAddCatalogItem}
-          />
-
-          {/* Bottom Clinical Safety Check + Cost Summary */}
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-            <div className="space-y-4 lg:col-span-8">
-              <Card className="border-emerald-200 bg-emerald-50/40">
-                <CardHeader className="py-3">
-                  <div className="flex items-center gap-2 text-xs font-bold uppercase text-emerald-800">
-                    <ShieldCheck className="h-4 w-4" aria-hidden="true" />
-                    <span>Kiểm tra An toàn Lâm sàng &amp; Tương tác Thuốc (Automated Check)</span>
-                  </div>
-                </CardHeader>
-                <CardContent className="text-xs text-emerald-900 space-y-1">
-                  <p>
-                    • Phác đồ 4 thuốc hiện tại hoàn toàn không chứa hoạt chất nhóm Penicillin /
-                    Beta-lactam và NSAIDs.
+                {allergyText ? <Alert tone="warning">Cảnh báo dị ứng: {allergyText}</Alert> : null}
+                {summary && summary.itemCount > 0 ? (
+                  <Alert tone="info">
+                    Đơn {summary.latestPrescriptionCode ?? ''} đang{' '}
+                    {summary.latestPrescriptionStatus} với {summary.itemCount} khoản. API không trả
+                    từng dòng thuốc. Lưu lại sẽ thay toàn bộ dòng của đơn nháp DRAFT/PENDING.
+                  </Alert>
+                ) : (
+                  <p className="text-xs text-sub">
+                    Kê đơn tạo hoặc thay đơn nháp DRAFT. Phát hành ISSUED khi hoàn tất lượt khám,
+                    không phải trên màn này.
                   </p>
-                  <p>
-                    • Lưu ý tư vấn người bệnh kiêng tuyệt đối rượu bia khi dùng Klion 500mg
-                    (Metronidazole).
-                  </p>
-                </CardContent>
-              </Card>
+                )}
+              </section>
 
-              <Card>
-                <CardHeader className="py-3">
-                  <label
-                    htmlFor="doctor-rx-advice"
-                    className="text-xs font-bold uppercase text-navy"
-                  >
-                    Lời dặn của Bác sĩ &amp; Chế độ Sinh hoạt Ngoại trú
-                  </label>
-                </CardHeader>
-                <CardContent>
-                  <textarea
-                    id="doctor-rx-advice"
-                    rows={3}
-                    value={doctorAdvice}
-                    onChange={(e) => setDoctorAdvice(e.target.value)}
-                    className="w-full rounded-lg border border-border bg-white p-3 text-xs text-ink focus:outline-hidden focus:ring-2 focus:ring-primary"
-                  />
-                </CardContent>
-              </Card>
-            </div>
+              {readOnlyReason ? <Alert tone="info">{readOnlyReason}</Alert> : null}
+              {notice ? <Alert tone={notice.tone}>{notice.message}</Alert> : null}
 
-            <div className="lg:col-span-4">
-              <Card>
-                <CardHeader className="border-b border-border bg-slate-50/70 py-3">
-                  <h2 className="text-xs font-bold uppercase text-navy">
-                    Tổng kết Viện phí Toa thuốc
-                  </h2>
-                </CardHeader>
-                <CardContent className="space-y-3 p-4 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-sub">Số khoản thuốc:</span>
-                    <strong className="font-mono text-navy">{items.length} khoản</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sub">Tổng số đơn vị:</span>
-                    <strong className="font-mono text-navy">{totalUnits} đơn vị</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-sub">Số ngày cấp:</span>
-                    <strong className="font-mono text-navy">14 ngày</strong>
-                  </div>
-                  <div className="border-t border-border pt-3 flex items-center justify-between">
-                    <span className="font-bold text-navy">TỔNG THANH TOÁN:</span>
-                    <span
-                      data-testid="prescription-total-amount"
-                      className="font-mono text-lg font-black text-primary"
+              <section aria-label="Dòng thuốc" className="space-y-3">
+                <div className="flex items-end justify-between gap-3">
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-navy">
+                    Nơi cấp thuốc
+                    <select
+                      value={fulfillmentChoice}
+                      disabled={!canSave || save.isPending}
+                      onChange={(event) =>
+                        setFulfillmentChoice(event.target.value as PrescriptionFulfillmentChoice)
+                      }
+                      className="rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink disabled:opacity-60"
                     >
-                      {totalAmount.toLocaleString('vi-VN')} đ
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
+                      {FULFILLMENT_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={!canSave || save.isPending || items.length >= 20}
+                    onClick={() => setItems((prev) => [...prev, blankPrescriptionLine()])}
+                  >
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                    Thêm dòng thuốc
+                  </Button>
+                </div>
+
+                {items.map((line, index) => (
+                  <Card key={`line-${index}`}>
+                    <CardContent className="grid gap-3 md:grid-cols-2">
+                      <label className="flex flex-col gap-1 text-xs font-semibold text-navy">
+                        {`Mã thuốc dòng ${index + 1}`}
+                        <input
+                          value={line.medicineCode}
+                          disabled={!canSave || save.isPending}
+                          onChange={(event) =>
+                            updateLine(index, { medicineCode: event.target.value })
+                          }
+                          className="rounded-lg border border-border px-3 py-2 text-sm font-normal text-ink disabled:opacity-60"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-xs font-semibold text-navy">
+                        {`ID thuốc dòng ${index + 1}`}
+                        <input
+                          inputMode="numeric"
+                          value={line.medicineId}
+                          disabled={!canSave || save.isPending}
+                          onChange={(event) =>
+                            updateLine(index, { medicineId: event.target.value })
+                          }
+                          className="rounded-lg border border-border px-3 py-2 text-sm font-normal text-ink disabled:opacity-60"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-xs font-semibold text-navy">
+                        {`Số lượng dòng ${index + 1}`}
+                        <input
+                          inputMode="decimal"
+                          value={line.prescribedQuantity}
+                          disabled={!canSave || save.isPending}
+                          onChange={(event) =>
+                            updateLine(index, { prescribedQuantity: event.target.value })
+                          }
+                          className="rounded-lg border border-border px-3 py-2 text-sm font-normal text-ink disabled:opacity-60"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-xs font-semibold text-navy">
+                        {`Lịch dùng dòng ${index + 1}`}
+                        <input
+                          value={line.doseScheduleText}
+                          disabled={!canSave || save.isPending}
+                          onChange={(event) =>
+                            updateLine(index, { doseScheduleText: event.target.value })
+                          }
+                          className="rounded-lg border border-border px-3 py-2 text-sm font-normal text-ink disabled:opacity-60"
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-xs font-semibold text-navy md:col-span-2">
+                        {`Hướng dẫn dòng ${index + 1}`}
+                        <input
+                          value={line.instructions}
+                          disabled={!canSave || save.isPending}
+                          onChange={(event) =>
+                            updateLine(index, { instructions: event.target.value })
+                          }
+                          className="rounded-lg border border-border px-3 py-2 text-sm font-normal text-ink disabled:opacity-60"
+                        />
+                      </label>
+                      <div className="md:col-span-2">
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          disabled={!canSave || save.isPending || items.length === 1}
+                          onClick={() =>
+                            setItems((prev) => prev.filter((_, lineIndex) => lineIndex !== index))
+                          }
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                          {`Xóa dòng ${index + 1}`}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+
+                {canSave ? (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    disabled={save.isPending}
+                    onClick={() => void handleSave()}
+                  >
+                    Lưu đơn nháp
+                  </Button>
+                ) : null}
+              </section>
+            </>
+          ) : null}
         </main>
-
-        <footer className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-white px-6 py-3 shadow-sm print:hidden">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() =>
-                setNotice({ tone: 'info', message: `Đã lưu nháp đơn thuốc ${ctx.rxCode}.` })
-              }
-              className="gap-1.5"
-            >
-              <Save className="h-4 w-4" aria-hidden="true" />
-              <span>Lưu nháp</span>
-            </Button>
-
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => window.print()}
-              className="gap-1.5"
-            >
-              <Printer className="h-4 w-4" aria-hidden="true" />
-              <span>In toa thuốc</span>
-            </Button>
-          </div>
-
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handleIssuePrescription}
-            className="gap-1.5 shadow-xs"
-          >
-            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            <span>Ký số &amp; Phát hành Đơn thuốc (Chuyển Nhà thuốc)</span>
-          </Button>
-        </footer>
       </div>
     </div>
   );

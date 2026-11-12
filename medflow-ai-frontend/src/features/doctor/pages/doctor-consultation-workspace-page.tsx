@@ -271,6 +271,13 @@ export function DoctorConsultationWorkspacePage({
       return;
     }
 
+    if (action.id === 'create-prescription' || action.ucCode === 'UC37') {
+      if (!action.enabled) return;
+      const targetVisit = data?.visit.visitCode ?? activeIdentifier;
+      navigate(`/doctor/consultation/${encodeURIComponent(targetVisit)}/prescription`);
+      return;
+    }
+
     setSelectedActionNotice(
       `Đã chọn thao tác "${action.label}" (${action.ucCode}) cho bệnh nhân ${data?.patient.fullName ?? ''} (${data?.visit.visitCode ?? activeIdentifier}).`,
     );

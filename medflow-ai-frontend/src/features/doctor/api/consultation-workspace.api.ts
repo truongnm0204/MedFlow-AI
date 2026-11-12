@@ -11,6 +11,7 @@ import {
   recordMockDiagnosis,
   resolveMockConsultationWorkspace,
   resolveMockDiagnosticOrderCatalog,
+  saveMockPrescription,
 } from '../data/consultation-workspace-mock';
 import {
   resolveMockDiagnosticResultsReview,
@@ -23,6 +24,7 @@ import type {
   DiagnosticOrderCatalogResponseDto,
   Icd10CatalogItemDto,
   OpenConsultationWorkspaceRequest,
+  CreatePrescriptionRequest,
   RecordClinicalExaminationRequest,
   RecordDiagnosisRequest,
   SearchIcd10CodesParams,
@@ -172,6 +174,28 @@ export async function searchIcd10Codes(
   }
 
   return searchMockIcd10Codes(params);
+}
+
+/**
+ * Lưu đơn thuốc nháp (`PUT /doctor/consultation/{idOrCode}/prescription` — UC37 / #140).
+ * Có `medflow.access_token` thì mọi lỗi HTTP và lỗi mạng đều throw. Không token mới dùng mock.
+ * API giữ `DRAFT`. Phát hành `ISSUED` là lúc hoàn tất lượt khám (UC38).
+ */
+export async function savePrescription(
+  idOrCode: string,
+  payload: CreatePrescriptionRequest,
+): Promise<ConsultationWorkspaceResponseDto> {
+  const encoded = encodeURIComponent(idOrCode.trim());
+
+  if (hasAccessToken()) {
+    const { data } = await apiClient.put<ConsultationWorkspaceResponseDto>(
+      `/doctor/consultation/${encoded}/prescription`,
+      payload,
+    );
+    return data;
+  }
+
+  return saveMockPrescription(idOrCode, payload);
 }
 
 /**

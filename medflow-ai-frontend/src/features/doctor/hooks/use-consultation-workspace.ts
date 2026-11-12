@@ -10,12 +10,14 @@ import {
   recordClinicalExamination,
   recordDiagnosis,
   reviewDiagnosticResults,
+  savePrescription,
   searchIcd10Codes,
 } from '../api/consultation-workspace.api';
 import type {
   CompleteVisitRequest,
   ConsultationWorkspaceResponseDto,
   CreateDiagnosticOrderRequest,
+  CreatePrescriptionRequest,
   OpenConsultationWorkspaceRequest,
   RecordClinicalExaminationRequest,
   RecordDiagnosisRequest,
@@ -104,6 +106,35 @@ export function useRecordDiagnosis() {
 
   return useMutation<ConsultationWorkspaceResponseDto, unknown, RecordDiagnosisVariables>({
     mutationFn: ({ idOrCode, payload }) => recordDiagnosis(idOrCode, payload),
+    onSuccess: (data, variables) => {
+      const normalized = variables.idOrCode.trim();
+      queryClient.setQueryData(['doctor', 'consultation', normalized], data);
+      if (data.visit?.visitCode) {
+        queryClient.setQueryData(['doctor', 'consultation', data.visit.visitCode], data);
+      }
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'medical-history'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'assigned-queue'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'dashboard'],
+      });
+    },
+  });
+}
+
+export interface SavePrescriptionVariables {
+  idOrCode: string;
+  payload: CreatePrescriptionRequest;
+}
+
+export function useSavePrescription() {
+  const queryClient = useQueryClient();
+
+  return useMutation<ConsultationWorkspaceResponseDto, unknown, SavePrescriptionVariables>({
+    mutationFn: ({ idOrCode, payload }) => savePrescription(idOrCode, payload),
     onSuccess: (data, variables) => {
       const normalized = variables.idOrCode.trim();
       queryClient.setQueryData(['doctor', 'consultation', normalized], data);
