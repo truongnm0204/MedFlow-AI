@@ -143,6 +143,61 @@ public sealed class DiagnosticResultsController : ControllerBase
             GetIp(),
             ct));
 
+    /// <summary>
+    /// POST/PUT/PATCH .../result/amend — Sửa kết quả cận lâm sàng đã khóa (UC43 / #136).
+    /// </summary>
+    [HttpPost("/api/v1/diagnostic/orders/{idOrCode}/result/amend")]
+    [HttpPut("/api/v1/diagnostic/orders/{idOrCode}/result/amend")]
+    [HttpPatch("/api/v1/diagnostic/orders/{idOrCode}/result/amend")]
+    [HttpPost("/api/v1/diagnostic-orders/{idOrCode}/result/amend")]
+    [HttpPut("/api/v1/diagnostic-orders/{idOrCode}/result/amend")]
+    [HttpPatch("/api/v1/diagnostic-orders/{idOrCode}/result/amend")]
+    [HttpPost("/api/v1/diagnostic/results/{idOrCode}/amend")]
+    [HttpPut("/api/v1/diagnostic/results/{idOrCode}/amend")]
+    [HttpPatch("/api/v1/diagnostic/results/{idOrCode}/amend")]
+    [HttpPost("/api/v1/diagnostic-results/{idOrCode}/amend")]
+    [HttpPut("/api/v1/diagnostic-results/{idOrCode}/amend")]
+    [HttpPatch("/api/v1/diagnostic-results/{idOrCode}/amend")]
+    [ProducesResponseType<EnterDiagnosticResultResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<EnterDiagnosticResultResponseDto>> AmendResult(
+        string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] UpdateDiagnosticResultRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _resultEntryService.UpdateDiagnosticResultAsync(
+            GetUserId(),
+            idOrCode,
+            request,
+            GetIp(),
+            ct));
+
+    /// <summary>
+    /// POST/PUT .../results/amend — Sửa kết quả đã khóa theo OrderId / OrderCode trong payload (UC43 / #136).
+    /// </summary>
+    [HttpPost("/api/v1/diagnostic/results/amend")]
+    [HttpPut("/api/v1/diagnostic/results/amend")]
+    [HttpPost("/api/v1/diagnostic/orders/result/amend")]
+    [HttpPut("/api/v1/diagnostic/orders/result/amend")]
+    [ProducesResponseType<EnterDiagnosticResultResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<EnterDiagnosticResultResponseDto>> AmendResultFromBody(
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] UpdateDiagnosticResultRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _resultEntryService.UpdateDiagnosticResultAsync(
+            GetUserId(),
+            null,
+            request,
+            GetIp(),
+            ct));
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
