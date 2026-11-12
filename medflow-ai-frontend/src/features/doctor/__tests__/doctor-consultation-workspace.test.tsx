@@ -1388,4 +1388,24 @@ describe('DoctorConsultationWorkspacePage (Issue #105 / UC31)', () => {
       }),
     ).toBeInTheDocument();
   });
+
+  it('navigates to the UC37 prescription screen from the allowed action', async () => {
+    authenticateAsDoctor();
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK,
+    });
+
+    renderWithRouter('/doctor/consultation/VIS-2026-0212');
+
+    expect(await screen.findByRole('heading', { name: 'Nguyễn Văn An' })).toBeInTheDocument();
+
+    const actionLabel = screen.getByText('Kê đơn thuốc ngoại trú');
+    const actionRow = actionLabel.closest('div.rounded-xl');
+    expect(actionRow).not.toBeNull();
+    fireEvent.click(within(actionRow as HTMLElement).getByRole('button', { name: 'Thực hiện' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Kê đơn thuốc ngoại trú (SCR-RX-01)' }),
+    ).toBeInTheDocument();
+  });
 });

@@ -14,6 +14,8 @@ export type ConsultationActionOutcome =
   | 'DIAGNOSTIC_ORDER_CREATED'
   | 'DIAGNOSIS_RECORDED'
   | 'DIAGNOSTIC_RESULTS_REVIEWED'
+  | 'PRESCRIPTION_CREATED'
+  | 'PRESCRIPTION_UPDATED'
   | 'VISIT_COMPLETED';
 
 export type ConsultationWorkspaceState =
@@ -375,6 +377,28 @@ export interface RecordDiagnosisItemRequest {
   isPrimary?: boolean | null;
   clinicalDiagnosis?: string | null;
   status?: ConsultationDiagnosisStatus | null;
+}
+
+export type PrescriptionFulfillmentChoice = 'HOSPITAL' | 'HOSPITAL_PHARMACY' | 'EXTERNAL_PHARMACY';
+
+export interface CreatePrescriptionItemRequest {
+  medicineId?: number | null;
+  medicineCode?: string | null;
+  prescribedQuantity?: number | null;
+  singleDoseQuantity?: number | null;
+  singleDoseUnit?: string | null;
+  doseScheduleText?: string | null;
+  frequency?: string | null;
+  durationDays?: number | null;
+  administrationRoute?: string | null;
+  instructions?: string | null;
+}
+
+export interface CreatePrescriptionRequest {
+  items?: CreatePrescriptionItemRequest[] | null;
+  fulfillmentChoice?: PrescriptionFulfillmentChoice | null;
+  expectedStateVersion?: number | null;
+  expectedRevisionNo?: number | null;
 }
 
 export interface RecordDiagnosisRequest {

@@ -11,6 +11,7 @@ import type {
   ConsultationWorkspaceState,
   CreateDiagnosticOrderItemRequest,
   CreateDiagnosticOrderRequest,
+  CreatePrescriptionRequest,
   DiagnosticOrderCatalogResponseDto,
   DiagnosticServiceCatalogItemDto,
   OpenConsultationWorkspaceRequest,
@@ -1734,5 +1735,32 @@ export function recordMockDiagnosis(
       false,
       base.clinicalContext.diagnosticSummary,
     ),
+  };
+}
+
+export function saveMockPrescription(
+  idOrCode: string,
+  request: CreatePrescriptionRequest,
+): ConsultationWorkspaceResponseDto {
+  const base = resolveMockConsultationWorkspace(idOrCode);
+  const itemCount = request.items?.length ?? 0;
+  const previous = base.clinicalContext.prescriptionSummary;
+  const hadDraft =
+    previous.latestPrescriptionStatus === 'DRAFT' ||
+    previous.latestPrescriptionStatus === 'PENDING';
+
+  return {
+    ...base,
+    actionOutcome: hadDraft ? 'PRESCRIPTION_UPDATED' : 'PRESCRIPTION_CREATED',
+    clinicalContext: {
+      ...base.clinicalContext,
+      prescriptionSummary: {
+        totalPrescriptions: Math.max(previous.totalPrescriptions, 1),
+        latestPrescriptionCode: previous.latestPrescriptionCode ?? 'RX-MOCK-0001',
+        latestPrescriptionStatus: 'DRAFT',
+        latestIssuedAt: null,
+        itemCount,
+      },
+    },
   };
 }
