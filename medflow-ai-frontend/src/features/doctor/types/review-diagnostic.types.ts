@@ -1,48 +1,129 @@
-export type DiagnosticLabFlag = 'NORMAL' | 'HIGH' | 'LOW';
+import type {
+  ConsultationDiagnosticSummaryDto,
+  ConsultationPatientSummaryDto,
+  ConsultationWorkspaceState,
+  DiagnosticOrderItemStatus,
+  DiagnosticOrderPriority,
+  DiagnosticServiceCategory,
+} from './consultation-workspace.types';
 
-export interface DiagnosticLabIndicator {
-  code: string;
-  name: string;
-  value: string;
-  unit: string;
-  referenceRange: string;
-  flag: DiagnosticLabFlag;
+export type DiagnosticResultStatus =
+  'PENDING' | 'PRELIMINARY' | 'FINALIZED' | 'VERIFIED' | 'CANCELLED';
+
+export interface ConsultationDiagnosticResultVersionDto {
+  versionId: number;
+  resultId: number;
+  versionNo: number;
+  resultText: string | null;
+  conclusion: string | null;
+  reportFileUrl: string | null;
+  isFinalized: boolean;
+  enteredByStaffId: number | null;
+  enteredByStaffCode: string | null;
+  enteredByStaffName: string | null;
+  enteredAt: string | null;
+  verifiedByStaffId: number | null;
+  verifiedByStaffCode: string | null;
+  verifiedByStaffName: string | null;
+  verifiedAt: string | null;
+  correctionReason: string | null;
 }
 
-export interface DiagnosticImageFrame {
-  id: string;
-  caption: string;
-}
-
-export interface DiagnosticResultAlertTag {
-  label: string;
-  tone: 'rose' | 'amber';
-}
-
-export interface DiagnosticResultItem {
-  id: string;
-  orderIndex: number;
+export interface ConsultationDiagnosticResultItemDto {
+  orderId: number;
+  orderCode: string;
+  visitId: number;
+  visitCode: string;
+  orderingDoctorId: number;
+  orderingDoctorCode: string;
+  orderingDoctorName: string;
+  serviceId: number;
   serviceCode: string;
   serviceName: string;
-  performedBy: string;
-  signedAtLabel: string;
-  conclusionSummary: string;
-  alertTag?: DiagnosticResultAlertTag;
-  labIndicators: DiagnosticLabIndicator[];
-  imageFrames: DiagnosticImageFrame[];
-  anatomicalDescription: string[];
-  recommendation: string;
-  pdfFileName: string;
+  category: DiagnosticServiceCategory | (string & {});
+  departmentId: number | null;
+  departmentCode: string | null;
+  departmentName: string;
+  specialtyId: number | null;
+  specialtyCode: string | null;
+  specialtyName: string;
+  unitPrice: number;
+  requiresResultVerification: boolean;
+  priority: DiagnosticOrderPriority | (string & {});
+  orderStatus: DiagnosticOrderItemStatus | (string & {});
+  requiredForConclusion: boolean;
+  instruction: string | null;
+  orderedAt: string;
+  confirmedAt: string | null;
+  confirmedByStaffId: number | null;
+  confirmedByStaffCode: string | null;
+  confirmedByStaffName: string | null;
+  queueEntryId: number | null;
+  formattedQueueEntryId: string | null;
+  ticketNo: string | null;
+  queueNumber: number | null;
+  queueStatus: string | null;
+  servicePointId: number | null;
+  servicePointName: string | null;
+  roomId: number | null;
+  roomCode: string | null;
+  roomName: string | null;
+  roomLocation: string | null;
+  completedAt: string | null;
+  hasResult: boolean;
+  isResultReady: boolean;
+  isResultFinalized: boolean;
+  resultId: number | null;
+  resultStatus: DiagnosticResultStatus | (string & {});
+  resultFinalizedAt: string | null;
+  finalizedByStaffId: number | null;
+  finalizedByStaffCode: string | null;
+  finalizedByStaffName: string | null;
+  latestVersionNo: number | null;
+  resultText: string | null;
+  conclusion: string | null;
+  reportFileUrl: string | null;
+  enteredByStaffId: number | null;
+  enteredByStaffCode: string | null;
+  enteredByStaffName: string | null;
+  enteredAt: string | null;
+  verifiedByStaffId: number | null;
+  verifiedByStaffCode: string | null;
+  verifiedByStaffName: string | null;
+  verifiedAt: string | null;
+  correctionReason: string | null;
+  versions: ConsultationDiagnosticResultVersionDto[];
 }
 
-export interface ReviewDiagnosticPatient {
-  fullName: string;
-  patientCode: string;
+export interface DiagnosticResultsReviewResponseDto {
+  visitId: number;
   visitCode: string;
-  allergies: string[];
+  visitStatus: string;
+  visitStatusLabel: string;
+  workspaceState: ConsultationWorkspaceState | (string & {});
+  canViewDiagnosticResults: boolean;
+  canAcknowledgeDiagnosticResults: boolean;
+  disabledReason: string | null;
+  generatedAtUtc: string;
+  patient: ConsultationPatientSummaryDto;
+  diagnosticSummary: ConsultationDiagnosticSummaryDto;
+  totalOrdersCount: number;
+  readyResultsCount: number;
+  pendingResultsCount: number;
+  mandatoryOrdersCount: number;
+  mandatoryReadyCount: number;
+  mandatoryPendingCount: number;
+  items: ConsultationDiagnosticResultItemDto[];
 }
 
-export interface ReviewDiagnosticData {
-  patient: ReviewDiagnosticPatient;
-  results: DiagnosticResultItem[];
+export interface ReviewDiagnosticResultsRequest {
+  orderIds?: number[] | null;
+  orderCodes?: string[] | null;
+  clinicalInterpretation?: string | null;
+  /** BE alias: used when `clinicalInterpretation` is null (`ClinicalInterpretation ?? ReviewNote`). */
+  reviewNote?: string | null;
+  clinicalConclusion?: string | null;
+  amendmentReason?: string | null;
+  expectedStateVersion?: number | null;
+  expectedRevisionNo?: number | null;
 }

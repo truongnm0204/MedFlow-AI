@@ -13,6 +13,7 @@ export type ConsultationActionOutcome =
   | 'CLINICAL_EXAMINATION_RECORDED'
   | 'DIAGNOSTIC_ORDER_CREATED'
   | 'DIAGNOSIS_RECORDED'
+  | 'DIAGNOSTIC_RESULTS_REVIEWED'
   | 'VISIT_COMPLETED';
 
 export type ConsultationWorkspaceState =
