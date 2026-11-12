@@ -65,3 +65,71 @@ export const enterDiagnosticResultSchema = z
   });
 
 export type EnterDiagnosticResultFormValues = z.infer<typeof enterDiagnosticResultSchema>;
+
+const amendMarkupMessage = {
+  resultText: 'Nội dung kết quả cận lâm sàng chứa ký tự không hợp lệ.',
+  conclusion: 'Kết luận cận lâm sàng chứa ký tự không hợp lệ.',
+  correctionReason: 'Lý do sửa kết quả cận lâm sàng chứa ký tự không hợp lệ.',
+} as const;
+
+function rejectsMarkup(value: string): boolean {
+  return !value.includes('<') && !value.includes('>');
+}
+
+// Schema sửa kết quả đã khóa. Khớp ValidateUpdateResultRequest (BE #136 / ADR 0035).
+export const updateDiagnosticResultSchema = z
+  .object({
+    resultText: z
+      .string()
+      .trim()
+      .min(3, 'Nội dung kết quả cận lâm sàng (ResultText) phải có ít nhất 3 ký tự.')
+      .max(5000, 'Nội dung kết quả cận lâm sàng (ResultText) không được vượt quá 5000 ký tự.')
+      .refine(rejectsMarkup, amendMarkupMessage.resultText),
+    conclusion: z
+      .string()
+      .trim()
+      .min(3, 'Kết luận cận lâm sàng (Conclusion) phải có ít nhất 3 ký tự.')
+      .max(2000, 'Kết luận cận lâm sàng (Conclusion) không được vượt quá 2000 ký tự.')
+      .refine(rejectsMarkup, amendMarkupMessage.conclusion),
+    reportFileUrl: z
+      .string()
+      .max(500, 'Đường dẫn tệp báo cáo cận lâm sàng (ReportFileUrl) không được vượt quá 500 ký tự.')
+      .optional(),
+    correctionReason: z
+      .string()
+      .trim()
+      .min(5, 'Lý do sửa kết quả cận lâm sàng (CorrectionReason) phải có ít nhất 5 ký tự.')
+      .max(500, 'Lý do sửa kết quả cận lâm sàng (CorrectionReason) không được vượt quá 500 ký tự.')
+      .refine(rejectsMarkup, amendMarkupMessage.correctionReason),
+    expectedStateVersion: z.number().int().min(1, 'ExpectedStateVersion phải lớn hơn hoặc bằng 1.'),
+  })
+  .superRefine((data, ctx) => {
+    const reportFileUrl = data.reportFileUrl;
+    if (reportFileUrl == null || reportFileUrl.length === 0) {
+      return;
+    }
+
+    if (reportFileUrl.includes('<') || reportFileUrl.includes('>') || /\s/.test(reportFileUrl)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['reportFileUrl'],
+        message: 'Đường dẫn tệp báo cáo cận lâm sàng (ReportFileUrl) chứa ký tự không hợp lệ.',
+      });
+      return;
+    }
+
+    const hasAllowedPrefix =
+      reportFileUrl.startsWith('/') ||
+      reportFileUrl.toLowerCase().startsWith('http://') ||
+      reportFileUrl.toLowerCase().startsWith('https://');
+    if (!hasAllowedPrefix) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['reportFileUrl'],
+        message:
+          "Đường dẫn tệp báo cáo cận lâm sàng (ReportFileUrl) phải bắt đầu bằng '/', 'http://' hoặc 'https://'.",
+      });
+    }
+  });
+
+export type UpdateDiagnosticResultFormValues = z.infer<typeof updateDiagnosticResultSchema>;

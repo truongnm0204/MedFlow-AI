@@ -1418,4 +1418,186 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
         await Assert.ThrowsAsync<ConflictException>(() =>
             _service.EnterDiagnosticResultAsync(7, "DIA-202610-0004", validRequest));
     }
+
+    [Fact]
+    public async Task UpdateDiagnosticResultAsync_OnFinalizedOrder_AppendsVersionPreservesHeaderLifecycleAndVisit()
+    {
+        var before = await _service.GetOrderResultByIdOrCodeAsync(7, "DIA-202610-0001");
+        Assert.True(before.Order.IsResultFinalized);
+        Assert.False(before.Order.CanEnterResult);
+        Assert.True(before.Order.CanAmendResult);
+        Assert.Null(before.Order.AmendDisabledReason);
+
+        var originalFinalizedAt = new DateTime(2026, 10, 20, 8, 20, 0);
+        var response = await _service.UpdateDiagnosticResultAsync(
+            actorUserId: 7,
+            orderIdOrCode: "DIA-202610-0001",
+            request: new UpdateDiagnosticResultRequest(
+                ResultText: "WBC: 9.1 G/L; RBC: 4.4 T/L; HGB: 138 g/L; PLT: 240 G/L.",
+                Conclusion: "Công thức máu sau hiệu đính vẫn trong giới hạn theo dõi.",
+                CorrectionReason: "Sửa số WBC do nhập nhầm đơn vị.",
+                ExpectedStateVersion: 4),
+            ipAddress: "127.0.0.1");
+
+        Assert.Equal(DiagnosticResultEntryService.DiagnosticResultAmendedAction, response.ActionOutcome);
+        Assert.True(response.IsFinalized);
+        Assert.Equal(2, response.VersionNo);
+        Assert.Equal("COMPLETED", response.PreviousOrderStatus);
+        Assert.Equal("COMPLETED", response.OrderStatus);
+        Assert.Equal("COMPLETED", response.PreviousQueueStatus);
+        Assert.Equal("COMPLETED", response.QueueStatus);
+        Assert.Equal(4, response.PreviousStateVersion);
+        Assert.Equal(5, response.StateVersion);
+        Assert.Equal(originalFinalizedAt, response.FinalizedAt);
+        Assert.Equal(5, response.Order.FinalizedByStaffId);
+        Assert.False(response.Order.CanEnterResult);
+        Assert.True(response.Order.CanAmendResult);
+        Assert.Equal("Sửa số WBC do nhập nhầm đơn vị.", response.LatestVersion.CorrectionReason);
+        Assert.Equal("https://cdn.medflow.vn/reports/cbc-0001.pdf", response.LatestVersion.ReportFileUrl);
+        Assert.Equal(2, response.Versions.Count);
+
+        var result = await _dbContext.DiagnosticResults.AsNoTracking().FirstAsync(r => r.Id == 1);
+        Assert.Equal("FINALIZED", result.Status);
+        Assert.Equal(originalFinalizedAt, result.FinalizedAt);
+        Assert.Equal(5, result.FinalizedByStaffId);
+
+        var order = await _dbContext.DiagnosticOrders.AsNoTracking().FirstAsync(o => o.Id == 1);
+        Assert.Equal("COMPLETED", order.Status);
+        var queue = await _dbContext.QueueEntries.AsNoTracking().FirstAsync(q => q.Id == 11);
+        Assert.Equal("COMPLETED", queue.Status);
+        Assert.Equal("PRESENT", queue.PresenceStatus);
+        Assert.Equal(5, queue.StateVersion);
+        Assert.Null(queue.BlockedReason);
+        var visit = await _dbContext.Visits.AsNoTracking().FirstAsync(v => v.Id == 100);
+        Assert.Equal("AWAITING_RESULTS", visit.Status);
+
+        var versionCount = await _dbContext.DiagnosticResultVersions.CountAsync(v => v.DiagnosticResultId == 1);
+        Assert.Equal(2, versionCount);
+
+        var audit = await _dbContext.AuditLogs.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Action == DiagnosticResultEntryService.DiagnosticResultAmendedAction);
+        Assert.NotNull(audit);
+        Assert.Equal(7, audit.ActorUserId);
+        Assert.Equal("1", audit.EntityId);
+
+        var detail = await _service.GetOrderResultByIdOrCodeAsync(7, "DIA-202610-0001");
+        Assert.Contains(detail.StatusHistory, h => h.Action == DiagnosticResultEntryService.DiagnosticResultAmendedAction);
+
+        var doctorView = await _consultationService.GetDiagnosticResultsAsync(3, "VIS-202610-0100");
+        Assert.False(doctorView.DiagnosticSummary.AllMandatoryResultsReady);
+        var cbc = Assert.Single(doctorView.Items, i => i.OrderCode == "DIA-202610-0001");
+        Assert.True(cbc.IsResultFinalized);
+        Assert.Equal("WBC: 9.1 G/L; RBC: 4.4 T/L; HGB: 138 g/L; PLT: 240 G/L.", cbc.ResultText);
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.EnterDiagnosticResultAsync(
+                7,
+                "DIA-202610-0001",
+                new EnterDiagnosticResultRequest(
+                    ResultText: "Nhập lại sau khi đã sửa bản khóa.",
+                    Conclusion: "Không được đi qua Enter.")));
+    }
+
+    [Fact]
+    public async Task UpdateDiagnosticResultAsync_ClearReportUrl_StoresNullUrl()
+    {
+        var response = await _service.UpdateDiagnosticResultAsync(
+            7,
+            "DIA-202610-0001",
+            new UpdateDiagnosticResultRequest(
+                ResultText: "WBC: 8.0 G/L sau khi gỡ file đính kèm.",
+                Conclusion: "Công thức máu bình thường, không kèm file.",
+                ReportFileUrl: "",
+                CorrectionReason: "Gỡ file báo cáo đính kèm sai."));
+
+        Assert.Null(response.LatestVersion.ReportFileUrl);
+    }
+
+    [Fact]
+    public async Task UpdateDiagnosticResultAsync_Guards_RejectInvalidOrClosedMutations()
+    {
+        var changed = new UpdateDiagnosticResultRequest(
+            ResultText: "Nội dung kết quả sau sửa đổi.",
+            Conclusion: "Kết luận sau sửa đổi.",
+            CorrectionReason: "Lý do sửa hợp lệ.");
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateDiagnosticResultAsync(7, "DIA-202610-0001", null));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateDiagnosticResultAsync(
+                7,
+                "DIA-202610-0001",
+                changed with { CorrectionReason = null }));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateDiagnosticResultAsync(
+                7,
+                "DIA-202610-0001",
+                changed with { CorrectionReason = "abcd" }));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateDiagnosticResultAsync(
+                7,
+                "DIA-202610-0001",
+                changed with { CorrectionReason = "<script>" }));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.UpdateDiagnosticResultAsync(
+                7,
+                "DIA-202610-0001",
+                changed with { ResultText = "" }));
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateDiagnosticResultAsync(7, "DIA-202610-0005", changed));
+
+        var versionCountBefore = await _dbContext.DiagnosticResultVersions.CountAsync(v => v.DiagnosticResultId == 1);
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateDiagnosticResultAsync(
+                7,
+                "DIA-202610-0001",
+                new UpdateDiagnosticResultRequest(
+                    ResultText: "WBC: 8.2 G/L; RBC: 4.6 T/L; HGB: 142 g/L; PLT: 250 G/L.",
+                    Conclusion: "Công thức máu trong giới hạn bình thường.",
+                    CorrectionReason: "Gửi lại đúng nội dung cũ.")));
+        Assert.Equal(versionCountBefore, await _dbContext.DiagnosticResultVersions.CountAsync(v => v.DiagnosticResultId == 1));
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateDiagnosticResultAsync(
+                7,
+                "DIA-202610-0001",
+                changed with { ExpectedStateVersion = 99 }));
+
+        var queue = await _dbContext.QueueEntries.FirstAsync(q => q.Id == 11);
+        queue.Status = "SKIPPED";
+        await _dbContext.SaveChangesAsync();
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateDiagnosticResultAsync(7, "DIA-202610-0001", changed));
+        queue.Status = "COMPLETED";
+        await _dbContext.SaveChangesAsync();
+
+        var order = await _dbContext.DiagnosticOrders.FirstAsync(o => o.Id == 1);
+        order.Status = "CANCELLED";
+        await _dbContext.SaveChangesAsync();
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateDiagnosticResultAsync(7, "DIA-202610-0001", changed));
+        order.Status = "COMPLETED";
+        await _dbContext.SaveChangesAsync();
+
+        order.VisitId = 103;
+        await _dbContext.SaveChangesAsync();
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateDiagnosticResultAsync(7, "DIA-202610-0001", changed));
+
+        order.VisitId = 104;
+        await _dbContext.SaveChangesAsync();
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateDiagnosticResultAsync(7, "DIA-202610-0001", changed));
+
+        order.VisitId = 100;
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.UpdateDiagnosticResultAsync(3, "DIA-202610-0001", changed));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.UpdateDiagnosticResultAsync(7, "DIA-202610-0008", changed));
+
+        Assert.Equal(versionCountBefore, await _dbContext.DiagnosticResultVersions.CountAsync(v => v.DiagnosticResultId == 1));
+    }
 }

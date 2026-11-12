@@ -5,6 +5,7 @@ import type {
 } from '../types/diagnostic-order-review.types';
 import type {
   DiagnosticResultEntryDetailResponseDto,
+  DiagnosticResultEntryEligibilityDto,
   DiagnosticResultEntryItemDto,
   DiagnosticResultEntryListResponseDto,
   DiagnosticResultEntrySummaryStatsDto,
@@ -13,6 +14,7 @@ import type {
   EnterDiagnosticResultRequest,
   EnterDiagnosticResultResponseDto,
   GetDiagnosticOrdersForResultEntryParams,
+  UpdateDiagnosticResultRequest,
 } from '../types/diagnostic-result-entry.types';
 import {
   DIAGNOSTIC_REVIEW_STAFF_PROFILE_MOCK,
@@ -67,7 +69,14 @@ const RESULT_FIELD_NULLS = {
   correctionReason: null,
 } as const;
 
-const INITIAL_DIAGNOSTIC_RESULT_ENTRY_ITEMS: DiagnosticResultEntryItemDto[] = [
+type DiagnosticResultEntrySeed = Omit<
+  DiagnosticResultEntryItemDto,
+  'canAmendResult' | 'amendDisabledReason' | 'eligibility'
+> & {
+  eligibility: Omit<DiagnosticResultEntryEligibilityDto, 'canAmendResult' | 'amendDisabledReason'>;
+};
+
+const DIAGNOSTIC_RESULT_ENTRY_SEEDS: DiagnosticResultEntrySeed[] = [
   // 1. IN_PROGRESS, no result yet — eligible for entry (STAT).
   {
     orderId: 44,
@@ -461,7 +470,7 @@ const INITIAL_DIAGNOSTIC_RESULT_ENTRY_ITEMS: DiagnosticResultEntryItemDto[] = [
     canEnterResult: false,
     canFinalizeResult: false,
     disabledReason:
-      "Kết quả của phiếu chỉ định 'DIA-202610-0041' đã được duyệt & trả (VERIFIED). Mọi chỉnh sửa sau duyệt cần thực hiện qua quy trình amendment (UC45).",
+      "Kết quả của phiếu chỉ định 'DIA-202610-0041' đã được duyệt & trả (VERIFIED). Không thể nhập mới.",
     eligibility: {
       ...ELIGIBILITY_BASE,
       isEligible: false,
@@ -469,7 +478,7 @@ const INITIAL_DIAGNOSTIC_RESULT_ENTRY_ITEMS: DiagnosticResultEntryItemDto[] = [
       canFinalizeResult: false,
       isResultAlreadyFinalized: true,
       disabledReason:
-        "Kết quả của phiếu chỉ định 'DIA-202610-0041' đã được duyệt & trả (VERIFIED). Mọi chỉnh sửa sau duyệt cần thực hiện qua quy trình amendment (UC45).",
+        "Kết quả của phiếu chỉ định 'DIA-202610-0041' đã được duyệt & trả (VERIFIED). Không thể nhập mới.",
     },
     versions: [
       {
@@ -729,6 +738,135 @@ const INITIAL_DIAGNOSTIC_RESULT_ENTRY_ITEMS: DiagnosticResultEntryItemDto[] = [
     versions: [],
   },
 ];
+
+function amendFieldsFor(item: {
+  orderCode: string;
+  isResultFinalized: boolean;
+  orderStatus: string;
+  status: string;
+  queueStatus?: string | null;
+  visitStatus: string;
+  eligibility: Pick<
+    DiagnosticResultEntryEligibilityDto,
+    | 'isMedicalRecordOpen'
+    | 'isPatientActive'
+    | 'isServiceActive'
+    | 'isDepartmentActive'
+    | 'isServicePointActive'
+    | 'isRoomActive'
+    | 'hasResultWritePermission'
+  >;
+}): { canAmendResult: boolean; amendDisabledReason: string | null } {
+  if (!item.isResultFinalized) {
+    return {
+      canAmendResult: false,
+      amendDisabledReason: `Phiếu chỉ định cận lâm sàng '${item.orderCode}' chưa có kết quả được xác nhận/khóa cuối. Vui lòng nhập kết quả trước khi sửa.`,
+    };
+  }
+
+  const orderStatus = (item.orderStatus || item.status).toUpperCase();
+  const queueStatus = (item.queueStatus ?? '').toUpperCase();
+  const visitStatus = item.visitStatus.toUpperCase();
+
+  if (orderStatus === 'CANCELLED' || queueStatus === 'CANCELLED') {
+    return {
+      canAmendResult: false,
+      amendDisabledReason: `Phiếu chỉ định cận lâm sàng '${item.orderCode}' đã bị hủy, không thể sửa kết quả.`,
+    };
+  }
+  if (queueStatus === 'SKIPPED') {
+    return {
+      canAmendResult: false,
+      amendDisabledReason:
+        'Lượt xếp hàng cận lâm sàng đã bị qua lượt (SKIPPED). Vui lòng khôi phục lượt trước khi sửa kết quả.',
+    };
+  }
+  if (visitStatus === 'CANCELLED' || visitStatus === 'NO_SHOW') {
+    return {
+      canAmendResult: false,
+      amendDisabledReason:
+        'Không thể sửa kết quả cận lâm sàng đã khóa cho lượt khám đã hủy hoặc vắng mặt (NO_SHOW).',
+    };
+  }
+  if (visitStatus === 'COMPLETED' || visitStatus === 'DONE') {
+    return {
+      canAmendResult: false,
+      amendDisabledReason:
+        'Lượt khám đã hoàn tất (COMPLETED), không thể sửa kết quả cận lâm sàng đã khóa.',
+    };
+  }
+  if (!item.eligibility.isMedicalRecordOpen) {
+    return {
+      canAmendResult: false,
+      amendDisabledReason:
+        'Hồ sơ bệnh án của lượt khám đã được khóa (FINALIZED), không thể sửa kết quả cận lâm sàng đã khóa.',
+    };
+  }
+  if (!item.eligibility.isPatientActive) {
+    return {
+      canAmendResult: false,
+      amendDisabledReason: 'Hồ sơ bệnh nhân hiện không ở trạng thái hoạt động.',
+    };
+  }
+  if (!item.eligibility.isServiceActive) {
+    return {
+      canAmendResult: false,
+      amendDisabledReason: 'Dịch vụ cận lâm sàng hiện đang ngừng hoạt động.',
+    };
+  }
+  if (!item.eligibility.isDepartmentActive) {
+    return {
+      canAmendResult: false,
+      amendDisabledReason: 'Khoa thực hiện dịch vụ hiện đang ngừng hoạt động.',
+    };
+  }
+  if (!item.eligibility.isServicePointActive) {
+    return {
+      canAmendResult: false,
+      amendDisabledReason: 'Điểm phục vụ cận lâm sàng hiện không hoạt động.',
+    };
+  }
+  if (!item.eligibility.isRoomActive) {
+    return {
+      canAmendResult: false,
+      amendDisabledReason: 'Phòng thực hiện cận lâm sàng hiện không hoạt động.',
+    };
+  }
+  if (!item.eligibility.hasResultWritePermission) {
+    return {
+      canAmendResult: false,
+      amendDisabledReason:
+        'Nhân viên cận lâm sàng không có quyền nhập và trả kết quả cận lâm sàng (yêu cầu quyền DIAGNOSTIC_RESULT_WRITE).',
+    };
+  }
+
+  return { canAmendResult: true, amendDisabledReason: null };
+}
+
+function applyAmendFields(target: DiagnosticResultEntryItemDto): void {
+  const amend = amendFieldsFor(target);
+  target.canAmendResult = amend.canAmendResult;
+  target.amendDisabledReason = amend.amendDisabledReason;
+  target.eligibility = {
+    ...target.eligibility,
+    ...amend,
+  };
+}
+
+function withAmendFields(item: DiagnosticResultEntrySeed): DiagnosticResultEntryItemDto {
+  const amend = amendFieldsFor(item);
+  return {
+    ...item,
+    ...amend,
+    eligibility: {
+      ...item.eligibility,
+      ...amend,
+    },
+  };
+}
+
+const INITIAL_DIAGNOSTIC_RESULT_ENTRY_ITEMS: DiagnosticResultEntryItemDto[] =
+  DIAGNOSTIC_RESULT_ENTRY_SEEDS.map(withAmendFields);
 
 const CLINICAL_CONTEXT_BY_VISIT_ID: Record<number, DiagnosticOrderClinicalSummaryDto> = {
   1004: {
@@ -1145,7 +1283,7 @@ export function enterMockDiagnosticResult(
 
   if (target.isResultFinalized || target.eligibility.isResultAlreadyFinalized) {
     throw new Error(
-      `Kết quả của phiếu chỉ định '${target.orderCode}' đã được duyệt & trả (FINALIZED). Không thể chỉnh sửa hoặc nhập lại — vui lòng sử dụng quy trình amendment (UC45).`,
+      `Kết quả của phiếu chỉ định '${target.orderCode}' đã được duyệt & trả (FINALIZED). Không thể nhập mới. Sửa kết quả đã khóa qua /result/amend.`,
     );
   }
 
@@ -1236,7 +1374,7 @@ export function enterMockDiagnosticResult(
     target.queueStatus = 'COMPLETED';
     target.canEnterResult = false;
     target.canFinalizeResult = false;
-    target.disabledReason = `Kết quả của phiếu chỉ định '${target.orderCode}' đã được duyệt & trả (${resultStatus}). Mọi chỉnh sửa sau duyệt cần thực hiện qua quy trình amendment (UC45).`;
+    target.disabledReason = `Kết quả của phiếu chỉ định '${target.orderCode}' đã được duyệt & trả (${resultStatus}). Không thể nhập mới.`;
     target.eligibility = {
       ...target.eligibility,
       isEligible: false,
@@ -1247,6 +1385,7 @@ export function enterMockDiagnosticResult(
     };
   }
 
+  applyAmendFields(target);
   target.stateVersion = previousStateVersion + 1;
   target.versions = [...target.versions, newVersion];
 
@@ -1276,6 +1415,197 @@ export function enterMockDiagnosticResult(
     stateVersion: target.stateVersion,
     enteredAt: nowIso,
     finalizedAt: isFinalized ? nowIso : null,
+    enteredByStaff: { ...DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK },
+    order: updatedOrder,
+    latestVersion: { ...newVersion },
+    versions: updatedOrder.versions.map((v) => ({ ...v })),
+  };
+}
+
+const NO_AMEND_CONTENT_CHANGE = 'Không có thay đổi nội dung kết quả cận lâm sàng.';
+
+function assertAmendText(
+  value: string | null | undefined,
+  label: string,
+  min: number,
+  max: number,
+): string {
+  const trimmed = value?.trim() ?? '';
+  if (!trimmed) {
+    throw new Error(`${label} không được để trống.`);
+  }
+  if (trimmed.length < min) {
+    throw new Error(`${label} phải có ít nhất ${min} ký tự.`);
+  }
+  if (trimmed.length > max) {
+    throw new Error(`${label} không được vượt quá ${max} ký tự.`);
+  }
+  if (trimmed.includes('<') || trimmed.includes('>')) {
+    throw new Error(`${label} chứa ký tự không hợp lệ.`);
+  }
+  return trimmed;
+}
+
+export function amendMockDiagnosticResult(
+  idOrCode: string,
+  payload: UpdateDiagnosticResultRequest,
+): EnterDiagnosticResultResponseDto {
+  const target =
+    (payload.orderId ? findMockResultEntryOrderByTarget(payload.orderId) : undefined) ??
+    (payload.orderCode ? findMockResultEntryOrderByTarget(payload.orderCode) : undefined) ??
+    findMockResultEntryOrderByTarget(idOrCode);
+
+  if (!target) {
+    throw new Error(`Không tìm thấy phiếu chỉ định cận lâm sàng '${idOrCode}'.`);
+  }
+
+  if (!target.canAmendResult) {
+    throw new Error(
+      target.amendDisabledReason ||
+        target.eligibility.amendDisabledReason ||
+        'Không thể sửa kết quả cận lâm sàng đã khóa.',
+    );
+  }
+
+  if (
+    payload.expectedStateVersion != null &&
+    payload.expectedStateVersion !== target.stateVersion
+  ) {
+    throw new Error(
+      `Dữ liệu phiếu chỉ định '${target.orderCode}' đã thay đổi bởi thao tác khác (state_version mismatch: expected ${payload.expectedStateVersion}, current ${target.stateVersion}). Vui lòng tải lại.`,
+    );
+  }
+
+  const resultText = assertAmendText(
+    payload.resultText,
+    'Nội dung kết quả cận lâm sàng (ResultText)',
+    3,
+    5000,
+  );
+  const conclusion = assertAmendText(
+    payload.conclusion,
+    'Kết luận cận lâm sàng (Conclusion)',
+    3,
+    2000,
+  );
+  const correctionReason = assertAmendText(
+    payload.correctionReason ?? payload.amendmentReason,
+    'Lý do sửa kết quả cận lâm sàng (CorrectionReason)',
+    5,
+    500,
+  );
+
+  const latest = [...target.versions].sort((a, b) => b.versionNo - a.versionNo)[0];
+  const rawReportFileUrl = payload.reportFileUrl;
+  let reportFileUrl: string | null;
+  if (rawReportFileUrl == null) {
+    reportFileUrl = (latest?.reportFileUrl ?? target.reportFileUrl)?.trim() || null;
+  } else if (!rawReportFileUrl.trim()) {
+    reportFileUrl = null;
+  } else {
+    const url = rawReportFileUrl.trim();
+    if (
+      url.length > 500 ||
+      url.includes('<') ||
+      url.includes('>') ||
+      /\s/.test(url) ||
+      (!url.startsWith('/') &&
+        !url.toLowerCase().startsWith('http://') &&
+        !url.toLowerCase().startsWith('https://'))
+    ) {
+      throw new Error(
+        'Đường dẫn tệp báo cáo cận lâm sàng (ReportFileUrl) chứa ký tự không hợp lệ.',
+      );
+    }
+    reportFileUrl = url;
+  }
+
+  const latestText = (latest?.resultText ?? target.resultText ?? '').trim();
+  const latestConclusion = (latest?.conclusion ?? target.conclusion ?? '').trim();
+  const latestUrl = (latest?.reportFileUrl ?? target.reportFileUrl)?.trim() || null;
+  if (resultText === latestText && conclusion === latestConclusion && reportFileUrl === latestUrl) {
+    throw new Error(NO_AMEND_CONTENT_CHANGE);
+  }
+
+  const nowIso = new Date().toISOString();
+  const previousStateVersion = target.stateVersion;
+  const previousOrderStatus = target.orderStatus || target.status;
+  const previousQueueStatus = target.queueStatus ?? null;
+  const versionNo = (target.latestVersionNo ?? latest?.versionNo ?? 0) + 1;
+  const versionId = (mockResultVersionSeq += 1);
+  const resultId = target.resultId ?? (mockResultIdSeq += 1);
+
+  const newVersion: DiagnosticResultVersionItemDto = {
+    versionId,
+    resultId,
+    versionNo,
+    resultText,
+    conclusion,
+    reportFileUrl,
+    isFinalized: true,
+    enteredByStaffId: DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.userId,
+    enteredByStaffCode: DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.staffCode ?? 'DIAG-009',
+    enteredByStaffName: DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.fullName,
+    enteredAt: nowIso,
+    verifiedByStaffId: DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.userId,
+    verifiedByStaffCode: DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.staffCode ?? 'DIAG-009',
+    verifiedByStaffName: DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.fullName,
+    verifiedAt: nowIso,
+    correctionReason,
+  };
+
+  target.resultId = resultId;
+  target.hasResult = true;
+  target.isResultReady = true;
+  target.isResultFinalized = true;
+  target.latestVersionNo = versionNo;
+  target.resultText = resultText;
+  target.conclusion = conclusion;
+  target.reportFileUrl = reportFileUrl;
+  target.enteredByStaffId = newVersion.enteredByStaffId;
+  target.enteredByStaffCode = newVersion.enteredByStaffCode;
+  target.enteredByStaffName = newVersion.enteredByStaffName;
+  target.enteredAt = nowIso;
+  target.correctionReason = correctionReason;
+  target.canEnterResult = false;
+  target.canFinalizeResult = false;
+  if (target.queueEntryId != null) {
+    target.stateVersion = previousStateVersion + 1;
+  }
+  target.versions = [...target.versions, newVersion];
+  applyAmendFields(target);
+  target.eligibility = {
+    ...target.eligibility,
+    isEligible: false,
+    canEnterResult: false,
+    canFinalizeResult: false,
+    isResultAlreadyFinalized: true,
+  };
+
+  const updatedOrder: DiagnosticResultEntryItemDto = {
+    ...target,
+    patient: { ...target.patient },
+    eligibility: { ...target.eligibility },
+    versions: target.versions.map((v) => ({ ...v })),
+  };
+
+  return {
+    actionOutcome: 'DIAGNOSTIC_RESULT_AMENDED',
+    message: `Đã sửa kết quả đã khóa của phiếu '${target.orderCode}', phiên bản v${versionNo}.`,
+    orderId: target.orderId,
+    orderCode: target.orderCode,
+    resultId,
+    versionNo,
+    resultStatus: target.resultStatus,
+    isFinalized: true,
+    previousOrderStatus,
+    orderStatus: target.orderStatus,
+    previousQueueStatus,
+    queueStatus: target.queueStatus ?? null,
+    previousStateVersion,
+    stateVersion: target.stateVersion,
+    enteredAt: nowIso,
+    finalizedAt: target.resultFinalizedAt ?? null,
     enteredByStaff: { ...DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK },
     order: updatedOrder,
     latestVersion: { ...newVersion },

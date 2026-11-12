@@ -17,6 +17,7 @@ import {
   useDiagnosticOrdersForResultEntry,
   useDiagnosticResultEntryDetail,
   useEnterDiagnosticResult,
+  useUpdateDiagnosticResult,
 } from '../hooks/use-diagnostic-result-entry';
 import type {
   DiagnosticResultEntryCategoryFilter,
@@ -27,6 +28,7 @@ import type {
   DiagnosticResultEntryStatusFilter,
   EnterDiagnosticResultRequest,
   EnterDiagnosticResultResponseDto,
+  UpdateDiagnosticResultRequest,
 } from '../types/diagnostic.types';
 
 const RESULT_ENTRY_REQUIRED_PERMISSIONS = ['DIAGNOSTIC_RESULT_WRITE'];
@@ -79,6 +81,7 @@ export function DiagnosticResultEntryPage() {
 
   const listQuery = useDiagnosticOrdersForResultEntry(queryParams, true);
   const enterMutation = useEnterDiagnosticResult();
+  const updateMutation = useUpdateDiagnosticResult();
 
   const items = useMemo(() => listQuery.data?.items ?? [], [listQuery.data?.items]);
   const summary = listQuery.data?.summary ?? {
@@ -183,6 +186,25 @@ export function DiagnosticResultEntryPage() {
     } catch (error) {
       setActionError(
         getErrorMessage(error, 'Không thể lưu kết quả cận lâm sàng. Vui lòng kiểm tra lại.'),
+      );
+    }
+  };
+
+  const handleUpdateResult = async (orderCode: string, payload: UpdateDiagnosticResultRequest) => {
+    setActionError(null);
+    try {
+      const response = await updateMutation.mutateAsync({
+        idOrCode: orderCode,
+        payload,
+      });
+      setLastEntryResult(response);
+      setSelectedOrderCode(response.order.orderCode);
+    } catch (error) {
+      setActionError(
+        getErrorMessage(
+          error,
+          'Không thể sửa kết quả cận lâm sàng đã khóa. Vui lòng kiểm tra lại.',
+        ),
       );
     }
   };
@@ -479,8 +501,9 @@ export function DiagnosticResultEntryPage() {
                 versions={detailQuery.data?.versions}
                 statusHistory={detailQuery.data?.statusHistory}
                 hasResultWritePermission={hasResultWritePermission}
-                isSubmitting={enterMutation.isPending}
+                isSubmitting={enterMutation.isPending || updateMutation.isPending}
                 onEnterResult={(orderCode, payload) => void handleEnterResult(orderCode, payload)}
+                onUpdateResult={(orderCode, payload) => void handleUpdateResult(orderCode, payload)}
               />
             </div>
           </div>
