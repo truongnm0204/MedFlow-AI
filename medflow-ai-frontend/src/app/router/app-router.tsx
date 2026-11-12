@@ -18,6 +18,7 @@ import { RoomListPage } from '@/features/admin-rooms/pages/room-list-page';
 import { StaffAccountEditPage } from '@/features/admin-staff/pages/staff-account-edit-page';
 import { ExaminationServiceCreatePage } from '@/features/admin-services/pages/examination-service-create-page';
 import { ExaminationServiceListPage } from '@/features/admin-services/pages/examination-service-list-page';
+import { DiagnosticServiceListPage } from '@/features/admin-services/pages/diagnostic-service-list-page';
 import { ServiceEditModal } from '@/features/admin-services/pages/service-edit-modal';
 import { StaffAccountCreatePage } from '@/features/admin-staff/pages/staff-account-create-page';
 import { ExaminationSlotCreatePage } from '@/features/admin-slots/pages/examination-slot-create-page';
@@ -78,6 +79,7 @@ import {
   RequireAdmin,
   RequireAuth,
   RequireDiagnostic,
+  RequireHospitalAdmin,
   RequireDoctor,
   RequirePharmacy,
   RequireReception,
@@ -901,6 +903,16 @@ export function AppRouter() {
       >
         <Route path=":serviceId/edit" element={<ServiceEditModal />} />
       </Route>
+      <Route
+        path="/admin/diagnostic-services"
+        element={
+          <RequireAuth>
+            <RequireHospitalAdmin>
+              <DiagnosticServiceListPage />
+            </RequireHospitalAdmin>
+          </RequireAuth>
+        }
+      />
       <Route
         path="/admin/departments/new"
         element={

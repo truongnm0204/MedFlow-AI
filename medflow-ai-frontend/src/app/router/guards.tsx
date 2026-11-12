@@ -47,6 +47,11 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
   return <RequireRole allowedRoles={['HOSPITAL_ADMIN', 'SYSTEM_ADMIN']}>{children}</RequireRole>;
 }
 
+/** Client-side navigation guard for Hospital Admin-only screens; API authorization remains server-side. */
+export function RequireHospitalAdmin({ children }: { children: ReactNode }) {
+  return <RequireRole allowedRoles={['HOSPITAL_ADMIN']}>{children}</RequireRole>;
+}
+
 /** Client-side navigation guard for System Admin screens; API authorization remains server-side. */
 export function RequireSystemAdmin({ children }: { children: ReactNode }) {
   return <RequireRole allowedRoles={['SYSTEM_ADMIN']}>{children}</RequireRole>;
