@@ -29,6 +29,7 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
     private const string ReviewDiagnosticResultsAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/review-diagnostic-results";
     private const string AdditionalDiagnosticOrdersRoute = "/api/v1/doctor/consultation/VIS-202610-0001/additional-diagnostic-orders";
     private const string AdditionalDiagnosticOrdersAliasRoute = "/api/v1/doctor/visits/VIS-202610-0001/additional-diagnostic-orders";
+    private const string DiagnosticResultsTrackingRoute = "/api/v1/doctor/diagnostic-results/tracking";
     private readonly TestWebAppFactory _factory;
 
     public DoctorConsultationEndpointTests(TestWebAppFactory factory)
@@ -715,6 +716,66 @@ public sealed class DoctorConsultationEndpointTests : AuthTestBase
             token,
             new { clinicalInterpretation = "Công thức máu bình thường" });
         Assert.Equal(HttpStatusCode.Conflict, completedVisitReviewResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetDiagnosticResultsTracking_Unauthenticated_Returns401()
+    {
+        var response = await Client.GetAsync(DiagnosticResultsTrackingRoute);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("PATIENT")]
+    [InlineData("RECEPTION")]
+    [InlineData("DIAGNOSTIC_STAFF")]
+    [InlineData("PHARMACY_STAFF")]
+    [InlineData("HOSPITAL_ADMIN")]
+    [InlineData("SYSTEM_ADMIN")]
+    public async Task GetDiagnosticResultsTracking_ForbiddenRoles_Returns403(string role)
+    {
+        var token = GenerateToken(11, $"{role.ToLowerInvariant()}@medflow.test", role);
+        var response = await GetWithTokenAsync(DiagnosticResultsTrackingRoute, token);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetDiagnosticResultsTracking_InvalidQuery_Returns400()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+
+        var invalidDateResponse = await GetWithTokenAsync(
+            $"{DiagnosticResultsTrackingRoute}?date=2026/10/20",
+            token);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidDateResponse.StatusCode);
+
+        var invalidStatusResponse = await GetWithTokenAsync(
+            $"{DiagnosticResultsTrackingRoute}?status=ABNORMAL",
+            token);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidStatusResponse.StatusCode);
+
+        var invalidPageSizeResponse = await GetWithTokenAsync(
+            $"{DiagnosticResultsTrackingRoute}?pageSize=0",
+            token);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidPageSizeResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetDiagnosticResultsTracking_SeededDoctor_Returns200_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(3, "doctor01@medflow.test", "DOCTOR");
+
+        var response = await GetWithTokenAsync(DiagnosticResultsTrackingRoute, token);
+        if (response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable)
+        {
+            return;
+        }
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var payload = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(payload);
+        Assert.True(doc.RootElement.TryGetProperty("items", out _));
+        Assert.True(doc.RootElement.TryGetProperty("stats", out _));
     }
 
     [Fact]

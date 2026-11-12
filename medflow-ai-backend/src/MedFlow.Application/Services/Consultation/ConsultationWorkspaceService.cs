@@ -16,7 +16,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.Application.Services.Consultation;
 
-public sealed class ConsultationWorkspaceService : IConsultationWorkspaceService
+public sealed partial class ConsultationWorkspaceService : IConsultationWorkspaceService
 {
     private const string DoctorRoleCode = "DOCTOR";
     private const string PermissionMedicalRecordWrite = "MEDICAL_RECORD_WRITE";

@@ -202,6 +202,26 @@ public sealed class DoctorConsultationController : ControllerBase
             ct));
 
     /// <summary>
+    /// GET /api/v1/doctor/diagnostic-results/tracking — Theo dõi mức độ hoàn thành chỉ định/kết quả cận lâm sàng theo lượt khám của bác sĩ (UC35 / #122).
+    /// </summary>
+    [HttpGet("/api/v1/doctor/diagnostic-results/tracking")]
+    [ProducesResponseType<DiagnosticResultsTrackingResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<DiagnosticResultsTrackingResponseDto>> GetDiagnosticResultsTracking(
+        [FromQuery] string? date = null,
+        [FromQuery] string? status = null,
+        [FromQuery] string? keyword = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.GetDiagnosticResultsTrackingAsync(
+            GetUserId(),
+            new GetDiagnosticResultsTrackingRequest(date, status, keyword, page, pageSize),
+            ct));
+
+    /// <summary>
     /// POST/PUT /api/v1/doctor/consultation/{idOrCode}/diagnostic-results/review — Xác nhận xem xét và ghi nhận nhận định lâm sàng đối với kết quả cận lâm sàng (UC35 / #114).
     /// </summary>
     [HttpPost("/api/v1/doctor/consultation/{idOrCode}/diagnostic-results/review")]
