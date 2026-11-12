@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MedFlow.UnitTests.Consultation;
 
-public sealed class ConsultationWorkspaceServiceTests : IDisposable
+public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
 {
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
     {
@@ -52,6 +52,7 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
         public DbSet<Visit> Visits => Set<Visit>();
         public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
         public DbSet<Payment> Payments => throw NotUsed();
+        public DbSet<Medicine> Medicines => Set<Medicine>();
         public DbSet<Prescription> Prescriptions => Set<Prescription>();
         public DbSet<PrescriptionItem> PrescriptionItems => Set<PrescriptionItem>();
         public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
@@ -75,7 +76,6 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
             modelBuilder.Entity<DoctorServiceAuthorization>().HasKey(a => new { a.DoctorId, a.ServiceId });
             modelBuilder.Ignore<PatientFamilyLink>();
             modelBuilder.Ignore<Payment>();
-            modelBuilder.Ignore<Medicine>();
             modelBuilder.Ignore<MedicineBatch>();
             modelBuilder.Ignore<MedicationDispense>();
             modelBuilder.Ignore<DispenseItem>();
@@ -133,6 +133,7 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
             modelBuilder.Entity<DiagnosticOrder>().HasKey(o => o.Id);
             modelBuilder.Entity<DiagnosticResult>().HasKey(r => r.Id);
             modelBuilder.Entity<DiagnosticResultVersion>().HasKey(v => v.Id);
+            modelBuilder.Entity<Medicine>().HasKey(m => m.Id);
             modelBuilder.Entity<Prescription>().HasKey(p => p.Id);
             modelBuilder.Entity<PrescriptionItem>().HasKey(i => i.Id);
             modelBuilder.Entity<AuditLog>(b =>
@@ -807,6 +808,41 @@ public sealed class ConsultationWorkspaceServiceTests : IDisposable
         _db.PrescriptionItems.AddRange(
             new PrescriptionItem { Id = 1, PrescriptionId = 1, MedicineId = 1, PrescribedQuantity = 14 },
             new PrescriptionItem { Id = 2, PrescriptionId = 1, MedicineId = 2, PrescribedQuantity = 20 });
+
+        _db.Medicines.AddRange(
+            new Medicine
+            {
+                Id = 1,
+                HospitalId = 1,
+                MedicineCode = "MED-001",
+                Name = "Omeprazole",
+                DispensingUnit = "Viên",
+                IsActive = true,
+            },
+            new Medicine
+            {
+                Id = 2,
+                HospitalId = 1,
+                MedicineCode = "MED-002",
+                Name = "Simethicone",
+                IsActive = true,
+            },
+            new Medicine
+            {
+                Id = 3,
+                HospitalId = 1,
+                MedicineCode = "MED-003",
+                Name = "Codeine",
+                IsActive = false,
+            },
+            new Medicine
+            {
+                Id = 4,
+                HospitalId = 2,
+                MedicineCode = "MED-004",
+                Name = "Vitamin C",
+                IsActive = true,
+            });
 
         _db.SaveChanges();
     }

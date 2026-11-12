@@ -281,6 +281,34 @@ public sealed class DoctorConsultationController : ControllerBase
             ct));
 
     /// <summary>
+    /// POST/PUT /api/v1/doctor/consultation/{idOrCode}/prescriptions — Kê đơn thuốc ngoại trú (UC37 / #140).
+    /// </summary>
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/prescriptions")]
+    [HttpPut("/api/v1/doctor/consultation/{idOrCode}/prescriptions")]
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/prescription")]
+    [HttpPut("/api/v1/doctor/consultation/{idOrCode}/prescription")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/prescriptions")]
+    [HttpPut("/api/v1/doctor/visits/{idOrCode}/prescriptions")]
+    [HttpPost("/api/v1/visits/{idOrCode}/prescriptions")]
+    [HttpPut("/api/v1/visits/{idOrCode}/prescriptions")]
+    [ProducesResponseType<ConsultationWorkspaceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ConsultationWorkspaceResponseDto>> CreatePrescription(
+        string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CreatePrescriptionRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.CreatePrescriptionAsync(
+            GetUserId(),
+            idOrCode,
+            request!,
+            GetIp(),
+            ct));
+
+    /// <summary>
     /// GET /api/v1/doctor/icd10-codes — Tra cứu danh mục mã bệnh ICD-10 (UC36 / #112).
     /// </summary>
     [HttpGet("/api/v1/doctor/icd10-codes")]
