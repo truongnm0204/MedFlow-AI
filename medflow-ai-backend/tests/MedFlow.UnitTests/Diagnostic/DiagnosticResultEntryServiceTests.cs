@@ -19,7 +19,7 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
         public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
     }
 
-    private sealed class DiagnosticResultEntryTestDbContext : DbContext, IApplicationDbContext
+    internal sealed class DiagnosticResultEntryTestDbContext : DbContext, IApplicationDbContext
     {
         public DiagnosticResultEntryTestDbContext(DbContextOptions<DiagnosticResultEntryTestDbContext> options)
             : base(options)
@@ -128,7 +128,7 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
         _consultationService = new ConsultationWorkspaceService(_dbContext, timeProvider);
     }
 
-    private static void SeedData(DiagnosticResultEntryTestDbContext db)
+    internal static void SeedData(DiagnosticResultEntryTestDbContext db)
     {
         db.Hospitals.AddRange(
             new Hospital { Id = 1, HospitalCode = "HOS-DEMO-01", Name = "Bệnh viện Đa khoa Trung tâm MedFlow", IsActive = true },
