@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Services;
@@ -5,6 +6,7 @@ using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MedFlow.UnitTests.Services;
@@ -39,7 +41,8 @@ public sealed class DiagnosticServiceAdminServiceTests : IDisposable
         public DbSet<ExaminationSlot> ExaminationSlots => throw NotUsed();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
-        public DbSet<AuditLog> AuditLogs => throw NotUsed();
+        public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+        public DbSet<DiagnosticOrder> DiagnosticOrders => Set<DiagnosticOrder>();
         public DbSet<Hospital> Hospitals => Set<Hospital>();
         public DbSet<Department> Departments => Set<Department>();
         public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
@@ -65,7 +68,6 @@ public sealed class DiagnosticServiceAdminServiceTests : IDisposable
             modelBuilder.Ignore<ExaminationSlot>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<AuditLog>();
             modelBuilder.Ignore<HospitalPolicy>();
             modelBuilder.Ignore<Appointment>();
             modelBuilder.Ignore<PatientFamilyLink>();
@@ -98,6 +100,8 @@ public sealed class DiagnosticServiceAdminServiceTests : IDisposable
                 .HasForeignKey(sp => sp.ServiceId);
             modelBuilder.Entity<ServicePrice>().HasKey(sp => sp.Id);
             modelBuilder.Entity<QueueServicePoint>().HasKey(qsp => qsp.Id);
+            modelBuilder.Entity<AuditLog>().HasKey(a => a.Id);
+            modelBuilder.Entity<DiagnosticOrder>().HasKey(o => o.Id);
         }
     }
 
@@ -110,6 +114,7 @@ public sealed class DiagnosticServiceAdminServiceTests : IDisposable
     {
         var options = new DbContextOptionsBuilder<DiagnosticServiceAdminTestDbContext>()
             .UseInMemoryDatabase(databaseName: $"DiagnosticServiceAdminTests_{Guid.NewGuid()}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         _dbContext = new DiagnosticServiceAdminTestDbContext(options);
@@ -128,7 +133,11 @@ public sealed class DiagnosticServiceAdminServiceTests : IDisposable
 
         db.Roles.AddRange(
             new Role { Id = 1, Code = "SYSTEM_ADMIN", Name = "System Admin" },
-            new Role { Id = 2, Code = "HOSPITAL_ADMIN", Name = "Hospital Admin" });
+            new Role { Id = 2, Code = "HOSPITAL_ADMIN", Name = "Hospital Admin" },
+            new Role { Id = 3, Code = "HOSPITAL_ADMIN", Name = "Hospital Admin thiếu HOSPITAL_CONFIG" });
+
+        db.Permissions.Add(new Permission { Id = 11, Code = "HOSPITAL_CONFIG" });
+        db.RolePermissions.Add(new RolePermission { RoleId = 2, PermissionId = 11 });
 
         db.Users.AddRange(
             new User { Id = 11, Email = "hospital_admin01@medflow.test", AccountStatus = AccountStatus.ACTIVE },
@@ -139,7 +148,8 @@ public sealed class DiagnosticServiceAdminServiceTests : IDisposable
             new User { Id = 16, Email = "inactive_staff@medflow.test", AccountStatus = AccountStatus.ACTIVE },
             new User { Id = 17, Email = "nostaff_admin@medflow.test", AccountStatus = AccountStatus.ACTIVE },
             new User { Id = 18, Email = "nohospital_admin@medflow.test", AccountStatus = AccountStatus.ACTIVE },
-            new User { Id = 19, Email = "inactive_hosp_admin@medflow.test", AccountStatus = AccountStatus.ACTIVE });
+            new User { Id = 19, Email = "inactive_hosp_admin@medflow.test", AccountStatus = AccountStatus.ACTIVE },
+            new User { Id = 20, Email = "noconfig_admin@medflow.test", AccountStatus = AccountStatus.ACTIVE });
 
         db.UserRoles.AddRange(
             new UserRole { UserId = 11, RoleId = 2 },
@@ -150,7 +160,8 @@ public sealed class DiagnosticServiceAdminServiceTests : IDisposable
             new UserRole { UserId = 16, RoleId = 2 },
             new UserRole { UserId = 17, RoleId = 2 },
             new UserRole { UserId = 18, RoleId = 2 },
-            new UserRole { UserId = 19, RoleId = 2 });
+            new UserRole { UserId = 19, RoleId = 2 },
+            new UserRole { UserId = 20, RoleId = 3 });
 
         db.Staff.AddRange(
             new Staff { Id = 101, UserId = 11, HospitalId = 1, StaffCode = "STF-011", FullName = "Admin CS1", Status = "ACTIVE" },
@@ -160,15 +171,19 @@ public sealed class DiagnosticServiceAdminServiceTests : IDisposable
             new Staff { Id = 105, UserId = 15, HospitalId = 1, StaffCode = "STF-015", FullName = "Inactive User", Status = "ACTIVE" },
             new Staff { Id = 106, UserId = 16, HospitalId = 1, StaffCode = "STF-016", FullName = "Inactive Staff", Status = "INACTIVE" },
             new Staff { Id = 108, UserId = 18, HospitalId = null, StaffCode = "STF-018", FullName = "No Hospital", Status = "ACTIVE" },
-            new Staff { Id = 109, UserId = 19, HospitalId = 3, StaffCode = "STF-019", FullName = "Inactive Hosp", Status = "ACTIVE" });
+            new Staff { Id = 109, UserId = 19, HospitalId = 3, StaffCode = "STF-019", FullName = "Inactive Hosp", Status = "ACTIVE" },
+            new Staff { Id = 120, UserId = 20, HospitalId = 1, StaffCode = "STF-020", FullName = "Admin thiếu quyền cấu hình", Status = "ACTIVE" });
 
         db.Departments.AddRange(
             new Department { Id = 4, HospitalId = 1, DepartmentCode = "DIA", Name = "Khoa Cận lâm sàng", IsActive = true },
-            new Department { Id = 7, HospitalId = 1, DepartmentCode = "IMG-DEP", Name = "Khoa Chẩn đoán hình ảnh", IsActive = true });
+            new Department { Id = 7, HospitalId = 1, DepartmentCode = "IMG-DEP", Name = "Khoa Chẩn đoán hình ảnh", IsActive = true },
+            new Department { Id = 8, HospitalId = 1, DepartmentCode = "OLD", Name = "Khoa đã ngừng", IsActive = false },
+            new Department { Id = 9, HospitalId = 2, DepartmentCode = "DIA-H2", Name = "Khoa Cận lâm sàng Cơ sở 2", IsActive = true });
 
         db.Specialties.AddRange(
             new Specialty { Id = 3, SpecialtyCode = "LAB", Name = "Xét nghiệm", IsActive = true },
-            new Specialty { Id = 4, SpecialtyCode = "IMG", Name = "Chẩn đoán hình ảnh", IsActive = true });
+            new Specialty { Id = 4, SpecialtyCode = "IMG", Name = "Chẩn đoán hình ảnh", IsActive = true },
+            new Specialty { Id = 5, SpecialtyCode = "OLD", Name = "Chuyên khoa đã ngừng", IsActive = false });
 
         db.HospitalRooms.AddRange(
             new HospitalRoom { Id = 5, HospitalId = 1, DepartmentId = 4, RoomCode = "RM-005", Name = "Phòng Xét nghiệm 1", RoomType = "DIAGNOSTIC", Status = "ACTIVE" },
@@ -438,6 +453,252 @@ public sealed class DiagnosticServiceAdminServiceTests : IDisposable
     {
         await Assert.ThrowsAsync<ForbiddenException>(() =>
             _service.GetDiagnosticServiceListAsync(userId, new GetDiagnosticServiceListAdminRequest()));
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticServiceAsync_ValidRequest_PersistsActiveServicePriceAndAudit()
+    {
+        var item = await _service.CreateDiagnosticServiceAsync(
+            11,
+            new CreateDiagnosticServiceAdminRequest(
+                ServiceCode: "dia-new-01",
+                Name: "  CT mới  ",
+                Description: "   ",
+                DepartmentId: 4,
+                SpecialtyId: null,
+                RequiresResultVerification: null,
+                Price: 350000m),
+            ipAddress: null);
+
+        Assert.Equal("DIA-NEW-01", item.ServiceCode);
+        Assert.Equal("CT mới", item.Name);
+        Assert.Null(item.Description);
+        Assert.Equal("ACTIVE", item.Status);
+        Assert.True(item.IsActive);
+        Assert.True(item.RequiresResultVerification);
+        Assert.Equal(350000m, item.Price);
+        Assert.Equal(4, item.DepartmentId);
+
+        var prices = await _dbContext.ServicePrices.Where(p => p.ServiceId == item.Id).ToListAsync();
+        Assert.Single(prices);
+        Assert.Equal(350000m, prices[0].PriceAmount);
+
+        var audit = Assert.Single(await _dbContext.AuditLogs.ToListAsync());
+        Assert.Equal("DIAGNOSTIC_SERVICE_CREATED", audit.Action);
+        Assert.Equal("SERVICE", audit.EntityType);
+        Assert.Equal(item.Id.ToString(), audit.EntityId);
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticServiceAsync_DuplicateCodeIgnoringCase_ThrowsConflict()
+    {
+        var ex = await Assert.ThrowsAsync<ConflictException>(() => _service.CreateDiagnosticServiceAsync(
+            11,
+            new CreateDiagnosticServiceAdminRequest(
+                ServiceCode: "dia-cbc",
+                Name: "Trùng mã",
+                DepartmentId: 4,
+                Price: 10000m),
+            ipAddress: null));
+
+        Assert.Equal("Mã dịch vụ 'DIA-CBC' đã tồn tại trong cơ sở.", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticServiceAsync_DepartmentOfOtherHospital_ThrowsNotFound()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() => _service.CreateDiagnosticServiceAsync(
+            11,
+            new CreateDiagnosticServiceAdminRequest(
+                ServiceCode: "DIA-OTHER",
+                Name: "Khoa cơ sở khác",
+                DepartmentId: 9),
+            ipAddress: null));
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticServiceAsync_InactiveDepartment_ThrowsConflict()
+    {
+        var ex = await Assert.ThrowsAsync<ConflictException>(() => _service.CreateDiagnosticServiceAsync(
+            11,
+            new CreateDiagnosticServiceAdminRequest(
+                ServiceCode: "DIA-OLD",
+                Name: "Khoa ngừng",
+                DepartmentId: 8),
+            ipAddress: null));
+
+        Assert.Equal("Khoa thực hiện đang ngừng hoạt động.", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticServiceAsync_InvalidServiceCode_ThrowsValidation()
+    {
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => _service.CreateDiagnosticServiceAsync(
+            11,
+            new CreateDiagnosticServiceAdminRequest(
+                ServiceCode: "có dấu",
+                Name: "Sai mã",
+                DepartmentId: 4),
+            ipAddress: null));
+
+        Assert.Equal("Mã dịch vụ chỉ gồm chữ in hoa, số và các ký tự - _ .", ex.Message);
+    }
+
+    [Fact]
+    public async Task Mutations_AdminMissingHospitalConfig_ThrowForbidden()
+    {
+        await Assert.ThrowsAsync<ForbiddenException>(() => _service.CreateDiagnosticServiceAsync(
+            20,
+            new CreateDiagnosticServiceAdminRequest(ServiceCode: "DIA-X", Name: "Không quyền", DepartmentId: 4),
+            ipAddress: null));
+
+        await Assert.ThrowsAsync<ForbiddenException>(() => _service.UpdateDiagnosticServiceAsync(
+            20,
+            5,
+            new UpdateDiagnosticServiceAdminRequest(Name: "Không quyền", DepartmentId: 4),
+            ipAddress: null));
+
+        await Assert.ThrowsAsync<ForbiddenException>(() => _service.DeactivateDiagnosticServiceAsync(
+            20,
+            5,
+            new DeactivateDiagnosticServiceAdminRequest("Không đủ quyền cấu hình"),
+            ipAddress: null));
+    }
+
+    [Fact]
+    public async Task UpdateDiagnosticServiceAsync_ServiceOfOtherHospital_ThrowsNotFound()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() => _service.UpdateDiagnosticServiceAsync(
+            11,
+            20,
+            new UpdateDiagnosticServiceAdminRequest(Name: "Sửa cơ sở khác", DepartmentId: 4),
+            ipAddress: null));
+    }
+
+    [Fact]
+    public async Task UpdateDiagnosticServiceAsync_ChangesNameAndDepartment_KeepsCodeAndWritesBeforeAfter()
+    {
+        var item = await _service.UpdateDiagnosticServiceAsync(
+            11,
+            6,
+            new UpdateDiagnosticServiceAdminRequest(
+                Name: "Siêu âm đã đổi tên",
+                Description: "Mô tả mới",
+                DepartmentId: 4,
+                SpecialtyId: 3,
+                RequiresResultVerification: true),
+            ipAddress: null);
+
+        Assert.Equal("DIA-US", item.ServiceCode);
+        Assert.Equal("Siêu âm đã đổi tên", item.Name);
+        Assert.Equal(4, item.DepartmentId);
+        Assert.Equal(3, item.SpecialtyId);
+        Assert.True(item.RequiresResultVerification);
+
+        var audit = Assert.Single(await _dbContext.AuditLogs.ToListAsync());
+        Assert.Equal("DIAGNOSTIC_SERVICE_UPDATED", audit.Action);
+        Assert.NotNull(audit.ChangeData);
+        using var change = JsonDocument.Parse(audit.ChangeData);
+        Assert.Equal("DIA-US", change.RootElement.GetProperty("serviceCode").GetString());
+        Assert.Equal("Siêu âm ổ bụng tổng quát", change.RootElement.GetProperty("before").GetProperty("name").GetString());
+        Assert.Equal("Siêu âm đã đổi tên", change.RootElement.GetProperty("after").GetProperty("name").GetString());
+        Assert.Equal(4, change.RootElement.GetProperty("after").GetProperty("departmentId").GetInt64());
+    }
+
+    [Fact]
+    public async Task UpdateDiagnosticServiceAsync_InactiveService_ThrowsConflict()
+    {
+        var ex = await Assert.ThrowsAsync<ConflictException>(() => _service.UpdateDiagnosticServiceAsync(
+            11,
+            7,
+            new UpdateDiagnosticServiceAdminRequest(Name: "Không sửa được", DepartmentId: 4),
+            ipAddress: null));
+
+        Assert.Equal("Không thể cập nhật dịch vụ cận lâm sàng đang ngừng hoạt động.", ex.Message);
+    }
+
+    [Fact]
+    public async Task DeactivateDiagnosticServiceAsync_OpenOrder_ThrowsConflictAndStaysActive()
+    {
+        _dbContext.DiagnosticOrders.Add(new DiagnosticOrder
+        {
+            Id = 501,
+            ServiceId = 5,
+            Status = "ORDERED",
+        });
+        await _dbContext.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() => _service.DeactivateDiagnosticServiceAsync(
+            11,
+            5,
+            new DeactivateDiagnosticServiceAdminRequest("Ngừng khi còn phiếu"),
+            ipAddress: null));
+
+        Assert.Contains("1", ex.Message, StringComparison.Ordinal);
+        var service = await _dbContext.Services.SingleAsync(s => s.Id == 5);
+        Assert.NotEqual(false, service.IsActive);
+    }
+
+    [Fact]
+    public async Task DeactivateDiagnosticServiceAsync_OnlyClosedOrders_SetsInactiveAndTrimsReason()
+    {
+        _dbContext.DiagnosticOrders.AddRange(
+            new DiagnosticOrder { Id = 601, ServiceId = 6, Status = "COMPLETED" },
+            new DiagnosticOrder { Id = 602, ServiceId = 6, Status = "CANCELLED" });
+        await _dbContext.SaveChangesAsync();
+
+        var item = await _service.DeactivateDiagnosticServiceAsync(
+            11,
+            6,
+            new DeactivateDiagnosticServiceAdminRequest("  Ngừng vì hết nhu cầu  "),
+            ipAddress: null);
+
+        Assert.Equal("INACTIVE", item.Status);
+        Assert.False(item.IsActive);
+
+        var audit = Assert.Single(await _dbContext.AuditLogs.ToListAsync());
+        Assert.Equal("DIAGNOSTIC_SERVICE_DEACTIVATED", audit.Action);
+        Assert.Equal("Ngừng vì hết nhu cầu", audit.Reason);
+    }
+
+    [Fact]
+    public async Task DeactivateDiagnosticServiceAsync_AlreadyInactive_ThrowsConflict()
+    {
+        var ex = await Assert.ThrowsAsync<ConflictException>(() => _service.DeactivateDiagnosticServiceAsync(
+            11,
+            7,
+            new DeactivateDiagnosticServiceAdminRequest("Ngừng lần nữa"),
+            ipAddress: null));
+
+        Assert.Equal("Dịch vụ cận lâm sàng đã ngừng hoạt động trước đó.", ex.Message);
+    }
+
+    [Fact]
+    public async Task DeactivateDiagnosticServiceAsync_ShortReason_ThrowsValidation()
+    {
+        var ex = await Assert.ThrowsAsync<ValidationException>(() => _service.DeactivateDiagnosticServiceAsync(
+            11,
+            5,
+            new DeactivateDiagnosticServiceAdminRequest("abcd"),
+            ipAddress: null));
+
+        Assert.Equal("Lý do ngừng hoạt động phải từ 5 đến 500 ký tự.", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetFormOptionsAsync_ReturnsActiveDepartmentsOfHospitalAndActiveSpecialties()
+    {
+        var options = await _service.GetFormOptionsAsync(11);
+
+        Assert.Equal(1, options.HospitalId);
+        Assert.Equal(new long[] { 4, 7 }, options.Departments.Select(d => d.Id).OrderBy(id => id).ToArray());
+        Assert.Equal(
+            options.Departments.Select(d => d.Name).OrderBy(n => n, StringComparer.CurrentCulture).ToArray(),
+            options.Departments.Select(d => d.Name).ToArray());
+        Assert.DoesNotContain(options.Departments, d => d.Id == 8);
+        Assert.DoesNotContain(options.Departments, d => d.Id == 9);
+        Assert.Equal(new long[] { 4, 3 }, options.Specialties.Select(s => s.Id).ToArray());
+        Assert.DoesNotContain(options.Specialties, s => s.Id == 5);
     }
 
     public void Dispose()
