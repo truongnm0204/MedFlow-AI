@@ -1,10 +1,26 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { fetchDiagnosticServicesApi } from '../api/diagnostic-service.api';
+import {
+  createDiagnosticServiceApi,
+  deactivateDiagnosticServiceApi,
+  fetchDiagnosticServiceFormOptionsApi,
+  fetchDiagnosticServicesApi,
+  updateDiagnosticServiceApi,
+} from '../api/diagnostic-service.api';
 import type {
+  CreateDiagnosticServicePayload,
+  DeactivateDiagnosticServicePayload,
   DiagnosticServiceDepartmentOption,
   DiagnosticServiceListParams,
+  UpdateDiagnosticServicePayload,
 } from '../types/diagnostic-service.types';
+
+function useInvalidateDiagnosticServices() {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: ['admin-diagnostic-services'] });
+  };
+}
 
 export function useDiagnosticServiceList(params: DiagnosticServiceListParams) {
   return useQuery({
@@ -33,5 +49,40 @@ export function useDiagnosticServiceDepartmentOptions() {
         .map(([id, name]) => ({ id, name }))
         .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
     },
+  });
+}
+
+export function useDiagnosticServiceFormOptions(enabled: boolean) {
+  return useQuery({
+    queryKey: ['admin-diagnostic-services', 'form-options'],
+    queryFn: fetchDiagnosticServiceFormOptionsApi,
+    staleTime: 300_000,
+    enabled,
+  });
+}
+
+export function useCreateDiagnosticService() {
+  const invalidate = useInvalidateDiagnosticServices();
+  return useMutation({
+    mutationFn: (payload: CreateDiagnosticServicePayload) => createDiagnosticServiceApi(payload),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateDiagnosticService() {
+  const invalidate = useInvalidateDiagnosticServices();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: UpdateDiagnosticServicePayload }) =>
+      updateDiagnosticServiceApi(id, payload),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeactivateDiagnosticService() {
+  const invalidate = useInvalidateDiagnosticServices();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: DeactivateDiagnosticServicePayload }) =>
+      deactivateDiagnosticServiceApi(id, payload),
+    onSuccess: invalidate,
   });
 }
