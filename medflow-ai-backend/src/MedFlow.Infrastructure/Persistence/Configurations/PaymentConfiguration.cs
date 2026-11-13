@@ -15,6 +15,10 @@ public class PaymentConfiguration : IEntityTypeConfiguration<Payment>
             .HasColumnName("id")
             .UseIdentityByDefaultColumn();
 
+        builder.Property(p => p.PaymentCode)
+            .HasColumnName("payment_code")
+            .HasMaxLength(40);
+
         builder.Property(p => p.VisitId)
             .HasColumnName("visit_id");
 
@@ -22,12 +26,20 @@ public class PaymentConfiguration : IEntityTypeConfiguration<Payment>
             .HasColumnName("amount")
             .HasColumnType("numeric(16,2)");
 
+        builder.Property(p => p.ExternalReference)
+            .HasColumnName("external_reference")
+            .HasMaxLength(150);
+
         builder.Property(p => p.Status)
             .HasColumnName("status")
             .HasMaxLength(16);
 
         builder.Property(p => p.PaidAt)
             .HasColumnName("paid_at")
+            .HasColumnType("timestamp without time zone");
+
+        builder.Property(p => p.CreatedAt)
+            .HasColumnName("created_at")
             .HasColumnType("timestamp without time zone");
     }
 }
