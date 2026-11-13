@@ -15,6 +15,7 @@ using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Reception;
 using MedFlow.Application.Services.Services;
 using MedFlow.Application.Services.SystemAdmin;
+using MedFlow.Application.Services.Payments;
 using MedFlow.Application.Services.Visits;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -75,6 +76,7 @@ public static class DependencyInjection
         services.AddScoped<IUpdatePatientAtReceptionService, UpdatePatientAtReceptionService>();
         services.AddScoped<ICheckInScheduledPatientService, CheckInScheduledPatientService>();
         services.AddScoped<ICreateWalkInVisitService, CreateWalkInVisitService>();
+        services.AddScoped<IVisitChargesService, VisitChargesService>();
         services.AddScoped<IConsultationWorkspaceService, ConsultationWorkspaceService>();
         services.AddScoped<IMedicalHistoryService, MedicalHistoryService>();
         return services;
