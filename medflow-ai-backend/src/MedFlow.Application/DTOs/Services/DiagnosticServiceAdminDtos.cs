@@ -56,3 +56,28 @@ public sealed record DiagnosticServiceAdminListResponseDto(
     int PageSize,
     int TotalPages,
     DiagnosticServiceAdminMetricsDto Metrics);
+
+public sealed record CreateDiagnosticServiceAdminRequest(
+    string? ServiceCode = null,
+    string? Name = null,
+    string? Description = null,
+    long? DepartmentId = null,
+    long? SpecialtyId = null,
+    bool? RequiresResultVerification = null,
+    decimal? Price = null);
+
+public sealed record UpdateDiagnosticServiceAdminRequest(
+    string? Name = null,
+    string? Description = null,
+    long? DepartmentId = null,
+    long? SpecialtyId = null,
+    bool? RequiresResultVerification = null);
+
+public sealed record DeactivateDiagnosticServiceAdminRequest(string? Reason = null);
+
+public sealed record DiagnosticServiceDepartmentOptionDto(long Id, string? DepartmentCode, string Name);
+public sealed record DiagnosticServiceSpecialtyOptionDto(long Id, string? SpecialtyCode, string Name);
+public sealed record DiagnosticServiceFormOptionsDto(
+    long HospitalId,
+    IReadOnlyList<DiagnosticServiceDepartmentOptionDto> Departments,
+    IReadOnlyList<DiagnosticServiceSpecialtyOptionDto> Specialties);

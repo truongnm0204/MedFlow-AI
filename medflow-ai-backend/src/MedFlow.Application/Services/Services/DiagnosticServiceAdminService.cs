@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.Application.Services.Services;
 
-public sealed class DiagnosticServiceAdminService : IDiagnosticServiceAdminService
+public sealed partial class DiagnosticServiceAdminService : IDiagnosticServiceAdminService
 {
     private const string HospitalAdminRoleCode = "HOSPITAL_ADMIN";
     private const string DiagnosticServiceType = "DIAGNOSTIC";
@@ -195,72 +195,7 @@ public sealed class DiagnosticServiceAdminService : IDiagnosticServiceAdminServi
 
         var now = DateTime.SpecifyKind(nowUtc, DateTimeKind.Unspecified);
 
-        var items = entities.Select(s =>
-        {
-            var isActive = s.IsActive ?? true;
-            var status = isActive ? "ACTIVE" : "INACTIVE";
-
-            var activePrice = s.ServicePrices
-                .Where(p => (!p.EffectiveFrom.HasValue || p.EffectiveFrom.Value <= now)
-                         && (!p.EffectiveTo.HasValue || p.EffectiveTo.Value > now))
-                .OrderByDescending(p => p.EffectiveFrom ?? DateTime.MinValue)
-                .ThenByDescending(p => p.Id)
-                .Select(p => p.PriceAmount)
-                .FirstOrDefault()
-                ?? s.ServicePrices
-                    .OrderByDescending(p => p.Id)
-                    .Select(p => p.PriceAmount)
-                    .FirstOrDefault();
-
-            var priceFormatted = activePrice.HasValue
-                ? activePrice.Value.ToString("N0", new CultureInfo("vi-VN")) + " đ"
-                : null;
-
-            var servicePoints = diagPoints
-                .Where(sp => sp.ServiceId == s.Id)
-                .OrderBy(sp => sp.Id)
-                .Select(sp =>
-                {
-                    HospitalRoom? room = null;
-                    if (sp.RoomId.HasValue)
-                    {
-                        roomsById.TryGetValue(sp.RoomId.Value, out room);
-                    }
-
-                    return new DiagnosticServiceAdminServicePointDto(
-                        ServicePointId: sp.Id,
-                        Name: sp.Name,
-                        RoomId: sp.RoomId,
-                        RoomCode: room?.RoomCode,
-                        RoomName: room?.Name,
-                        IsActive: sp.IsActive ?? true);
-                })
-                .ToList();
-
-            var servicePointCount = servicePoints.Count;
-            var activeServicePointCount = servicePoints.Count(sp => sp.IsActive);
-
-            return new DiagnosticServiceAdminItemDto(
-                Id: s.Id,
-                ServiceCode: s.ServiceCode,
-                Name: s.Name,
-                Description: s.Description,
-                ServiceType: s.ServiceType,
-                DepartmentId: s.DepartmentId,
-                DepartmentCode: s.Department?.DepartmentCode,
-                DepartmentName: s.Department?.Name,
-                SpecialtyId: s.SpecialtyId,
-                SpecialtyCode: s.Specialty?.SpecialtyCode,
-                SpecialtyName: s.Specialty?.Name,
-                Price: activePrice,
-                PriceFormatted: priceFormatted,
-                RequiresResultVerification: s.RequiresResultVerification ?? false,
-                IsActive: isActive,
-                Status: status,
-                ServicePointCount: servicePointCount,
-                ActiveServicePointCount: activeServicePointCount,
-                ServicePoints: servicePoints);
-        }).ToList();
+        var items = entities.Select(s => MapItem(s, diagPoints, roomsById, now)).ToList();
 
         return new DiagnosticServiceAdminListResponseDto(
             HospitalId: hospitalId,
@@ -272,6 +207,77 @@ public sealed class DiagnosticServiceAdminService : IDiagnosticServiceAdminServi
             PageSize: request.PageSize,
             TotalPages: totalPages,
             Metrics: metrics);
+    }
+
+    private static DiagnosticServiceAdminItemDto MapItem(
+        Service s,
+        IEnumerable<QueueServicePoint> diagPoints,
+        IReadOnlyDictionary<long, HospitalRoom> roomsById,
+        DateTime now)
+    {
+        var isActive = s.IsActive ?? true;
+        var status = isActive ? "ACTIVE" : "INACTIVE";
+
+        var activePrice = s.ServicePrices
+            .Where(p => (!p.EffectiveFrom.HasValue || p.EffectiveFrom.Value <= now)
+                     && (!p.EffectiveTo.HasValue || p.EffectiveTo.Value > now))
+            .OrderByDescending(p => p.EffectiveFrom ?? DateTime.MinValue)
+            .ThenByDescending(p => p.Id)
+            .Select(p => p.PriceAmount)
+            .FirstOrDefault()
+            ?? s.ServicePrices
+                .OrderByDescending(p => p.Id)
+                .Select(p => p.PriceAmount)
+                .FirstOrDefault();
+
+        var priceFormatted = activePrice.HasValue
+            ? activePrice.Value.ToString("N0", new CultureInfo("vi-VN")) + " đ"
+            : null;
+
+        var servicePoints = diagPoints
+            .Where(sp => sp.ServiceId == s.Id)
+            .OrderBy(sp => sp.Id)
+            .Select(sp =>
+            {
+                HospitalRoom? room = null;
+                if (sp.RoomId.HasValue)
+                {
+                    roomsById.TryGetValue(sp.RoomId.Value, out room);
+                }
+
+                return new DiagnosticServiceAdminServicePointDto(
+                    ServicePointId: sp.Id,
+                    Name: sp.Name,
+                    RoomId: sp.RoomId,
+                    RoomCode: room?.RoomCode,
+                    RoomName: room?.Name,
+                    IsActive: sp.IsActive ?? true);
+            })
+            .ToList();
+
+        var servicePointCount = servicePoints.Count;
+        var activeServicePointCount = servicePoints.Count(sp => sp.IsActive);
+
+        return new DiagnosticServiceAdminItemDto(
+            Id: s.Id,
+            ServiceCode: s.ServiceCode,
+            Name: s.Name,
+            Description: s.Description,
+            ServiceType: s.ServiceType,
+            DepartmentId: s.DepartmentId,
+            DepartmentCode: s.Department?.DepartmentCode,
+            DepartmentName: s.Department?.Name,
+            SpecialtyId: s.SpecialtyId,
+            SpecialtyCode: s.Specialty?.SpecialtyCode,
+            SpecialtyName: s.Specialty?.Name,
+            Price: activePrice,
+            PriceFormatted: priceFormatted,
+            RequiresResultVerification: s.RequiresResultVerification ?? false,
+            IsActive: isActive,
+            Status: status,
+            ServicePointCount: servicePointCount,
+            ActiveServicePointCount: activeServicePointCount,
+            ServicePoints: servicePoints);
     }
 
     private async Task<(Hospital Hospital, long HospitalId)> EnsureHospitalAdminAccessAsync(
