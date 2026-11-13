@@ -1,12 +1,15 @@
-import { FlaskConical, RefreshCw } from 'lucide-react';
+import { FlaskConical, Plus, RefreshCw } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
+import { useRoleAccess } from '@/features/auth/hooks/use-role-access';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 
 import { AdminServicesShell } from '../components/admin-services-shell';
+import { DiagnosticServiceDeactivateModal } from '../components/diagnostic-service-deactivate-modal';
 import { DiagnosticServiceFilters } from '../components/diagnostic-service-filters';
+import { DiagnosticServiceFormModal } from '../components/diagnostic-service-form-modal';
 import { DiagnosticServiceMetrics } from '../components/diagnostic-service-metrics';
 import { DiagnosticServiceTable } from '../components/diagnostic-service-table';
 import { ServicePagination } from '../components/service-pagination';
@@ -16,13 +19,24 @@ import {
 } from '../hooks/use-diagnostic-services';
 import type {
   DiagnosticServiceFilterValue,
+  DiagnosticServiceItem,
   DiagnosticServiceListParams,
 } from '../types/diagnostic-service.types';
 
-export function DiagnosticServiceListPage() {
+export function DiagnosticServiceListPage({
+  explicitPermissions,
+}: { explicitPermissions?: readonly string[] | null } = {}) {
+  const { hasPermission } = useRoleAccess(explicitPermissions);
+  const canManage = hasPermission('HOSPITAL_CONFIG');
   const [filters, setFilters] = useState<DiagnosticServiceFilterValue>({ keyword: '' });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [formState, setFormState] = useState<{
+    mode: 'create' | 'edit';
+    service: DiagnosticServiceItem | null;
+  } | null>(null);
+  const [deactivateTarget, setDeactivateTarget] = useState<DiagnosticServiceItem | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const params = useMemo<DiagnosticServiceListParams>(
     () => ({
@@ -67,14 +81,22 @@ export function DiagnosticServiceListPage() {
   return (
     <AdminServicesShell variant="diagnostic">
       <main className="space-y-5 px-6 py-6">
-        <div>
-          <h1 className="text-lg font-bold text-ink">Danh mục Dịch vụ Cận lâm sàng</h1>
-          {data && (
-            <p className="mt-1 text-xs text-sub">
-              <span>{data.hospitalName}</span>
-              {' · '}
-              <span className="font-mono font-medium text-navy">{data.hospitalCode}</span>
-            </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-lg font-bold text-ink">Danh mục Dịch vụ Cận lâm sàng</h1>
+            {data && (
+              <p className="mt-1 text-xs text-sub">
+                <span>{data.hospitalName}</span>
+                {' · '}
+                <span className="font-mono font-medium text-navy">{data.hospitalCode}</span>
+              </p>
+            )}
+          </div>
+          {canManage && (
+            <Button type="button" onClick={() => setFormState({ mode: 'create', service: null })}>
+              <Plus aria-hidden="true" className="h-4 w-4" />
+              Thêm dịch vụ
+            </Button>
           )}
         </div>
 
@@ -120,6 +142,8 @@ export function DiagnosticServiceListPage() {
               onReset={handleResetFilters}
             />
 
+            {notice && <Alert tone="success">{notice}</Alert>}
+
             <section
               aria-label="Bảng danh mục dịch vụ cận lâm sàng"
               aria-busy={isFetching}
@@ -153,7 +177,12 @@ export function DiagnosticServiceListPage() {
                 </div>
               ) : (
                 <>
-                  <DiagnosticServiceTable services={data.data} />
+                  <DiagnosticServiceTable
+                    services={data.data}
+                    canManage={canManage}
+                    onEdit={(service) => setFormState({ mode: 'edit', service })}
+                    onDeactivate={setDeactivateTarget}
+                  />
                   <ServicePagination
                     count={data.total}
                     currentPage={data.page}
@@ -170,6 +199,30 @@ export function DiagnosticServiceListPage() {
             </section>
           </>
         )}
+
+        <DiagnosticServiceFormModal
+          open={formState !== null}
+          mode={formState?.mode ?? 'create'}
+          service={formState?.service ?? null}
+          onClose={() => setFormState(null)}
+          onSaved={(item) => {
+            setNotice(
+              formState?.mode === 'edit'
+                ? `Đã cập nhật dịch vụ ${item.serviceCode}.`
+                : `Đã tạo dịch vụ ${item.serviceCode}.`,
+            );
+            setFormState(null);
+          }}
+        />
+        <DiagnosticServiceDeactivateModal
+          open={deactivateTarget !== null}
+          service={deactivateTarget}
+          onClose={() => setDeactivateTarget(null)}
+          onDeactivated={(item) => {
+            setNotice(`Đã ngừng hoạt động dịch vụ ${item.serviceCode}.`);
+            setDeactivateTarget(null);
+          }}
+        />
       </main>
     </AdminServicesShell>
   );

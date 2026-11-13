@@ -1,12 +1,22 @@
+import { Pencil, Power } from 'lucide-react';
+
 import { Badge } from '@/shared/ui/badge';
 
 import type { DiagnosticServiceItem } from '../types/diagnostic-service.types';
 
 interface DiagnosticServiceTableProps {
   services: DiagnosticServiceItem[];
+  canManage?: boolean;
+  onEdit?: (service: DiagnosticServiceItem) => void;
+  onDeactivate?: (service: DiagnosticServiceItem) => void;
 }
 
-export function DiagnosticServiceTable({ services }: DiagnosticServiceTableProps) {
+export function DiagnosticServiceTable({
+  services,
+  canManage = false,
+  onEdit,
+  onDeactivate,
+}: DiagnosticServiceTableProps) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[960px] text-xs">
@@ -37,6 +47,11 @@ export function DiagnosticServiceTable({ services }: DiagnosticServiceTableProps
             <th scope="col" className="px-4 py-3">
               Trạng thái
             </th>
+            {canManage && (
+              <th scope="col" className="px-4 py-3">
+                Thao tác
+              </th>
+            )}
           </tr>
         </thead>
         <tbody className="divide-y divide-border bg-white">
@@ -98,6 +113,30 @@ export function DiagnosticServiceTable({ services }: DiagnosticServiceTableProps
                     <Badge tone="slate">Ngừng hoạt động</Badge>
                   )}
                 </td>
+                {canManage && (
+                  <td className="px-4 py-3.5 align-top">
+                    {service.status !== 'INACTIVE' && (
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          className="rounded-lg p-1.5 text-navy hover:bg-canvas"
+                          aria-label={`Sửa dịch vụ ${service.serviceCode}`}
+                          onClick={() => onEdit?.(service)}
+                        >
+                          <Pencil aria-hidden="true" className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg p-1.5 text-rose-700 hover:bg-canvas"
+                          aria-label={`Ngừng hoạt động dịch vụ ${service.serviceCode}`}
+                          onClick={() => onDeactivate?.(service)}
+                        >
+                          <Power aria-hidden="true" className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                )}
               </tr>
             );
           })}

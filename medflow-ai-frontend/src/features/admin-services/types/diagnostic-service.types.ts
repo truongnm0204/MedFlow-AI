@@ -72,3 +72,43 @@ export interface DiagnosticServiceFilterValue {
   status?: DiagnosticServiceStatus;
   requiresResultVerification?: boolean;
 }
+
+export interface DiagnosticServiceDepartmentFormOption {
+  id: number;
+  departmentCode: string | null;
+  name: string;
+}
+
+export interface DiagnosticServiceSpecialtyFormOption {
+  id: number;
+  specialtyCode: string | null;
+  name: string;
+}
+
+export interface DiagnosticServiceFormOptions {
+  hospitalId: number;
+  departments: DiagnosticServiceDepartmentFormOption[];
+  specialties: DiagnosticServiceSpecialtyFormOption[];
+}
+
+export interface CreateDiagnosticServicePayload {
+  serviceCode: string;
+  name: string;
+  description: string | null;
+  departmentId: number;
+  specialtyId: number | null;
+  requiresResultVerification: boolean;
+  price: number | null;
+}
+
+export interface UpdateDiagnosticServicePayload {
+  name: string;
+  description: string | null;
+  departmentId: number;
+  specialtyId: number | null;
+  requiresResultVerification: boolean;
+}
+
+export interface DeactivateDiagnosticServicePayload {
+  reason: string;
+}
