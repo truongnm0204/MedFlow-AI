@@ -132,4 +132,149 @@ public sealed class DiagnosticServiceAdminEndpointTests : AuthTestBase
                 $"Unexpected status code: {response.StatusCode}");
         }
     }
+
+    [Fact]
+    public async Task CreateDiagnosticService_Unauthenticated_Returns401()
+    {
+        var response = await Client.PostAsJsonAsync(EndpointRoute, new { serviceCode = "DIA-X" });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("DOCTOR")]
+    [InlineData("SYSTEM_ADMIN")]
+    public async Task CreateDiagnosticService_ForbiddenRoles_Returns403(string role)
+    {
+        var token = GenerateToken(13, $"{role.ToLowerInvariant()}@medflow.test", role);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, EndpointRoute);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new { serviceCode = "DIA-X", name = "Ngoài quyền", departmentId = 4 });
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticService_EmptyBody_Returns400()
+    {
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, EndpointRoute);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = new ByteArrayContent([]);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateDiagnosticService_DuplicateSeedCode_Returns409_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        using var optionsRequest = new HttpRequestMessage(HttpMethod.Get, $"{EndpointRoute}/form-options");
+        optionsRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var optionsResponse = await Client.SendAsync(optionsRequest);
+
+        if (optionsResponse.StatusCode != HttpStatusCode.OK)
+        {
+            Assert.True(
+                optionsResponse.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {optionsResponse.StatusCode}");
+            return;
+        }
+
+        var options = await optionsResponse.Content.ReadFromJsonAsync<DiagnosticServiceFormOptionsDto>();
+        Assert.NotNull(options);
+        Assert.NotEmpty(options.Departments);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, EndpointRoute);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new CreateDiagnosticServiceAdminRequest(
+            ServiceCode: "DIA-CBC",
+            Name: "Trùng mã seed",
+            DepartmentId: options.Departments[0].Id,
+            Price: 10000m));
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UpdateMissingDiagnosticService_Returns404_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"{EndpointRoute}/999999999");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new UpdateDiagnosticServiceAdminRequest(
+            Name: "Không tồn tại",
+            DepartmentId: 1));
+
+        var response = await Client.SendAsync(request);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+        else
+        {
+            Assert.True(
+                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {response.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task DeactivateMissingDiagnosticService_Returns404_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Patch, $"{EndpointRoute}/999999999/deactivate");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new DeactivateDiagnosticServiceAdminRequest("Dịch vụ không tồn tại"));
+
+        var response = await Client.SendAsync(request);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+        else
+        {
+            Assert.True(
+                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {response.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task GetFormOptions_HospitalAdmin_Returns200_WhenDatabaseAvailable()
+    {
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{EndpointRoute}/form-options");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        if (response.StatusCode == HttpStatusCode.OK)
+        {
+            var payload = await response.Content.ReadFromJsonAsync<DiagnosticServiceFormOptionsDto>();
+            Assert.NotNull(payload);
+            Assert.Equal(1, payload.HospitalId);
+            Assert.NotEmpty(payload.Departments);
+        }
+        else
+        {
+            Assert.True(
+                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {response.StatusCode}");
+        }
+    }
 }
