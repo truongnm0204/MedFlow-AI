@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { apiClient } from '@/shared/lib/axios';
 
 import { CheckInResultContent, CheckInResultModal } from '../components/checkin-result-modal';
 import type { CheckInSuccessResult } from '../types/checkin.types';
@@ -110,13 +111,17 @@ describe('View Check-in Result Components (Issue #73)', () => {
   });
 
   describe('ReceptionDashboardPage Integration', () => {
-    it('displays "Xem kết quả" button for checked-in appointments and opens modal', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('loads the checked-in result from the API when clicking "Xem kết quả"', async () => {
       useAuthStore.setState({
         user: {
           id: 1,
           fullName: 'Lễ Tân Test',
           email: 'letan@medflow.vn',
-          roles: ['RECEPTIONIST'],
+          roles: ['RECEPTION'],
           patientCode: null,
           staffCode: 'NV-001',
         },
@@ -125,12 +130,70 @@ describe('View Check-in Result Components (Issue #73)', () => {
         isAuthenticated: true,
       });
 
+      vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+        if (url === '/reception/patients/search') {
+          return {
+            data: {
+              items: [
+                {
+                  id: 1,
+                  patientCode: 'BN-2024-0018',
+                  fullName: 'Đỗ Gia Huy',
+                  gender: 'MALE',
+                  dateOfBirth: '1988-05-14',
+                  identityCardMasked: '0010***345',
+                  phone: '0912345678',
+                  address: 'Hà Nội',
+                  totalPastVisits: 2,
+                  todayAppointment: {
+                    id: 12,
+                    time: '09:15',
+                    doctorName: 'BS. CKII Trần Khánh',
+                    department: 'Nội tổng quát',
+                    roomName: 'P.102',
+                    status: 'CHECKED_IN',
+                  },
+                },
+              ],
+              totalCount: 1,
+              page: 1,
+              pageSize: 50,
+              counts: { all: 1, hasAppointment: 1, checkedIn: 1, noAppointment: 0 },
+            },
+          } as never;
+        }
+        if (typeof url === 'string' && url.endsWith('/check-in-result')) {
+          return {
+            data: {
+              visitId: 18,
+              visitCode: 'VIS-202610-0018',
+              ticketNo: 'A018',
+              queueNumber: 4,
+              priority: 'ELDERLY',
+              patientCode: 'BN-2024-0018',
+              patientName: 'Đỗ Gia Huy',
+              departmentName: 'Khoa Nội tổng quát',
+              roomName: 'P.102',
+              doctorName: 'BS. CKII Trần Khánh',
+              waitingCountBefore: 3,
+              estimatedWaitMinutes: 15,
+              checkedInAt: '08:45',
+              nextStepInstructions: [],
+            },
+          } as never;
+        }
+        return { data: {} } as never;
+      });
+
       renderWithProviders(<ReceptionDashboardPage />);
 
-      // Find an appointment or verify the button renders when checked-in
-      // If none currently checked-in, we check Check-in button can check-in and switch to checked-in
-      const checkInBtns = screen.getAllByRole('button', { name: /^Check-in$/i });
-      expect(checkInBtns.length).toBeGreaterThan(0);
+      fireEvent.click(await screen.findByRole('button', { name: /Xem kết quả/i }));
+
+      expect(
+        await screen.findByRole('heading', { name: /Kết Quả Tiếp Nhận & Phiếu Khám/i }),
+      ).toBeInTheDocument();
+      expect(screen.getByText('A018')).toBeInTheDocument();
+      expect(screen.getByText('VIS-202610-0018')).toBeInTheDocument();
     });
   });
 });

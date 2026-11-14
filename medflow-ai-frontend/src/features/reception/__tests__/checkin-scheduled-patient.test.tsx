@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { apiClient } from '@/shared/lib/axios';
 
 import { CheckInAppointmentSummary } from '../components/checkin-appointment-summary';
 import { CheckInModal } from '../components/checkin-modal';
@@ -53,7 +54,14 @@ describe('Check-in Scheduled Patient Components (Issue #71)', () => {
 
   describe('CheckInModal', () => {
     it('shows validation errors if required fields are missing', async () => {
-      render(<CheckInModal isOpen={true} onClose={vi.fn()} appointment={mockAppointment} />);
+      render(
+        <CheckInModal
+          isOpen={true}
+          onClose={vi.fn()}
+          appointment={mockAppointment}
+          onSubmit={vi.fn()}
+        />,
+      );
 
       const submitBtn = screen.getByRole('button', { name: /Xác nhận Check-in & Cấp STT/i });
       fireEvent.click(submitBtn);
@@ -73,6 +81,22 @@ describe('Check-in Scheduled Patient Components (Issue #71)', () => {
           isOpen={true}
           onClose={vi.fn()}
           appointment={mockAppointment}
+          onSubmit={async () => ({
+            visitId: '12',
+            visitCode: 'VIS-TEST-0012',
+            ticketNo: 'A018',
+            patientName: mockAppointment.patientName,
+            patientCode: mockAppointment.patientCode,
+            roomName: mockAppointment.roomName,
+            departmentName: mockAppointment.department,
+            doctorName: mockAppointment.doctorName,
+            checkedInAt: '09:20',
+            priority: 'NORMAL',
+            queueNumber: 18,
+            waitingCountBefore: 3,
+            estimatedWaitMinutes: 15,
+            nextStepInstructions: [],
+          })}
           onSuccess={handleSuccess}
         />,
       );
@@ -112,7 +136,41 @@ describe('Check-in Scheduled Patient Components (Issue #71)', () => {
   });
 
   describe('ReceptionDashboardPage Integration', () => {
-    it('opens CheckInModal when clicking Check-in button in appointment list', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('opens CheckInModal when clicking Check-in button in appointment list', async () => {
+      vi.spyOn(apiClient, 'get').mockResolvedValue({
+        data: {
+          items: [
+            {
+              id: 1,
+              patientCode: 'BN-TEST-01',
+              fullName: 'Đỗ Gia Huy',
+              gender: 'MALE',
+              dateOfBirth: '1988-05-14',
+              identityCardMasked: '0010***345',
+              phone: '0912345678',
+              address: 'Hà Nội',
+              totalPastVisits: 2,
+              todayAppointment: {
+                id: 12,
+                time: '09:15',
+                doctorName: 'BS. CKII Trần Khánh',
+                department: 'Nội tổng quát',
+                roomName: 'P.102',
+                status: 'BOOKED',
+              },
+            },
+          ],
+          totalCount: 1,
+          page: 1,
+          pageSize: 50,
+          counts: { all: 1, hasAppointment: 1, checkedIn: 0, noAppointment: 0 },
+        },
+      } as never);
+
       useAuthStore.setState({
         user: {
           id: 5,
@@ -135,10 +193,10 @@ describe('Check-in Scheduled Patient Components (Issue #71)', () => {
         </QueryClientProvider>,
       );
 
-      const checkInBtns = screen.getAllByRole('button', { name: 'Check-in' });
-      expect(checkInBtns.length).toBeGreaterThan(0);
+      const checkInBtn = await screen.findByRole('button', { name: 'Check-in' });
+      expect(checkInBtn).toBeInTheDocument();
 
-      fireEvent.click(checkInBtns[0]);
+      fireEvent.click(checkInBtn);
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(screen.getByText(/Xác Nhận Check-in Lịch Hẹn Khám/i)).toBeInTheDocument();
