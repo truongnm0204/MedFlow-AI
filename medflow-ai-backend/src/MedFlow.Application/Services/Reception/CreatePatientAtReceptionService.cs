@@ -1,9 +1,8 @@
 using System.ComponentModel.DataAnnotations;
-using System.Security.Cryptography;
-using System.Text;
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Patients;
 using MedFlow.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using DomainValidationException = MedFlow.Domain.Exceptions.ValidationException;
@@ -60,13 +59,14 @@ public sealed class CreatePatientAtReceptionService : ICreatePatientAtReceptionS
         string? masked = null;
         if (normalized.IdentityCard is not null)
         {
-            hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized.IdentityCard))).ToLowerInvariant();
+            var canonicalId = IdentificationNumber.Normalize(normalized.IdentityCard);
+            hash = IdentificationNumber.ComputeSha256(canonicalId);
             if (await _db.Patients.AnyAsync(p => p.IdentificationHash == hash, ct))
             {
                 throw new DomainConflictException("CCCD đã tồn tại trong hệ thống");
             }
 
-            masked = new string('*', 8) + normalized.IdentityCard[^4..];
+            masked = new string('*', 8) + canonicalId[^4..];
         }
 
         var prefix = $"BN-{now.Year}-";

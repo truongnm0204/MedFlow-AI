@@ -395,6 +395,57 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
     }
 
     [Fact]
+    public async Task CreateFamilyMember_ExistingIdentityCard_ReturnsPendingNotVerified()
+    {
+        var (_, firstTokens) = await RegisterVerifyLoginAsync();
+        var (_, secondTokens) = await RegisterVerifyLoginAsync();
+        var cccd = "001" + Random.Shared.Next(100000000, 999999999);
+
+        var firstRequest = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Thị Một",
+            Relationship = "Vợ",
+            Gender = "Nữ",
+            BirthDate = "1990-01-01",
+            Address = "Số 1 Nguyễn Trãi, Hà Nội",
+            IdentificationNo = cccd
+        };
+
+        using var firstPost = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        firstPost.Headers.Authorization = new AuthenticationHeaderValue("Bearer", firstTokens.AccessToken);
+        firstPost.Content = JsonContent.Create(firstRequest);
+        var firstResponse = await Client.SendAsync(firstPost);
+        Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
+        var firstMember = await firstResponse.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(firstMember);
+        Assert.False(firstMember.IsIdentityVerified);
+        Assert.Equal("PENDING", firstMember.Permissions?.RelationshipStatus);
+        Assert.False(firstMember.Permissions!.CanViewMedicalRecords);
+
+        var secondRequest = new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Thị Một",
+            Relationship = "Chị gái",
+            Gender = "Nữ",
+            BirthDate = "1990-01-01",
+            Address = "Số 2 Nguyễn Trãi, Hà Nội",
+            IdentificationNo = cccd
+        };
+
+        using var secondPost = new HttpRequestMessage(HttpMethod.Post, "/api/v1/patients/me/family-members");
+        secondPost.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secondTokens.AccessToken);
+        secondPost.Content = JsonContent.Create(secondRequest);
+        var secondResponse = await Client.SendAsync(secondPost);
+
+        Assert.Equal(HttpStatusCode.Created, secondResponse.StatusCode);
+        var secondMember = await secondResponse.Content.ReadFromJsonAsync<FamilyMemberResponse>();
+        Assert.NotNull(secondMember);
+        Assert.Equal(firstMember.MemberPatientId, secondMember.MemberPatientId);
+        Assert.False(secondMember.IsIdentityVerified);
+        Assert.Equal("PENDING", secondMember.Permissions?.RelationshipStatus);
+    }
+
+    [Fact]
     public async Task CreateFamilyMember_AliasRoute_Returns201Created()
     {
         var (_, tokens) = await RegisterVerifyLoginAsync();
@@ -423,7 +474,7 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
     }
 
     [Fact]
-    public async Task UpdateFamilyMember_ValidContactUpdate_Returns200OK()
+    public async Task UpdateFamilyMember_UnverifiedLink_ContactUpdate_Returns403()
     {
         var (_, tokens) = await RegisterVerifyLoginAsync();
 
@@ -457,12 +508,9 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
         putReq.Content = JsonContent.Create(updateReq);
         var putRes = await Client.SendAsync(putReq);
 
-        Assert.Equal(HttpStatusCode.OK, putRes.StatusCode);
-        var updated = await putRes.Content.ReadFromJsonAsync<FamilyMemberResponse>();
-        Assert.NotNull(updated);
-        Assert.Equal("0988765432", updated.Phone);
-        Assert.Equal("khang.new@medflow.vn", updated.Email);
-        Assert.Equal("Số 45 Tràng Tiền, Quận Hoàn Kiếm, Hà Nội", updated.Address);
+        Assert.Equal(HttpStatusCode.Forbidden, putRes.StatusCode);
+        var stored = await Db.Patients.AsNoTracking().FirstAsync(p => p.Id == created.MemberPatientId);
+        Assert.Equal("0912345678", stored.Phone);
     }
 
     [Fact]
@@ -488,7 +536,7 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
 
         var updateReq = new UpdateFamilyMemberRequest
         {
-            Address = "Số 200 Cầu Giấy, Hà Nội"
+            Relationship = "Khác"
         };
 
         using var putReq = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/patients/me/family-profiles/{created.MemberPatientId}");
@@ -499,7 +547,7 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
         Assert.Equal(HttpStatusCode.OK, putRes.StatusCode);
         var updated = await putRes.Content.ReadFromJsonAsync<FamilyMemberResponse>();
         Assert.NotNull(updated);
-        Assert.Equal("Số 200 Cầu Giấy, Hà Nội", updated.Address);
+        Assert.NotEqual("Con gái", updated.Relationship);
     }
 
     [Fact]
@@ -524,6 +572,11 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
         Assert.Equal(HttpStatusCode.Created, postRes.StatusCode);
         var created = await postRes.Content.ReadFromJsonAsync<FamilyMemberResponse>();
         Assert.NotNull(created);
+
+        var link = await Db.PatientFamilyLinks.FirstAsync(l => l.MemberPatientId == created.MemberPatientId);
+        link.VerificationStatus = "VERIFIED";
+        link.VerifiedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+        await Db.SaveChangesAsync();
 
         var updateReq = new UpdateFamilyMemberRequest
         {

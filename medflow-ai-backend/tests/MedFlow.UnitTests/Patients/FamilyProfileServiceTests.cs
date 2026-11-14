@@ -799,7 +799,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateFamilyMember_ValidNewParent_WithCCCD_ReturnsVerifiedMember()
+    public async Task CreateFamilyMember_ValidNewParent_WithCCCD_RequiresVerification()
     {
         var user = new User { Id = 502, Email = "create_parent_user@test.com", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 512, UserId = user.Id, User = user, Status = "ACTIVE" };
@@ -825,13 +825,16 @@ public sealed class FamilyProfileServiceTests : IDisposable
         Assert.Equal("Trần Thị Mẹ", result.FullName);
         Assert.Equal("Mẹ ruột", result.Relationship);
         Assert.Equal("amber", result.RelationshipBadgeColor);
-        Assert.True(result.IsIdentityVerified);
-        Assert.Contains("Đã xác thực CCCD", result.IdentificationNo);
-        Assert.Equal("Hồ sơ người cao tuổi", result.SubStatus);
+        Assert.False(result.IsIdentityVerified);
+        Assert.Equal("Chưa cập nhật CCCD", result.IdentificationNo);
+        Assert.Equal("Chỉ đọc", result.SubStatus);
+        Assert.False(result.Permissions!.CanManage);
+        Assert.False(result.Permissions.CanViewMedicalRecords);
         Assert.Equal("O+", result.Vitals?.BloodType);
 
         var link = await _db.PatientFamilyLinks.FirstAsync(l => l.OwnerPatientId == owner.Id && l.MemberPatientId == result.MemberPatientId);
-        Assert.Equal("VERIFIED", link.VerificationStatus);
+        Assert.Equal("PENDING", link.VerificationStatus);
+        Assert.Null(link.VerifiedAt);
         Assert.Equal("PARENT", link.Relationship);
     }
 
@@ -884,6 +887,9 @@ public sealed class FamilyProfileServiceTests : IDisposable
             .FirstOrDefaultAsync(l => l.OwnerPatientId == owner.Id && l.MemberPatientId == 555);
         Assert.NotNull(link);
         Assert.Equal("SPOUSE", link.Relationship);
+        Assert.Equal("PENDING", link.VerificationStatus);
+        Assert.Null(link.VerifiedAt);
+        Assert.False(result.IsIdentityVerified);
     }
 
     [Fact]
@@ -968,7 +974,8 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var updatedLink = await _db.PatientFamilyLinks.FirstAsync(l => l.OwnerPatientId == owner.Id && l.MemberPatientId == member.Id);
         Assert.Null(updatedLink.RevokedAt);
         Assert.Equal("SPOUSE", updatedLink.Relationship);
-        Assert.Equal("VERIFIED", updatedLink.VerificationStatus);
+        Assert.Equal("PENDING", updatedLink.VerificationStatus);
+        Assert.Null(updatedLink.VerifiedAt);
     }
 
     [Fact]
@@ -1341,7 +1348,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
             OwnerPatientId = owner.Id,
             MemberPatientId = child.Id,
             Relationship = "CHILD",
-            VerificationStatus = "ACTIVE"
+            VerificationStatus = "VERIFIED"
         };
 
         _db.Users.Add(user);
@@ -1393,7 +1400,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
             OwnerPatientId = owner.Id,
             MemberPatientId = member.Id,
             Relationship = "CHILD",
-            VerificationStatus = "ACTIVE"
+            VerificationStatus = "VERIFIED"
         };
 
         _db.Users.Add(user);
@@ -1438,7 +1445,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
             OwnerPatientId = owner.Id,
             MemberPatientId = member.Id,
             Relationship = "CHILD",
-            VerificationStatus = "ACTIVE"
+            VerificationStatus = "VERIFIED"
         };
 
         _db.Users.Add(user);
@@ -1458,6 +1465,110 @@ public sealed class FamilyProfileServiceTests : IDisposable
 
         var updatedMember = await _db.Patients.FindAsync(member.Id);
         Assert.Equal(new DateOnly(2019, 8, 15), updatedMember!.DateOfBirth);
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_UnverifiedLink_IdentityUpdate_Forbidden()
+    {
+        var user = new User { Id = 604, Email = "guard_unverified@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 641, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-641" };
+        var member = new Patient
+        {
+            Id = 642,
+            FullName = "Nguyễn Văn Bé",
+            PatientCode = "PAT-2026-642",
+            Gender = "MALE",
+            Status = "ACTIVE",
+        };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "CHILD",
+            VerificationStatus = "PENDING"
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, member.Id.ToString(), new UpdateFamilyMemberRequest { Phone = "0912345678" }));
+
+        Assert.Contains("không thể sửa thông tin định danh", ex.Message, StringComparison.OrdinalIgnoreCase);
+        var stored = await _db.Patients.FindAsync(member.Id);
+        Assert.Null(stored!.Phone);
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_MemberHasAccount_IdentityUpdate_Forbidden()
+    {
+        var user = new User { Id = 605, Email = "guard_account@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var otherUser = new User { Id = 606, Email = "member_account@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 651, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-651" };
+        var member = new Patient
+        {
+            Id = 652,
+            UserId = otherUser.Id,
+            FullName = "Trần Văn Tự Chủ",
+            PatientCode = "PAT-2026-652",
+            Status = "ACTIVE",
+        };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "SPOUSE",
+            VerificationStatus = "VERIFIED"
+        };
+
+        _db.Users.AddRange(user, otherUser);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, member.Id.ToString(), new UpdateFamilyMemberRequest { FullName = "Tên Bị Sửa" }));
+
+        var stored = await _db.Patients.FindAsync(member.Id);
+        Assert.Equal("Trần Văn Tự Chủ", stored!.FullName);
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_UnverifiedLink_RelationshipOnly_Allowed()
+    {
+        var user = new User { Id = 607, Email = "guard_relationship@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 661, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-661" };
+        var member = new Patient
+        {
+            Id = 662,
+            FullName = "Nguyễn Văn Bé",
+            PatientCode = "PAT-2026-662",
+            Gender = "MALE",
+            Status = "ACTIVE",
+        };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "CHILD",
+            VerificationStatus = "PENDING"
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.UpdateFamilyMemberAsync(
+            user.Id,
+            member.Id.ToString(),
+            new UpdateFamilyMemberRequest { Relationship = "Con trai" });
+
+        Assert.Equal("Con trai", result.Relationship);
+        Assert.Equal("PENDING", result.Permissions?.RelationshipStatus);
+        Assert.False(result.Permissions!.CanViewMedicalRecords);
     }
 
     [Fact]
@@ -1485,7 +1596,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var user = new User { Id = 605, Email = "updater5@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 651, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-651" };
         var member = new Patient { Id = 652, FullName = "Nguyễn A", PatientCode = "PAT-2026-652", Status = "ACTIVE", Address = "Hà Nội" };
-        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED" };
 
         _db.Users.Add(user);
         _db.Patients.AddRange(owner, member);
@@ -1508,7 +1619,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var user = new User { Id = 606, Email = "updater6@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 661, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-661" };
         var member = new Patient { Id = 662, FullName = "Nguyễn A", PatientCode = "PAT-2026-662", Status = "ACTIVE", Address = "Hà Nội" };
-        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED" };
 
         _db.Users.Add(user);
         _db.Patients.AddRange(owner, member);
@@ -1532,7 +1643,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var user = new User { Id = 607, Email = "updater7@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 671, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-671" };
         var member = new Patient { Id = 672, FullName = "Nguyễn A", PatientCode = "PAT-2026-672", Status = "ACTIVE", Address = "Hà Nội" };
-        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED" };
 
         _db.Users.Add(user);
         _db.Patients.AddRange(owner, member);
@@ -1553,7 +1664,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var user = new User { Id = 608, Email = "updater8@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 681, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-681" };
         var member = new Patient { Id = 682, FullName = "Nguyễn A", PatientCode = "PAT-2026-682", Status = "ACTIVE", Address = "Hà Nội" };
-        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED" };
 
         _db.Users.Add(user);
         _db.Patients.AddRange(owner, member);
@@ -1576,7 +1687,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var user = new User { Id = 609, Email = "updater9@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 691, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-691" };
         var member = new Patient { Id = 692, FullName = "Nguyễn A", PatientCode = "PAT-2026-692", Status = "ACTIVE", Address = "Hà Nội" };
-        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED" };
 
         _db.Users.Add(user);
         _db.Patients.AddRange(owner, member);
@@ -1597,7 +1708,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var user = new User { Id = 610, Email = "updater10@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 701, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-701" };
         var member = new Patient { Id = 702, FullName = "Nguyễn A", PatientCode = "PAT-2026-702", Status = "ACTIVE", Address = "Hà Nội" };
-        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED" };
 
         _db.Users.Add(user);
         _db.Patients.AddRange(owner, member);

@@ -23,7 +23,7 @@ public sealed class CreatePatientAtReceptionRequest
     [StringLength(500, ErrorMessage = "Địa chỉ tối đa 500 ký tự")]
     public string Address { get; set; } = string.Empty;
 
-    [RegularExpression(@"^\d{12}$", ErrorMessage = "CCCD phải gồm đúng 12 chữ số")]
+    [RegularExpression(@"^\d{9}(\d{3})?$", ErrorMessage = "Số CCCD/định danh phải gồm 9 hoặc 12 chữ số")]
     public string? IdentityCard { get; set; }
 
     [EmailAddress(ErrorMessage = "Email không hợp lệ")]
