@@ -236,6 +236,7 @@ public sealed class GenerateQrPaymentServiceTests : IDisposable
             OwnerPatientId = 100,
             MemberPatientId = 200,
             VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
             RevokedAt = FixedNow.UtcDateTime,
         });
         var familyVisit = AddVisit(1001, 200, "CHECKED_IN");
@@ -255,6 +256,7 @@ public sealed class GenerateQrPaymentServiceTests : IDisposable
             OwnerPatientId = 100,
             MemberPatientId = 200,
             VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
         });
         _db.SaveChanges();
         var visit = AddVisit(1001, 200, "CHECKED_IN");

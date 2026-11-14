@@ -28,6 +28,7 @@ export function AssignRoomPage() {
         onItemSelect={(item) => {
           if (item === 'dashboard') navigate('/reception');
           if (item === 'patients') navigate('/reception/patients');
+          if (item === 'identity-claims') navigate('/reception/identity-claims');
         }}
       />
       <div className="flex-1 flex flex-col min-w-0">

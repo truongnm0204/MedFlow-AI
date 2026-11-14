@@ -422,6 +422,10 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
         Assert.Equal("PENDING", firstMember.Permissions?.RelationshipStatus);
         Assert.False(firstMember.Permissions!.CanViewMedicalRecords);
 
+        var stored = await Db.Patients.AsNoTracking().FirstAsync(p => p.Id == firstMember.MemberPatientId);
+        Assert.False(string.IsNullOrWhiteSpace(stored.IdentificationHashHmac));
+        Assert.Equal((short?)1, stored.HashVersion);
+
         var secondRequest = new CreateFamilyMemberRequest
         {
             FullName = "Nguyễn Thị Một",
@@ -575,6 +579,7 @@ public sealed class FamilyProfileEndpointTests : AuthTestBase
 
         var link = await Db.PatientFamilyLinks.FirstAsync(l => l.MemberPatientId == created.MemberPatientId);
         link.VerificationStatus = "VERIFIED";
+        link.VerificationMethod = "STAFF";
         link.VerifiedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
         await Db.SaveChangesAsync();
 

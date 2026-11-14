@@ -99,6 +99,7 @@ public sealed class VisitChargesEndpointTests : AuthTestBase
             OwnerPatientId = 1,
             MemberPatientId = member.Id,
             VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
         });
         await Db.SaveChangesAsync();
 
@@ -113,6 +114,52 @@ public sealed class VisitChargesEndpointTests : AuthTestBase
             await Db.SaveChangesAsync();
 
             var denied = await Client.SendAsync(AuthedGet($"/api/v1/patients/visits/{created.VisitId}/charges", userId: 1, role: "PATIENT"));
+            Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+        }
+        finally
+        {
+            await CleanupAsync(created);
+            var link = await Db.PatientFamilyLinks.FirstOrDefaultAsync(l => l.OwnerPatientId == 1 && l.MemberPatientId == member.Id);
+            if (link is not null)
+                Db.PatientFamilyLinks.Remove(link);
+            var patient = await Db.Patients.FirstOrDefaultAsync(p => p.Id == member.Id);
+            if (patient is not null)
+                Db.Patients.Remove(patient);
+            await Db.SaveChangesAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GetCharges_LegacyFamilyLink_PhiDenied()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var member = new Patient
+        {
+            PatientCode = $"VCLEG-{suffix}",
+            FullName = "Thanh vien legacy",
+            Status = "ACTIVE",
+        };
+        Db.Patients.Add(member);
+        await Db.SaveChangesAsync();
+        Db.PatientFamilyLinks.Add(new PatientFamilyLink
+        {
+            OwnerPatientId = 1,
+            MemberPatientId = member.Id,
+            Relationship = "CHILD",
+            VerificationStatus = "VERIFIED",
+            VerificationMethod = "LEGACY",
+            LegacyAccessUntil = DateTime.SpecifyKind(DateTime.UtcNow.AddDays(10), DateTimeKind.Unspecified),
+        });
+        await Db.SaveChangesAsync();
+
+        var created = await SeedOwnedVisitAsync(suffix, 80_000m, null, member.Id);
+        try
+        {
+            var denied = await Client.SendAsync(AuthedGet(
+                $"/api/v1/patients/visits/{created.VisitId}/charges",
+                userId: 1,
+                role: "PATIENT"));
+
             Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
         }
         finally

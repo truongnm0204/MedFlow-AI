@@ -14,15 +14,18 @@ public sealed class PatientsController : ControllerBase
     private readonly IPatientProfileService _profileService;
     private readonly IFamilyProfileService _familyProfileService;
     private readonly IPatientDiagnosticResultService _diagnosticResultService;
+    private readonly IPatientIdentityClaimService _identityClaimService;
 
     public PatientsController(
         IPatientProfileService profileService,
         IFamilyProfileService familyProfileService,
-        IPatientDiagnosticResultService diagnosticResultService)
+        IPatientDiagnosticResultService diagnosticResultService,
+        IPatientIdentityClaimService identityClaimService)
     {
         _profileService = profileService;
         _familyProfileService = familyProfileService;
         _diagnosticResultService = diagnosticResultService;
+        _identityClaimService = identityClaimService;
     }
 
     /// <summary>GET /api/v1/patients/me/profile — Xem thông tin hồ sơ cá nhân của bệnh nhân đang đăng nhập.</summary>
@@ -33,6 +36,46 @@ public sealed class PatientsController : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<PatientProfileResponse>> GetMyProfile(CancellationToken ct)
         => Ok(await _profileService.GetPersonalProfileAsync(GetUserId(), ct));
+
+    /// <summary>POST /api/v1/patients/me/identity-claims/otp — Gửi OTP step-up cho yêu cầu liên kết hồ sơ.</summary>
+    [HttpPost("me/identity-claims/otp")]
+    [ProducesResponseType<SendIdentityClaimOtpResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<SendIdentityClaimOtpResponse>> SendIdentityClaimOtp(CancellationToken ct)
+        => Ok(await _identityClaimService.SendOtpAsync(GetUserId(), ct));
+
+    /// <summary>POST /api/v1/patients/me/identity-claims — Gửi yêu cầu liên kết hồ sơ đã có.</summary>
+    [HttpPost("me/identity-claims")]
+    [ProducesResponseType<IdentityClaimResponse>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<IdentityClaimResponse>> CreateIdentityClaim(
+        [FromBody] CreateIdentityClaimRequest request,
+        CancellationToken ct)
+    {
+        var result = await _identityClaimService.CreateAsync(GetUserId(), request, ct);
+        return StatusCode(StatusCodes.Status201Created, result);
+    }
+
+    /// <summary>GET /api/v1/patients/me/identity-claims — Danh sách yêu cầu liên kết của tôi.</summary>
+    [HttpGet("me/identity-claims")]
+    [ProducesResponseType<IReadOnlyList<IdentityClaimResponse>>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<IReadOnlyList<IdentityClaimResponse>>> GetMyIdentityClaims(
+        CancellationToken ct)
+        => Ok(await _identityClaimService.GetMineAsync(GetUserId(), ct));
+
+    /// <summary>GET /api/v1/patients/me/identity-claims/{id} — Trạng thái một yêu cầu liên kết.</summary>
+    [HttpGet("me/identity-claims/{id:long}")]
+    [ProducesResponseType<IdentityClaimResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<IdentityClaimResponse>> GetMyIdentityClaim(
+        [FromRoute] long id,
+        CancellationToken ct)
+        => Ok(await _identityClaimService.GetMineByIdAsync(GetUserId(), id, ct));
 
     /// <summary>GET /api/v1/patients/me/family-members — Xem danh sách hồ sơ người thân của bệnh nhân đang đăng nhập.</summary>
     [HttpGet("me/family-members")]

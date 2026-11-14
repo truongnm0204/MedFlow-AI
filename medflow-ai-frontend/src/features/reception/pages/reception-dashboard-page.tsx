@@ -82,6 +82,7 @@ export function ReceptionDashboardPage() {
         activeItem="dashboard"
         onItemSelect={(item) => {
           if (item === 'patients') navigate('/reception/patients');
+          if (item === 'identity-claims') navigate('/reception/identity-claims');
           if (item === 'queue') navigate('/reception/queue');
         }}
       />

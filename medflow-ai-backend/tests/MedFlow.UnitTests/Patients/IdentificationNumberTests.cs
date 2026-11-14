@@ -62,4 +62,14 @@ public sealed class IdentificationNumberTests
         Assert.Equal(first, second);
         Assert.Matches("^[0-9a-f]{64}$", first);
     }
+
+    [Fact]
+    public void ComputeHmac_DependsOnKeyAndIsLowercaseHex()
+    {
+        var first = IdentificationNumber.ComputeHmac("012345678901", "key-a");
+        var second = IdentificationNumber.ComputeHmac("012345678901", "key-b");
+
+        Assert.NotEqual(first, second);
+        Assert.Matches("^[0-9a-f]{64}$", first);
+    }
 }

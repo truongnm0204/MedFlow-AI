@@ -32,19 +32,7 @@ public sealed class PatientProfileService : IPatientProfileService
         if (userId <= 0)
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
 
-        var patient = await _db.Patients
-            .AsNoTracking()
-            .Include(p => p.User)
-            .FirstOrDefaultAsync(p => p.UserId == userId, ct);
-
-        if (patient is null)
-            throw new NotFoundException("Patient", userId);
-
-        if (patient.User is null || patient.User.AccountStatus != AccountStatus.ACTIVE)
-            throw new UnauthorizedAccessException("Tài khoản bệnh nhân chưa kích hoạt hoặc đã bị khóa.");
-
-        if (!string.Equals(patient.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
-            throw new UnauthorizedAccessException("Hồ sơ bệnh nhân đang ngừng hoạt động.");
+        var patient = await PatientSelfResolver.LoadActiveAsync(_db, userId, ct);
 
         var email = !string.IsNullOrWhiteSpace(patient.Email)
             ? patient.Email

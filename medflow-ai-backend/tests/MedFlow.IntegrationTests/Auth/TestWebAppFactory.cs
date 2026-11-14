@@ -48,6 +48,8 @@ public sealed class TestWebAppFactory : WebApplicationFactory<Program>
                 ["Jwt:RefreshTokenExpiryDays"] = "7",
                 ["Auth:OtpSecret"] = "IntegrationTest_OtpHmacSecret_2026",
                 ["Smtp:Host"] = "localhost",
+                ["Identity:HashKey"] = "IntegrationTest_IdentityHash_Key_2026",
+                ["Identity:Mode"] = "dual",
             }));
 
         builder.ConfigureTestServices(services =>

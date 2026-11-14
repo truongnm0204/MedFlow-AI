@@ -38,6 +38,8 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 builder.Services.AddApplication();
+builder.Services.Configure<MedFlow.Application.Options.IdentityHashOptions>(
+    builder.Configuration.GetSection("Identity"));
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var jwtSecret = builder.Configuration["Jwt:Secret"]
