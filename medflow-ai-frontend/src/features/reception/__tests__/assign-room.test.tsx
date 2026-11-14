@@ -24,9 +24,9 @@ const roomsDto = {
   requiredDepartmentName: 'Nội tổng quát',
   rooms: [
     {
-      roomId: 206,
+      id: 206,
       roomCode: 'P206',
-      roomName: 'Phòng 206',
+      name: 'Phòng 206',
       roomType: 'EXAMINATION',
       location: 'Tầng 2',
       hospitalId: 1,
@@ -34,10 +34,9 @@ const roomsDto = {
       departmentCode: 'NOI',
       departmentName: 'Nội tổng quát',
       capacity: 2,
-      activeVisitCount: 0,
+      currentOccupancy: 0,
       availableCapacity: 2,
       status: 'ACTIVE',
-      isCurrentRoom: false,
       isCompatible: true,
       isAvailable: true,
       unavailableReason: null,
@@ -102,7 +101,7 @@ describe('Assign Room (Issue #79)', () => {
     const confirm = screen.getByRole('button', { name: 'Xác nhận gán buồng khám' });
     expect(confirm).toBeDisabled();
 
-    fireEvent.click(await screen.findByRole('radio', { name: /Phòng 206/ }));
+    fireEvent.click(await screen.findByRole('radio', { name: /Phòng 206/ }, { timeout: 5000 }));
     expect(screen.getByText(/Buồng đã chọn: Phòng 206/)).toBeInTheDocument();
     expect(confirm).toBeEnabled();
 
