@@ -37,6 +37,7 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<Visit> Visits => Set<Visit>();
     public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<PaymentGatewayEvent> PaymentGatewayEvents => Set<PaymentGatewayEvent>();
     public DbSet<VisitCharge> VisitCharges => Set<VisitCharge>();
     public DbSet<Medicine> Medicines => Set<Medicine>();
     public DbSet<MedicineBatch> MedicineBatches => Set<MedicineBatch>();
