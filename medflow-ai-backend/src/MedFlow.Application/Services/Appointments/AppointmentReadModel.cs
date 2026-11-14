@@ -387,7 +387,9 @@ internal static class AppointmentReadModel
                     : null,
             SlotReleaseNote: isOverdueUnattended ? "Đã quá giờ tiếp đón" : null,
             RebookSpecialtyLabel: null,
-            BookedAt: bookedAt);
+            BookedAt: bookedAt,
+            VisitId: visit?.Id,
+            VisitCode: string.IsNullOrWhiteSpace(visit?.VisitCode) ? null : visit!.VisitCode!.Trim());
     }
 
     public static string ResolveEffectiveStatus(Appointment appointment, Visit? visit)
