@@ -77,6 +77,8 @@ public static class DependencyInjection
         services.AddScoped<ICheckInScheduledPatientService, CheckInScheduledPatientService>();
         services.AddScoped<ICreateWalkInVisitService, CreateWalkInVisitService>();
         services.AddScoped<IVisitChargesService, VisitChargesService>();
+        services.AddScoped<IGenerateQrPaymentService, GenerateQrPaymentService>();
+        services.AddScoped<ISePayWebhookService, SePayWebhookService>();
         services.AddScoped<IConsultationWorkspaceService, ConsultationWorkspaceService>();
         services.AddScoped<IMedicalHistoryService, MedicalHistoryService>();
         return services;
