@@ -56,6 +56,8 @@ import { HomePage } from '@/features/home/pages/home-page';
 import { HospitalAdminDashboardPage } from '@/features/hospital-admin/pages/hospital-admin-dashboard-page';
 import { PatientDiagnosticResultPage } from '@/features/patient/pages/patient-diagnostic-result-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
+import { PatientPaymentDetailPage } from '@/features/payment/pages/patient-payment-detail-page';
+import { PatientPaymentListPage } from '@/features/payment/pages/patient-payment-list-page';
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
 import { PrescriptionSearchPage } from '@/features/pharmacy/pages/prescription-search-page';
 import { AssignRoomPage } from '@/features/reception/pages/assign-room-page';
@@ -120,6 +122,26 @@ export function AppRouter() {
       <Route path="/appointments/:appointmentId/print" element={<AppointmentPrintPreviewPage />} />
       <Route path="/appointments/:appointmentId/queue" element={<AppointmentQueueTrackingPage />} />
       <Route path="/appointments/:appointmentId" element={<AppointmentDetailPage />} />
+      <Route
+        path="/payments"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientPaymentListPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/payments/:visitCode"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientPaymentDetailPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
       <Route
         path="/patient"
         element={
