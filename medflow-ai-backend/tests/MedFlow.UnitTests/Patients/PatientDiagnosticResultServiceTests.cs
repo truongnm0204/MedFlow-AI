@@ -422,6 +422,7 @@ public sealed class PatientDiagnosticResultServiceTests : IDisposable
             MemberPatientId = 2,
             Relationship = relationship,
             VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
             RevokedAt = revokedAt,
             ValidUntil = validUntil,
         });

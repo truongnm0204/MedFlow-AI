@@ -32,6 +32,15 @@ public class PatientConfiguration : IEntityTypeConfiguration<Patient>
             .IsUnique()
             .HasDatabaseName("uq_patients_identification_hash");
 
+        builder.Property(p => p.IdentificationHashHmac)
+            .HasColumnName("identification_hash_hmac")
+            .HasMaxLength(128);
+        builder.HasIndex(p => p.IdentificationHashHmac)
+            .IsUnique()
+            .HasDatabaseName("uq_patients_identification_hash_hmac");
+
+        builder.Property(p => p.HashVersion).HasColumnName("hash_version").HasColumnType("smallint");
+
         builder.Property(p => p.Address).HasColumnName("address");
         builder.Property(p => p.Status).HasColumnName("status").HasMaxLength(16);
         builder.Property(p => p.BloodType).HasColumnName("blood_type").HasMaxLength(8);

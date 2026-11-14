@@ -2,10 +2,13 @@ using System.Security.Cryptography;
 using System.Text;
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Application.Options;
+using MedFlow.Application.Services.Patients;
 using MedFlow.Application.Services.Reception;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MedFlow.UnitTests.Reception;
@@ -100,7 +103,10 @@ public sealed class CreatePatientAtReceptionServiceTests : IDisposable
             .UseInMemoryDatabase($"create-patient-{Guid.NewGuid():N}")
             .Options;
         _db = new TestDbContext(options);
-        _sut = new CreatePatientAtReceptionService(_db, new FixedTimeProvider(Now));
+        _sut = new CreatePatientAtReceptionService(
+            _db,
+            new FixedTimeProvider(Now),
+            Options.Create(new IdentityHashOptions { HashKey = "unit-test-identity-key" }));
     }
 
     public void Dispose() => _db.Dispose();
@@ -135,6 +141,10 @@ public sealed class CreatePatientAtReceptionServiceTests : IDisposable
         var saved = await _db.Patients.SingleAsync();
         Assert.Equal("ACTIVE", saved.Status);
         Assert.Equal(Hash("012345678901"), saved.IdentificationHash);
+        Assert.Equal(
+            IdentificationNumber.ComputeHmac("012345678901", "unit-test-identity-key"),
+            saved.IdentificationHashHmac);
+        Assert.Equal(IdentificationNumber.CurrentHashVersion, saved.HashVersion);
         Assert.Equal(result.Id, saved.Id);
     }
 
@@ -144,7 +154,23 @@ public sealed class CreatePatientAtReceptionServiceTests : IDisposable
         var result = await _sut.CreatePatientAsync(ValidRequest("012345678"));
 
         Assert.Equal("********5678", result.IdentityCardMasked);
-        Assert.Equal(Hash("012345678"), (await _db.Patients.SingleAsync()).IdentificationHash);
+        var saved = await _db.Patients.SingleAsync();
+        Assert.Equal(Hash("012345678"), saved.IdentificationHash);
+        Assert.Equal(
+            IdentificationNumber.ComputeHmac("012345678", "unit-test-identity-key"),
+            saved.IdentificationHashHmac);
+    }
+
+    [Fact]
+    public async Task CreatePatient_WithoutHashKey_FailsClosed()
+    {
+        var service = new CreatePatientAtReceptionService(_db, new FixedTimeProvider(Now));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreatePatientAsync(ValidRequest("012345678901")));
+
+        Assert.Equal(IdentificationNumber.MissingKeyMessage, ex.Message);
+        Assert.Empty(_db.Patients);
     }
 
     [Fact]

@@ -1,10 +1,12 @@
 using MedFlow.Application.DTOs.Patients;
 using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Application.Options;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MedFlow.UnitTests.Patients;
@@ -125,7 +127,9 @@ public sealed class FamilyProfileServiceTests : IDisposable
             .Options;
 
         _db = new FamilyTestDbContext(options);
-        _sut = new FamilyProfileService(_db);
+        _sut = new FamilyProfileService(
+            _db,
+            Options.Create(new IdentityHashOptions { HashKey = "unit-test-identity-key" }));
     }
 
     public void Dispose() => _db.Dispose();
@@ -180,6 +184,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
             MemberPatient = memberChild,
             Relationship = "CHILD",
             VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
             VerifiedAt = DateTime.UtcNow
         };
 
@@ -190,6 +195,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
             MemberPatient = memberSpouse,
             Relationship = "SPOUSE",
             VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
             VerifiedAt = DateTime.UtcNow
         };
 
@@ -253,7 +259,8 @@ public sealed class FamilyProfileServiceTests : IDisposable
             MemberPatientId = member.Id,
             MemberPatient = member,
             Relationship = "PARENT",
-            VerificationStatus = "VERIFIED"
+            VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
         };
 
         _db.Users.Add(user);
@@ -473,6 +480,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
             MemberPatient = child,
             Relationship = "CHILD",
             VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
             VerifiedAt = DateTime.UtcNow
         };
 
@@ -516,7 +524,8 @@ public sealed class FamilyProfileServiceTests : IDisposable
             MemberPatientId = member.Id,
             MemberPatient = member,
             Relationship = "SPOUSE",
-            VerificationStatus = "VERIFIED"
+            VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
         };
 
         _db.Users.Add(user);
@@ -547,7 +556,8 @@ public sealed class FamilyProfileServiceTests : IDisposable
             MemberPatientId = member.Id,
             MemberPatient = member,
             Relationship = "CHILD",
-            VerificationStatus = "VERIFIED"
+            VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
         };
 
         _db.Users.Add(user);
@@ -839,6 +849,96 @@ public sealed class FamilyProfileServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateFamilyMember_WithCCCD_StoresHmacAndHashVersion()
+    {
+        var user = new User { Id = 515, Email = "hmac_store@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 545, UserId = user.Id, User = user, Status = "ACTIVE" };
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        var cccd = "001177000111";
+        var result = await _sut.CreateFamilyMemberAsync(user.Id, new CreateFamilyMemberRequest
+        {
+            FullName = "Nguyễn Văn Hmac",
+            Relationship = "Con trai",
+            Gender = "Nam",
+            BirthDate = "2015-05-05",
+            Address = "Hà Nội số 1",
+            IdentificationNo = cccd,
+        });
+
+        var saved = await _db.Patients.FirstAsync(p => p.Id == result.MemberPatientId);
+        Assert.Equal(
+            IdentificationNumber.ComputeHmac(cccd, "unit-test-identity-key"),
+            saved.IdentificationHashHmac);
+        Assert.Equal(IdentificationNumber.CurrentHashVersion, saved.HashVersion);
+        Assert.Equal(IdentificationNumber.ComputeSha256(cccd), saved.IdentificationHash);
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_MatchesPatientByHmacOnly()
+    {
+        var user = new User { Id = 516, Email = "hmac_match@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 546, UserId = user.Id, User = user, Status = "ACTIVE" };
+        var cccd = "001177000222";
+        var existing = new Patient
+        {
+            Id = 556,
+            PatientCode = "PAT-2026-556",
+            FullName = "Hồ Sơ Hmac",
+            Status = "ACTIVE",
+            IdentificationHash = null,
+            IdentificationHashHmac = IdentificationNumber.ComputeHmac(cccd, "unit-test-identity-key"),
+            HashVersion = IdentificationNumber.CurrentHashVersion,
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, existing);
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.CreateFamilyMemberAsync(user.Id, new CreateFamilyMemberRequest
+        {
+            FullName = "Hồ Sơ Hmac",
+            Relationship = "Vợ",
+            Gender = "Nữ",
+            BirthDate = "1990-01-01",
+            Address = "Hà Nội số 2",
+            IdentificationNo = cccd,
+        });
+
+        Assert.Equal(existing.Id, result.MemberPatientId);
+        var link = await _db.PatientFamilyLinks.FirstAsync(l => l.MemberPatientId == existing.Id);
+        Assert.Equal("PENDING", link.VerificationStatus);
+        Assert.Equal("SPOUSE", link.Relationship);
+    }
+
+    [Fact]
+    public async Task CreateFamilyMember_WithoutHashKey_ThrowsConfigurationError()
+    {
+        var user = new User { Id = 517, Email = "no_key@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 547, UserId = user.Id, User = user, Status = "ACTIVE" };
+        _db.Users.Add(user);
+        _db.Patients.Add(owner);
+        await _db.SaveChangesAsync();
+
+        var service = new FamilyProfileService(_db);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateFamilyMemberAsync(user.Id, new CreateFamilyMemberRequest
+            {
+                FullName = "Thiếu Key",
+                Relationship = "Con trai",
+                Gender = "Nam",
+                BirthDate = "2015-05-05",
+                Address = "Hà Nội số 3",
+                IdentificationNo = "001177000333",
+            }));
+
+        Assert.Equal(IdentificationNumber.MissingKeyMessage, ex.Message);
+    }
+
+    [Fact]
     public async Task CreateFamilyMember_ExistingPatientInSystem_LinksExistingPatient()
     {
         var user = new User { Id = 503, Email = "link_existing_user@test.com", AccountStatus = AccountStatus.ACTIVE };
@@ -909,6 +1009,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
             MemberPatientId = member.Id,
             Relationship = "CHILD",
             VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
             RevokedAt = null
         };
 
@@ -1348,7 +1449,8 @@ public sealed class FamilyProfileServiceTests : IDisposable
             OwnerPatientId = owner.Id,
             MemberPatientId = child.Id,
             Relationship = "CHILD",
-            VerificationStatus = "VERIFIED"
+            VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
         };
 
         _db.Users.Add(user);
@@ -1400,7 +1502,8 @@ public sealed class FamilyProfileServiceTests : IDisposable
             OwnerPatientId = owner.Id,
             MemberPatientId = member.Id,
             Relationship = "CHILD",
-            VerificationStatus = "VERIFIED"
+            VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
         };
 
         _db.Users.Add(user);
@@ -1445,7 +1548,8 @@ public sealed class FamilyProfileServiceTests : IDisposable
             OwnerPatientId = owner.Id,
             MemberPatientId = member.Id,
             Relationship = "CHILD",
-            VerificationStatus = "VERIFIED"
+            VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
         };
 
         _db.Users.Add(user);
@@ -1520,7 +1624,8 @@ public sealed class FamilyProfileServiceTests : IDisposable
             OwnerPatientId = owner.Id,
             MemberPatientId = member.Id,
             Relationship = "SPOUSE",
-            VerificationStatus = "VERIFIED"
+            VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
         };
 
         _db.Users.AddRange(user, otherUser);
@@ -1533,6 +1638,40 @@ public sealed class FamilyProfileServiceTests : IDisposable
 
         var stored = await _db.Patients.FindAsync(member.Id);
         Assert.Equal("Trần Văn Tự Chủ", stored!.FullName);
+    }
+
+    [Fact]
+    public async Task UpdateFamilyMember_LegacyLink_IdentityUpdate_Forbidden()
+    {
+        var user = new User { Id = 608, Email = "guard_legacy@test.com", AccountStatus = AccountStatus.ACTIVE };
+        var owner = new Patient { Id = 671, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-671" };
+        var member = new Patient
+        {
+            Id = 672,
+            FullName = "Hồ Sơ Legacy",
+            PatientCode = "PAT-2026-672",
+            Status = "ACTIVE",
+        };
+        var link = new PatientFamilyLink
+        {
+            OwnerPatientId = owner.Id,
+            MemberPatientId = member.Id,
+            Relationship = "PARENT",
+            VerificationStatus = "VERIFIED",
+            VerificationMethod = "LEGACY",
+            LegacyAccessUntil = DateTime.UtcNow.AddDays(10),
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.AddRange(owner, member);
+        _db.PatientFamilyLinks.Add(link);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _sut.UpdateFamilyMemberAsync(user.Id, member.Id.ToString(), new UpdateFamilyMemberRequest { FullName = "Tên Bị Sửa" }));
+
+        var stored = await _db.Patients.FindAsync(member.Id);
+        Assert.Equal("Hồ Sơ Legacy", stored!.FullName);
     }
 
     [Fact]
@@ -1596,7 +1735,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var user = new User { Id = 605, Email = "updater5@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 651, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-651" };
         var member = new Patient { Id = 652, FullName = "Nguyễn A", PatientCode = "PAT-2026-652", Status = "ACTIVE", Address = "Hà Nội" };
-        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED", VerificationMethod = "STAFF" };
 
         _db.Users.Add(user);
         _db.Patients.AddRange(owner, member);
@@ -1619,7 +1758,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var user = new User { Id = 606, Email = "updater6@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 661, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-661" };
         var member = new Patient { Id = 662, FullName = "Nguyễn A", PatientCode = "PAT-2026-662", Status = "ACTIVE", Address = "Hà Nội" };
-        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED", VerificationMethod = "STAFF" };
 
         _db.Users.Add(user);
         _db.Patients.AddRange(owner, member);
@@ -1643,7 +1782,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var user = new User { Id = 607, Email = "updater7@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 671, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-671" };
         var member = new Patient { Id = 672, FullName = "Nguyễn A", PatientCode = "PAT-2026-672", Status = "ACTIVE", Address = "Hà Nội" };
-        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED", VerificationMethod = "STAFF" };
 
         _db.Users.Add(user);
         _db.Patients.AddRange(owner, member);
@@ -1664,7 +1803,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var user = new User { Id = 608, Email = "updater8@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 681, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-681" };
         var member = new Patient { Id = 682, FullName = "Nguyễn A", PatientCode = "PAT-2026-682", Status = "ACTIVE", Address = "Hà Nội" };
-        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED", VerificationMethod = "STAFF" };
 
         _db.Users.Add(user);
         _db.Patients.AddRange(owner, member);
@@ -1687,7 +1826,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var user = new User { Id = 609, Email = "updater9@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 691, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-691" };
         var member = new Patient { Id = 692, FullName = "Nguyễn A", PatientCode = "PAT-2026-692", Status = "ACTIVE", Address = "Hà Nội" };
-        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED", VerificationMethod = "STAFF" };
 
         _db.Users.Add(user);
         _db.Patients.AddRange(owner, member);
@@ -1708,7 +1847,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
         var user = new User { Id = 610, Email = "updater10@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var owner = new Patient { Id = 701, UserId = user.Id, User = user, Status = "ACTIVE", PatientCode = "PAT-2026-701" };
         var member = new Patient { Id = 702, FullName = "Nguyễn A", PatientCode = "PAT-2026-702", Status = "ACTIVE", Address = "Hà Nội" };
-        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED" };
+        var link = new PatientFamilyLink { OwnerPatientId = owner.Id, MemberPatientId = member.Id, Relationship = "CHILD", VerificationStatus = "VERIFIED", VerificationMethod = "STAFF" };
 
         _db.Users.Add(user);
         _db.Patients.AddRange(owner, member);

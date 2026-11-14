@@ -48,7 +48,7 @@ internal static class VisitPaymentAccess
         CancellationToken ct)
     {
         var nowLocal = AppointmentBookingRules.GetVietnamNow(time);
-        var owned = await AppointmentBookingRules.LoadOwnedPatientsAsync(db, actorUserId, nowLocal, ct);
+        var owned = await AppointmentBookingRules.LoadOwnedPatientsPhiAsync(db, actorUserId, nowLocal, ct);
         var ids = new HashSet<long> { owned.Self.Id };
         foreach (var link in owned.FamilyLinks)
             ids.Add(link.MemberPatientId);
