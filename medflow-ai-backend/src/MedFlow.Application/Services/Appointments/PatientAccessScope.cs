@@ -1,34 +1,16 @@
 using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Application.Services.Patients;
 using MedFlow.Domain.Entities;
-using MedFlow.Domain.Enums;
-using MedFlow.Domain.Exceptions;
-using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.Application.Services.Appointments;
 
 internal static class PatientAccessScope
 {
-    public static async Task<Patient> LoadActiveSelfAsync(
+    public static Task<Patient> LoadActiveSelfAsync(
         IApplicationDbContext db,
         long userId,
         CancellationToken ct)
-    {
-        var self = await db.Patients
-            .AsNoTracking()
-            .Include(p => p.User)
-            .FirstOrDefaultAsync(p => p.UserId == userId, ct);
-
-        if (self is null)
-            throw new NotFoundException("Patient", userId);
-
-        if (self.User is null || self.User.AccountStatus != AccountStatus.ACTIVE)
-            throw new UnauthorizedAccessException("Tài khoản bệnh nhân chưa kích hoạt hoặc đã bị khóa.");
-
-        if (!string.Equals(self.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
-            throw new UnauthorizedAccessException("Hồ sơ bệnh nhân đang ngừng hoạt động.");
-
-        return self;
-    }
+        => PatientSelfResolver.LoadActiveAsync(db, userId, ct);
 
     public static IQueryable<PatientFamilyLink> WhereActiveMemberOf(
         this IQueryable<PatientFamilyLink> links,
