@@ -55,6 +55,8 @@ public sealed class MyAppointmentsEndpointTests : AuthTestBase
         var apt1 = Assert.Single(dto.Items, i => i.AppointmentCode == "APT-202610-0001");
         Assert.Equal("COMPLETED", apt1.Status);
         Assert.Equal("PAID_VIETQR", apt1.PaymentStatus);
+        Assert.Equal(1, apt1.VisitId);
+        Assert.Equal("VIS-202610-0001", apt1.VisitCode);
 
         Assert.DoesNotContain(dto.Items, i => i.AppointmentCode == "APT-202610-0002");
 

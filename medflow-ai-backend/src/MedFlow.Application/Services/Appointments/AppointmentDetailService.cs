@@ -244,5 +244,7 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
             PatientBirthDateLabel: patientBirthDateLabel,
             PatientPhone: patientPhone,
             PatientAddress: patientAddress,
-            AvailableActions: availableActions);
+            AvailableActions: availableActions,
+            VisitId: item.VisitId,
+            VisitCode: item.VisitCode);
 }
