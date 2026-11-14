@@ -751,7 +751,7 @@ CREATE TABLE IF NOT EXISTS "auth_verification_challenges" (
     CONSTRAINT "ck_avc_attempts_lte_max" CHECK ("attempts" <= "max_attempts"),
     CONSTRAINT "ck_avc_channel" CHECK ("channel" IN ('EMAIL','SMS')),
     CONSTRAINT "ck_avc_max_attempts_range" CHECK ("max_attempts" BETWEEN 1 AND 20),
-    CONSTRAINT "ck_avc_purpose" CHECK ("purpose" IN ('REGISTER_EMAIL','CHANGE_EMAIL','CHANGE_PHONE','PASSWORD_RESET')),
+    CONSTRAINT "ck_avc_purpose" CHECK ("purpose" IN ('REGISTER_EMAIL','CHANGE_EMAIL','CHANGE_PHONE','PASSWORD_RESET','IDENTITY_CLAIM')),
     CONSTRAINT "ck_avc_recipient_fingerprint_len" CHECK (octet_length("recipient_fingerprint") = 32),
     CONSTRAINT "ck_avc_status" CHECK ("status" IN ('PENDING','VERIFIED','EXPIRED','LOCKED','REVOKED')),
     CONSTRAINT "ck_avc_verified_at_consistency" CHECK ("status" <> 'VERIFIED' OR "verified_at" IS NOT NULL),
@@ -860,3 +860,16 @@ CREATE INDEX IF NOT EXISTS "ix_identity_claims_status_expires"
 
 CREATE INDEX IF NOT EXISTS "ix_identity_claims_hospital_status"
   ON "patient_identity_claims" ("hospital_id", "status");
+
+-- 018_patient_identity_verify_permission
+INSERT INTO "permissions" ("code")
+SELECT 'PATIENT_IDENTITY_VERIFY'
+WHERE NOT EXISTS (SELECT 1 FROM "permissions" WHERE "code" = 'PATIENT_IDENTITY_VERIFY');
+
+INSERT INTO "role_permissions" ("role_id", "permission_id")
+SELECT r."id", p."id"
+FROM "roles" r
+CROSS JOIN "permissions" p
+WHERE p."code" = 'PATIENT_IDENTITY_VERIFY'
+  AND r."code" IN ('HOSPITAL_ADMIN', 'SYSTEM_ADMIN')
+ON CONFLICT DO NOTHING;

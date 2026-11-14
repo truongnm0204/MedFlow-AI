@@ -9,6 +9,7 @@ using MedFlow.Application.Services.ExaminationRooms;
 using MedFlow.Application.Services.ExaminationSlots;
 using MedFlow.Application.Services.HospitalAdmin;
 using MedFlow.Application.Services.Hospitals;
+using MedFlow.Application.Services.IdentityClaims;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Application.Services.Pharmacy;
 using MedFlow.Application.Services.Policies;
@@ -38,6 +39,7 @@ public static class DependencyInjection
         services.AddScoped<IPatientProfileService, PatientProfileService>();
         services.AddScoped<IFamilyProfileService, FamilyProfileService>();
         services.AddScoped<IPatientDiagnosticResultService, PatientDiagnosticResultService>();
+        services.AddScoped<IPatientIdentityClaimService, PatientIdentityClaimService>();
         services.AddScoped<IAppointmentPolicyService, AppointmentPolicyService>();
         services.AddScoped<IQueuePolicyService, QueuePolicyService>();
         services.AddScoped<IDepartmentService, DepartmentService>();
