@@ -1,29 +1,34 @@
+import { ArrowLeft, ArrowRight, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+
+import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { Alert } from '@/shared/ui/alert';
+import { Button } from '@/shared/ui/button';
+import { Spinner } from '@/shared/ui/spinner';
+
 import { AssignDoctorPanel } from '../components/assign-doctor-panel';
 import { ReceptionSidebar } from '../components/reception-sidebar';
-import { ASSIGN_DOCTOR_MOCK_DOCTORS, ASSIGN_DOCTOR_VISIT_MOCK } from '../data/assign-doctor-mock';
-import type { AssignDoctorPayload } from '../types/assign-doctor.types';
+import { useAssignableDoctors, useAssignDoctorMutation } from '../hooks/use-reception-api';
 
 export function VisitRoutingPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const visitId = searchParams.get('visitId')?.trim() ?? '';
+
+  const doctorsQuery = useAssignableDoctors(visitId);
+  const assignDoctor = useAssignDoctorMutation(visitId);
   const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(null);
-  const [assigned, setAssigned] = useState<AssignDoctorPayload | null>(null);
+
+  const doctors = doctorsQuery.data?.doctors ?? [];
+  const patient = doctorsQuery.data?.patient ?? null;
+  const assigned = assignDoctor.data;
 
   const handleConfirm = () => {
-    const doctor = ASSIGN_DOCTOR_MOCK_DOCTORS.find((d) => d.id === selectedDoctorId);
-    if (!doctor) return;
-    setAssigned({
-      visitId: ASSIGN_DOCTOR_VISIT_MOCK.visitId,
-      doctorId: doctor.id,
-      roomName: doctor.roomName,
-    });
+    const doctor = doctors.find((item) => item.id === selectedDoctorId);
+    if (!doctor || !visitId) return;
+    assignDoctor.mutate({ visitId, doctorId: doctor.id, roomName: doctor.roomName });
   };
-
-  const assignedDoctor = assigned
-    ? ASSIGN_DOCTOR_MOCK_DOCTORS.find((d) => d.id === assigned.doctorId)
-    : null;
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
@@ -55,21 +60,78 @@ export function VisitRoutingPage() {
         </header>
 
         <main className="p-6 flex-1 max-w-4xl w-full mx-auto space-y-4">
-          {assigned && assignedDoctor && (
+          {!visitId ? (
+            <Alert tone="warning">
+              Thiếu mã lượt khám. Hãy check-in bệnh nhân hoặc tạo lượt vãng lai trước khi điều phối.
+            </Alert>
+          ) : null}
+
+          {doctorsQuery.isPending && visitId ? (
+            <div className="flex items-center justify-center gap-2 py-16 text-xs text-sub">
+              <Spinner className="h-4 w-4" />
+              Đang tải danh sách bác sĩ khả dụng...
+            </div>
+          ) : null}
+
+          {doctorsQuery.isError ? (
+            <div className="space-y-3">
+              <Alert tone="error">{getErrorMessage(doctorsQuery.error)}</Alert>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void doctorsQuery.refetch()}
+                loading={doctorsQuery.isFetching}
+              >
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                Thử lại
+              </Button>
+            </div>
+          ) : null}
+
+          {assigned ? (
             <div
               role="status"
-              className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"
             >
-              Đã phân bổ {assignedDoctor.fullName} — {assignedDoctor.roomName}
+              <span>
+                Đã phân bổ {assigned.doctorName} — {assigned.roomName}
+              </span>
+              <Button
+                size="sm"
+                onClick={() =>
+                  navigate(`/reception/assign-room?visitId=${encodeURIComponent(visitId)}`)
+                }
+              >
+                Gán buồng khám
+                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </Button>
             </div>
-          )}
-          <AssignDoctorPanel
-            patient={ASSIGN_DOCTOR_VISIT_MOCK}
-            doctors={ASSIGN_DOCTOR_MOCK_DOCTORS}
-            selectedDoctorId={selectedDoctorId}
-            onSelectDoctor={setSelectedDoctorId}
-            onConfirm={handleConfirm}
-          />
+          ) : null}
+
+          {assignDoctor.isError ? (
+            <Alert tone="error">{getErrorMessage(assignDoctor.error)}</Alert>
+          ) : null}
+
+          {patient && doctors.length > 0 ? (
+            <AssignDoctorPanel
+              patient={patient}
+              doctors={doctors}
+              selectedDoctorId={selectedDoctorId}
+              onSelectDoctor={setSelectedDoctorId}
+              onConfirm={handleConfirm}
+            />
+          ) : null}
+
+          {doctorsQuery.isSuccess && doctors.length === 0 ? (
+            <Alert tone="info">Chưa có bác sĩ khả dụng cho lượt khám này.</Alert>
+          ) : null}
+
+          {assignDoctor.isPending ? (
+            <div className="flex items-center gap-2 text-xs text-sub">
+              <Spinner className="h-4 w-4" />
+              Đang phân bổ bác sĩ...
+            </div>
+          ) : null}
         </main>
       </div>
     </div>

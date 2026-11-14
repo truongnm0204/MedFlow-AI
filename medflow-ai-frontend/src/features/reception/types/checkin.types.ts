@@ -3,6 +3,8 @@ export type CheckInPriority = 'NORMAL' | 'URGENT' | 'ELDERLY' | 'PREGNANT';
 export interface ScheduledCheckInAppointment {
   id: string;
   appointmentCode: string;
+  /** ID số của lịch hẹn khi backend chỉ trả ID (dùng cho POST check-in). */
+  appointmentId?: number;
   patientCode: string;
   patientName: string;
   gender: 'MALE' | 'FEMALE' | 'OTHER';
@@ -30,6 +32,7 @@ export interface CheckInFormData {
 
 export interface CheckInSuccessResult {
   visitId: string;
+  visitCode?: string;
   ticketNo: string;
   patientName: string;
   patientCode?: string;

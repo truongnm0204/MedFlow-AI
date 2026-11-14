@@ -1,11 +1,62 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { apiClient } from '@/shared/lib/axios';
 
 import { AssignRoomSelector } from '../components/assign-room-selector';
 import { RoomCompatibilityCard } from '../components/room-compatibility-card';
 import { ASSIGN_ROOM_SERVICE, AVAILABLE_ROOMS_MOCK } from '../data/assign-room-mock';
 import { AssignRoomPage } from '../pages/assign-room-page';
+
+const roomsDto = {
+  visitId: 1,
+  visitCode: 'VIS-1',
+  visitStatus: 'CHECKED_IN',
+  hospitalId: 1,
+  assignedDoctorId: 7,
+  assignedDoctorCode: 'BS-07',
+  assignedDoctorName: 'BS.CKI Trần Quốc Tuấn',
+  currentExaminationRoomId: null,
+  currentExaminationRoomCode: null,
+  requiredDepartmentId: 1,
+  requiredDepartmentName: 'Nội tổng quát',
+  rooms: [
+    {
+      roomId: 206,
+      roomCode: 'P206',
+      roomName: 'Phòng 206',
+      roomType: 'EXAMINATION',
+      location: 'Tầng 2',
+      hospitalId: 1,
+      departmentId: 1,
+      departmentCode: 'NOI',
+      departmentName: 'Nội tổng quát',
+      capacity: 2,
+      activeVisitCount: 0,
+      availableCapacity: 2,
+      status: 'ACTIVE',
+      isCurrentRoom: false,
+      isCompatible: true,
+      isAvailable: true,
+      unavailableReason: null,
+    },
+  ],
+};
+
+function renderAssignRoomPage() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/reception/assign-room?visitId=VIS-1']}>
+        <AssignRoomPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
 
 describe('Assign Room (Issue #79)', () => {
   it('card shows status badge, waiting count and compatibility', () => {
@@ -36,18 +87,29 @@ describe('Assign Room (Issue #79)', () => {
     expect(screen.getByText('Quá tải')).toBeInTheDocument();
   });
 
-  it('page disables confirm until a room is selected, then confirms', () => {
-    render(
-      <MemoryRouter>
-        <AssignRoomPage />
-      </MemoryRouter>,
-    );
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('page loads compatible rooms and assigns the selected room via API', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: roomsDto } as never);
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({
+      data: { roomName: 'Phòng 206', queueNumber: 12 },
+    } as never);
+
+    renderAssignRoomPage();
+
     const confirm = screen.getByRole('button', { name: 'Xác nhận gán buồng khám' });
     expect(confirm).toBeDisabled();
-    fireEvent.click(screen.getByRole('radio', { name: /Phòng 206/ }));
+
+    fireEvent.click(await screen.findByRole('radio', { name: /Phòng 206/ }));
     expect(screen.getByText(/Buồng đã chọn: Phòng 206/)).toBeInTheDocument();
     expect(confirm).toBeEnabled();
+
     fireEvent.click(confirm);
-    expect(screen.getByText(/Đã gán buồng khám: Phòng 206/)).toBeInTheDocument();
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(put.mock.calls[0]?.[0]).toBe('/reception/visits/VIS-1/examination-room');
+    expect(await screen.findByText(/Đã gán buồng khám Phòng 206/)).toBeInTheDocument();
   });
 });

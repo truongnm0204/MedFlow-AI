@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { hasPermission } from '@/features/auth/utils/rbac';
+import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
@@ -16,8 +18,9 @@ import { PrintExaminationTicketModal } from '../components/print-examination-tic
 import { UpdatePatientModal } from '../components/update-patient-modal';
 import { TransferVisitRoomModal } from '../components/transfer-visit-room-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
-import { SCHEDULED_CHECKIN_APPOINTMENTS_MOCK, createMockCheckInResult } from '../data/checkin-mock';
+import { fetchCheckInResult } from '../api/reception.api';
 import type { CheckInSuccessResult, ScheduledCheckInAppointment } from '../types/checkin.types';
+import { useCheckInMutation, useReceptionPatientSearch } from '../hooks/use-reception-api';
 import { QueuePreviewTable } from '../components/queue-preview-table';
 import { ReceptionSidebar } from '../components/reception-sidebar';
 import { ReceptionStatCards } from '../components/reception-stat-cards';
@@ -25,24 +28,23 @@ import {
   PATIENT_UPDATE_MOCK,
   QUEUE_ENTRIES_MOCK,
   QUICK_ACTIONS_MOCK,
-  RECEPTION_STATS_MOCK,
-  TODAY_APPOINTMENTS_MOCK,
 } from '../data/reception-mock-data';
 import type { CreatePatientFormData, CreatedPatientResult } from '../types/create-patient.types';
 import type { AssignRoomVisitTarget } from '../types/assign-examination-room.types';
 import { findPatientDetailByCode } from '../data/patient-detail-mock';
-import type { QueueEntry, TodayAppointment } from '../types/reception.types';
+import type { QueueEntry, ReceptionStats } from '../types/reception.types';
 import type { UpdatePatientFormData } from '../types/update-patient.types';
 import type { TransferVisitRoomTarget } from '../types/visit-room-transfer.types';
 
 const APPOINTMENT_STATUS_LABEL: Record<
-  TodayAppointment['status'],
+  string,
   { label: string; tone: 'sky' | 'emerald' | 'rose' | 'slate' }
 > = {
   BOOKED: { label: 'Đã đặt', tone: 'sky' },
   CHECKED_IN: { label: 'Đã check-in', tone: 'emerald' },
   CANCELLED: { label: 'Đã hủy', tone: 'rose' },
   NO_SHOW: { label: 'Không đến', tone: 'slate' },
+  IN_CONSULTATION: { label: 'Đang khám', tone: 'emerald' },
 };
 
 // TODO(M2): thay bằng API tạo bệnh nhân khi backend sẵn sàng; hiện sinh mã cục bộ.
@@ -60,8 +62,10 @@ export function ReceptionDashboardPage() {
   const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
   const canAssignVisit = hasPermission(user?.roles, 'VISIT_ASSIGN');
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
-  const [appointments, setAppointments] = useState(TODAY_APPOINTMENTS_MOCK);
+  const searchQuery = useReceptionPatientSearch('', 'ALL');
+  const checkInMutation = useCheckInMutation();
   const [selectedCheckIn, setSelectedCheckIn] = useState<ScheduledCheckInAppointment | null>(null);
+  const [resultError, setResultError] = useState<string | null>(null);
   const [selectedCheckInResult, setSelectedCheckInResult] = useState<CheckInSuccessResult | null>(
     null,
   );
@@ -75,6 +79,64 @@ export function ReceptionDashboardPage() {
   const [assigningVisitTarget, setAssigningVisitTarget] = useState<AssignRoomVisitTarget | null>(
     null,
   );
+
+  const patientRows = searchQuery.data?.items ?? [];
+  const counts = searchQuery.data?.counts ?? {
+    all: 0,
+    hasAppointment: 0,
+    checkedIn: 0,
+    noAppointment: 0,
+  };
+  const stats: ReceptionStats = {
+    waitingCheckIn: Math.max(0, counts.hasAppointment - counts.checkedIn),
+    inQueue: counts.checkedIn,
+    inConsultation: 0,
+    completedToday: 0,
+  };
+  const appointments = patientRows
+    .filter((row) => row.todayAppointment)
+    .map((row) => ({
+      id: row.todayAppointment!.id,
+      time: row.todayAppointment!.time,
+      patientName: row.fullName,
+      patientCode: row.patientCode,
+      doctorName: row.todayAppointment!.doctorName,
+      department: row.todayAppointment!.department,
+      roomName: row.todayAppointment!.roomName,
+      status: row.todayAppointment!.status,
+    }));
+
+  const toScheduledCheckIn = (appointmentId: string): ScheduledCheckInAppointment | null => {
+    const row = patientRows.find((item) => item.todayAppointment?.id === appointmentId);
+    if (!row?.todayAppointment) return null;
+    const birthYear = Number.parseInt(row.dateOfBirth.slice(0, 4), 10);
+    return {
+      id: row.todayAppointment.id,
+      appointmentId: Number(row.todayAppointment.id),
+      appointmentCode: `#${row.todayAppointment.id}`,
+      patientCode: row.patientCode,
+      patientName: row.fullName,
+      gender: row.gender,
+      birthYear: Number.isFinite(birthYear) ? birthYear : 0,
+      identityCard: row.identityCard,
+      phoneNumber: row.phoneNumber,
+      doctorName: row.todayAppointment.doctorName,
+      department: row.todayAppointment.department,
+      roomName: row.todayAppointment.roomName,
+      time: row.todayAppointment.time,
+      date: todayLabel,
+      status: row.todayAppointment.status === 'CHECKED_IN' ? 'CHECKED_IN' : 'BOOKED',
+    };
+  };
+
+  const openCheckInResult = async (appointmentId: string) => {
+    setResultError(null);
+    try {
+      setSelectedCheckInResult(await fetchCheckInResult(appointmentId));
+    } catch (error) {
+      setResultError(getErrorMessage(error));
+    }
+  };
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
@@ -148,7 +210,12 @@ export function ReceptionDashboardPage() {
             </div>
           )}
 
-          <ReceptionStatCards stats={RECEPTION_STATS_MOCK} />
+          {resultError ? <Alert tone="error">{resultError}</Alert> : null}
+          {searchQuery.isError ? (
+            <Alert tone="error">{getErrorMessage(searchQuery.error)}</Alert>
+          ) : null}
+
+          <ReceptionStatCards stats={stats} />
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             {/* Queue preview */}
@@ -225,7 +292,8 @@ export function ReceptionDashboardPage() {
                     )}
                     onAction={(id) => {
                       if (id === 'check-in') {
-                        setSelectedCheckIn(SCHEDULED_CHECKIN_APPOINTMENTS_MOCK[0]);
+                        const next = appointments.find((item) => item.status === 'BOOKED');
+                        if (next) setSelectedCheckIn(toScheduledCheckIn(next.id));
                       } else if (id === 'new-patient') {
                         setCreateOpen(true);
                       } else if (id === 'walk-in') {
@@ -279,7 +347,7 @@ export function ReceptionDashboardPage() {
               <Card>
                 <CardHeader className="flex items-center justify-between">
                   <div className="text-sm font-bold text-slate-900">Lịch hẹn sắp tới</div>
-                  <Badge tone="amber">{TODAY_APPOINTMENTS_MOCK.length} ca</Badge>
+                  <Badge tone="amber">{appointments.length} ca</Badge>
                 </CardHeader>
                 <CardContent className="p-0">
                   <ul className="divide-y divide-slate-100">
@@ -296,34 +364,13 @@ export function ReceptionDashboardPage() {
                             {ap.doctorName} • {ap.department}
                           </div>
                         </div>
-                        <Badge tone={APPOINTMENT_STATUS_LABEL[ap.status].tone}>
-                          {APPOINTMENT_STATUS_LABEL[ap.status].label}
+                        <Badge tone={APPOINTMENT_STATUS_LABEL[ap.status]?.tone ?? 'slate'}>
+                          {APPOINTMENT_STATUS_LABEL[ap.status]?.label ?? ap.status}
                         </Badge>
                         {ap.status === 'BOOKED' && (
                           <button
                             type="button"
-                            onClick={() => {
-                              const found = SCHEDULED_CHECKIN_APPOINTMENTS_MOCK.find(
-                                (item) => item.id === ap.id,
-                              ) || {
-                                id: ap.id,
-                                appointmentCode: `APT-2024-${ap.id}`,
-                                patientCode: 'BN-2024-0018',
-                                patientName: ap.patientName,
-                                gender: 'MALE' as const,
-                                birthYear: 1988,
-                                identityCard: '001088012345',
-                                phoneNumber: '0912345678',
-                                healthInsuranceNumber: 'DN4010123456789',
-                                doctorName: ap.doctorName,
-                                department: ap.department,
-                                roomName: 'P.102',
-                                time: ap.time,
-                                date: 'Hôm nay',
-                                status: 'BOOKED' as const,
-                              };
-                              setSelectedCheckIn(found);
-                            }}
+                            onClick={() => setSelectedCheckIn(toScheduledCheckIn(ap.id))}
                             className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] shadow-2xs transition-colors shrink-0"
                           >
                             Check-in
@@ -332,28 +379,7 @@ export function ReceptionDashboardPage() {
                         {ap.status === 'CHECKED_IN' && (
                           <button
                             type="button"
-                            onClick={() => {
-                              const found = SCHEDULED_CHECKIN_APPOINTMENTS_MOCK.find(
-                                (item) => item.id === ap.id,
-                              ) || {
-                                id: ap.id,
-                                appointmentCode: `APT-2024-${ap.id}`,
-                                patientCode: 'BN-2024-0018',
-                                patientName: ap.patientName,
-                                gender: 'MALE' as const,
-                                birthYear: 1988,
-                                identityCard: '001088012345',
-                                phoneNumber: '0912345678',
-                                healthInsuranceNumber: 'DN4010123456789',
-                                doctorName: ap.doctorName,
-                                department: ap.department,
-                                roomName: 'P.102',
-                                time: ap.time,
-                                date: 'Hôm nay',
-                                status: 'CHECKED_IN' as const,
-                              };
-                              setSelectedCheckInResult(createMockCheckInResult(found));
-                            }}
+                            onClick={() => void openCheckInResult(ap.id)}
                             className="px-2.5 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-semibold text-[11px] transition-colors shrink-0"
                           >
                             Xem kết quả
@@ -378,13 +404,21 @@ export function ReceptionDashboardPage() {
         isOpen={!!selectedCheckIn}
         onClose={() => setSelectedCheckIn(null)}
         appointment={selectedCheckIn}
+        onSubmit={(form) =>
+          checkInMutation.mutateAsync({
+            appointmentIdOrCode: String(
+              selectedCheckIn?.appointmentId ?? selectedCheckIn?.id ?? '',
+            ),
+            form,
+          })
+        }
         onSuccess={() => {
-          if (selectedCheckIn) {
-            setAppointments((prev) =>
-              prev.map((item) =>
-                item.id === selectedCheckIn.id ? { ...item, status: 'CHECKED_IN' } : item,
-              ),
-            );
+          void searchQuery.refetch();
+        }}
+        onGoToRouting={(result) => {
+          setSelectedCheckIn(null);
+          if (result.visitCode) {
+            navigate(`/reception/routing?visitId=${encodeURIComponent(result.visitCode)}`);
           }
         }}
       />

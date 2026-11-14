@@ -69,7 +69,9 @@ export function CheckInResultContent({
         </h3>
         <p className="text-xs text-slate-500">
           Lượt khám kích hoạt:{' '}
-          <span className="font-mono font-bold text-slate-700">{result.visitId}</span>
+          <span className="font-mono font-bold text-slate-700">
+            {result.visitCode ?? result.visitId}
+          </span>
         </p>
       </div>
 
