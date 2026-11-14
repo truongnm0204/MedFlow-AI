@@ -19,6 +19,10 @@ public class PatientConfiguration : IEntityTypeConfiguration<Patient>
         builder.HasIndex(p => p.PatientCode).IsUnique().HasDatabaseName("uq_patients_patient_code");
 
         builder.Property(p => p.UserId).HasColumnName("user_id");
+        builder.HasIndex(p => p.UserId)
+            .IsUnique()
+            .HasFilter("user_id IS NOT NULL")
+            .HasDatabaseName("uq_patients_user_id");
         // FK + one-to-one with User is configured in UserConfiguration.
 
         builder.Property(p => p.FullName).HasColumnName("full_name").HasMaxLength(200).IsRequired();
