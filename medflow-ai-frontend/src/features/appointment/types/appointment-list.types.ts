@@ -18,6 +18,8 @@ export interface AppointmentMemberOption {
 export interface AppointmentListItem {
   id: string;
   appointmentCode: string;
+  visitId?: number | null;
+  visitCode?: string | null;
   patientId: string;
   patientCode: string;
   patientName: string;
