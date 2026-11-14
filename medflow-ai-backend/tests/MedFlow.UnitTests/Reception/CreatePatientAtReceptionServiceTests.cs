@@ -139,6 +139,15 @@ public sealed class CreatePatientAtReceptionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreatePatient_WithNineDigitIdentity_StoresHash()
+    {
+        var result = await _sut.CreatePatientAsync(ValidRequest("012345678"));
+
+        Assert.Equal("********5678", result.IdentityCardMasked);
+        Assert.Equal(Hash("012345678"), (await _db.Patients.SingleAsync()).IdentificationHash);
+    }
+
+    [Fact]
     public async Task CreatePatient_WithoutIdentityCard_StoresNullHash()
     {
         var result = await _sut.CreatePatientAsync(ValidRequest());
