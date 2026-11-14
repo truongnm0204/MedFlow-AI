@@ -1,0 +1,15 @@
+BEGIN;
+
+INSERT INTO permissions (code)
+SELECT 'PATIENT_IDENTITY_VERIFY'
+WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = 'PATIENT_IDENTITY_VERIFY');
+
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM roles r
+CROSS JOIN permissions p
+WHERE p.code = 'PATIENT_IDENTITY_VERIFY'
+  AND r.code IN ('HOSPITAL_ADMIN', 'SYSTEM_ADMIN')
+ON CONFLICT DO NOTHING;
+
+COMMIT;
