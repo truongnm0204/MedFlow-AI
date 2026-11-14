@@ -55,6 +55,8 @@ public sealed class AppointmentDetailEndpointTests : AuthTestBase
         Assert.Equal("APT-202610-0001", dto.AppointmentCode);
         Assert.Equal("COMPLETED", dto.Status);
         Assert.Equal("PAID_VIETQR", dto.PaymentStatus);
+        Assert.Equal(1, dto.VisitId);
+        Assert.Equal("VIS-202610-0001", dto.VisitCode);
         Assert.Equal("001", dto.QueueNumber);
         Assert.Equal("0900000001", dto.PatientPhone);
         Assert.Equal("Địa chỉ demo số 1, Hà Nội", dto.PatientAddress);
