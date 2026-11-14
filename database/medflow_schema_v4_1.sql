@@ -813,4 +813,16 @@ CREATE INDEX IF NOT EXISTS "ix_payment_gateway_events_payment_id"
 CREATE INDEX IF NOT EXISTS "ix_payment_gateway_events_payment_code"
   ON "payment_gateway_events" ("payment_code");
 
+-- 014_family_link_verification
+ALTER TABLE "patient_family_links" ADD COLUMN IF NOT EXISTS "verification_method" VARCHAR(16);
+ALTER TABLE "patient_family_links" ADD COLUMN IF NOT EXISTS "verified_by_staff_id" BIGINT REFERENCES "staff" ("id");
+ALTER TABLE "patient_family_links" ADD COLUMN IF NOT EXISTS "legacy_access_until" TIMESTAMP WITHOUT TIME ZONE;
+
+-- 015_patient_identification_hmac
+ALTER TABLE "patients" ADD COLUMN IF NOT EXISTS "identification_hash_hmac" VARCHAR(128);
+ALTER TABLE "patients" ADD COLUMN IF NOT EXISTS "hash_version" SMALLINT;
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_patients_identification_hash_hmac"
+  ON "patients" ("identification_hash_hmac");
+
+
 

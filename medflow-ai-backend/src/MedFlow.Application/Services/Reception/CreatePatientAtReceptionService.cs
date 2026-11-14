@@ -2,9 +2,11 @@ using System.ComponentModel.DataAnnotations;
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Options;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using DomainValidationException = MedFlow.Domain.Exceptions.ValidationException;
 using DomainConflictException = MedFlow.Domain.Exceptions.ConflictException;
 
@@ -14,11 +16,16 @@ public sealed class CreatePatientAtReceptionService : ICreatePatientAtReceptionS
 {
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _time;
+    private readonly IOptions<IdentityHashOptions>? _hashOptions;
 
-    public CreatePatientAtReceptionService(IApplicationDbContext db, TimeProvider time)
+    public CreatePatientAtReceptionService(
+        IApplicationDbContext db,
+        TimeProvider time,
+        IOptions<IdentityHashOptions>? hashOptions = null)
     {
         _db = db;
         _time = time;
+        _hashOptions = hashOptions;
     }
 
     public async Task<CreatePatientResponseDto> CreatePatientAsync(
@@ -55,13 +62,22 @@ public sealed class CreatePatientAtReceptionService : ICreatePatientAtReceptionS
             throw new DomainValidationException("Ngày sinh không được ở tương lai");
         }
 
-        string? hash = null;
+        string? legacyHash = null;
+        string? hmacHash = null;
         string? masked = null;
         if (normalized.IdentityCard is not null)
         {
             var canonicalId = IdentificationNumber.Normalize(normalized.IdentityCard);
-            hash = IdentificationNumber.ComputeSha256(canonicalId);
-            if (await _db.Patients.AnyAsync(p => p.IdentificationHash == hash, ct))
+            var key = IdentificationNumber.RequireKey(_hashOptions);
+            legacyHash = IdentificationNumber.ComputeSha256(canonicalId);
+            hmacHash = IdentificationNumber.ComputeHmac(canonicalId, key);
+
+            var allowFallback = IdentificationNumber.AllowShaFallback(_hashOptions);
+            var duplicated = await _db.Patients.AnyAsync(
+                p => p.IdentificationHashHmac == hmacHash ||
+                     (allowFallback && p.IdentificationHash == legacyHash),
+                ct);
+            if (duplicated)
             {
                 throw new DomainConflictException("CCCD đã tồn tại trong hệ thống");
             }
@@ -91,7 +107,9 @@ public sealed class CreatePatientAtReceptionService : ICreatePatientAtReceptionS
             Gender = normalized.Gender.ToUpperInvariant(),
             Phone = normalized.Phone,
             Email = normalized.Email,
-            IdentificationHash = hash,
+            IdentificationHash = legacyHash,
+            IdentificationHashHmac = hmacHash,
+            HashVersion = hmacHash is null ? null : IdentificationNumber.CurrentHashVersion,
             Address = address,
             BloodType = normalized.BloodType?.ToUpperInvariant(),
             Status = "ACTIVE",

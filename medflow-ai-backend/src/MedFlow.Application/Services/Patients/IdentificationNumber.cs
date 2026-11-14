@@ -1,7 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using MedFlow.Application.Options;
 using MedFlow.Domain.Exceptions;
+using Microsoft.Extensions.Options;
 
 namespace MedFlow.Application.Services.Patients;
 
@@ -12,6 +14,8 @@ namespace MedFlow.Application.Services.Patients;
 internal static class IdentificationNumber
 {
     public const string InvalidMessage = "Số CCCD/định danh không hợp lệ (cần 9 hoặc 12 chữ số).";
+    public const string MissingKeyMessage = "Identity:HashKey chưa được cấu hình.";
+    public const short CurrentHashVersion = 1;
 
     private static readonly Regex ValidDigits = new(@"^\d{9}$|^\d{12}$", RegexOptions.Compiled);
 
@@ -27,7 +31,25 @@ internal static class IdentificationNumber
         return compact;
     }
 
-    /// <summary>Tạm thời giữ SHA-256; G1 thay bằng HMAC có khóa (ADR 0045).</summary>
+    /// <summary>SHA-256 không khóa — chỉ dùng cho dual-read/dual-write trong giai đoạn chuyển tiếp.</summary>
     public static string ComputeSha256(string canonical)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+
+    public static string ComputeHmac(string canonical, string key)
+    {
+        var keyBytes = Encoding.UTF8.GetBytes(key);
+        var digest = Encoding.UTF8.GetBytes(ComputeSha256(canonical));
+        return Convert.ToHexString(HMACSHA256.HashData(keyBytes, digest)).ToLowerInvariant();
+    }
+
+    public static string RequireKey(IOptions<IdentityHashOptions>? options)
+    {
+        var key = options?.Value.HashKey;
+        if (string.IsNullOrWhiteSpace(key))
+            throw new InvalidOperationException(MissingKeyMessage);
+        return key;
+    }
+
+    public static bool AllowShaFallback(IOptions<IdentityHashOptions>? options)
+        => !string.Equals(options?.Value.Mode, "hmac", StringComparison.OrdinalIgnoreCase);
 }

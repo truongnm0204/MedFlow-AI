@@ -12,6 +12,8 @@ public class Patient
     public string? Email { get; set; }
     /// <summary>SHA-256 HMAC hash of identity number — never store plaintext.</summary>
     public string? IdentificationHash { get; set; }
+    public string? IdentificationHashHmac { get; set; }
+    public short? HashVersion { get; set; }
     public string Status { get; set; } = "ACTIVE";
     public string? Address { get; set; }
     public string? BloodType { get; set; }
