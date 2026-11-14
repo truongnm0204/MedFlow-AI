@@ -116,7 +116,7 @@ public sealed class GenerateQrPaymentEndpointTests : AuthTestBase
     [Fact]
     public async Task Create_HospitalWithoutVietQrPolicy_Returns409()
     {
-        var seeded = await SeedAsync(10_000m, withPolicy: false);
+        var seeded = await SeedAsync(10_000m, withPolicy: false, isolatedHospital: true);
         try
         {
             var response = await Client.SendAsync(AuthedPost($"/api/v1/visits/{seeded.VisitId}/payments/qr"));
@@ -143,13 +143,34 @@ public sealed class GenerateQrPaymentEndpointTests : AuthTestBase
         return request;
     }
 
-    private async Task<Seed> SeedAsync(decimal price, bool withPolicy, string? paymentMethod = null)
+    private async Task<Seed> SeedAsync(
+        decimal price,
+        bool withPolicy,
+        string? paymentMethod = null,
+        bool isolatedHospital = false)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var staff = await Db.Staff.AsNoTracking().FirstAsync(s => s.UserId == 5);
+        var hospitalId = staff.HospitalId;
+        long? isolatedHospitalId = null;
+
+        if (isolatedHospital)
+        {
+            var hospital = new Hospital
+            {
+                HospitalCode = $"QRH{suffix}"[..10],
+                Name = "Co so QR test",
+                IsActive = true,
+            };
+            Db.Hospitals.Add(hospital);
+            await Db.SaveChangesAsync();
+            isolatedHospitalId = hospital.Id;
+            hospitalId = hospital.Id;
+        }
+
         var room = new HospitalRoom
         {
-            HospitalId = staff.HospitalId,
+            HospitalId = hospitalId,
             RoomCode = $"QR{suffix}"[..8],
             Name = "Phong QR test",
             RoomType = "EXAMINATION",
@@ -176,7 +197,7 @@ public sealed class GenerateQrPaymentEndpointTests : AuthTestBase
         });
 
         long? policyId = null;
-        if (withPolicy && staff.HospitalId is long hospitalId)
+        if (withPolicy)
         {
             var policy = new HospitalPolicy
             {
@@ -199,7 +220,7 @@ public sealed class GenerateQrPaymentEndpointTests : AuthTestBase
         {
             Db.AuditLogs.Add(new AuditLog
             {
-                HospitalId = staff.HospitalId,
+                HospitalId = hospitalId,
                 Action = "WALK_IN_VISIT_CREATED",
                 EntityType = "VISIT",
                 EntityId = visit.Id.ToString(),
@@ -209,7 +230,7 @@ public sealed class GenerateQrPaymentEndpointTests : AuthTestBase
             await Db.SaveChangesAsync();
         }
 
-        return new Seed(visit.Id, visit.VisitCode!, room.Id, policyId);
+        return new Seed(visit.Id, visit.VisitCode!, room.Id, policyId, isolatedHospitalId);
     }
 
     private async Task CleanupAsync(Seed seeded)
@@ -238,10 +259,22 @@ public sealed class GenerateQrPaymentEndpointTests : AuthTestBase
                 Db.HospitalPolicies.Remove(policy);
         }
 
+        if (seeded.HospitalId is long isolatedHospitalId)
+        {
+            var hospital = await Db.Hospitals.FirstOrDefaultAsync(h => h.Id == isolatedHospitalId);
+            if (hospital is not null)
+                Db.Hospitals.Remove(hospital);
+        }
+
         await Db.SaveChangesAsync();
     }
 
     private static JsonSerializerOptions JsonOptions() => new(JsonSerializerDefaults.Web);
 
-    private sealed record Seed(long VisitId, string VisitCode, long RoomId, long? PolicyId);
+    private sealed record Seed(
+        long VisitId,
+        string VisitCode,
+        long RoomId,
+        long? PolicyId,
+        long? HospitalId);
 }
