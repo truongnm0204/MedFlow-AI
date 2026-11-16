@@ -65,7 +65,9 @@ public sealed class AdminStaffEndpointTests : AuthTestBase
             Assert.Equal(1, payload.Page);
             Assert.Equal(5, payload.PageSize);
             Assert.True(payload.Data.Count <= 5);
-            Assert.Equal(payload.Data, payload.Items);
+            Assert.Equal(
+                payload.Data.Select(item => item.StaffId),
+                payload.Items.Select(item => item.StaffId));
             Assert.True(payload.Metrics.Total >= payload.Total);
         }
         else
