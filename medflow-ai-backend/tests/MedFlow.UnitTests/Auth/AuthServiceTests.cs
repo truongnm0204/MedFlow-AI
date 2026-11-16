@@ -436,6 +436,24 @@ public sealed class AuthServiceTests : IDisposable
         Assert.Equal("Sai thông tin đăng nhập", ex.Message);
     }
 
+    [Fact]
+    public async Task LoginAsync_GoogleAccountWithoutPasswordHash_ThrowsGenericUnauthorized()
+    {
+        var user = await SeedUserAsync(email: "google@medflow.test");
+        user.AuthProvider = "GOOGLE";
+        user.PasswordHash = null;
+        await _db.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.LoginAsync(new LoginRequest
+            {
+                Email = user.Email,
+                Password = DefaultPassword,
+            }, "127.0.0.1"));
+
+        Assert.Equal("Sai thông tin đăng nhập", exception.Message);
+    }
+
     [Theory]
     [InlineData(AccountStatus.PENDING)]
     [InlineData(AccountStatus.INACTIVE)]

@@ -150,6 +150,12 @@ public class AuthService : IAuthService
         if (user is null || user.AccountStatus != AccountStatus.ACTIVE)
             throw new UnauthorizedAccessException(invalidMsg);
 
+        if (!string.Equals(user.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrEmpty(user.PasswordHash))
+        {
+            throw new UnauthorizedAccessException(invalidMsg);
+        }
+
         ApplyLockoutRules(user);
 
         var result = _passwordHasher.VerifyHashedPassword(null!, user.PasswordHash!, request.Password);

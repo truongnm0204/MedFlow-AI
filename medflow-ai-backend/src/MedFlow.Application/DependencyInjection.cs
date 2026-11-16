@@ -64,6 +64,7 @@ public static class DependencyInjection
         services.AddScoped<IDiagnosticServiceExecutionService, DiagnosticServiceExecutionService>();
         services.AddScoped<IDiagnosticResultEntryService, DiagnosticResultEntryService>();
         services.AddScoped<IRoleCatalogService, RoleCatalogService>();
+        services.AddScoped<IStaffAccountService, StaffAccountService>();
         services.AddScoped<IPharmacyDashboardService, PharmacyDashboardService>();
         services.AddScoped<IPrescriptionSearchService, PrescriptionSearchService>();
         services.AddScoped<IPrepareMedicinesService, PrepareMedicinesService>();
