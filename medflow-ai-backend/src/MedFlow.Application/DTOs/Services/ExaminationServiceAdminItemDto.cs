@@ -21,6 +21,8 @@ public sealed record ExaminationServiceAdminItemDto(
     string BookingChannel,
     bool RequiresResultVerification,
     bool IsActive,
-    string Status
+    string Status,
+    bool? HasActiveBookings = null,
+    int? ActiveBookingsCount = null
 );
 
