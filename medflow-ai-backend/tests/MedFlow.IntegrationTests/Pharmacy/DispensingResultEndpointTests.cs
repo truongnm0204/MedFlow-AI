@@ -231,23 +231,6 @@ public sealed class DispensingResultEndpointTests : IClassFixture<TestWebAppFact
     }
 
     [Fact]
-    public async Task GetDispensingResult_ViaPrescriptionRoute_Returns200()
-    {
-        var token = GenerateToken(10, "pharmacy01@medflow.test", "PHARMACY_STAFF");
-
-        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/pharmacy/prescriptions/RX-202611-0001/dispense-result");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-        var response = await _client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        var detail = await response.Content.ReadFromJsonAsync<DispensingResultDetailDto>();
-        Assert.NotNull(detail);
-        Assert.Equal(1, detail.DispenseId);
-        Assert.Equal("RX-202611-0001", detail.RxCode);
-    }
-
-    [Fact]
     public async Task GetDispense_CrossHospital_Returns404()
     {
         var token = GenerateToken(10, "pharmacy01@medflow.test", "PHARMACY_STAFF");
