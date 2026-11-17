@@ -7,19 +7,6 @@ using MedFlow.Domain.Exceptions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-        if (!string.Equals(user.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase) ||
-            string.IsNullOrWhiteSpace(user.PasswordHash))
-        {
-            throw new UnauthorizedAccessException(invalidMsg);
-        }
-
-        if (result.User.AccountStatus != AccountStatus.ACTIVE ||
-            (result.User.LockedUntil.HasValue && result.User.LockedUntil.Value > DateTime.UtcNow))
-        {
-            await _sessionService.RevokeAllForUserAsync(result.User.Id, ipAddress, ct);
-            throw new UnauthorizedAccessException("Refresh token không hợp lệ");
-        }
-
 
 namespace MedFlow.Application.Services.Auth;
 
@@ -163,6 +150,12 @@ public class AuthService : IAuthService
         if (user is null || user.AccountStatus != AccountStatus.ACTIVE)
             throw new UnauthorizedAccessException(invalidMsg);
 
+        if (!string.Equals(user.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(user.PasswordHash))
+        {
+            throw new UnauthorizedAccessException(invalidMsg);
+        }
+
         ApplyLockoutRules(user);
 
         var result = _passwordHasher.VerifyHashedPassword(null!, user.PasswordHash!, request.Password);
@@ -241,6 +234,13 @@ public class AuthService : IAuthService
 
         if (!result.Success || result.Entity is null || result.User is null)
             throw new UnauthorizedAccessException("Refresh token không hợp lệ");
+
+        if (result.User.AccountStatus != AccountStatus.ACTIVE ||
+            (result.User.LockedUntil.HasValue && result.User.LockedUntil.Value > DateTime.UtcNow))
+        {
+            await _sessionService.RevokeAllForUserAsync(result.User.Id, ipAddress, ct);
+            throw new UnauthorizedAccessException("Refresh token không hợp lệ");
+        }
 
         var roles = await _db.UserRoles
             .Where(ur => ur.UserId == result.User.Id)

@@ -2,17 +2,10 @@ using System.Security.Cryptography;
 using System.Text;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Domain.Entities;
+using MedFlow.Domain.Enums;
 using MedFlow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using MedFlow.Domain.Enums;
-        if (existing.User.AccountStatus != AccountStatus.ACTIVE ||
-            (existing.User.LockedUntil.HasValue && existing.User.LockedUntil.Value > DateTime.UtcNow))
-        {
-            await RevokeAllForUserAsync(existing.UserId, ipAddress, ct);
-            return new RotateResult { User = existing.User };
-        }
-
 
 namespace MedFlow.Infrastructure.Identity;
 
@@ -63,6 +56,13 @@ public class AuthSessionService : IAuthSessionService
 
         if (existing.ExpiresAt <= DateTime.UtcNow)
             return new RotateResult { User = existing.User };
+
+        if (existing.User.AccountStatus != AccountStatus.ACTIVE ||
+            (existing.User.LockedUntil.HasValue && existing.User.LockedUntil.Value > DateTime.UtcNow))
+        {
+            await RevokeAllForUserAsync(existing.UserId, ipAddress, ct);
+            return new RotateResult { User = existing.User };
+        }
 
         var newToken = await GenerateAsync(existing.UserId, ipAddress, ct);
 

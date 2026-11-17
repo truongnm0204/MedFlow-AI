@@ -19,7 +19,6 @@ using MedFlow.Application.Services.SystemAdmin;
 using MedFlow.Application.Services.Payments;
 using MedFlow.Application.Services.Visits;
 using Microsoft.Extensions.DependencyInjection;
-        services.AddScoped<IStaffAccountUpdateService, StaffAccountUpdateService>();
 
 namespace MedFlow.Application;
 
@@ -65,6 +64,7 @@ public static class DependencyInjection
         services.AddScoped<IDiagnosticServiceExecutionService, DiagnosticServiceExecutionService>();
         services.AddScoped<IDiagnosticResultEntryService, DiagnosticResultEntryService>();
         services.AddScoped<IRoleCatalogService, RoleCatalogService>();
+        services.AddScoped<IStaffAccountUpdateService, StaffAccountUpdateService>();
         services.AddScoped<IPharmacyDashboardService, PharmacyDashboardService>();
         services.AddScoped<IPrescriptionSearchService, PrescriptionSearchService>();
         services.AddScoped<IPrepareMedicinesService, PrepareMedicinesService>();
