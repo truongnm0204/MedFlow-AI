@@ -1,6 +1,10 @@
 using MedFlow.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+        builder.Property<uint>("xmin")
+            .HasColumnName("xmin")
+            .IsRowVersion();
+
 
 namespace MedFlow.Infrastructure.Persistence.Configurations;
 

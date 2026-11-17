@@ -19,6 +19,7 @@ using MedFlow.Application.Services.SystemAdmin;
 using MedFlow.Application.Services.Payments;
 using MedFlow.Application.Services.Visits;
 using Microsoft.Extensions.DependencyInjection;
+        services.AddScoped<IStaffAccountUpdateService, StaffAccountUpdateService>();
 
 namespace MedFlow.Application;
 

@@ -7,6 +7,19 @@ using MedFlow.Domain.Exceptions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+        if (!string.Equals(user.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(user.PasswordHash))
+        {
+            throw new UnauthorizedAccessException(invalidMsg);
+        }
+
+        if (result.User.AccountStatus != AccountStatus.ACTIVE ||
+            (result.User.LockedUntil.HasValue && result.User.LockedUntil.Value > DateTime.UtcNow))
+        {
+            await _sessionService.RevokeAllForUserAsync(result.User.Id, ipAddress, ct);
+            throw new UnauthorizedAccessException("Refresh token không hợp lệ");
+        }
+
 
 namespace MedFlow.Application.Services.Auth;
 

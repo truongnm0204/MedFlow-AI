@@ -13,6 +13,61 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
+        public List<(long UserId, string? IpAddress)> RevokedUsers { get; } = [];
+        {
+            RevokedUsers.Add((userId, ipAddress));
+            return Task.CompletedTask;
+        }
+    [Fact]
+    public async Task LoginAsync_GoogleAccountWithoutPasswordHash_ThrowsUnauthorized()
+    {
+        var user = await SeedUserAsync(email: "google@medflow.test");
+        user.AuthProvider = "GOOGLE";
+        user.PasswordHash = null;
+        await _db.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.LoginAsync(new LoginRequest
+            {
+                Email = "google@medflow.test",
+                Password = DefaultPassword,
+            }, "127.0.0.1"));
+
+        Assert.Equal("Sai thông tin đăng nhập", ex.Message);
+    }
+
+    public async Task RefreshAsync_LockedUserAfterRotation_RevokesSessionsAndThrowsUnauthorized()
+    {
+        var user = await SeedUserAsync(
+            email: "locked-refresh@medflow.test",
+            status: AccountStatus.LOCKED);
+        _sessions.NextRotateResult = new RotateResult
+        {
+            Success = true,
+            User = user,
+            Entity = new AuthSession
+            {
+                Id = 100,
+                UserId = user.Id,
+                ExpiresAt = DateTime.UtcNow.AddDays(7),
+            },
+            RawToken = "must-not-be-returned",
+        };
+
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.RefreshAsync(new RefreshRequest
+            {
+                RefreshToken = "locked-user-token",
+            }, "10.0.0.12"));
+
+        Assert.Equal("Refresh token không hợp lệ", ex.Message);
+        var revoked = Assert.Single(_sessions.RevokedUsers);
+        Assert.Equal(user.Id, revoked.UserId);
+        Assert.Equal("10.0.0.12", revoked.IpAddress);
+        Assert.Empty(_jwt.Calls);
+    }
+
+    [Fact]
 
 namespace MedFlow.UnitTests.Auth;
 

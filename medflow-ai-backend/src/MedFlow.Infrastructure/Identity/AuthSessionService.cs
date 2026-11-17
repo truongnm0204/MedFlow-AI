@@ -5,6 +5,14 @@ using MedFlow.Domain.Entities;
 using MedFlow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using MedFlow.Domain.Enums;
+        if (existing.User.AccountStatus != AccountStatus.ACTIVE ||
+            (existing.User.LockedUntil.HasValue && existing.User.LockedUntil.Value > DateTime.UtcNow))
+        {
+            await RevokeAllForUserAsync(existing.UserId, ipAddress, ct);
+            return new RotateResult { User = existing.User };
+        }
+
 
 namespace MedFlow.Infrastructure.Identity;
 
