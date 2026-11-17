@@ -516,7 +516,7 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     [Fact]
     public async Task DeactivateExaminationService_NotFound_Returns404()
     {
-        var token = GenerateToken(1, "hospital_admin_deact@medflow.test", "HOSPITAL_ADMIN", "SYSTEM_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-services/99999999/deactivate");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);

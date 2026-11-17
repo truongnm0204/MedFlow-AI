@@ -10,7 +10,6 @@ namespace MedFlow.API.Controllers;
 [ApiController]
 [Route("api/v1/admin/examination-services")]
 [Route("api/v1/admin/services")]
-[Route("api/v1/examination-services")]
 [Authorize(Roles = "HOSPITAL_ADMIN,SYSTEM_ADMIN")]
 public sealed class AdminExaminationServicesController : ControllerBase
 {
