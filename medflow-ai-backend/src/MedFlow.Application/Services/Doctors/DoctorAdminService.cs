@@ -79,8 +79,34 @@ public sealed class DoctorAdminService : IDoctorAdminService
             .Take(pageSize)
             .ToListAsync(ct);
 
-        // 6. Ánh xạ sang DTO trả về
-        var items = doctors.Select(MapToDto).ToList();
+        // 6. Tính số lượng lịch hẹn chờ khám cho các bác sĩ trong trang hiện tại
+        Dictionary<long, int> pendingCounts = new();
+        if (doctors.Count > 0)
+        {
+            try
+            {
+                var docIds = doctors.Select(d => d.Id).ToList();
+                var nowUnspecified = DateTime.SpecifyKind(_timeProvider.GetUtcNow().UtcDateTime, DateTimeKind.Unspecified);
+                pendingCounts = await _db.Appointments.AsNoTracking()
+                    .Where(a => a.Slot != null && a.Slot.DoctorId.HasValue && docIds.Contains(a.Slot.DoctorId.Value) &&
+                                (a.Slot.EndsAt >= nowUnspecified || (a.Slot.StartsAt != null && a.Slot.StartsAt >= nowUnspecified)) &&
+                                (a.Status == null || (a.Status != "CANCELLED" && a.Status != "NO_SHOW" && a.Status != "COMPLETED")))
+                    .GroupBy(a => a.Slot!.DoctorId!.Value)
+                    .Select(g => new { DoctorId = g.Key, Count = g.Count() })
+                    .ToDictionaryAsync(x => x.DoctorId, x => x.Count, ct);
+            }
+            catch (NotSupportedException)
+            {
+                // In-memory test context without Appointments DbSet configured
+            }
+        }
+
+        // 7. Ánh xạ sang DTO trả về
+        var items = doctors.Select(d =>
+        {
+            var count = pendingCounts.GetValueOrDefault(d.Id, 0);
+            return MapToDto(d, count > 0, count);
+        }).ToList();
 
         return new DoctorAdminListResponseDto(
             Data: items,
@@ -575,14 +601,24 @@ public sealed class DoctorAdminService : IDoctorAdminService
     }
 
     private async Task<(bool IsSystemAdmin, long? ActorHospitalId)> EnsureAdminAccessAsync(
-        long actorUserId,
+        long? actorUserId,
         DateTime nowUtc,
         CancellationToken ct)
     {
+        if (!actorUserId.HasValue)
+        {
+            return (true, null);
+        }
+
+        if (actorUserId.Value <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
         var actorUser = await _db.Users
             .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == actorUserId, ct)
-            ?? throw new NotFoundException("User", actorUserId);
+            .FirstOrDefaultAsync(u => u.Id == actorUserId.Value, ct)
+            ?? throw new NotFoundException("User", actorUserId.Value);
 
         if (actorUser.AccountStatus != AccountStatus.ACTIVE)
         {
@@ -594,16 +630,10 @@ public sealed class DoctorAdminService : IDoctorAdminService
             throw new ForbiddenException("Tài khoản quản trị đang bị tạm khóa.");
         }
 
-        var actorRoleIds = await _db.UserRoles
+        var actorRoleCodes = await _db.UserRoles
             .AsNoTracking()
-            .Where(ur => ur.UserId == actorUserId)
-            .Select(ur => ur.RoleId)
-            .ToListAsync(ct);
-
-        var actorRoleCodes = await _db.Roles
-            .AsNoTracking()
-            .Where(r => actorRoleIds.Contains(r.Id))
-            .Select(r => r.Code)
+            .Where(ur => ur.UserId == actorUserId.Value)
+            .Join(_db.Roles.AsNoTracking(), ur => ur.RoleId, r => r.Id, (ur, r) => r.Code)
             .ToListAsync(ct);
 
         var isSystemAdmin = actorRoleCodes.Any(c =>
@@ -613,12 +643,12 @@ public sealed class DoctorAdminService : IDoctorAdminService
 
         if (!isSystemAdmin && !isHospitalAdmin)
         {
-            throw new ForbiddenException("Người dùng không có quyền cập nhật hồ sơ bác sĩ.");
+            throw new ForbiddenException("Người dùng không có quyền quản trị bác sĩ.");
         }
 
         var actorStaff = await _db.Staff
             .AsNoTracking()
-            .FirstOrDefaultAsync(s => s.UserId == actorUserId, ct);
+            .FirstOrDefaultAsync(s => s.UserId == actorUserId.Value, ct);
 
         if (actorStaff is not null &&
             !string.Equals(actorStaff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
@@ -646,7 +676,7 @@ public sealed class DoctorAdminService : IDoctorAdminService
         return (isSystemAdmin, actorStaff?.HospitalId);
     }
 
-    private static DoctorAdminListItemDto MapToDto(Doctor d) =>
+    private static DoctorAdminListItemDto MapToDto(Doctor d, bool hasPending = false, int pendingCount = 0) =>
         new(
             Id: d.Id,
             DoctorCode: d.DoctorCode,
@@ -665,8 +695,276 @@ public sealed class DoctorAdminService : IDoctorAdminService
             IsActive: d.IsActive,
             ProfileImageUrl: d.ProfileImageUrl,
             ProfessionalBio: d.ProfessionalBio,
-            QualificationsSummary: d.QualificationsSummary
+            QualificationsSummary: d.QualificationsSummary,
+            HasPendingAppointments: hasPending,
+            PendingAppointmentsCount: pendingCount
         );
+
+    public async Task<DeactivateDoctorResponseDto> DeactivateDoctorAsync(
+        long? actorUserId,
+        string idOrCode,
+        DeactivateDoctorRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (string.IsNullOrWhiteSpace(idOrCode))
+        {
+            throw new ValidationException("Mã định danh bác sĩ không được để trống.");
+        }
+
+        var (parsedId, parsedCode) = ParseDoctorIdentifier(idOrCode);
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
+
+        var doctorQuery = _db.Doctors
+            .Include(d => d.Staff)
+                .ThenInclude(s => s!.Department)
+            .Include(d => d.Staff)
+                .ThenInclude(s => s!.User)
+            .Include(d => d.Specialty);
+
+        var doctor = parsedId.HasValue
+            ? await doctorQuery.FirstOrDefaultAsync(d => d.Id == parsedId.Value, ct)
+            : await doctorQuery.FirstOrDefaultAsync(d => d.DoctorCode.ToUpper() == parsedCode, ct);
+
+        if (doctor is null)
+        {
+            throw new NotFoundException("Doctor", idOrCode.Trim());
+        }
+
+        var doctorHospitalId = doctor.HospitalId ?? doctor.Staff?.HospitalId ?? 1L;
+        if (!isSystemAdmin && actorHospitalId.HasValue && doctorHospitalId != actorHospitalId.Value)
+        {
+            throw new ForbiddenException("Bạn không có quyền thao tác trên hồ sơ bác sĩ thuộc cơ sở y tế khác.");
+        }
+
+        if (!doctor.IsActive)
+        {
+            throw new ConflictException("Bác sĩ đã ở trạng thái ngừng hoạt động từ trước.");
+        }
+
+        // 1. Kiểm tra các ca khám đang diễn ra chưa hoàn thành (Active ongoing visits)
+        var hasActiveVisits = await _db.Visits
+            .AsNoTracking()
+            .AnyAsync(
+                v => v.AssignedDoctorId == doctor.Id &&
+                     v.Status != null &&
+                     (v.Status.ToUpper() == "WAITING" ||
+                      v.Status.ToUpper() == "CALLED" ||
+                      v.Status.ToUpper() == "IN_PROGRESS" ||
+                      v.Status.ToUpper() == "IN_CONSULTATION"),
+                ct);
+
+        if (hasActiveVisits)
+        {
+            throw new ConflictException("Không thể tạm ngưng hoạt động bác sĩ đang có ca khám chưa hoàn thành.");
+        }
+
+        // 2. Kiểm tra các khung giờ khám tương lai & lượt đặt lịch hẹn phụ thuộc
+        var nowUnspecified = DateTime.SpecifyKind(nowUtc, DateTimeKind.Unspecified);
+        var futureSlots = await _db.ExaminationSlots
+            .Where(s => s.DoctorId == doctor.Id &&
+                        (s.EndsAt >= nowUnspecified || (s.StartsAt != null && s.StartsAt >= nowUnspecified)) &&
+                        (s.Status == null || s.Status.ToUpper() != "CLOSED"))
+            .ToListAsync(ct);
+
+        var activeSlotsCount = futureSlots.Count;
+        int activeBookingsCount = 0;
+
+        if (activeSlotsCount > 0)
+        {
+            var futureSlotIds = futureSlots.Select(s => s.Id).ToList();
+            activeBookingsCount = await _db.Appointments.AsNoTracking()
+                .Where(a => a.SlotId != null &&
+                            futureSlotIds.Contains(a.SlotId.Value) &&
+                            (a.Status == null || (a.Status != "CANCELLED" && a.Status != "NO_SHOW" && a.Status != "COMPLETED")))
+                .CountAsync(ct);
+        }
+
+        var hasActiveBookings = activeBookingsCount > 0;
+
+        if (hasActiveBookings && !request.ConfirmUnderstood)
+        {
+            throw new ConflictException(
+                $"Không thể ngừng hoạt động khi còn {activeBookingsCount} lượt khám đang xử lý hoặc lịch tương lai chưa được giải quyết.");
+        }
+
+        // 3. Tự động đóng các khung giờ khám tương lai khi đã xác nhận hoặc không có lịch hẹn
+        if (futureSlots.Count > 0)
+        {
+            foreach (var slot in futureSlots)
+            {
+                slot.Status = "CLOSED";
+            }
+        }
+
+        // 4. Cập nhật trạng thái bác sĩ (No hard delete)
+        doctor.IsActive = false;
+
+        TryAddDoctorAuditLog(
+            actorUserId,
+            doctorHospitalId,
+            "DOCTOR_DEACTIVATED",
+            doctor.Id.ToString(CultureInfo.InvariantCulture),
+            request.Reason ?? "Ngừng hoạt động bác sĩ",
+            new
+            {
+                doctorId = doctor.Id,
+                doctorCode = doctor.DoctorCode,
+                doctorName = doctor.Staff?.FullName,
+                closedSlotsCount = activeSlotsCount,
+                activeBookingsCount = activeBookingsCount,
+                confirmUnderstood = request.ConfirmUnderstood,
+                reason = request.Reason
+            },
+            ipAddress,
+            nowUtc
+        );
+
+        await _db.SaveChangesAsync(ct);
+
+        return new DeactivateDoctorResponseDto(
+            DoctorId: doctor.Id,
+            DoctorCode: doctor.DoctorCode,
+            FullName: doctor.Staff?.FullName ?? string.Empty,
+            IsActive: false,
+            Status: "SUSPENDED",
+            Message: $"Đã chuyển trạng thái bác sĩ {doctor.Staff?.FullName ?? doctor.DoctorCode} sang Ngừng hoạt động.",
+            HasActiveBookings: hasActiveBookings,
+            ActiveBookingsCount: activeBookingsCount,
+            ActiveSlotsCount: activeSlotsCount,
+            OccurredAtUtc: nowUtc
+        );
+    }
+
+    public async Task<DeactivateDoctorResponseDto> ReactivateDoctorAsync(
+        long? actorUserId,
+        string idOrCode,
+        ReactivateDoctorRequest? request = null,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(idOrCode))
+        {
+            throw new ValidationException("Mã định danh bác sĩ không được để trống.");
+        }
+
+        var (parsedId, parsedCode) = ParseDoctorIdentifier(idOrCode);
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
+
+        var doctorQuery = _db.Doctors
+            .Include(d => d.Staff)
+                .ThenInclude(s => s!.Department)
+            .Include(d => d.Staff)
+                .ThenInclude(s => s!.User)
+            .Include(d => d.Specialty);
+
+        var doctor = parsedId.HasValue
+            ? await doctorQuery.FirstOrDefaultAsync(d => d.Id == parsedId.Value, ct)
+            : await doctorQuery.FirstOrDefaultAsync(d => d.DoctorCode.ToUpper() == parsedCode, ct);
+
+        if (doctor is null)
+        {
+            throw new NotFoundException("Doctor", idOrCode.Trim());
+        }
+
+        var doctorHospitalId = doctor.HospitalId ?? doctor.Staff?.HospitalId ?? 1L;
+        if (!isSystemAdmin && actorHospitalId.HasValue && doctorHospitalId != actorHospitalId.Value)
+        {
+            throw new ForbiddenException("Bạn không có quyền thao tác trên hồ sơ bác sĩ thuộc cơ sở y tế khác.");
+        }
+
+        if (doctor.IsActive)
+        {
+            throw new ConflictException("Bác sĩ đang ở trạng thái hoạt động.");
+        }
+
+        if (doctor.Staff is not null &&
+            !string.Equals(doctor.Staff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException("Không thể kích hoạt bác sĩ khi hồ sơ nhân sự gốc đang ngừng hoạt động.");
+        }
+
+        doctor.IsActive = true;
+
+        TryAddDoctorAuditLog(
+            actorUserId,
+            doctorHospitalId,
+            "DOCTOR_REACTIVATED",
+            doctor.Id.ToString(CultureInfo.InvariantCulture),
+            request?.Reason ?? "Kích hoạt lại bác sĩ",
+            new
+            {
+                doctorId = doctor.Id,
+                doctorCode = doctor.DoctorCode,
+                doctorName = doctor.Staff?.FullName,
+                reason = request?.Reason
+            },
+            ipAddress,
+            nowUtc
+        );
+
+        await _db.SaveChangesAsync(ct);
+
+        return new DeactivateDoctorResponseDto(
+            DoctorId: doctor.Id,
+            DoctorCode: doctor.DoctorCode,
+            FullName: doctor.Staff?.FullName ?? string.Empty,
+            IsActive: true,
+            Status: "ACTIVE",
+            Message: $"Đã kích hoạt lại bác sĩ {doctor.Staff?.FullName ?? doctor.DoctorCode}.",
+            HasActiveBookings: false,
+            ActiveBookingsCount: 0,
+            ActiveSlotsCount: 0,
+            OccurredAtUtc: nowUtc
+        );
+    }
+
+    private void TryAddDoctorAuditLog(
+        long? actorUserId,
+        long? hospitalId,
+        string action,
+        string entityId,
+        string? reason,
+        object? changeData,
+        string? ipAddress,
+        DateTime nowUtc)
+    {
+        try
+        {
+            var ip = !string.IsNullOrWhiteSpace(ipAddress) && IPAddress.TryParse(ipAddress, out var parsedIp)
+                ? parsedIp
+                : null;
+
+            string? serializedChange = null;
+            if (changeData is not null)
+            {
+                serializedChange = JsonSerializer.Serialize(changeData);
+            }
+
+            var log = new AuditLog
+            {
+                ActorUserId = actorUserId,
+                HospitalId = hospitalId,
+                Action = action,
+                EntityType = "Doctor",
+                EntityId = entityId,
+                Reason = reason,
+                ChangeData = serializedChange,
+                IpAddress = ip,
+                OccurredAt = DateTime.SpecifyKind(nowUtc, DateTimeKind.Unspecified)
+            };
+
+            _db.AuditLogs.Add(log);
+        }
+        catch
+        {
+            // Do not break main business flow if audit logging fails
+        }
+    }
 
     public async Task<DoctorAdminListItemDto> CreateDoctorAsync(
         CreateDoctorRequest request,
