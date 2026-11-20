@@ -4,14 +4,19 @@ import {
   assignDoctorToVisit,
   assignRoomToVisit,
   checkInScheduledPatient,
+  createPatientAtReception,
   createWalkInVisit,
   fetchAssignableDoctors,
   fetchAvailableRooms,
+  fetchPatientDetail,
   fetchWalkInCatalog,
   searchReceptionPatients,
+  updatePatientAtReception,
 } from '../api/reception.api';
 import type { AssignDoctorPayload } from '../types/assign-doctor.types';
 import type { CheckInFormData } from '../types/checkin.types';
+import type { CreatePatientFormData } from '../types/create-patient.types';
+import type { PatientEditableFields } from '../types/update-patient.types';
 import type { ClinicalPriority, PaymentMethod, WalkInPatient } from '../types/walk-in-visit.types';
 
 const searchKey = (query: string, tab: string) => ['reception', 'search', query, tab] as const;
@@ -84,5 +89,33 @@ export function useAvailableRooms(visitIdOrCode: string) {
 export function useAssignRoomMutation(visitIdOrCode: string) {
   return useMutation({
     mutationFn: (roomId: string) => assignRoomToVisit(visitIdOrCode, roomId),
+  });
+}
+
+export function usePatientDetail(idOrCode: string | null) {
+  return useQuery({
+    queryKey: ['reception', 'patient', idOrCode],
+    queryFn: () => fetchPatientDetail(idOrCode!),
+    enabled: Boolean(idOrCode),
+  });
+}
+
+export function useUpdatePatientMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { idOrCode: string; values: PatientEditableFields }) =>
+      updatePatientAtReception(input.idOrCode, input.values),
+    onSuccess: (_data, input) => {
+      queryClient.invalidateQueries({ queryKey: ['reception', 'patient', input.idOrCode] });
+      queryClient.invalidateQueries({ queryKey: ['reception', 'search'] });
+    },
+  });
+}
+
+export function useCreatePatientMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreatePatientFormData) => createPatientAtReception(data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['reception', 'search'] }),
   });
 }
