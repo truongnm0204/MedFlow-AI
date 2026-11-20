@@ -2,6 +2,8 @@ import axios from 'axios';
 
 import { apiClient } from '@/shared/lib/axios';
 
+import { DISPENSING_RESULT_MOCK } from '../data/dispensing-result-mock';
+import type { DispensingResultDetail } from '../types/dispensing-result.types';
 import { PHARMACY_DASHBOARD_MOCK } from '../data/pharmacy-mock-data';
 import type {
   PharmacyDashboardQueryParams,
@@ -41,4 +43,33 @@ export async function fetchPharmacyDashboardSummary(
   }
 
   return PHARMACY_DASHBOARD_MOCK;
+}
+
+/**
+ * Lấy chi tiết kết quả cấp phát thuốc / biên nhận bàn giao (`GET /pharmacy/dispenses/:idOrCode`).
+ * Khi backend chưa có dữ liệu hoặc offline (404/network), fallback về mock;
+ * các lỗi phân quyền/nghiệp vụ (401/403/500...) được rethrow để UI hiển thị trạng thái lỗi.
+ */
+export async function fetchDispensingResult(idOrCode: string): Promise<DispensingResultDetail> {
+  const trimmed = idOrCode?.trim() || '';
+  const hasToken =
+    typeof window !== 'undefined' && Boolean(window.localStorage?.getItem('medflow.access_token'));
+
+  if (hasToken && trimmed) {
+    try {
+      const { data } = await apiClient.get<DispensingResultDetail>(
+        `/pharmacy/dispenses/${encodeURIComponent(trimmed)}`,
+      );
+      return data;
+    } catch (error) {
+      if (!shouldFallbackToMock(error)) {
+        throw error;
+      }
+    }
+  }
+
+  return {
+    ...DISPENSING_RESULT_MOCK,
+    dispenseCode: trimmed || DISPENSING_RESULT_MOCK.dispenseCode,
+  };
 }
