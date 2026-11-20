@@ -30,7 +30,7 @@ import { ReceptionSidebar } from '../components/reception-sidebar';
 import { UpdateQueueStatusModal } from '../components/update-queue-status-modal';
 import { ReturnToDoctorQueueModal } from '../components/return-to-doctor-queue-modal';
 import { DEFAULT_QUEUE_DATE } from '../data/examination-queue-mock';
-import { findPatientDetailByCode } from '../data/patient-detail-mock';
+import { usePatientDetail } from '../hooks/use-reception-api';
 import { useCallNextEligiblePatient, useExaminationQueue } from '../hooks/use-examination-queue';
 import {
   examinationQueueFilterSchema,
@@ -114,7 +114,8 @@ export function ExaminationQueuePage() {
   const [callNextResult, setCallNextResult] = useState<CallNextPatientResponseDto | null>(null);
   const [callNextError, setCallNextError] = useState<string | null>(null);
   const callNextMutation = useCallNextEligiblePatient();
-  const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
+  const patientDetailQuery = usePatientDetail(selectedPatientCode);
+  const selectedPatient = patientDetailQuery.data ?? null;
 
   const { data, isPending, isError, error, refetch } = useExaminationQueue({
     queueDate: appliedFilters.queueDate,
