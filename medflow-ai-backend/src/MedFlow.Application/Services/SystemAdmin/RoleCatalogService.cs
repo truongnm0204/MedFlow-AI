@@ -1417,6 +1417,11 @@ public sealed class RoleCatalogService : IRoleCatalogService
         return (items, permissions.Count);
     }
 
+    internal static string GetBaselineStatus(string roleCode) =>
+        RoleMetadataCatalog.TryGetValue(roleCode, out var metadata)
+            ? metadata.Status
+            : "ACTIVE";
+
     private static RoleCatalogMetadata GetRoleMetadata(Role role)
     {
         if (RoleMetadataCatalog.TryGetValue(role.Code, out var metadata))
