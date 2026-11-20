@@ -79,36 +79,3 @@ public sealed record ConfirmDispenseRequest(
     string? Notes = null
 );
 
-public sealed record DispensedLineItemDto(
-    string Id,
-    int OrderIndex,
-    string DrugName,
-    string DosageForm,
-    decimal QtyDispensed,
-    string Unit,
-    string BatchCode,
-    string ExpiryDate,
-    string ShelfLocation,
-    string UnitPriceFormatted,
-    string LineTotalFormatted
-);
-
-public sealed record DispensingResultDetailDto(
-    long DispenseId,
-    string DispenseCode,
-    string RxCode,
-    string VisitCode,
-    string TicketNo,
-    string PatientName,
-    string PatientCode,
-    string ReceiverName,
-    string ReceiverIdentityMasked,
-    string PrescribingDoctor,
-    string DispensingPharmacist,
-    string DispensedAt,
-    string StatusLabel,
-    string PaymentSummary,
-    string TotalAmountFormatted,
-    IReadOnlyList<DispensedLineItemDto> Items,
-    string AuditNote
-);
