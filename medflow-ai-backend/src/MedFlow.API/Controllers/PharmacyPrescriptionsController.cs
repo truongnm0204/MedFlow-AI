@@ -73,7 +73,6 @@ public sealed class PharmacyPrescriptionsController(
     /// GET /api/v1/pharmacy/prescriptions/{idOrCode}/dispense-result — Xem biên nhận kết quả cấp phát thuốc (UC46 / SCR-PHA-04).
     /// </summary>
     [HttpGet("{idOrCode}/dispense-result")]
-    [HttpGet("/api/v1/pharmacy/dispenses/{idOrCode}")]
     [HttpGet("/api/v1/pharmacy/dispensing/{idOrCode}")]
     [ProducesResponseType<DispensingResultDetailDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]

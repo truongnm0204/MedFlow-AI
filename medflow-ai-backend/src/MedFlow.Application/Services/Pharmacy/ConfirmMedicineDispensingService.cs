@@ -715,7 +715,9 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             PaymentSummary: paymentSummary,
             TotalAmountFormatted: totalAmountFormatted,
             Items: lines,
-            AuditNote: auditNote
+            AuditNote: auditNote,
+            PrescriptionId: prescription.Id,
+            TotalAmount: totalAmount
         );
     }
 
