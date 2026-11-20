@@ -455,3 +455,150 @@ export async function assignRoomToVisit(
   });
   return { roomName: data.roomName, queueNumber: data.queueNumber };
 }
+
+// --- Patient detail / update / create ---------------------------------------
+
+import type { PatientDetail, PatientTodayAppointment } from '../types/patient-detail.types';
+import type { PatientEditableFields } from '../types/update-patient.types';
+import type { CreatePatientFormData, CreatedPatientResult } from '../types/create-patient.types';
+
+interface EmergencyContactDto {
+  name: string;
+  relationship: string;
+  phone: string;
+}
+
+interface TodayAppointmentDetailDto {
+  id: number;
+  appointmentCode: string;
+  time: string;
+  timeRange: string;
+  doctorName: string;
+  department: string;
+  roomName: string;
+  status: string;
+  visitCode: string | null;
+}
+
+interface PastVisitSummaryDto {
+  id: number;
+  visitCode: string;
+  date: string;
+  department: string;
+  doctorName: string;
+  diagnosis: string;
+}
+
+interface PatientDetailResponseDto {
+  id: number;
+  patientCode: string;
+  fullName: string;
+  gender: string;
+  age: number;
+  dateOfBirth: string;
+  cccd: string;
+  phone: string;
+  bhytNumber: string | null;
+  healthInsuranceNumber: string | null;
+  address: string;
+  emergencyContact: EmergencyContactDto | null;
+  todayAppointment: TodayAppointmentDetailDto | null;
+  pastVisits: PastVisitSummaryDto[];
+}
+
+const GENDERS: Record<string, PatientDetail['gender']> = {
+  MALE: 'MALE',
+  FEMALE: 'FEMALE',
+  OTHER: 'OTHER',
+};
+
+const TODAY_APPT_STATUS: Record<string, PatientTodayAppointment['status']> = {
+  BOOKED: 'BOOKED',
+  ARRIVED: 'ARRIVED',
+  CHECKED_IN: 'ARRIVED',
+  IN_PROGRESS: 'IN_PROGRESS',
+  IN_CONSULTATION: 'IN_PROGRESS',
+  DONE: 'DONE',
+  COMPLETED: 'DONE',
+};
+
+function mapTodayAppointmentStatus(status: string): PatientTodayAppointment['status'] {
+  return TODAY_APPT_STATUS[status?.toUpperCase() ?? ''] ?? 'BOOKED';
+}
+
+function mapPatientDetail(data: PatientDetailResponseDto): PatientDetail {
+  return {
+    id: String(data.id),
+    patientCode: data.patientCode,
+    fullName: data.fullName,
+    gender: GENDERS[data.gender?.toUpperCase() ?? ''] ?? 'OTHER',
+    age: data.age,
+    dateOfBirth: data.dateOfBirth,
+    cccd: data.cccd,
+    phone: data.phone,
+    bhytNumber: data.bhytNumber ?? data.healthInsuranceNumber ?? null,
+    address: data.address,
+    emergencyContact: data.emergencyContact
+      ? {
+          name: data.emergencyContact.name,
+          relationship: data.emergencyContact.relationship,
+          phone: data.emergencyContact.phone,
+        }
+      : null,
+    todayAppointment: data.todayAppointment
+      ? {
+          timeRange: data.todayAppointment.timeRange,
+          doctorName: data.todayAppointment.doctorName,
+          room: data.todayAppointment.roomName,
+          status: mapTodayAppointmentStatus(data.todayAppointment.status),
+        }
+      : null,
+    pastVisits: (data.pastVisits ?? []).map((v) => ({
+      id: String(v.id),
+      date: v.date,
+      department: v.department,
+      doctorName: v.doctorName,
+      diagnosis: v.diagnosis,
+    })),
+  };
+}
+
+export async function fetchPatientDetail(idOrCode: string): Promise<PatientDetail> {
+  const { data } = await apiClient.get<PatientDetailResponseDto>(
+    `/reception/patients/${encodeURIComponent(idOrCode)}`,
+  );
+  return mapPatientDetail(data);
+}
+
+export async function updatePatientAtReception(
+  idOrCode: string,
+  values: PatientEditableFields,
+): Promise<void> {
+  await apiClient.put(`/reception/patients/${encodeURIComponent(idOrCode)}`, {
+    fullName: values.fullName,
+    dateOfBirth: values.dateOfBirth || null,
+    gender: values.gender || null,
+    phone: values.phone,
+    address: values.address,
+    identityCard: values.nationalId || null,
+    email: values.email || null,
+  });
+}
+
+export async function createPatientAtReception(
+  data: CreatePatientFormData,
+): Promise<CreatedPatientResult> {
+  const { data: res } = await apiClient.post<{ patientCode: string; fullName: string }>(
+    '/reception/patients',
+    {
+      fullName: data.fullName,
+      dateOfBirth: data.dateOfBirth || null,
+      gender: data.gender,
+      phone: data.phone,
+      address: data.address,
+      identityCard: data.identityCard || null,
+      email: data.email || null,
+    },
+  );
+  return { patientCode: res.patientCode, fullName: res.fullName };
+}
