@@ -39,6 +39,7 @@ public static class DependencyInjection
         services.AddScoped<IPatientProfileService, PatientProfileService>();
         services.AddScoped<IFamilyProfileService, FamilyProfileService>();
         services.AddScoped<IPatientDiagnosticResultService, PatientDiagnosticResultService>();
+        services.AddScoped<IPatientPrescriptionService, PatientPrescriptionService>();
         services.AddScoped<IPatientIdentityClaimService, PatientIdentityClaimService>();
         services.AddScoped<IAppointmentPolicyService, AppointmentPolicyService>();
         services.AddScoped<IQueuePolicyService, QueuePolicyService>();
@@ -54,6 +55,7 @@ public static class DependencyInjection
         services.AddScoped<IAppointmentStatusTrackingService, AppointmentStatusTrackingService>();
         services.AddScoped<IAppointmentQueueTrackingService, AppointmentQueueTrackingService>();
         services.AddScoped<ISystemAdminDashboardService, SystemAdminDashboardService>();
+        services.AddScoped<IStaffAccountListService, StaffAccountListService>();
         services.AddScoped<IHospitalAdminDashboardService, HospitalAdminDashboardService>();
         services.AddScoped<IDoctorDashboardService, DoctorDashboardService>();
         services.AddScoped<IDiagnosticDashboardService, DiagnosticDashboardService>();
@@ -64,9 +66,11 @@ public static class DependencyInjection
         services.AddScoped<IDiagnosticServiceExecutionService, DiagnosticServiceExecutionService>();
         services.AddScoped<IDiagnosticResultEntryService, DiagnosticResultEntryService>();
         services.AddScoped<IRoleCatalogService, RoleCatalogService>();
+        services.AddScoped<IStaffAccountUpdateService, StaffAccountUpdateService>();
         services.AddScoped<IPharmacyDashboardService, PharmacyDashboardService>();
         services.AddScoped<IPrescriptionSearchService, PrescriptionSearchService>();
         services.AddScoped<IPrepareMedicinesService, PrepareMedicinesService>();
+        services.AddScoped<IConfirmMedicineDispensingService, ConfirmMedicineDispensingService>();
         services.AddScoped<IVisitRoomTransferService, VisitRoomTransferService>();
         services.AddScoped<IVisitTicketService, VisitTicketService>();
         services.AddScoped<IVisitRoomAssignmentService, VisitRoomAssignmentService>();
