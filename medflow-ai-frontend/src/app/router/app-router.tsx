@@ -56,6 +56,8 @@ import { HomePage } from '@/features/home/pages/home-page';
 import { HospitalAdminDashboardPage } from '@/features/hospital-admin/pages/hospital-admin-dashboard-page';
 import { PatientDiagnosticResultPage } from '@/features/patient/pages/patient-diagnostic-result-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
+import { VisitPaymentPage } from '@/features/payment/pages/visit-payment-page';
+import { MyVisitsPage } from '@/features/payment/pages/my-visits-page';
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
 import { PrescriptionSearchPage } from '@/features/pharmacy/pages/prescription-search-page';
 import { AssignRoomPage } from '@/features/reception/pages/assign-room-page';
@@ -117,6 +119,30 @@ export function AppRouter() {
       <Route path="/appointments/:appointmentId/print" element={<AppointmentPrintPreviewPage />} />
       <Route path="/appointments/:appointmentId/queue" element={<AppointmentQueueTrackingPage />} />
       <Route path="/appointments/:appointmentId" element={<AppointmentDetailPage />} />
+      <Route
+        path="/patient/visits"
+        element={
+          <RequireAuth>
+            <MyVisitsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/payments/visits/:visitIdOrCode"
+        element={
+          <RequireAuth>
+            <VisitPaymentPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/patient/payments/visits/:visitIdOrCode"
+        element={
+          <RequireAuth>
+            <VisitPaymentPage />
+          </RequireAuth>
+        }
+      />
       <Route
         path="/patient"
         element={

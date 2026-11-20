@@ -16,16 +16,40 @@ internal static class VisitWalkInAudits
         long visitId,
         CancellationToken ct)
     {
-        var entityId = visitId.ToString(CultureInfo.InvariantCulture);
+        var all = await LoadManyAsync(db, [visitId], ct);
+        return all.TryGetValue(visitId, out var audits) ? audits : [];
+    }
+
+    /// <summary>Load walk-in audit cho nhiều visit trong một truy vấn, giữ thứ tự id giảm dần.</summary>
+    public static async Task<Dictionary<long, List<WalkInAudit>>> LoadManyAsync(
+        IApplicationDbContext db,
+        IReadOnlyList<long> visitIds,
+        CancellationToken ct)
+    {
+        var result = visitIds.ToDictionary(id => id, _ => new List<WalkInAudit>());
+        if (visitIds.Count == 0)
+            return result;
+
+        var entityIds = visitIds.Select(id => id.ToString(CultureInfo.InvariantCulture)).ToList();
         var rows = await db.AuditLogs.AsNoTracking()
             .Where(a =>
-                a.EntityId == entityId &&
+                a.EntityId != null &&
+                entityIds.Contains(a.EntityId) &&
                 a.EntityType.ToUpper() == EntityType &&
                 a.Action.ToUpper() == Action)
             .OrderByDescending(a => a.Id)
             .ToListAsync(ct);
 
-        return rows.Select(Parse).ToList();
+        foreach (var row in rows)
+        {
+            if (row.EntityId is null ||
+                !long.TryParse(row.EntityId, NumberStyles.None, CultureInfo.InvariantCulture, out var visitId) ||
+                !result.TryGetValue(visitId, out var audits))
+                continue;
+            audits.Add(Parse(row));
+        }
+
+        return result;
     }
 
     public static string? NormalizePaymentMethod(string? raw)

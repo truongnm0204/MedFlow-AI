@@ -14,15 +14,18 @@ public sealed class PatientsController : ControllerBase
     private readonly IPatientProfileService _profileService;
     private readonly IFamilyProfileService _familyProfileService;
     private readonly IPatientDiagnosticResultService _diagnosticResultService;
+    private readonly IPatientVisitListService _visitListService;
 
     public PatientsController(
         IPatientProfileService profileService,
         IFamilyProfileService familyProfileService,
-        IPatientDiagnosticResultService diagnosticResultService)
+        IPatientDiagnosticResultService diagnosticResultService,
+        IPatientVisitListService visitListService)
     {
         _profileService = profileService;
         _familyProfileService = familyProfileService;
         _diagnosticResultService = diagnosticResultService;
+        _visitListService = visitListService;
     }
 
     /// <summary>GET /api/v1/patients/me/profile — Xem thông tin hồ sơ cá nhân của bệnh nhân đang đăng nhập.</summary>
@@ -33,6 +36,16 @@ public sealed class PatientsController : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<PatientProfileResponse>> GetMyProfile(CancellationToken ct)
         => Ok(await _profileService.GetPersonalProfileAsync(GetUserId(), ct));
+
+    /// <summary>GET /api/v1/patients/me/visits — Danh sách lượt khám thuộc quyền xem của bệnh nhân (UC18 / #778).</summary>
+    [HttpGet("me/visits")]
+    [ProducesResponseType<PatientVisitListResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<PatientVisitListResponseDto>> GetMyVisits(
+        [FromQuery] int? limit = null,
+        CancellationToken ct = default)
+        => Ok(await _visitListService.GetMyVisitsAsync(GetUserId(), limit, ct));
 
     /// <summary>GET /api/v1/patients/me/family-members — Xem danh sách hồ sơ người thân của bệnh nhân đang đăng nhập.</summary>
     [HttpGet("me/family-members")]
