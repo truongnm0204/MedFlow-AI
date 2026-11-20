@@ -14,18 +14,21 @@ public sealed class PatientsController : ControllerBase
     private readonly IPatientProfileService _profileService;
     private readonly IFamilyProfileService _familyProfileService;
     private readonly IPatientDiagnosticResultService _diagnosticResultService;
+    private readonly IPatientPrescriptionService _prescriptionService;
     private readonly IPatientIdentityClaimService _identityClaimService;
 
     public PatientsController(
         IPatientProfileService profileService,
         IFamilyProfileService familyProfileService,
         IPatientDiagnosticResultService diagnosticResultService,
-        IPatientIdentityClaimService identityClaimService)
+        IPatientIdentityClaimService identityClaimService,
+        IPatientPrescriptionService prescriptionService)
     {
         _profileService = profileService;
         _familyProfileService = familyProfileService;
         _diagnosticResultService = diagnosticResultService;
         _identityClaimService = identityClaimService;
+        _prescriptionService = prescriptionService;
     }
 
     /// <summary>GET /api/v1/patients/me/profile — Xem thông tin hồ sơ cá nhân của bệnh nhân đang đăng nhập.</summary>
@@ -160,6 +163,30 @@ public sealed class PatientsController : ControllerBase
         CancellationToken ct)
         => Ok(await _diagnosticResultService.GetMyResultAsync(GetUserId(), idOrCode, ct));
 
+    /// <summary>GET /api/v1/patients/me/prescriptions — Xem danh sách đơn thuốc của bệnh nhân đang đăng nhập.</summary>
+    [HttpGet("me/prescriptions")]
+    [ProducesResponseType<PatientPrescriptionListResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PatientPrescriptionListResponseDto>> GetMyPrescriptions(
+        [FromQuery] GetPatientPrescriptionsRequest? request,
+        CancellationToken ct)
+        => Ok(await _prescriptionService.GetMyPrescriptionsAsync(GetUserId(), request, ct, GetIp()));
+
+    /// <summary>GET /api/v1/patients/me/prescriptions/{idOrCode} — Xem thuốc và hướng dẫn sử dụng của một đơn thuốc.</summary>
+    [HttpGet("me/prescriptions/{idOrCode}")]
+    [ProducesResponseType<PatientPrescriptionDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PatientPrescriptionDetailDto>> GetMyPrescription(
+        string idOrCode,
+        CancellationToken ct)
+        => Ok(await _prescriptionService.GetMyPrescriptionAsync(GetUserId(), idOrCode, ct, GetIp()));
+
     /// <summary>DELETE /api/v1/patients/me/family-members/{identifier} — Gỡ liên kết hồ sơ người thân.</summary>
     [HttpDelete("me/family-members/{identifier}")]
     [HttpDelete("me/family-profiles/{identifier}")]
@@ -178,6 +205,10 @@ public sealed class PatientsController : ControllerBase
         await _familyProfileService.RemoveFamilyMemberAsync(GetUserId(), identifier, finalReason, ct);
         return NoContent();
     }
+
+    private string? GetIp() =>
+        HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
+        ?? HttpContext.Connection.RemoteIpAddress?.ToString();
 
     private long GetUserId()
     {
