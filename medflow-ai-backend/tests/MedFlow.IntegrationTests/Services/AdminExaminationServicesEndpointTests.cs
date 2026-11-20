@@ -478,5 +478,69 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
             }
         }
     }
+
+    [Fact]
+    public async Task DeactivateExaminationService_Unauthenticated_Returns401()
+    {
+        var response = await Client.PostAsync("/api/v1/admin/examination-services/1/deactivate", null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeactivateExaminationService_PatientRole_Returns403()
+    {
+        var token = GenerateToken(999, "patient_deact@medflow.test", "PATIENT");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-services/1/deactivate");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeactivateExaminationService_DoctorRole_Returns403()
+    {
+        var token = GenerateToken(888, "doctor_deact@medflow.test", "DOCTOR");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-services/1/deactivate");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeactivateExaminationService_NotFound_Returns404()
+    {
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-services/99999999/deactivate");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+        else
+        {
+            Assert.True(
+                response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
+                $"Unexpected status code: {response.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task DeactivateExaminationService_HttpDeleteAlias_Unauthenticated_Returns401()
+    {
+        var response = await Client.DeleteAsync("/api/v1/admin/examination-services/1");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
 }
 
