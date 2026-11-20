@@ -58,3 +58,25 @@ export interface GenerateQrPaymentResponse {
   transferContent: string;
   issueKind: QrPaymentIssueKind;
 }
+
+// ── Patient visit list (GET /patients/me/visits) ───────────────────────────────
+
+export interface PatientVisitListItemDto {
+  visitId: number;
+  visitCode: string | null;
+  visitStatus: string | null;
+  checkedInAt: string | null;
+  completedAt: string | null;
+  hospitalName: string | null;
+  paymentStatus: string | null;
+  paymentCode: string | null;
+}
+
+export interface PatientVisitListResponseDto {
+  items: PatientVisitListItemDto[];
+}
+
+// Aliases used by the my-visits / visit-payment pages (UC18).
+export type QrPaymentResponseDto = GenerateQrPaymentResponse;
+export type VisitChargesResponseDto = VisitChargesResponse;
+export type VisitChargeLineDto = VisitChargeLine;

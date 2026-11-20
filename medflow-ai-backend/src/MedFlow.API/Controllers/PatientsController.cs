@@ -16,19 +16,22 @@ public sealed class PatientsController : ControllerBase
     private readonly IPatientDiagnosticResultService _diagnosticResultService;
     private readonly IPatientPrescriptionService _prescriptionService;
     private readonly IPatientIdentityClaimService _identityClaimService;
+    private readonly IPatientVisitListService _visitListService;
 
     public PatientsController(
         IPatientProfileService profileService,
         IFamilyProfileService familyProfileService,
         IPatientDiagnosticResultService diagnosticResultService,
         IPatientIdentityClaimService identityClaimService,
-        IPatientPrescriptionService prescriptionService)
+        IPatientPrescriptionService prescriptionService,
+        IPatientVisitListService visitListService)
     {
         _profileService = profileService;
         _familyProfileService = familyProfileService;
         _diagnosticResultService = diagnosticResultService;
         _identityClaimService = identityClaimService;
         _prescriptionService = prescriptionService;
+        _visitListService = visitListService;
     }
 
     /// <summary>GET /api/v1/patients/me/profile — Xem thông tin hồ sơ cá nhân của bệnh nhân đang đăng nhập.</summary>
@@ -40,6 +43,15 @@ public sealed class PatientsController : ControllerBase
     public async Task<ActionResult<PatientProfileResponse>> GetMyProfile(CancellationToken ct)
         => Ok(await _profileService.GetPersonalProfileAsync(GetUserId(), ct));
 
+    /// <summary>GET /api/v1/patients/me/visits — Danh sách lượt khám thuộc quyền xem của bệnh nhân (UC18 / #778).</summary>
+    [HttpGet("me/visits")]
+    [ProducesResponseType<PatientVisitListResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<PatientVisitListResponseDto>> GetMyVisits(
+        [FromQuery] int? limit = null,
+        CancellationToken ct = default)
+        => Ok(await _visitListService.GetMyVisitsAsync(GetUserId(), limit, ct));
     /// <summary>POST /api/v1/patients/me/identity-claims/otp — Gửi OTP step-up cho yêu cầu liên kết hồ sơ.</summary>
     [HttpPost("me/identity-claims/otp")]
     [ProducesResponseType<SendIdentityClaimOtpResponse>(StatusCodes.Status200OK)]

@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom';
-import { ArrowRight, ChevronRight, Home, Info, QrCode, RefreshCw } from 'lucide-react';
+import { ArrowRight, ChevronRight, CreditCard, Home, Info, QrCode, RefreshCw } from 'lucide-react';
 
 import { AppHeader } from '@/shared/components/layout/app-header';
 import { PatientFooter } from '@/shared/components/layout/patient-footer';
@@ -86,15 +86,27 @@ export function AppointmentQueueTrackingPage() {
               </section>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
-                <Link
-                  to={`/appointments/${data.appointmentId}/print`}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-white px-6 py-3 text-sm font-semibold text-navy transition-colors hover:bg-canvas"
-                >
-                  <QrCode className="h-4 w-4" aria-hidden="true" />
-                  <span>Xem phiếu hẹn &amp; Mã QR</span>
-                </Link>
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <Link
+                    to={`/appointments/${data.appointmentId}/print`}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-white px-6 py-3 text-sm font-semibold text-navy transition-colors hover:bg-canvas"
+                  >
+                    <QrCode className="h-4 w-4" aria-hidden="true" />
+                    <span>Xem phiếu hẹn &amp; Mã QR</span>
+                  </Link>
 
-                <Button variant="primary" size="lg" type="button" onClick={() => void refetch()}>
+                  {data.status !== 'AWAITING_CHECK_IN' ? (
+                    <Link
+                      to={`/payments/visits/${encodeURIComponent(data.visitCode)}`}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-primary-dark focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      <CreditCard className="h-4 w-4" aria-hidden="true" />
+                      <span>Thanh toán viện phí</span>
+                    </Link>
+                  ) : null}
+                </div>
+
+                <Button variant="secondary" size="lg" type="button" onClick={() => void refetch()}>
                   <RefreshCw
                     className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`}
                     aria-hidden="true"
