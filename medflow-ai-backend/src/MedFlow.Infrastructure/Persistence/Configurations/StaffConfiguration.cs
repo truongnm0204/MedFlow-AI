@@ -23,6 +23,10 @@ public class StaffConfiguration : IEntityTypeConfiguration<Staff>
         builder.Property(s => s.FullName).HasColumnName("full_name").HasMaxLength(200).IsRequired();
         builder.Property(s => s.Status).HasColumnName("status").HasMaxLength(16);
 
+        builder.Property<uint>("xmin")
+            .HasColumnName("xmin")
+            .IsRowVersion();
+
         builder.HasIndex(s => new { s.HospitalId, s.StaffCode })
             .IsUnique()
             .HasDatabaseName("uq_staff_hospital_id_staff_code");
