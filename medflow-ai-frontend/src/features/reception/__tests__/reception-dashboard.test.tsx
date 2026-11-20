@@ -51,7 +51,7 @@ describe('ReceptionDashboardPage', () => {
     expect(screen.getByText('Hoàn tất hôm nay')).toBeInTheDocument();
   });
 
-  it('render queue table voi mock entries', () => {
+  it('render queue table voi mock entries', async () => {
     useAuthStore.setState({
       user: null,
       accessToken: 'tok',
@@ -62,8 +62,8 @@ describe('ReceptionDashboardPage', () => {
     renderPage();
 
     expect(screen.getByText('Hàng đợi hiện tại')).toBeInTheDocument();
-    expect(screen.getByText('A012')).toBeInTheDocument();
-    expect(screen.getByText('Nguyễn Văn An')).toBeInTheDocument();
+    expect(await screen.findByText('A012')).toBeInTheDocument();
+    expect(await screen.findByText('Nguyễn Văn An')).toBeInTheDocument();
   });
 
   it('mo modal chuyen phong tuong thich tu bang hang doi va khoa ca dang kham', async () => {
@@ -83,12 +83,12 @@ describe('ReceptionDashboardPage', () => {
     const user = userEvent.setup();
     renderPage();
 
-    const inProgressBtn = screen.getByRole('button', {
+    const inProgressBtn = await screen.findByRole('button', {
       name: 'Chuyển phòng khám cho Nguyễn Văn An',
     });
     expect(inProgressBtn).toBeDisabled();
 
-    const calledBtn = screen.getByRole('button', {
+    const calledBtn = await screen.findByRole('button', {
       name: 'Chuyển phòng khám cho Trần Thị Bích',
     });
     expect(calledBtn).not.toBeDisabled();
@@ -117,10 +117,12 @@ describe('ReceptionDashboardPage', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(screen.getByRole('button', { name: 'Phân buồng khám cho Lê Minh Cường' }));
+    await user.click(
+      await screen.findByRole('button', { name: 'Phân buồng khám cho Vũ Thị Phương' }),
+    );
 
     expect(await screen.findByText('Phân buồng khám lâm sàng (UC27)')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('VIS-202610-0009')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('VIS-2026-0106')).toBeInTheDocument();
   });
 
   it('an thao tac chuyen buong kham khi nguoi dung khong co quyen VISIT_ASSIGN', () => {
