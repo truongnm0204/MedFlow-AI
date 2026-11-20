@@ -8,7 +8,7 @@ public class Staff
     public long? DepartmentId { get; set; }
     public string StaffCode { get; set; } = string.Empty;
     public string FullName { get; set; } = string.Empty;
-    public string Status { get; set; } = "ACTIVE";
+    public string? Status { get; set; }
 
     public User? User { get; set; }
     public Department? Department { get; set; }
