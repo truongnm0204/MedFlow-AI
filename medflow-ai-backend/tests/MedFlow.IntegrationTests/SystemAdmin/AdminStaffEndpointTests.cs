@@ -30,7 +30,7 @@ public sealed class AdminStaffEndpointTests : AuthTestBase
     [Fact]
     public async Task GetStaffAccounts_NonAdminRole_Returns403()
     {
-        using var request = AuthorizedRequest(11, "doctor01@medflow.test", "DOCTOR");
+        using var request = AuthorizedRequest(HttpMethod.Get, "/api/v1/admin/staff", 11, "doctor01@medflow.test", "DOCTOR");
 
         var response = await Client.SendAsync(request);
 
@@ -40,7 +40,7 @@ public sealed class AdminStaffEndpointTests : AuthTestBase
     [Fact]
     public async Task GetStaffAccounts_InvalidPaging_Returns400BeforeDatabaseQuery()
     {
-        using var request = AuthorizedRequest(13, "system_admin01@medflow.test", "SYSTEM_ADMIN", "?page=0");
+        using var request = AuthorizedRequest(HttpMethod.Get, "/api/v1/admin/staff?page=0", 13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
 
         var response = await Client.SendAsync(request);
 
@@ -51,10 +51,11 @@ public sealed class AdminStaffEndpointTests : AuthTestBase
     public async Task GetStaffAccounts_SystemAdmin_ReturnsContract_WhenDatabaseAvailable()
     {
         using var request = AuthorizedRequest(
+            HttpMethod.Get,
+            "/api/v1/admin/staff?page=1&pageSize=5",
             13,
             "system_admin01@medflow.test",
-            "SYSTEM_ADMIN",
-            "?page=1&pageSize=5");
+            "SYSTEM_ADMIN");
 
         var response = await Client.SendAsync(request);
 
@@ -89,7 +90,7 @@ public sealed class AdminStaffEndpointTests : AuthTestBase
     [Fact]
     public async Task GetStaffAccounts_ForgedSystemAdminClaim_Returns403_WhenDatabaseAvailable()
     {
-        using var request = AuthorizedRequest(1, "patient01@medflow.test", "SYSTEM_ADMIN");
+        using var request = AuthorizedRequest(HttpMethod.Get, "/api/v1/admin/staff", 1, "patient01@medflow.test", "SYSTEM_ADMIN");
 
         var response = await Client.SendAsync(request);
 
@@ -101,11 +102,55 @@ public sealed class AdminStaffEndpointTests : AuthTestBase
         }
     }
 
+    [Fact]
+    public async Task Deactivate_Unauthenticated_Returns401()
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Patch,
+            "/api/v1/admin/staff/20/deactivate");
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Deactivate_NonSystemAdminRole_Returns403()
+    {
+        using var request = AuthorizedRequest(
+            HttpMethod.Patch,
+            "/api/v1/admin/staff/20/deactivate",
+            200,
+            "doctor@medflow.test",
+            "DOCTOR");
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Deactivate_SystemAdminWithMissingBody_ReturnsProblemDetails400()
+    {
+        using var request = AuthorizedRequest(
+            HttpMethod.Patch,
+            "/api/v1/admin/staff/20/deactivate",
+            100,
+            "admin@medflow.test",
+            "SYSTEM_ADMIN");
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
     private HttpRequestMessage AuthorizedRequest(
+        HttpMethod method,
+        string uri,
         long userId,
         string email,
-        string role,
-        string query = "")
+        string role)
     {
         using var scope = _factory.Services.CreateScope();
         var jwtService = scope.ServiceProvider.GetRequiredService<IJwtTokenService>();
@@ -113,7 +158,7 @@ public sealed class AdminStaffEndpointTests : AuthTestBase
             new User { Id = userId, Email = email },
             [role]).AccessToken;
 
-        var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/admin/staff{query}");
+        var request = new HttpRequestMessage(method, uri);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return request;
     }
