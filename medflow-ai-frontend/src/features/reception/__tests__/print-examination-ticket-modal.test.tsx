@@ -47,7 +47,7 @@ describe('PrintExaminationTicketModal & ReceptionDashboardPage (UC29)', () => {
 
   it('opens examination ticket modal from queue row and prints ticket via backend API', async () => {
     const initialTicket = {
-      ...buildFallbackExaminationTicket('VIS-202610-0001'),
+      ...buildFallbackExaminationTicket('VIS-2026-0101'),
       ticketNo: 'A001',
       queueNumber: 1,
       queueNumberFormatted: '001',
@@ -75,7 +75,7 @@ describe('PrintExaminationTicketModal & ReceptionDashboardPage (UC29)', () => {
 
     renderReceptionDashboard();
 
-    const printRowBtn = screen.getByRole('button', {
+    const printRowBtn = await screen.findByRole('button', {
       name: 'In phiếu khám cho Nguyễn Văn An',
     });
     fireEvent.click(printRowBtn);
@@ -85,7 +85,7 @@ describe('PrintExaminationTicketModal & ReceptionDashboardPage (UC29)', () => {
     ).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(fetchSpy).toHaveBeenCalledWith('VIS-202610-0001');
+      expect(fetchSpy).toHaveBeenCalledWith('VIS-2026-0101');
     });
 
     expect(await screen.findByText('A001')).toBeInTheDocument();
@@ -102,7 +102,7 @@ describe('PrintExaminationTicketModal & ReceptionDashboardPage (UC29)', () => {
     fireEvent.click(submitPrintBtn);
 
     await waitFor(() => {
-      expect(printSpy).toHaveBeenCalledWith('VIS-202610-0001', {
+      expect(printSpy).toHaveBeenCalledWith('VIS-2026-0101', {
         copies: 2,
         isReprint: false,
         reason: 'In phiếu tại quầy 1',
@@ -137,7 +137,8 @@ describe('PrintExaminationTicketModal & ReceptionDashboardPage (UC29)', () => {
 
     renderReceptionDashboard();
 
-    fireEvent.click(screen.getByRole('button', { name: /In phiếu khám bệnh/i }));
+    await screen.findByText('A012');
+    fireEvent.click(await screen.findByRole('button', { name: /In phiếu khám bệnh/i }));
 
     await screen.findByLabelText('Phiếu khám bệnh ngoại trú');
 
