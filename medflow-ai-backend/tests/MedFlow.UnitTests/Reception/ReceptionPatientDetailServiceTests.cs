@@ -292,6 +292,7 @@ public sealed class ReceptionPatientDetailServiceTests : IDisposable
             MemberPatientId = 11,
             Relationship = "SPOUSE",
             VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
             VerifiedAt = TodayLocal.AddDays(-30)
         });
 

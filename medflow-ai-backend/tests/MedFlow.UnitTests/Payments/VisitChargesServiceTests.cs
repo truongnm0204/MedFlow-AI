@@ -81,6 +81,7 @@ public sealed class VisitChargesServiceTests : IDisposable
             OwnerPatientId = 100,
             MemberPatientId = 200,
             VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
             MemberPatient = null,
         });
         _db.Patients.Find(200L)!.Status = "ACTIVE";
@@ -103,6 +104,7 @@ public sealed class VisitChargesServiceTests : IDisposable
             OwnerPatientId = 100,
             MemberPatientId = 200,
             VerificationStatus = "VERIFIED",
+            VerificationMethod = "STAFF",
             RevokedAt = FixedNow.UtcDateTime,
         });
         var visit = AddVisit(1000, 200, "CHECKED_IN", HospitalA);

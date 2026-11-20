@@ -11,6 +11,7 @@ import { DispensingReceiptCard } from '../components/dispensing-receipt-card';
 import { PharmacySidebar } from '../components/pharmacy-sidebar';
 import { DISPENSING_RESULT_MOCK } from '../data/dispensing-result-mock';
 import { PHARMACY_WORKBENCH_META } from '../data/pharmacy-mock-data';
+import { useDispensingResult } from '../hooks/use-dispensing-result';
 
 export function DispensingResultPage() {
   const params = useParams<{ dispenseCode?: string }>();
@@ -18,8 +19,9 @@ export function DispensingResultPage() {
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
 
-  const detail = DISPENSING_RESULT_MOCK;
-  const activeDispenseCode = params.dispenseCode?.trim() || detail.dispenseCode;
+  const activeDispenseCode = params.dispenseCode?.trim() || DISPENSING_RESULT_MOCK.dispenseCode;
+  const { data: fetchedDetail } = useDispensingResult(activeDispenseCode);
+  const detail = fetchedDetail ?? { ...DISPENSING_RESULT_MOCK, dispenseCode: activeDispenseCode };
   const [notice, setNotice] = useState<string | null>(null);
 
   return (

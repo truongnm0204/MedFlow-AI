@@ -295,18 +295,38 @@ public static class AppointmentBookingRules
         return hospitalId ?? 0L;
     }
 
-    public static async Task<OwnedPatients> LoadOwnedPatientsAsync(
+    public static Task<OwnedPatients> LoadOwnedPatientsAsync(
         IApplicationDbContext db,
         long userId,
         DateTime nowLocal,
         CancellationToken ct)
+        => LoadOwnedPatientsCoreAsync(db, userId, nowLocal, phiOnly: false, ct);
+
+    public static Task<OwnedPatients> LoadOwnedPatientsPhiAsync(
+        IApplicationDbContext db,
+        long userId,
+        DateTime nowLocal,
+        CancellationToken ct)
+        => LoadOwnedPatientsCoreAsync(db, userId, nowLocal, phiOnly: true, ct);
+
+    private static async Task<OwnedPatients> LoadOwnedPatientsCoreAsync(
+        IApplicationDbContext db,
+        long userId,
+        DateTime nowLocal,
+        bool phiOnly,
+        CancellationToken ct)
     {
         var self = await PatientAccessScope.LoadActiveSelfAsync(db, userId, ct);
 
-        var familyLinks = await db.PatientFamilyLinks
+        var query = db.PatientFamilyLinks
             .AsNoTracking()
-            .Include(l => l.MemberPatient)
-            .WhereActiveMemberOf(self.Id, nowLocal)
+            .Include(l => l.MemberPatient);
+
+        var scoped = phiOnly
+            ? query.WherePhiMemberOf(self.Id, nowLocal)
+            : query.WhereActiveMemberOf(self.Id, nowLocal);
+
+        var familyLinks = await scoped
             .OrderBy(l => l.MemberPatientId)
             .ToListAsync(ct);
 

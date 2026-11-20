@@ -124,7 +124,7 @@ public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultSer
         CancellationToken ct)
     {
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
-        var owned = await AppointmentBookingRules.LoadOwnedPatientsAsync(_db, actorUserId, nowLocal, ct);
+        var owned = await AppointmentBookingRules.LoadOwnedPatientsPhiAsync(_db, actorUserId, nowLocal, ct);
         return AppointmentReadModel.BuildScopeMembers(
             owned.Self,
             owned.FamilyLinks,

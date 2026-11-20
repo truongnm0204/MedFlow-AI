@@ -2,6 +2,8 @@ using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Services;
 using MedFlow.Domain.Entities;
+using MedFlow.Domain.Enums;
+using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 
@@ -16,28 +18,28 @@ public sealed class ExaminationServiceAdminServiceTests : IDisposable
         {
         }
 
-        public DbSet<User> Users => throw NotUsed();
-        public DbSet<Role> Roles => throw NotUsed();
+        public DbSet<User> Users => Set<User>();
+        public DbSet<Role> Roles => Set<Role>();
         public DbSet<Permission> Permissions => throw NotUsed();
-        public DbSet<UserRole> UserRoles => throw NotUsed();
+        public DbSet<UserRole> UserRoles => Set<UserRole>();
         public DbSet<RolePermission> RolePermissions => throw NotUsed();
         public DbSet<Patient> Patients => throw NotUsed();
-        public DbSet<Staff> Staff => throw NotUsed();
+        public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => throw NotUsed();
         public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => throw NotUsed();
-        public DbSet<ExaminationSlot> ExaminationSlots => throw NotUsed();
+        public DbSet<ExaminationSlot> ExaminationSlots => Set<ExaminationSlot>();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
-        public DbSet<AuditLog> AuditLogs => throw NotUsed();
+        public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
-        public DbSet<Hospital> Hospitals => throw NotUsed();
+        public DbSet<Hospital> Hospitals => Set<Hospital>();
         public DbSet<Department> Departments => Set<Department>();
         public DbSet<HospitalRoom> HospitalRooms => throw NotUsed();
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => Set<Service>();
         public DbSet<ServicePrice> ServicePrices => Set<ServicePrice>();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
-        public DbSet<Appointment> Appointments => throw NotUsed();
+        public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => throw NotUsed();
         public DbSet<QueueEntry> QueueEntries => throw NotUsed();
@@ -48,28 +50,25 @@ public sealed class ExaminationServiceAdminServiceTests : IDisposable
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Ignore<User>();
-            modelBuilder.Ignore<Role>();
             modelBuilder.Ignore<Permission>();
-            modelBuilder.Ignore<UserRole>();
             modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Patient>();
-            modelBuilder.Ignore<Staff>();
             modelBuilder.Ignore<Doctor>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
-            modelBuilder.Ignore<ExaminationSlot>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<AuditLog>();
-            modelBuilder.Ignore<Hospital>();
             modelBuilder.Ignore<HospitalRoom>();
             modelBuilder.Ignore<HospitalPolicy>();
-            modelBuilder.Ignore<Appointment>();
             modelBuilder.Ignore<PatientFamilyLink>();
             modelBuilder.Ignore<Visit>();
             modelBuilder.Ignore<QueueEntry>();
             modelBuilder.Ignore<Payment>();
 
+            modelBuilder.Entity<Hospital>().HasKey(h => h.Id);
+            modelBuilder.Entity<User>().HasKey(u => u.Id);
+            modelBuilder.Entity<Role>().HasKey(r => r.Id);
+            modelBuilder.Entity<UserRole>().HasKey(ur => new { ur.UserId, ur.RoleId });
+            modelBuilder.Entity<Staff>().HasKey(st => st.Id);
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
             modelBuilder.Entity<Specialty>().HasKey(s => s.Id);
             modelBuilder.Entity<Service>(b =>
@@ -80,6 +79,20 @@ public sealed class ExaminationServiceAdminServiceTests : IDisposable
                 b.HasMany(s => s.ServicePrices).WithOne(p => p.Service).HasForeignKey(p => p.ServiceId);
             });
             modelBuilder.Entity<ServicePrice>().HasKey(p => p.Id);
+            modelBuilder.Entity<ExaminationSlot>(b =>
+            {
+                b.HasKey(es => es.Id);
+                b.Ignore(es => es.Doctor);
+                b.Ignore(es => es.Room);
+                b.HasOne(es => es.Service).WithMany().HasForeignKey(es => es.ServiceId);
+            });
+            modelBuilder.Entity<Appointment>(b =>
+            {
+                b.HasKey(a => a.Id);
+                b.Ignore(a => a.Patient);
+                b.HasOne(a => a.Slot).WithMany(s => s.Appointments).HasForeignKey(a => a.SlotId);
+            });
+            modelBuilder.Entity<AuditLog>().HasKey(al => al.Id);
         }
 
         private static NotSupportedException NotUsed()
@@ -918,5 +931,264 @@ public sealed class ExaminationServiceAdminServiceTests : IDisposable
         Assert.Equal("DIAGNOSTIC", result.ServiceType);
         Assert.Equal(1, result.DepartmentId);
         Assert.Equal("Khoa Khám bệnh", result.DepartmentName);
+    }
+
+    // =========================================================================
+    // UC50 — Deactivate & Reactivate Examination Service Tests (#196 / M2-064)
+    // =========================================================================
+
+    [Fact]
+    public async Task DeactivateExaminationServiceAsync_EmptyIdOrCode_ThrowsArgumentException()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _sut.DeactivateExaminationServiceAsync(1, "   "));
+    }
+
+    [Fact]
+    public async Task DeactivateExaminationServiceAsync_ServiceNotFound_ThrowsNotFoundException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.DeactivateExaminationServiceAsync(1, "99999"));
+    }
+
+    [Fact]
+    public async Task DeactivateExaminationServiceAsync_AlreadySuspended_ThrowsConflictException()
+    {
+        var service = new Service
+        {
+            Id = 501,
+            ServiceCode = "EX-SUSPENDED",
+            Name = "Dịch vụ đã ngừng",
+            ServiceType = "EXAMINATION",
+            HospitalId = 1,
+            IsActive = false
+        };
+        _db.Services.Add(service);
+        await _db.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _sut.DeactivateExaminationServiceAsync(1, "501"));
+
+        Assert.Contains("ngừng hoạt động", ex.Message);
+    }
+
+    [Fact]
+    public async Task DeactivateExaminationServiceAsync_HasActiveBookingsWithoutConfirmation_ThrowsConflictException()
+    {
+        var service = new Service
+        {
+            Id = 502,
+            ServiceCode = "EX-WITH-BOOKINGS",
+            Name = "Dịch vụ có lịch đặt",
+            ServiceType = "EXAMINATION",
+            HospitalId = 1,
+            IsActive = true
+        };
+        var slot = new ExaminationSlot
+        {
+            Id = 5021,
+            ServiceId = 502,
+            Status = "OPEN",
+            StartsAt = DateTime.UtcNow.AddHours(2),
+            EndsAt = DateTime.UtcNow.AddHours(3)
+        };
+        var appointment = new Appointment
+        {
+            Id = 50211,
+            SlotId = 5021,
+            Status = "CONFIRMED"
+        };
+
+        _db.Services.Add(service);
+        _db.ExaminationSlots.Add(slot);
+        _db.Appointments.Add(appointment);
+        await _db.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _sut.DeactivateExaminationServiceAsync(1, "502", new DeactivateExaminationServiceRequest(ConfirmUnderstood: false)));
+
+        Assert.Contains("Không thể ngừng hoạt động dịch vụ khám khi còn", ex.Message);
+        Assert.Contains("lịch hẹn khám", ex.Message);
+    }
+
+    [Fact]
+    public async Task DeactivateExaminationServiceAsync_HasActiveBookingsWithConfirmation_ClosesSlotsAndSuspendsService()
+    {
+        var service = new Service
+        {
+            Id = 503,
+            ServiceCode = "EX-WITH-CONFIRM",
+            Name = "Dịch vụ xác nhận đóng",
+            ServiceType = "EXAMINATION",
+            HospitalId = 1,
+            IsActive = true
+        };
+        var slot = new ExaminationSlot
+        {
+            Id = 5031,
+            ServiceId = 503,
+            Status = "OPEN",
+            StartsAt = DateTime.UtcNow.AddHours(1),
+            EndsAt = DateTime.UtcNow.AddHours(2)
+        };
+        var appointment = new Appointment
+        {
+            Id = 50311,
+            SlotId = 5031,
+            Status = "CONFIRMED"
+        };
+
+        _db.Services.Add(service);
+        _db.ExaminationSlots.Add(slot);
+        _db.Appointments.Add(appointment);
+        await _db.SaveChangesAsync();
+
+        var request = new DeactivateExaminationServiceRequest(
+            ReasonCode: "POLICY_CHANGE",
+            Reason: "Thay đổi quy trình khám",
+            ConfirmUnderstood: true,
+            CloseFutureSlots: true
+        );
+
+        var result = await _sut.DeactivateExaminationServiceAsync(1, "503", request);
+
+        Assert.NotNull(result);
+        Assert.False(result.IsActive);
+        Assert.Equal("SUSPENDED", result.Status);
+        Assert.Equal(1, result.ActiveBookingsCount);
+        Assert.Equal(1, result.ActiveSlotsCount);
+
+        var dbService = await _db.Services.FindAsync(503L);
+        Assert.NotNull(dbService);
+        Assert.False(dbService.IsActive);
+
+        var dbSlot = await _db.ExaminationSlots.FindAsync(5031L);
+        Assert.NotNull(dbSlot);
+        Assert.Equal("CLOSED", dbSlot.Status);
+
+        var auditLog = await _db.AuditLogs.FirstOrDefaultAsync(al => al.Action == "EXAMINATION_SERVICE_DEACTIVATED" && al.EntityId == "503");
+        Assert.NotNull(auditLog);
+        Assert.Equal("Service", auditLog.EntityType);
+    }
+
+    [Fact]
+    public async Task DeactivateExaminationServiceAsync_ByServiceCode_DeactivatesSuccessfully()
+    {
+        var service = new Service
+        {
+            Id = 504,
+            ServiceCode = "EX-CODE-TEST",
+            Name = "Dịch vụ tìm theo code",
+            ServiceType = "EXAMINATION",
+            HospitalId = 1,
+            IsActive = true
+        };
+        _db.Services.Add(service);
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.DeactivateExaminationServiceAsync(1, "EX-CODE-TEST");
+
+        Assert.NotNull(result);
+        Assert.False(result.IsActive);
+        Assert.Equal("SUSPENDED", result.Status);
+        Assert.Equal("EX-CODE-TEST", result.ServiceCode);
+    }
+
+    [Fact]
+    public async Task ReactivateExaminationServiceAsync_ServiceNotFound_ThrowsNotFoundException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _sut.ReactivateExaminationServiceAsync(1, "99999"));
+    }
+
+    [Fact]
+    public async Task ReactivateExaminationServiceAsync_AlreadyActive_ThrowsConflictException()
+    {
+        var service = new Service
+        {
+            Id = 505,
+            ServiceCode = "EX-ALREADY-ACTIVE",
+            Name = "Dịch vụ đang hoạt động",
+            ServiceType = "EXAMINATION",
+            HospitalId = 1,
+            IsActive = true
+        };
+        _db.Services.Add(service);
+        await _db.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _sut.ReactivateExaminationServiceAsync(1, "505"));
+
+        Assert.Contains("đang ở trạng thái hoạt động", ex.Message);
+    }
+
+    [Fact]
+    public async Task ReactivateExaminationServiceAsync_SuspendedService_ReactivatesSuccessfully()
+    {
+        var service = new Service
+        {
+            Id = 506,
+            ServiceCode = "EX-REACTIVATE",
+            Name = "Dịch vụ mở lại",
+            ServiceType = "EXAMINATION",
+            HospitalId = 1,
+            IsActive = false
+        };
+        _db.Services.Add(service);
+        await _db.SaveChangesAsync();
+
+        var result = await _sut.ReactivateExaminationServiceAsync(1, "506", new ReactivateExaminationServiceRequest(Reason: "Mở lại phục vụ bệnh nhân"));
+
+        Assert.NotNull(result);
+        Assert.True(result.IsActive);
+        Assert.Equal("ACTIVE", result.Status);
+
+        var dbService = await _db.Services.FindAsync(506L);
+        Assert.NotNull(dbService);
+        Assert.True(dbService.IsActive);
+
+        var auditLog = await _db.AuditLogs.FirstOrDefaultAsync(al => al.Action == "EXAMINATION_SERVICE_REACTIVATED" && al.EntityId == "506");
+        Assert.NotNull(auditLog);
+    }
+
+    [Fact]
+    public async Task GetExaminationServiceListAsync_PopulatesActiveBookingsFlagsCorrectly()
+    {
+        var service = new Service
+        {
+            Id = 507,
+            ServiceCode = "EX-WITH-ACTIVE-FLAG",
+            Name = "Dịch vụ test cờ active bookings",
+            ServiceType = "EXAMINATION",
+            HospitalId = 1,
+            IsActive = true
+        };
+        var slot = new ExaminationSlot
+        {
+            Id = 5071,
+            ServiceId = 507,
+            Status = "OPEN",
+            StartsAt = DateTime.UtcNow.AddDays(1),
+            EndsAt = DateTime.UtcNow.AddDays(1).AddHours(1)
+        };
+        var appointment = new Appointment
+        {
+            Id = 50711,
+            SlotId = 5071,
+            Status = "PENDING"
+        };
+
+        _db.Services.Add(service);
+        _db.ExaminationSlots.Add(slot);
+        _db.Appointments.Add(appointment);
+        await _db.SaveChangesAsync();
+
+        var response = await _sut.GetExaminationServiceListAsync(new GetExaminationServiceListAdminRequest(Keyword: "EX-WITH-ACTIVE-FLAG"));
+
+        Assert.NotNull(response);
+        Assert.Single(response.Data);
+        var item = response.Data[0];
+        Assert.True(item.HasActiveBookings);
+        Assert.Equal(1, item.ActiveBookingsCount);
     }
 }

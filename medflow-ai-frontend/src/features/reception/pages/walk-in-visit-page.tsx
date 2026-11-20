@@ -1,10 +1,13 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, UserPlus } from 'lucide-react';
+import { ArrowLeft, ArrowRight, RefreshCw, UserPlus } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
-import { useAuthStore } from '@/features/auth/store/auth.store';
 import { useLogout } from '@/features/auth/hooks/use-auth';
+import { useAuthStore } from '@/features/auth/store/auth.store';
+import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { Alert } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
+import { Spinner } from '@/shared/ui/spinner';
 
 import { ReceptionSidebar } from '../components/reception-sidebar';
 import { WalkInClinicalSection } from '../components/walk-in-clinical-section';
@@ -12,60 +15,82 @@ import { WalkInPatientBanner } from '../components/walk-in-patient-banner';
 import { WalkInPaymentSection } from '../components/walk-in-payment-section';
 import { WalkInSuccessModal } from '../components/walk-in-success-modal';
 import {
-  SYMPTOM_OPTIONS_MOCK,
-  WALK_IN_DEPARTMENTS_MOCK,
-  WALK_IN_PATIENT_MOCK,
-} from '../data/walk-in-visit-mock';
+  useCreateWalkInMutation,
+  useReceptionPatientSearch,
+  useWalkInCatalog,
+} from '../hooks/use-reception-api';
 import { walkInVisitSchema } from '../schemas/walk-in-visit.schema';
 import type {
   ClinicalPriority,
   CreatedWalkInVisitResult,
   PaymentMethod,
+  WalkInPatient,
 } from '../types/walk-in-visit.types';
 
 export function WalkInVisitPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
 
-  const [patient] = useState(WALK_IN_PATIENT_MOCK);
+  const patientCode = searchParams.get('patientCode')?.trim() ?? '';
+  const catalogQuery = useWalkInCatalog();
+  const patientsQuery = useReceptionPatientSearch(patientCode, 'ALL');
+  const createWalkIn = useCreateWalkInMutation();
+
   const [priority, setPriority] = useState<ClinicalPriority>('STANDARD');
-  const [departmentId, setDepartmentId] = useState('dept-gastro');
-  const [serviceId, setServiceId] = useState('srv-gastro-01');
-  const [reasonForVisit, setReasonForVisit] = useState(
-    'Bệnh nhân đau quặn vùng thượng vị sau ăn khoảng 1-2 tiếng, ợ hơi chua nhiều kèm cảm giác cồn cào buồn nôn 2 ngày nay. Không sốt, chưa dùng thuốc gì ở nhà.',
-  );
-  const [symptoms, setSymptoms] = useState<string[]>(['Đau thượng vị', 'Ợ hơi/ợ chua', 'Buồn nôn']);
+  const [departmentId, setDepartmentId] = useState('');
+  const [serviceId, setServiceId] = useState('');
+  const [reasonForVisit, setReasonForVisit] = useState('');
+  const [symptoms, setSymptoms] = useState<string[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('VIETQR');
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [successResult, setSuccessResult] = useState<CreatedWalkInVisitResult | null>(null);
 
-  const selectedDept = WALK_IN_DEPARTMENTS_MOCK.find((d) => d.id === departmentId);
-  const currentService = selectedDept
-    ? selectedDept.services.find((s) => s.id === serviceId) || null
-    : null;
+  const departments = catalogQuery.data?.departments ?? [];
+  const selectedDept = departments.find((d) => d.id === departmentId) ?? departments[0] ?? null;
+  const currentService =
+    selectedDept?.services.find((s) => s.id === serviceId) ?? selectedDept?.services[0] ?? null;
+  const symptomOptions = catalogQuery.data?.symptomOptions ?? [];
+
+  const patient = useMemo<WalkInPatient | null>(() => {
+    const found = patientsQuery.data?.items.find((item) => item.patientCode === patientCode);
+    if (!found) return null;
+    const birthYear = Number.parseInt(found.dateOfBirth.slice(0, 4), 10);
+    return {
+      id: found.id,
+      patientCode: found.patientCode,
+      fullName: found.fullName,
+      gender: found.gender,
+      birthYear: Number.isFinite(birthYear) ? birthYear : 0,
+      identityCard: found.identityCard,
+      phoneNumber: found.phoneNumber,
+      insuranceType: '',
+    };
+  }, [patientCode, patientsQuery.data]);
 
   const handleDepartmentChange = (newDeptId: string) => {
     setDepartmentId(newDeptId);
-    const dept = WALK_IN_DEPARTMENTS_MOCK.find((d) => d.id === newDeptId);
-    if (dept && dept.services.length > 0) {
-      setServiceId(dept.services[0].id);
-    } else {
-      setServiceId('');
+    setServiceId('');
+  };
+
+  const handleToggleSymptom = (symptom: string) => {
+    setSymptoms((prev) =>
+      prev.includes(symptom) ? prev.filter((value) => value !== symptom) : [...prev, symptom],
+    );
+  };
+
+  const handleSubmit = async () => {
+    if (!patient) {
+      setErrors({ patientId: 'Vui lòng chọn bệnh nhân trước khi tạo lượt khám.' });
+      return;
     }
-  };
 
-  const handleToggleSymptom = (sym: string) => {
-    setSymptoms((prev) => (prev.includes(sym) ? prev.filter((s) => s !== sym) : [...prev, sym]));
-  };
-
-  const handleSubmit = () => {
     const parseResult = walkInVisitSchema.safeParse({
       patientId: patient.id,
       clinicalPriority: priority,
-      departmentId,
-      serviceId,
+      departmentId: selectedDept?.id ?? '',
+      serviceId: currentService?.id ?? '',
       reasonForVisit,
       symptoms,
       paymentMethod,
@@ -84,25 +109,22 @@ export function WalkInVisitPage() {
     }
 
     setErrors({});
-    setIsSubmitting(true);
-
-    setTimeout(() => {
-      setIsSubmitting(false);
-      setSuccessResult({
-        visitId: `VIS-${Date.now().toString().slice(-6)}`,
-        visitCode: 'VIS-2026-0415-0145',
-        ticketNo: 'A019',
-        patientName: patient.fullName,
-        departmentName: selectedDept ? selectedDept.name : 'Khoa Tiêu hóa',
-        serviceName: currentService ? currentService.name : 'Khám chuyên khoa',
-        receptionTime: new Date().toLocaleTimeString('vi-VN', {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
+    try {
+      const result = await createWalkIn.mutateAsync({
+        patient,
+        departmentId: selectedDept!.id,
+        serviceId: currentService!.id,
+        reasonForVisit,
+        symptoms,
+        clinicalPriority: priority,
         paymentMethod,
-        priceFormatted: currentService ? currentService.priceFormatted : '250.000 VNĐ',
+        serviceName: currentService?.name ?? '',
+        priceFormatted: currentService?.priceFormatted ?? '',
       });
-    }, 600);
+      setSuccessResult(result);
+    } catch (error) {
+      setErrors({ form: getErrorMessage(error) });
+    }
   };
 
   return (
@@ -110,7 +132,6 @@ export function WalkInVisitPage() {
       <ReceptionSidebar activeItem="dashboard" />
 
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Header */}
         <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
@@ -152,41 +173,78 @@ export function WalkInVisitPage() {
           </div>
         </header>
 
-        {/* Main Content */}
         <main className="p-6 space-y-6 flex-1 max-w-5xl w-full mx-auto pb-28">
-          {/* Patient Banner */}
-          <WalkInPatientBanner
-            patient={patient}
-            onChangePatient={() => navigate('/reception/patients')}
-          />
+          {errors.form ? <Alert tone="error">{errors.form}</Alert> : null}
 
-          {/* Clinical Information Section */}
-          <WalkInClinicalSection
-            priority={priority}
-            onPriorityChange={setPriority}
-            departments={WALK_IN_DEPARTMENTS_MOCK}
-            selectedDepartmentId={departmentId}
-            onDepartmentChange={handleDepartmentChange}
-            selectedServiceId={serviceId}
-            onServiceChange={setServiceId}
-            currentService={currentService}
-            reasonForVisit={reasonForVisit}
-            onReasonChange={setReasonForVisit}
-            symptoms={symptoms}
-            onToggleSymptom={handleToggleSymptom}
-            symptomOptions={SYMPTOM_OPTIONS_MOCK}
-            errors={errors}
-          />
+          {catalogQuery.isError ? (
+            <div className="space-y-3">
+              <Alert tone="error">{getErrorMessage(catalogQuery.error)}</Alert>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void catalogQuery.refetch()}
+                loading={catalogQuery.isFetching}
+              >
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                Thử lại
+              </Button>
+            </div>
+          ) : null}
 
-          {/* Payment Section */}
-          <WalkInPaymentSection
-            paymentMethod={paymentMethod}
-            onPaymentMethodChange={setPaymentMethod}
-            service={currentService}
-          />
+          {catalogQuery.isPending ? (
+            <div className="flex items-center justify-center gap-2 py-16 text-xs text-sub">
+              <Spinner className="h-4 w-4" />
+              Đang tải danh mục khoa và dịch vụ...
+            </div>
+          ) : null}
+
+          {patient ? (
+            <WalkInPatientBanner
+              patient={patient}
+              onChangePatient={() => navigate('/reception/patients')}
+            />
+          ) : (
+            <Alert tone="warning">
+              Chưa chọn bệnh nhân.{' '}
+              <button
+                type="button"
+                onClick={() => navigate('/reception/patients')}
+                className="font-semibold underline"
+              >
+                Tra cứu và chọn bệnh nhân
+              </button>{' '}
+              trước khi tạo lượt khám vãng lai.
+            </Alert>
+          )}
+
+          {catalogQuery.isSuccess ? (
+            <>
+              <WalkInClinicalSection
+                priority={priority}
+                onPriorityChange={setPriority}
+                departments={departments}
+                selectedDepartmentId={selectedDept?.id ?? ''}
+                onDepartmentChange={handleDepartmentChange}
+                selectedServiceId={currentService?.id ?? ''}
+                onServiceChange={setServiceId}
+                currentService={currentService}
+                reasonForVisit={reasonForVisit}
+                onReasonChange={setReasonForVisit}
+                symptoms={symptoms}
+                onToggleSymptom={handleToggleSymptom}
+                symptomOptions={symptomOptions}
+                errors={errors}
+              />
+
+              <WalkInPaymentSection
+                paymentMethod={paymentMethod}
+                onPaymentMethodChange={setPaymentMethod}
+                service={currentService}
+              />
+            </>
+          ) : null}
         </main>
 
-        {/* Sticky Bottom Action Bar */}
         <div className="fixed bottom-0 left-0 lg:left-[260px] right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 px-6 py-4 flex items-center justify-between z-30 shadow-lg">
           <Button
             variant="secondary"
@@ -201,8 +259,9 @@ export function WalkInVisitPage() {
           <Button
             variant="primary"
             size="md"
-            loading={isSubmitting}
-            onClick={handleSubmit}
+            loading={createWalkIn.isPending}
+            disabled={!patient || !currentService}
+            onClick={() => void handleSubmit()}
             className="gap-2 shadow-xs px-6"
           >
             <UserPlus className="w-4 h-4" aria-hidden="true" />
@@ -212,17 +271,19 @@ export function WalkInVisitPage() {
         </div>
       </div>
 
-      {/* Success Modal */}
       <WalkInSuccessModal
-        isOpen={!!successResult}
+        isOpen={Boolean(successResult)}
         result={successResult}
         onClose={() => {
           setSuccessResult(null);
           navigate('/reception');
         }}
         onGoToRouting={() => {
+          const visitId = successResult?.visitCode ?? successResult?.visitId;
           setSuccessResult(null);
-          navigate('/reception');
+          if (visitId) {
+            navigate(`/reception/routing?visitId=${encodeURIComponent(visitId)}`);
+          }
         }}
       />
     </div>

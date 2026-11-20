@@ -1,13 +1,56 @@
+export type ChargeSource = 'PERSISTED' | 'DERIVED';
+
+export type ChargeDataStatus = 'VALID' | 'INVALID' | 'UNPRICED';
+
+export type SettlementStatus = 'UNPAID' | 'PAID' | 'MISMATCH' | 'UNDETERMINED';
+
+export type PaymentStatus = 'UNPAID' | 'PENDING' | 'PAID' | 'EXPIRED' | 'CANCELLED' | 'FAILED';
+
 export type QrPaymentIssueKind = 'CREATED' | 'ADOPTED' | 'REUSED';
 
-export interface QrPaymentResponseDto {
+export interface VisitChargeLine {
+  chargeId: number | null;
+  chargeSource: ChargeSource;
+  serviceId: number | null;
+  serviceCode: string | null;
+  serviceName: string | null;
+  diagnosticOrderId: number | null;
+  unitPrice: number | null;
+  paymentRequirement: string | null;
+  payable: boolean | null;
+  chargeDataStatus: ChargeDataStatus;
+}
+
+export interface VisitChargesResponse {
+  visitId: number;
+  visitCode: string | null;
+  visitStatus: string | null;
+  patientId: number | null;
+  charges: VisitChargeLine[];
+  payableTotal: number;
+  hasUnpricedPayableCharges: boolean;
+  amountDue: number | null;
+  currency: string;
+  recognizedPaidTotal: number;
+  settlementStatus: SettlementStatus;
+  paymentId: number | null;
+  paymentCode: string | null;
+  paymentStatus: PaymentStatus | null;
+  paymentAmount: number | null;
+  paymentMethod: string | null;
+  paidAt: string | null;
+  externalReference: string | null;
+  canPayByQr: boolean;
+}
+
+export interface GenerateQrPaymentResponse {
   visitId: number;
   visitCode: string | null;
   paymentId: number;
   paymentCode: string;
   amount: number;
   currency: string;
-  status: string;
+  status: PaymentStatus;
   qrPayload: string;
   bankBin: string;
   accountNumber: string;
@@ -16,40 +59,7 @@ export interface QrPaymentResponseDto {
   issueKind: QrPaymentIssueKind;
 }
 
-export interface VisitChargeLineDto {
-  chargeId: number | null;
-  chargeSource: string;
-  serviceId: number | null;
-  serviceCode: string | null;
-  serviceName: string | null;
-  diagnosticOrderId: number | null;
-  unitPrice: number | null;
-  paymentRequirement: string | null;
-  payable: boolean | null;
-  chargeDataStatus: string;
-}
-
-export interface VisitChargesResponseDto {
-  visitId: number;
-  visitCode: string | null;
-  visitStatus: string;
-  patientId: number | null;
-  charges: VisitChargeLineDto[];
-  payableTotal: number;
-  hasUnpricedPayableCharges: boolean;
-  amountDue: number | null;
-  currency: string;
-  recognizedPaidTotal: number;
-  settlementStatus: string;
-  paymentId: number | null;
-  paymentCode: string | null;
-  paymentStatus: string | null;
-  paymentAmount: number | null;
-  paymentMethod: string | null;
-  paidAt: string | null;
-  externalReference: string | null;
-  canPayByQr: boolean;
-}
+// ── Patient visit list (GET /patients/me/visits) ───────────────────────────────
 
 export interface PatientVisitListItemDto {
   visitId: number;
@@ -65,3 +75,8 @@ export interface PatientVisitListItemDto {
 export interface PatientVisitListResponseDto {
   items: PatientVisitListItemDto[];
 }
+
+// Aliases used by the my-visits / visit-payment pages (UC18).
+export type QrPaymentResponseDto = GenerateQrPaymentResponse;
+export type VisitChargesResponseDto = VisitChargesResponse;
+export type VisitChargeLineDto = VisitChargeLine;

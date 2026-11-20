@@ -18,6 +18,8 @@ public sealed record DoctorAdminListItemDto(
     bool IsActive,
     string? ProfileImageUrl,
     string? ProfessionalBio,
-    string? QualificationsSummary
+    string? QualificationsSummary,
+    bool HasPendingAppointments = false,
+    int PendingAppointmentsCount = 0
 );
 

@@ -25,6 +25,7 @@ public static class DependencyInjection
             sp.GetRequiredService<MedFlowDbContext>());
         services.AddScoped<IAppointmentBookingLock, AppointmentBookingLock>();
         services.AddScoped<IPaymentGatewayEventStore, PaymentGatewayEventStore>();
+        services.AddScoped<IPatientIdentityClaimStore, PatientIdentityClaimStore>();
 
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<IAuthSessionService, AuthSessionService>();

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { CheckCircle2, Sparkles, UserCheck, X } from 'lucide-react';
 
+import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { Alert } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 
 import { checkInSchema } from '../schemas/checkin.schema';
@@ -17,10 +19,19 @@ interface CheckInModalProps {
   isOpen: boolean;
   onClose: () => void;
   appointment: ScheduledCheckInAppointment | null;
+  onSubmit: (form: CheckInFormData) => Promise<CheckInSuccessResult>;
   onSuccess?: (result: CheckInSuccessResult) => void;
+  onGoToRouting?: (result: CheckInSuccessResult) => void;
 }
 
-export function CheckInModal({ isOpen, onClose, appointment, onSuccess }: CheckInModalProps) {
+export function CheckInModal({
+  isOpen,
+  onClose,
+  appointment,
+  onSubmit,
+  onSuccess,
+  onGoToRouting,
+}: CheckInModalProps) {
   const [formData, setFormData] = useState<CheckInFormData>({
     reasonForVisit: '',
     isIdentityVerified: false,
@@ -45,7 +56,7 @@ export function CheckInModal({ isOpen, onClose, appointment, onSuccess }: CheckI
     });
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const parseResult = checkInSchema.safeParse(formData);
 
     if (!parseResult.success) {
@@ -60,37 +71,18 @@ export function CheckInModal({ isOpen, onClose, appointment, onSuccess }: CheckI
       return;
     }
 
+    setErrors({});
     setIsSubmitting(true);
 
-    // Giả lập mutation tiếp nhận (M2 contract)
-    setTimeout(() => {
-      const result: CheckInSuccessResult = {
-        visitId: `VIS-${Date.now().toString().slice(-6)}`,
-        ticketNo: 'A018',
-        patientName: appointment.patientName,
-        patientCode: appointment.patientCode,
-        roomName: appointment.roomName,
-        departmentName: appointment.department,
-        doctorName: appointment.doctorName,
-        priority: formData.priority,
-        queueNumber: 4,
-        waitingCountBefore: 3,
-        estimatedWaitMinutes: 15,
-        checkedInAt: new Date().toLocaleTimeString('vi-VN', {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-        nextStepInstructions: [
-          `Di chuyển đến trước ${appointment.roomName} (${appointment.department} - Tầng 1).`,
-          'Theo dõi màn hình điện tử và lắng nghe loa gọi số thứ tự tiếp nhận.',
-          'Chuẩn bị sẵn thẻ CCCD/BHYT bản gốc trước khi vào phòng khám.',
-        ],
-      };
-
-      setIsSubmitting(false);
+    try {
+      const result = await onSubmit(formData);
       setSuccessResult(result);
       onSuccess?.(result);
-    }, 600);
+    } catch (error) {
+      setErrors({ form: getErrorMessage(error) });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleClose = () => {
@@ -150,10 +142,20 @@ export function CheckInModal({ isOpen, onClose, appointment, onSuccess }: CheckI
         <div className="p-6 overflow-y-auto space-y-6">
           {successResult ? (
             /* Success Screen (#73) */
-            <CheckInResultContent result={successResult} onClose={handleClose} />
+            <div className="space-y-4">
+              <CheckInResultContent result={successResult} onClose={handleClose} />
+              {onGoToRouting ? (
+                <div className="flex justify-end">
+                  <Button size="sm" onClick={() => onGoToRouting(successResult)}>
+                    Điều phối bác sĩ
+                  </Button>
+                </div>
+              ) : null}
+            </div>
           ) : (
             /* Form screen */
             <>
+              {errors.form ? <Alert tone="error">{errors.form}</Alert> : null}
               {/* Summary of scheduled appointment */}
               <CheckInAppointmentSummary appointment={appointment} />
 

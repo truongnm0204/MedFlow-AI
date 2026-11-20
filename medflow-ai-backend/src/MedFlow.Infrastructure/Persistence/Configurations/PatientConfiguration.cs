@@ -19,6 +19,10 @@ public class PatientConfiguration : IEntityTypeConfiguration<Patient>
         builder.HasIndex(p => p.PatientCode).IsUnique().HasDatabaseName("uq_patients_patient_code");
 
         builder.Property(p => p.UserId).HasColumnName("user_id");
+        builder.HasIndex(p => p.UserId)
+            .IsUnique()
+            .HasFilter("user_id IS NOT NULL")
+            .HasDatabaseName("uq_patients_user_id");
         // FK + one-to-one with User is configured in UserConfiguration.
 
         builder.Property(p => p.FullName).HasColumnName("full_name").HasMaxLength(200).IsRequired();
@@ -31,6 +35,15 @@ public class PatientConfiguration : IEntityTypeConfiguration<Patient>
         builder.HasIndex(p => p.IdentificationHash)
             .IsUnique()
             .HasDatabaseName("uq_patients_identification_hash");
+
+        builder.Property(p => p.IdentificationHashHmac)
+            .HasColumnName("identification_hash_hmac")
+            .HasMaxLength(128);
+        builder.HasIndex(p => p.IdentificationHashHmac)
+            .IsUnique()
+            .HasDatabaseName("uq_patients_identification_hash_hmac");
+
+        builder.Property(p => p.HashVersion).HasColumnName("hash_version").HasColumnType("smallint");
 
         builder.Property(p => p.Address).HasColumnName("address");
         builder.Property(p => p.Status).HasColumnName("status").HasMaxLength(16);

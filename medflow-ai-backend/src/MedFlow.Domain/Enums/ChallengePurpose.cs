@@ -6,4 +6,5 @@ public enum ChallengePurpose
     CHANGE_EMAIL,
     CHANGE_PHONE,
     PASSWORD_RESET,
+    IDENTITY_CLAIM,
 }

@@ -87,8 +87,8 @@ describe('VisitPaymentPage', () => {
     expect(await screen.findByText('120.000 VNĐ')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /Tạo mã QR thanh toán/i }));
 
-    expect(post).toHaveBeenCalledWith(`/visits/${visitCode}/payments/qr`);
-    expect(get).toHaveBeenCalledWith(`/visits/${visitCode}/charges`);
+    expect(post).toHaveBeenCalledWith(`/patients/visits/${visitCode}/payments/qr`, {});
+    expect(get).toHaveBeenCalledWith(`/patients/visits/${visitCode}/charges`);
     expect(await screen.findByText('Quét mã để chuyển khoản')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Mã QR thanh toán MF5' })).toBeInTheDocument();
     expect(screen.getByText('0123456789')).toBeInTheDocument();

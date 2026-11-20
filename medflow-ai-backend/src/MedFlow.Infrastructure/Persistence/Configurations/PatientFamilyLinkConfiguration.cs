@@ -26,6 +26,22 @@ public class PatientFamilyLinkConfiguration : IEntityTypeConfiguration<PatientFa
             .HasColumnName("verification_status")
             .HasMaxLength(16);
 
+        builder.Property(l => l.VerificationMethod)
+            .HasColumnName("verification_method")
+            .HasMaxLength(16);
+
+        builder.Property(l => l.VerifiedByStaffId)
+            .HasColumnName("verified_by_staff_id");
+
+        builder.Property(l => l.LegacyAccessUntil)
+            .HasColumnName("legacy_access_until")
+            .HasColumnType("timestamp without time zone");
+
+        builder.HasOne<Staff>()
+            .WithMany()
+            .HasForeignKey(l => l.VerifiedByStaffId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.Property(l => l.VerifiedAt)
             .HasColumnName("verified_at")
             .HasColumnType("timestamp without time zone");

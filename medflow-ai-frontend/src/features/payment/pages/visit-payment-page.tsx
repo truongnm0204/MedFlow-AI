@@ -209,7 +209,7 @@ function blockedMessage(charges: {
   hasUnpricedPayableCharges: boolean;
   amountDue: number | null;
   paymentMethod: string | null;
-  visitStatus: string;
+  visitStatus: string | null;
 }): string {
   if (charges.hasUnpricedPayableCharges || charges.amountDue === null) {
     return 'Chưa xác định được số tiền cần thanh toán cho lượt khám này. Vui lòng liên hệ quầy thu ngân.';

@@ -43,4 +43,6 @@ public sealed record AppointmentListItemDto(
     string? CancellationReason,
     string? SlotReleaseNote,
     string? RebookSpecialtyLabel,
-    string BookedAt);
+    string BookedAt,
+    long? VisitId,
+    string? VisitCode);

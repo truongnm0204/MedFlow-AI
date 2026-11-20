@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { hasPermission } from '@/features/auth/utils/rbac';
+import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
@@ -16,39 +18,77 @@ import { PrintExaminationTicketModal } from '../components/print-examination-tic
 import { UpdatePatientModal } from '../components/update-patient-modal';
 import { TransferVisitRoomModal } from '../components/transfer-visit-room-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
-import { SCHEDULED_CHECKIN_APPOINTMENTS_MOCK, createMockCheckInResult } from '../data/checkin-mock';
+import { fetchCheckInResult } from '../api/reception.api';
 import type { CheckInSuccessResult, ScheduledCheckInAppointment } from '../types/checkin.types';
+import {
+  useCheckInMutation,
+  useCreatePatientMutation,
+  usePatientDetail,
+  useReceptionPatientSearch,
+  useUpdatePatientMutation,
+} from '../hooks/use-reception-api';
+import { useExaminationQueue } from '../hooks/use-examination-queue';
 import { QueuePreviewTable } from '../components/queue-preview-table';
 import { ReceptionSidebar } from '../components/reception-sidebar';
 import { ReceptionStatCards } from '../components/reception-stat-cards';
-import {
-  PATIENT_UPDATE_MOCK,
-  QUEUE_ENTRIES_MOCK,
-  QUICK_ACTIONS_MOCK,
-  RECEPTION_STATS_MOCK,
-  TODAY_APPOINTMENTS_MOCK,
-} from '../data/reception-mock-data';
-import type { CreatePatientFormData, CreatedPatientResult } from '../types/create-patient.types';
+import { QUICK_ACTIONS_MOCK } from '../data/reception-mock-data';
 import type { AssignRoomVisitTarget } from '../types/assign-examination-room.types';
-import { findPatientDetailByCode } from '../data/patient-detail-mock';
-import type { QueueEntry, TodayAppointment } from '../types/reception.types';
+import type { QueueEntry, ReceptionStats, QueueStatus } from '../types/reception.types';
 import type { UpdatePatientFormData } from '../types/update-patient.types';
 import type { TransferVisitRoomTarget } from '../types/visit-room-transfer.types';
 
 const APPOINTMENT_STATUS_LABEL: Record<
-  TodayAppointment['status'],
+  string,
   { label: string; tone: 'sky' | 'emerald' | 'rose' | 'slate' }
 > = {
   BOOKED: { label: 'Đã đặt', tone: 'sky' },
   CHECKED_IN: { label: 'Đã check-in', tone: 'emerald' },
   CANCELLED: { label: 'Đã hủy', tone: 'rose' },
   NO_SHOW: { label: 'Không đến', tone: 'slate' },
+  IN_CONSULTATION: { label: 'Đang khám', tone: 'emerald' },
 };
 
-// TODO(M2): thay bằng API tạo bệnh nhân khi backend sẵn sàng; hiện sinh mã cục bộ.
-async function createPatientLocally(data: CreatePatientFormData): Promise<CreatedPatientResult> {
-  const seq = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
-  return { patientCode: `BN-${new Date().getFullYear()}-${seq}`, fullName: data.fullName };
+const QUEUE_STATUS_MAP: Record<string, QueueStatus> = {
+  WAITING: 'WAITING',
+  READY: 'WAITING',
+  CALLED: 'CALLED',
+  SERVING: 'IN_PROGRESS',
+  IN_PROGRESS: 'IN_PROGRESS',
+  COMPLETED: 'DONE',
+  DONE: 'DONE',
+  SKIPPED: 'SKIPPED',
+};
+
+function toQueueEntry(entry: {
+  id: string;
+  visitCode: string;
+  ticketNo: string;
+  patientName: string;
+  patientCode: string;
+  visitType: string;
+  roomCode: string;
+  roomName: string;
+  doctorName: string;
+  departmentName: string;
+  status: string;
+  priority: string;
+  checkedInAt: string;
+}): QueueEntry {
+  return {
+    id: entry.id,
+    visitCode: entry.visitCode,
+    ticketNo: entry.ticketNo,
+    patientName: entry.patientName,
+    patientCode: entry.patientCode,
+    visitType: entry.visitType === 'WALK_IN' ? 'WALK_IN' : 'SCHEDULED',
+    room: entry.roomCode || entry.roomName,
+    doctorName: entry.doctorName,
+    departmentName: entry.departmentName,
+    status: QUEUE_STATUS_MAP[entry.status?.toUpperCase() ?? ''] ?? 'WAITING',
+    checkedInAt: entry.checkedInAt,
+    priority:
+      entry.priority === 'ELDERLY' || entry.priority === 'PREGNANT' ? entry.priority : 'NORMAL',
+  };
 }
 
 export function ReceptionDashboardPage() {
@@ -57,17 +97,22 @@ export function ReceptionDashboardPage() {
   const logout = useLogout();
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedPatientCode, setSelectedPatientCode] = useState<string | null>(null);
-  const selectedPatient = selectedPatientCode ? findPatientDetailByCode(selectedPatientCode) : null;
+  const patientDetailQuery = usePatientDetail(selectedPatientCode);
+  const selectedPatient = patientDetailQuery.data ?? null;
   const canAssignVisit = hasPermission(user?.roles, 'VISIT_ASSIGN');
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
-  const [appointments, setAppointments] = useState(TODAY_APPOINTMENTS_MOCK);
+  const searchQuery = useReceptionPatientSearch('', 'ALL');
+  const checkInMutation = useCheckInMutation();
+  const createPatientMutation = useCreatePatientMutation();
+  const updatePatientMutation = useUpdatePatientMutation();
+  const queueQuery = useExaminationQueue();
   const [selectedCheckIn, setSelectedCheckIn] = useState<ScheduledCheckInAppointment | null>(null);
+  const [resultError, setResultError] = useState<string | null>(null);
   const [selectedCheckInResult, setSelectedCheckInResult] = useState<CheckInSuccessResult | null>(
     null,
   );
   const [editingPatient, setEditingPatient] = useState<UpdatePatientFormData | null>(null);
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
-  const [queueEntries, setQueueEntries] = useState<QueueEntry[]>(QUEUE_ENTRIES_MOCK);
   const [transferringTarget, setTransferringTarget] = useState<TransferVisitRoomTarget | null>(
     null,
   );
@@ -76,12 +121,75 @@ export function ReceptionDashboardPage() {
     null,
   );
 
+  const queueEntries = (queueQuery.data?.servicePoints ?? []).flatMap((sp) =>
+    (sp.entries ?? []).map(toQueueEntry),
+  );
+
+  const patientRows = searchQuery.data?.items ?? [];
+  const counts = searchQuery.data?.counts ?? {
+    all: 0,
+    hasAppointment: 0,
+    checkedIn: 0,
+    noAppointment: 0,
+  };
+  const stats: ReceptionStats = {
+    waitingCheckIn: Math.max(0, counts.hasAppointment - counts.checkedIn),
+    inQueue: counts.checkedIn,
+    inConsultation: 0,
+    completedToday: 0,
+  };
+  const appointments = patientRows
+    .filter((row) => row.todayAppointment)
+    .map((row) => ({
+      id: row.todayAppointment!.id,
+      time: row.todayAppointment!.time,
+      patientName: row.fullName,
+      patientCode: row.patientCode,
+      doctorName: row.todayAppointment!.doctorName,
+      department: row.todayAppointment!.department,
+      roomName: row.todayAppointment!.roomName,
+      status: row.todayAppointment!.status,
+    }));
+
+  const toScheduledCheckIn = (appointmentId: string): ScheduledCheckInAppointment | null => {
+    const row = patientRows.find((item) => item.todayAppointment?.id === appointmentId);
+    if (!row?.todayAppointment) return null;
+    const birthYear = Number.parseInt(row.dateOfBirth.slice(0, 4), 10);
+    return {
+      id: row.todayAppointment.id,
+      appointmentId: Number(row.todayAppointment.id),
+      appointmentCode: `#${row.todayAppointment.id}`,
+      patientCode: row.patientCode,
+      patientName: row.fullName,
+      gender: row.gender,
+      birthYear: Number.isFinite(birthYear) ? birthYear : 0,
+      identityCard: row.identityCard,
+      phoneNumber: row.phoneNumber,
+      doctorName: row.todayAppointment.doctorName,
+      department: row.todayAppointment.department,
+      roomName: row.todayAppointment.roomName,
+      time: row.todayAppointment.time,
+      date: todayLabel,
+      status: row.todayAppointment.status === 'CHECKED_IN' ? 'CHECKED_IN' : 'BOOKED',
+    };
+  };
+
+  const openCheckInResult = async (appointmentId: string) => {
+    setResultError(null);
+    try {
+      setSelectedCheckInResult(await fetchCheckInResult(appointmentId));
+    } catch (error) {
+      setResultError(getErrorMessage(error));
+    }
+  };
+
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
       <ReceptionSidebar
         activeItem="dashboard"
         onItemSelect={(item) => {
           if (item === 'patients') navigate('/reception/patients');
+          if (item === 'identity-claims') navigate('/reception/identity-claims');
           if (item === 'queue') navigate('/reception/queue');
         }}
       />
@@ -147,7 +255,12 @@ export function ReceptionDashboardPage() {
             </div>
           )}
 
-          <ReceptionStatCards stats={RECEPTION_STATS_MOCK} />
+          {resultError ? <Alert tone="error">{resultError}</Alert> : null}
+          {searchQuery.isError ? (
+            <Alert tone="error">{getErrorMessage(searchQuery.error)}</Alert>
+          ) : null}
+
+          <ReceptionStatCards stats={stats} />
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             {/* Queue preview */}
@@ -179,7 +292,7 @@ export function ReceptionDashboardPage() {
                       ? (entry) => {
                           setUpdateNotice(null);
                           setAssigningVisitTarget({
-                            visitIdOrCode: entry.visitCode ?? 'VIS-202610-0001',
+                            visitIdOrCode: entry.visitCode ?? entry.ticketNo,
                             patientCode: entry.patientCode,
                             patientName: entry.patientName,
                             currentRoomCode: entry.room,
@@ -195,7 +308,7 @@ export function ReceptionDashboardPage() {
                       ? (entry) => {
                           setUpdateNotice(null);
                           setTransferringTarget({
-                            visitIdOrCode: entry.visitCode ?? 'VIS-202610-0002',
+                            visitIdOrCode: entry.visitCode ?? entry.ticketNo,
                             patientCode: entry.patientCode,
                             patientName: entry.patientName,
                             currentRoomCode: entry.room,
@@ -224,7 +337,8 @@ export function ReceptionDashboardPage() {
                     )}
                     onAction={(id) => {
                       if (id === 'check-in') {
-                        setSelectedCheckIn(SCHEDULED_CHECKIN_APPOINTMENTS_MOCK[0]);
+                        const next = appointments.find((item) => item.status === 'BOOKED');
+                        if (next) setSelectedCheckIn(toScheduledCheckIn(next.id));
                       } else if (id === 'new-patient') {
                         setCreateOpen(true);
                       } else if (id === 'walk-in') {
@@ -233,7 +347,7 @@ export function ReceptionDashboardPage() {
                         navigate('/reception/patients');
                       } else if (id === 'update-patient') {
                         setUpdateNotice(null);
-                        setEditingPatient(PATIENT_UPDATE_MOCK);
+                        navigate('/reception/patients?action=update');
                       } else if (id === 'transfer-room') {
                         setUpdateNotice(null);
                         const candidate =
@@ -242,7 +356,7 @@ export function ReceptionDashboardPage() {
                           ) ?? queueEntries[0];
                         if (candidate) {
                           setTransferringTarget({
-                            visitIdOrCode: candidate.visitCode ?? 'VIS-202610-0002',
+                            visitIdOrCode: candidate.visitCode ?? candidate.ticketNo,
                             patientCode: candidate.patientCode,
                             patientName: candidate.patientName,
                             currentRoomCode: candidate.room,
@@ -251,7 +365,9 @@ export function ReceptionDashboardPage() {
                         }
                       } else if (id === 'print-ticket') {
                         setUpdateNotice(null);
-                        setPrintingVisitCode(QUEUE_ENTRIES_MOCK[0]?.visitCode ?? 'VIS-202610-0001');
+                        setPrintingVisitCode(
+                          queueEntries[0]?.visitCode ?? queueEntries[0]?.ticketNo ?? null,
+                        );
                       } else if (id === 'assign-room') {
                         setUpdateNotice(null);
                         const candidate =
@@ -260,7 +376,7 @@ export function ReceptionDashboardPage() {
                           ) ?? queueEntries[0];
                         if (candidate) {
                           setAssigningVisitTarget({
-                            visitIdOrCode: candidate.visitCode ?? 'VIS-202610-0001',
+                            visitIdOrCode: candidate.visitCode ?? candidate.ticketNo,
                             patientCode: candidate.patientCode,
                             patientName: candidate.patientName,
                             currentRoomCode: candidate.room,
@@ -278,7 +394,7 @@ export function ReceptionDashboardPage() {
               <Card>
                 <CardHeader className="flex items-center justify-between">
                   <div className="text-sm font-bold text-slate-900">Lịch hẹn sắp tới</div>
-                  <Badge tone="amber">{TODAY_APPOINTMENTS_MOCK.length} ca</Badge>
+                  <Badge tone="amber">{appointments.length} ca</Badge>
                 </CardHeader>
                 <CardContent className="p-0">
                   <ul className="divide-y divide-slate-100">
@@ -295,34 +411,13 @@ export function ReceptionDashboardPage() {
                             {ap.doctorName} • {ap.department}
                           </div>
                         </div>
-                        <Badge tone={APPOINTMENT_STATUS_LABEL[ap.status].tone}>
-                          {APPOINTMENT_STATUS_LABEL[ap.status].label}
+                        <Badge tone={APPOINTMENT_STATUS_LABEL[ap.status]?.tone ?? 'slate'}>
+                          {APPOINTMENT_STATUS_LABEL[ap.status]?.label ?? ap.status}
                         </Badge>
                         {ap.status === 'BOOKED' && (
                           <button
                             type="button"
-                            onClick={() => {
-                              const found = SCHEDULED_CHECKIN_APPOINTMENTS_MOCK.find(
-                                (item) => item.id === ap.id,
-                              ) || {
-                                id: ap.id,
-                                appointmentCode: `APT-2024-${ap.id}`,
-                                patientCode: 'BN-2024-0018',
-                                patientName: ap.patientName,
-                                gender: 'MALE' as const,
-                                birthYear: 1988,
-                                identityCard: '001088012345',
-                                phoneNumber: '0912345678',
-                                healthInsuranceNumber: 'DN4010123456789',
-                                doctorName: ap.doctorName,
-                                department: ap.department,
-                                roomName: 'P.102',
-                                time: ap.time,
-                                date: 'Hôm nay',
-                                status: 'BOOKED' as const,
-                              };
-                              setSelectedCheckIn(found);
-                            }}
+                            onClick={() => setSelectedCheckIn(toScheduledCheckIn(ap.id))}
                             className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] shadow-2xs transition-colors shrink-0"
                           >
                             Check-in
@@ -331,28 +426,7 @@ export function ReceptionDashboardPage() {
                         {ap.status === 'CHECKED_IN' && (
                           <button
                             type="button"
-                            onClick={() => {
-                              const found = SCHEDULED_CHECKIN_APPOINTMENTS_MOCK.find(
-                                (item) => item.id === ap.id,
-                              ) || {
-                                id: ap.id,
-                                appointmentCode: `APT-2024-${ap.id}`,
-                                patientCode: 'BN-2024-0018',
-                                patientName: ap.patientName,
-                                gender: 'MALE' as const,
-                                birthYear: 1988,
-                                identityCard: '001088012345',
-                                phoneNumber: '0912345678',
-                                healthInsuranceNumber: 'DN4010123456789',
-                                doctorName: ap.doctorName,
-                                department: ap.department,
-                                roomName: 'P.102',
-                                time: ap.time,
-                                date: 'Hôm nay',
-                                status: 'CHECKED_IN' as const,
-                              };
-                              setSelectedCheckInResult(createMockCheckInResult(found));
-                            }}
+                            onClick={() => void openCheckInResult(ap.id)}
                             className="px-2.5 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-semibold text-[11px] transition-colors shrink-0"
                           >
                             Xem kết quả
@@ -377,13 +451,21 @@ export function ReceptionDashboardPage() {
         isOpen={!!selectedCheckIn}
         onClose={() => setSelectedCheckIn(null)}
         appointment={selectedCheckIn}
+        onSubmit={(form) =>
+          checkInMutation.mutateAsync({
+            appointmentIdOrCode: String(
+              selectedCheckIn?.appointmentId ?? selectedCheckIn?.id ?? '',
+            ),
+            form,
+          })
+        }
         onSuccess={() => {
-          if (selectedCheckIn) {
-            setAppointments((prev) =>
-              prev.map((item) =>
-                item.id === selectedCheckIn.id ? { ...item, status: 'CHECKED_IN' } : item,
-              ),
-            );
+          void searchQuery.refetch();
+        }}
+        onGoToRouting={(result) => {
+          setSelectedCheckIn(null);
+          if (result.visitCode) {
+            navigate(`/reception/routing?visitId=${encodeURIComponent(result.visitCode)}`);
           }
         }}
       />
@@ -395,7 +477,15 @@ export function ReceptionDashboardPage() {
       <CreatePatientModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        onSubmit={createPatientLocally}
+        onSubmit={async (form) => {
+          try {
+            const created = await createPatientMutation.mutateAsync(form);
+            return created;
+          } catch (error) {
+            setResultError(getErrorMessage(error));
+            throw error;
+          }
+        }}
       />
 
       {editingPatient && (
@@ -403,10 +493,16 @@ export function ReceptionDashboardPage() {
           open
           patient={editingPatient}
           onClose={() => setEditingPatient(null)}
-          onSubmit={(code, values) => {
-            // TODO(M2): goi API cap nhat ho so khi backend san sang.
-            setEditingPatient(null);
-            setUpdateNotice(`Đã cập nhật hồ sơ ${code} — ${values.fullName}`);
+          onSubmit={async (code, values) => {
+            try {
+              await updatePatientMutation.mutateAsync({ idOrCode: code, values });
+              setEditingPatient(null);
+              setUpdateNotice(`Đã cập nhật hồ sơ ${code} — ${values.fullName}`);
+            } catch (error) {
+              setUpdateNotice(null);
+              setResultError(getErrorMessage(error));
+              setEditingPatient(null);
+            }
           }}
         />
       )}
@@ -417,18 +513,7 @@ export function ReceptionDashboardPage() {
           target={transferringTarget}
           onClose={() => setTransferringTarget(null)}
           onTransferred={(result) => {
-            setQueueEntries((prev) =>
-              prev.map((entry) =>
-                entry.patientCode === transferringTarget.patientCode ||
-                entry.visitCode === result.visitCode
-                  ? {
-                      ...entry,
-                      room: result.currentRoomCode,
-                      status: entry.status === 'CALLED' ? 'WAITING' : entry.status,
-                    }
-                  : entry,
-              ),
-            );
+            void queueQuery.refetch();
             setTransferringTarget(null);
             setUpdateNotice(
               `Đã chuyển phòng khám cho ${transferringTarget.patientName} từ ${result.previousRoomCode} sang ${result.currentRoomCode} (${result.currentRoomName})`,
@@ -457,19 +542,7 @@ export function ReceptionDashboardPage() {
           target={assigningVisitTarget}
           onClose={() => setAssigningVisitTarget(null)}
           onAssigned={(result) => {
-            setQueueEntries((prev) =>
-              prev.map((item) =>
-                item.visitCode === result.visitCode ||
-                item.patientCode === assigningVisitTarget.patientCode
-                  ? {
-                      ...item,
-                      room: result.roomCode,
-                      priority: result.priority,
-                      status: item.status === 'IN_PROGRESS' ? item.status : 'WAITING',
-                    }
-                  : item,
-              ),
-            );
+            void queueQuery.refetch();
             setAssigningVisitTarget(null);
             setUpdateNotice(
               `Đã phân buồng khám ${result.roomCode} (${result.roomName}) cho lượt khám ${result.visitCode}`,

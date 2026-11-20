@@ -1,29 +1,29 @@
 import { apiClient } from '@/shared/lib/axios';
 
 import type {
+  GenerateQrPaymentResponse,
   PatientVisitListResponseDto,
-  QrPaymentResponseDto,
-  VisitChargesResponseDto,
+  VisitChargesResponse,
 } from '../types/payment.types';
 
-function visitPath(visitIdOrCode: string): string {
-  return `/visits/${encodeURIComponent(visitIdOrCode.trim())}`;
-}
-
-/** POST /visits/{idOrCode}/payments/qr — 200 = REUSED/ADOPTED, 201 = CREATED. */
-export async function createQrPaymentApi(visitIdOrCode: string): Promise<QrPaymentResponseDto> {
-  const { data } = await apiClient.post<QrPaymentResponseDto>(
-    `${visitPath(visitIdOrCode)}/payments/qr`,
+/**
+ * Hai endpoint tiền: không fallback mock. Sai một lần là hiển thị sai số tiền.
+ * GET /patients/visits/{idOrCode}/charges — nguồn trạng thái thanh toán để poll.
+ */
+export async function fetchVisitChargesApi(visitIdOrCode: string): Promise<VisitChargesResponse> {
+  const { data } = await apiClient.get<VisitChargesResponse>(
+    `/patients/visits/${encodeURIComponent(visitIdOrCode.trim())}/charges`,
   );
   return data;
 }
 
-/** GET /visits/{idOrCode}/charges — nguồn trạng thái thanh toán để poll. */
-export async function fetchVisitChargesApi(
+/** POST /patients/visits/{idOrCode}/payments/qr — 200 = REUSED/ADOPTED, 201 = CREATED. */
+export async function generateQrPaymentApi(
   visitIdOrCode: string,
-): Promise<VisitChargesResponseDto> {
-  const { data } = await apiClient.get<VisitChargesResponseDto>(
-    `${visitPath(visitIdOrCode)}/charges`,
+): Promise<GenerateQrPaymentResponse> {
+  const { data } = await apiClient.post<GenerateQrPaymentResponse>(
+    `/patients/visits/${encodeURIComponent(visitIdOrCode.trim())}/payments/qr`,
+    {},
   );
   return data;
 }

@@ -1,7 +1,9 @@
+using System.Security.Claims;
 using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Services.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace MedFlow.API.Controllers;
 
@@ -136,5 +138,71 @@ public sealed class AdminExaminationServicesController : ControllerBase
             });
         }
     }
+
+    /// <summary>POST|PATCH|PUT /api/v1/admin/examination-services/{idOrCode}/deactivate hoặc DELETE {idOrCode} — Ngừng hoạt động dịch vụ khám (UC50 / #196).</summary>
+    [HttpPost("{idOrCode}/deactivate")]
+    [HttpPatch("{idOrCode}/deactivate")]
+    [HttpPut("{idOrCode}/deactivate")]
+    [HttpDelete("{idOrCode}")]
+    [ProducesResponseType<DeactivateExaminationServiceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<DeactivateExaminationServiceResponseDto>> DeactivateExaminationService(
+        [FromRoute] string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] DeactivateExaminationServiceRequest? request = null,
+        CancellationToken ct = default)
+    {
+        var result = await _service.DeactivateExaminationServiceAsync(
+            GetUserId(),
+            idOrCode,
+            request ?? new DeactivateExaminationServiceRequest(),
+            GetIp(),
+            ct);
+        return Ok(result);
+    }
+
+    /// <summary>POST|PATCH|PUT /api/v1/admin/examination-services/{idOrCode}/reactivate — Kích hoạt lại dịch vụ khám đã ngừng hoạt động (UC50 / #196).</summary>
+    [HttpPost("{idOrCode}/reactivate")]
+    [HttpPatch("{idOrCode}/reactivate")]
+    [HttpPut("{idOrCode}/reactivate")]
+    [ProducesResponseType<DeactivateExaminationServiceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<DeactivateExaminationServiceResponseDto>> ReactivateExaminationService(
+        [FromRoute] string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] ReactivateExaminationServiceRequest? request = null,
+        CancellationToken ct = default)
+    {
+        var result = await _service.ReactivateExaminationServiceAsync(
+            GetUserId(),
+            idOrCode,
+            request,
+            GetIp(),
+            ct);
+        return Ok(result);
+    }
+
+    private long? GetUserId()
+    {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue("sub");
+
+        if (string.IsNullOrWhiteSpace(sub) || !long.TryParse(sub, out var userId))
+        {
+            return null;
+        }
+
+        return userId;
+    }
+
+    private string? GetIp() =>
+        HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
+        ?? HttpContext.Connection.RemoteIpAddress?.ToString();
 }
 

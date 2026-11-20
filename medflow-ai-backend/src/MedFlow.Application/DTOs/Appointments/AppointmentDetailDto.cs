@@ -48,4 +48,6 @@ public sealed record AppointmentDetailDto(
     string? PatientBirthDateLabel,
     string? PatientPhone,
     string? PatientAddress,
-    IReadOnlyList<string> AvailableActions);
+    IReadOnlyList<string> AvailableActions,
+    long? VisitId,
+    string? VisitCode);

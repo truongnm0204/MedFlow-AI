@@ -33,8 +33,8 @@ export const PATIENT_NAV_LINKS: NavLinkItem[] = [
   { label: 'Lịch hẹn của tôi', to: '/appointments', activePatterns: ['/appointments/*'] },
   {
     label: 'Viện phí',
-    to: '/patient/visits',
-    activePatterns: ['/patient/visits', '/payments/visits/*'],
+    to: '/payments',
+    activePatterns: ['/payments/*', '/patient/visits', '/patient/payments/*'],
   },
   { label: 'Hồ sơ bệnh án', to: '/emr', activePatterns: ['/emr/*'] },
 ];

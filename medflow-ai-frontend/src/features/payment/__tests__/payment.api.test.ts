@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { apiClient } from '@/shared/lib/axios';
 
-import { createQrPaymentApi, fetchMyVisitsApi, fetchVisitChargesApi } from '../api/payment.api';
+import { fetchMyVisitsApi, fetchVisitChargesApi, generateQrPaymentApi } from '../api/payment.api';
 import type { QrPaymentResponseDto, VisitChargesResponseDto } from '../types/payment.types';
 
 const qrDto: QrPaymentResponseDto = {
@@ -51,9 +51,9 @@ describe('payment.api', () => {
   it('encodes visit code and posts to the QR endpoint', async () => {
     const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({ data: qrDto });
 
-    await expect(createQrPaymentApi(' VIS-1/2 ')).resolves.toEqual(qrDto);
+    await expect(generateQrPaymentApi(' VIS-1/2 ')).resolves.toEqual(qrDto);
 
-    expect(post).toHaveBeenCalledWith('/visits/VIS-1%2F2/payments/qr');
+    expect(post).toHaveBeenCalledWith('/patients/visits/VIS-1%2F2/payments/qr', {});
   });
 
   it('gets visit charges by visit code', async () => {
@@ -61,7 +61,7 @@ describe('payment.api', () => {
 
     await expect(fetchVisitChargesApi('VIS-202611-0001')).resolves.toEqual(chargesDto);
 
-    expect(get).toHaveBeenCalledWith('/visits/VIS-202611-0001/charges');
+    expect(get).toHaveBeenCalledWith('/patients/visits/VIS-202611-0001/charges');
   });
 
   it('gets my visits with the page limit', async () => {

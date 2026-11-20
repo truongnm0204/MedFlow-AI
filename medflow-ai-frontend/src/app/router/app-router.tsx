@@ -58,6 +58,8 @@ import { PatientDiagnosticResultPage } from '@/features/patient/pages/patient-di
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
 import { VisitPaymentPage } from '@/features/payment/pages/visit-payment-page';
 import { MyVisitsPage } from '@/features/payment/pages/my-visits-page';
+import { PatientPaymentDetailPage } from '@/features/payment/pages/patient-payment-detail-page';
+import { PatientPaymentListPage } from '@/features/payment/pages/patient-payment-list-page';
 import { PharmacyDashboardPage } from '@/features/pharmacy/pages/pharmacy-dashboard-page';
 import { PrescriptionSearchPage } from '@/features/pharmacy/pages/prescription-search-page';
 import { AssignRoomPage } from '@/features/reception/pages/assign-room-page';
@@ -65,6 +67,8 @@ import { VisitRoutingPage } from '@/features/reception/pages/visit-routing-page'
 import { ExaminationQueuePage } from '@/features/reception/pages/examination-queue-page';
 import { PatientSearchPage } from '@/features/reception/pages/patient-search-page';
 import { ReceptionDashboardPage } from '@/features/reception/pages/reception-dashboard-page';
+import { PatientIdentityClaimPage } from '@/features/identity-claim/pages/patient-identity-claim-page';
+import { ReceptionIdentityClaimPage } from '@/features/identity-claim/pages/reception-identity-claim-page';
 import { WalkInVisitPage } from '@/features/reception/pages/walk-in-visit-page';
 import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
 import { DoctorReviewDiagnosticsPage } from '@/features/doctor/pages/doctor-review-diagnostics-page';
@@ -85,6 +89,7 @@ import {
   RequireDoctor,
   RequirePharmacy,
   RequireReception,
+  RequireRole,
   RequireSystemAdmin,
 } from './guards';
 
@@ -128,6 +133,16 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/payments"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientPaymentListPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/payments/visits/:visitIdOrCode"
         element={
           <RequireAuth>
@@ -140,6 +155,16 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <VisitPaymentPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/payments/:visitCode"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientPaymentDetailPage />
+            </RequireRole>
           </RequireAuth>
         }
       />
@@ -232,6 +257,16 @@ export function AppRouter() {
             <RequireReception>
               <AssignRoomPage />
             </RequireReception>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/reception/identity-claims"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['HOSPITAL_ADMIN', 'SYSTEM_ADMIN']}>
+              <ReceptionIdentityClaimPage />
+            </RequireRole>
           </RequireAuth>
         }
       />
@@ -1155,6 +1190,16 @@ export function AppRouter() {
       />
       <Route path="/profile" element={<PatientProfilePage />} />
       <Route path="/patient/profile" element={<PatientProfilePage />} />
+      <Route
+        path="/patient/identity-claims"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientIdentityClaimPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
       <Route
         path="/patient/emr/diagnostic-result"
         element={

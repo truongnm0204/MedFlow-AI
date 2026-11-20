@@ -356,6 +356,7 @@ public sealed class AppointmentSlotServiceTests : IDisposable
                 MemberPatientId = 3,
                 Relationship = "CHILD",
                 VerificationStatus = "VERIFIED",
+                VerificationMethod = "STAFF",
                 VerifiedAt = new DateTime(2026, 1, 1, 8, 0, 0),
                 RevokedAt = null,
             },
@@ -365,6 +366,7 @@ public sealed class AppointmentSlotServiceTests : IDisposable
                 MemberPatientId = 4,
                 Relationship = "PARENT",
                 VerificationStatus = "VERIFIED",
+                VerificationMethod = "STAFF",
                 VerifiedAt = new DateTime(2026, 1, 1, 8, 0, 0),
                 RevokedAt = new DateTime(2026, 10, 1, 8, 0, 0),
             });

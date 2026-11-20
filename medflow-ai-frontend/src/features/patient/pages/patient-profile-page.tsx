@@ -108,6 +108,21 @@ export function PatientProfilePage() {
                 onEditContact={() => setIsEditModalOpen(true)}
                 onDownloadPdf={handleDownloadPdf}
               />
+
+              <div className="mt-6 rounded-2xl border border-border bg-white p-5">
+                <h2 className="text-sm font-bold text-ink">Đã từng khám tại bệnh viện?</h2>
+                <p className="mt-1 text-xs leading-relaxed text-sub">
+                  Liên kết tài khoản với hồ sơ bệnh nhân cũ để xem lại lịch sử khám và viện phí. Cần
+                  xác thực OTP và nhân viên đối chiếu giấy tờ.
+                </p>
+                <Link
+                  to="/patient/identity-claims"
+                  className="mt-3 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-dark focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <span>Liên kết hồ sơ đã có</span>
+                  <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                </Link>
+              </div>
             </section>
           </div>
         </div>

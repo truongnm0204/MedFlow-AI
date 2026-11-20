@@ -1,14 +1,14 @@
 using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.RegularExpressions;
 using MedFlow.Application.DTOs.Patients;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Options;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MedFlow.Application.Services.Patients;
 
@@ -18,10 +18,14 @@ public sealed class FamilyProfileService : IFamilyProfileService
     private const string UnverifiedIdentityText = "Chưa cập nhật CCCD";
 
     private readonly IApplicationDbContext _db;
+    private readonly IOptions<IdentityHashOptions>? _hashOptions;
 
-    public FamilyProfileService(IApplicationDbContext db)
+    public FamilyProfileService(
+        IApplicationDbContext db,
+        IOptions<IdentityHashOptions>? hashOptions = null)
     {
         _db = db;
+        _hashOptions = hashOptions;
     }
 
     public async Task<IReadOnlyList<FamilyMemberResponse>> GetFamilyMembersAsync(
@@ -175,14 +179,14 @@ public sealed class FamilyProfileService : IFamilyProfileService
                 throw new ValidationException("Số điện thoại khẩn cấp không hợp lệ.");
         }
 
-        string? idHash = null;
+        string? legacyHash = null;
+        string? hmacHash = null;
         if (!string.IsNullOrWhiteSpace(request.IdentificationNo))
         {
-            var idTrimmed = request.IdentificationNo.Trim();
-            if (!Regex.IsMatch(idTrimmed, @"^\d{9}(\d{3})?$"))
-                throw new ValidationException("Số CCCD/định danh không hợp lệ (cần 9 hoặc 12 chữ số).");
-
-            idHash = ComputeIdentificationHash(idTrimmed);
+            var normalizedId = IdentificationNumber.Normalize(request.IdentificationNo);
+            var key = IdentificationNumber.RequireKey(_hashOptions);
+            legacyHash = IdentificationNumber.ComputeSha256(normalizedId);
+            hmacHash = IdentificationNumber.ComputeHmac(normalizedId, key);
         }
 
         if (!string.IsNullOrWhiteSpace(request.BloodType))
@@ -195,11 +199,17 @@ public sealed class FamilyProfileService : IFamilyProfileService
         var self = await LoadActiveSelfAsync(userId, ct);
         var canonicalRel = ToCanonicalRelationship(trimmedRel, request.Gender);
 
-        // Check if an existing patient matches IdentificationHash
-        if (idHash != null)
+        // Check if an existing patient matches the identity hash (HMAC first, SHA fallback during transition).
+        if (hmacHash != null)
         {
             var existingPatient = await _db.Patients
-                .FirstOrDefaultAsync(p => p.IdentificationHash == idHash, ct);
+                .FirstOrDefaultAsync(p => p.IdentificationHashHmac == hmacHash, ct);
+
+            if (existingPatient is null && IdentificationNumber.AllowShaFallback(_hashOptions))
+            {
+                existingPatient = await _db.Patients
+                    .FirstOrDefaultAsync(p => p.IdentificationHash == legacyHash, ct);
+            }
 
             if (existingPatient != null)
             {
@@ -214,11 +224,14 @@ public sealed class FamilyProfileService : IFamilyProfileService
                     if (existingLink.RevokedAt == null)
                         throw new ConflictException("Hồ sơ người thân với số định danh này đã tồn tại trong danh sách của bạn.");
 
-                    // Reactivate revoked link
+                    // Reactivate revoked link; verification must be re-established later.
                     existingLink.RevokedAt = null;
                     existingLink.Relationship = canonicalRel;
-                    existingLink.VerificationStatus = "VERIFIED";
-                    existingLink.VerifiedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+                    existingLink.VerificationStatus = "PENDING";
+                    existingLink.VerificationMethod = null;
+                    existingLink.VerifiedByStaffId = null;
+                    existingLink.VerifiedAt = null;
+                    existingLink.LegacyAccessUntil = null;
                     await _db.SaveChangesAsync(ct);
 
                     return BuildMemberResponse(self, existingPatient, existingLink, 0, false, null);
@@ -230,8 +243,8 @@ public sealed class FamilyProfileService : IFamilyProfileService
                     OwnerPatientId = self.Id,
                     MemberPatientId = existingPatient.Id,
                     Relationship = canonicalRel,
-                    VerificationStatus = "VERIFIED",
-                    VerifiedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified),
+                    VerificationStatus = "PENDING",
+                    VerifiedAt = null,
                     RevokedAt = null
                 };
 
@@ -253,7 +266,9 @@ public sealed class FamilyProfileService : IFamilyProfileService
             Phone = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim(),
             Email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim().ToLowerInvariant(),
             Address = request.Address.Trim(),
-            IdentificationHash = idHash,
+            IdentificationHash = legacyHash,
+            IdentificationHashHmac = hmacHash,
+            HashVersion = hmacHash is null ? null : IdentificationNumber.CurrentHashVersion,
             BloodType = string.IsNullOrWhiteSpace(request.BloodType) ? null : request.BloodType.Trim().ToUpperInvariant(),
             Status = "ACTIVE",
             UserId = null
@@ -267,8 +282,8 @@ public sealed class FamilyProfileService : IFamilyProfileService
             OwnerPatientId = self.Id,
             MemberPatientId = newPatient.Id,
             Relationship = canonicalRel,
-            VerificationStatus = idHash != null ? "VERIFIED" : "ACTIVE",
-            VerifiedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified),
+            VerificationStatus = hmacHash != null ? "PENDING" : "ACTIVE",
+            VerifiedAt = null,
             RevokedAt = null
         };
 
@@ -324,7 +339,23 @@ public sealed class FamilyProfileService : IFamilyProfileService
         if (!string.Equals(member.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
             throw new NotFoundException("FamilyMember", identifier);
 
-        // 1. Validate & update FullName if provided
+        var linkStatus = link.VerificationStatus?.Trim().ToUpperInvariant();
+        var linkMethod = link.VerificationMethod?.Trim().ToUpperInvariant();
+        var canEditIdentity = linkStatus == "VERIFIED" && linkMethod is "STAFF" or "OTP";
+        var identityFieldsRequested =
+            request.FullName is not null ||
+            request.Gender is not null ||
+            request.Address is not null ||
+            request.Phone is not null ||
+            request.Email is not null ||
+            request.BirthDate is not null ||
+            request.DateOfBirth.HasValue;
+
+        if (identityFieldsRequested && (member.UserId is not null || !canEditIdentity))
+        {
+            throw new ForbiddenException(
+                "Không thể sửa thông tin định danh của hồ sơ người thân này. Vui lòng liên hệ quầy tiếp nhận.");
+        }
         if (request.FullName is not null)
         {
             var nameTrimmed = request.FullName.Trim();
@@ -648,10 +679,12 @@ public sealed class FamilyProfileService : IFamilyProfileService
     {
         var relationship = MapRelationship(link.Relationship, member.Gender);
         var badgeColor = GetBadgeColor(relationship);
-        var isVerified = !string.IsNullOrWhiteSpace(member.IdentificationHash);
         var status = !string.IsNullOrWhiteSpace(link.VerificationStatus)
             ? link.VerificationStatus.ToUpperInvariant()
             : "ACTIVE";
+        var method = link.VerificationMethod?.Trim().ToUpperInvariant();
+        var canViewPhi = status == "VERIFIED" && method is "STAFF" or "OTP";
+        var isVerified = canViewPhi;
 
         var canManage = status is "VERIFIED" or "ACTIVE";
         var subStatus = canManage ? GetSubStatus(relationship) : "Chỉ đọc";
@@ -702,9 +735,9 @@ public sealed class FamilyProfileService : IFamilyProfileService
             Permissions: new FamilyMemberPermissionsDto(
                 CanManage: canManage,
                 CanBookAppointments: true,
-                CanViewMedicalRecords: true,
+                CanViewMedicalRecords: canViewPhi,
                 RelationshipStatus: status,
-                ConsentVerifiedAt: link.VerifiedAt?.ToString("dd/MM/yyyy")
+                ConsentVerifiedAt: canViewPhi ? link.VerifiedAt?.ToString("dd/MM/yyyy") : null
             )
         );
     }
@@ -857,13 +890,6 @@ public sealed class FamilyProfileService : IFamilyProfileService
 
         if (dob.Year < 1900)
             throw new ValidationException("Năm sinh không hợp lệ (năm sinh từ năm 1900 đến nay).");
-    }
-
-    private static string ComputeIdentificationHash(string idNo)
-    {
-        using var sha256 = SHA256.Create();
-        var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(idNo.Trim()));
-        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
     private async Task<string> GenerateUniquePatientCodeAsync(CancellationToken ct)
