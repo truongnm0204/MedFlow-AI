@@ -934,4 +934,192 @@ public sealed class DoctorAdminServiceTests : IDisposable
         await Assert.ThrowsAsync<ConflictException>(() =>
             _service.UpdateDoctorAsync(11, 2L, new UpdateDoctorAdminRequest(IsActive: true)));
     }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task DeactivateDoctorAsync_EmptyIdOrCode_ThrowsValidationException(string invalidId)
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.DeactivateDoctorAsync(11, invalidId, new DeactivateDoctorRequest()));
+    }
+
+    [Fact]
+    public async Task DeactivateDoctorAsync_NotFound_ThrowsNotFoundException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.DeactivateDoctorAsync(11, "999999", new DeactivateDoctorRequest()));
+    }
+
+    [Fact]
+    public async Task DeactivateDoctorAsync_DifferentHospital_ThrowsForbiddenException()
+    {
+        // Doctor 1 belongs to Hospital 1. User 12 is Hospital Admin at Hospital 2.
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.DeactivateDoctorAsync(12, "1", new DeactivateDoctorRequest()));
+    }
+
+    [Fact]
+    public async Task DeactivateDoctorAsync_AlreadyDeactivated_ThrowsConflictException()
+    {
+        var doctor = await _db.Doctors.FirstAsync(d => d.Id == 1);
+        doctor.IsActive = false;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.DeactivateDoctorAsync(11, "1", new DeactivateDoctorRequest()));
+    }
+
+    [Fact]
+    public async Task DeactivateDoctorAsync_ActiveOngoingVisits_ThrowsConflictException()
+    {
+        var activeVisit = new Visit
+        {
+            Id = 501,
+            AssignedDoctorId = 1,
+            Status = "IN_CONSULTATION"
+        };
+        _db.Visits.Add(activeVisit);
+        await _db.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.DeactivateDoctorAsync(11, "1", new DeactivateDoctorRequest()));
+
+        Assert.Contains("ca khám chưa hoàn thành", ex.Message);
+    }
+
+    [Fact]
+    public async Task DeactivateDoctorAsync_DependentBookingsWithoutConfirmation_ThrowsConflictException()
+    {
+        var futureSlot = new ExaminationSlot
+        {
+            Id = 601,
+            DoctorId = 1,
+            StartsAt = DateTime.UtcNow.AddDays(1),
+            EndsAt = DateTime.UtcNow.AddDays(1).AddMinutes(30),
+            Status = "OPEN"
+        };
+        var activeAppointment = new Appointment
+        {
+            Id = 701,
+            AppointmentCode = "APT-DEACT-01",
+            SlotId = 601,
+            Status = "BOOKED"
+        };
+        _db.ExaminationSlots.Add(futureSlot);
+        _db.Appointments.Add(activeAppointment);
+        await _db.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.DeactivateDoctorAsync(11, "1", new DeactivateDoctorRequest(ConfirmUnderstood: false)));
+
+        Assert.Contains("Không thể ngừng hoạt động", ex.Message);
+    }
+
+    [Fact]
+    public async Task DeactivateDoctorAsync_DependentBookingsWithConfirmation_ClosesSlotsAndSucceeds()
+    {
+        var futureSlot = new ExaminationSlot
+        {
+            Id = 602,
+            DoctorId = 1,
+            StartsAt = DateTime.UtcNow.AddDays(2),
+            EndsAt = DateTime.UtcNow.AddDays(2).AddMinutes(30),
+            Status = "OPEN"
+        };
+        var activeAppointment = new Appointment
+        {
+            Id = 702,
+            AppointmentCode = "APT-DEACT-02",
+            SlotId = 602,
+            Status = "CONFIRMED"
+        };
+        _db.ExaminationSlots.Add(futureSlot);
+        _db.Appointments.Add(activeAppointment);
+        await _db.SaveChangesAsync();
+
+        var response = await _service.DeactivateDoctorAsync(
+            11,
+            "DOC-0001",
+            new DeactivateDoctorRequest(Reason: "Nghỉ việc chuyển cơ sở", ConfirmUnderstood: true));
+
+        Assert.False(response.IsActive);
+        Assert.Equal("SUSPENDED", response.Status);
+        Assert.True(response.HasActiveBookings);
+        Assert.True(response.ActiveBookingsCount > 0);
+
+        // Verify slot was closed
+        var slotInDb = await _db.ExaminationSlots.FirstAsync(s => s.Id == 602);
+        Assert.Equal("CLOSED", slotInDb.Status);
+
+        // Verify doctor in DB
+        var docInDb = await _db.Doctors.FirstAsync(d => d.Id == 1);
+        Assert.False(docInDb.IsActive);
+
+        // Verify AuditLog
+        var audit = await _db.AuditLogs.FirstOrDefaultAsync(a => a.Action == "DOCTOR_DEACTIVATED" && a.EntityId == "1");
+        Assert.NotNull(audit);
+    }
+
+    [Fact]
+    public async Task DeactivateDoctorAsync_NoDependencies_SucceedsAndRecordsAuditLog()
+    {
+        var response = await _service.DeactivateDoctorAsync(
+            11,
+            "1",
+            new DeactivateDoctorRequest(Reason: "Tạm dừng công tác"));
+
+        Assert.False(response.IsActive);
+        Assert.Equal("SUSPENDED", response.Status);
+        Assert.False(response.HasActiveBookings);
+        Assert.Equal(0, response.ActiveBookingsCount);
+
+        var docInDb = await _db.Doctors.FirstAsync(d => d.Id == 1);
+        Assert.False(docInDb.IsActive);
+    }
+
+    [Fact]
+    public async Task ReactivateDoctorAsync_AlreadyActive_ThrowsConflictException()
+    {
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ReactivateDoctorAsync(11, "1"));
+    }
+
+    [Fact]
+    public async Task ReactivateDoctorAsync_InactiveStaff_ThrowsConflictException()
+    {
+        var doctor = await _db.Doctors.FirstAsync(d => d.Id == 1);
+        doctor.IsActive = false;
+
+        var staff1 = await _db.Staff.FirstAsync(s => s.Id == 1);
+        staff1.Status = "INACTIVE";
+        await _db.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ReactivateDoctorAsync(11, "1"));
+
+        Assert.Contains("hồ sơ nhân sự gốc đang ngừng hoạt động", ex.Message);
+    }
+
+    [Fact]
+    public async Task ReactivateDoctorAsync_Success_ReactivatesAndRecordsAuditLog()
+    {
+        var doctor = await _db.Doctors.FirstAsync(d => d.Id == 1);
+        doctor.IsActive = false;
+        await _db.SaveChangesAsync();
+
+        var response = await _service.ReactivateDoctorAsync(
+            11,
+            "DOC-0001",
+            new ReactivateDoctorRequest(Reason: "Quay trở lại công tác"));
+
+        Assert.True(response.IsActive);
+        Assert.Equal("ACTIVE", response.Status);
+
+        var docInDb = await _db.Doctors.FirstAsync(d => d.Id == 1);
+        Assert.True(docInDb.IsActive);
+
+        var audit = await _db.AuditLogs.FirstOrDefaultAsync(a => a.Action == "DOCTOR_REACTIVATED" && a.EntityId == "1");
+        Assert.NotNull(audit);
+    }
 }

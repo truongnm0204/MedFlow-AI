@@ -3,6 +3,7 @@ using MedFlow.Application.DTOs.Doctors;
 using MedFlow.Application.Services.Doctors;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace MedFlow.API.Controllers;
 
@@ -91,7 +92,7 @@ public sealed class AdminDoctorsController : ControllerBase
         CancellationToken ct)
     {
         var result = await _doctorAdminService.UpdateDoctorAsync(
-            GetUserId(),
+            GetRequiredUserId(),
             id,
             request,
             GetIp(),
@@ -99,17 +100,71 @@ public sealed class AdminDoctorsController : ControllerBase
         return Ok(result);
     }
 
-    private long GetUserId()
+    /// <summary>POST|PATCH|PUT /api/v1/admin/doctors/{idOrCode}/deactivate hoặc DELETE {idOrCode} — Ngừng hoạt động bác sĩ (UC49 / #188).</summary>
+    [HttpPost("{idOrCode}/deactivate")]
+    [HttpPatch("{idOrCode}/deactivate")]
+    [HttpPut("{idOrCode}/deactivate")]
+    [HttpDelete("{idOrCode}")]
+    [ProducesResponseType<DeactivateDoctorResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<DeactivateDoctorResponseDto>> DeactivateDoctor(
+        [FromRoute] string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] DeactivateDoctorRequest? request = null,
+        CancellationToken ct = default)
+    {
+        var result = await _doctorAdminService.DeactivateDoctorAsync(
+            GetUserId(),
+            idOrCode,
+            request ?? new DeactivateDoctorRequest(),
+            GetIp(),
+            ct);
+        return Ok(result);
+    }
+
+    /// <summary>POST|PATCH|PUT /api/v1/admin/doctors/{idOrCode}/reactivate — Kích hoạt lại bác sĩ đã ngừng hoạt động (UC49 / #188).</summary>
+    [HttpPost("{idOrCode}/reactivate")]
+    [HttpPatch("{idOrCode}/reactivate")]
+    [HttpPut("{idOrCode}/reactivate")]
+    [ProducesResponseType<DeactivateDoctorResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<DeactivateDoctorResponseDto>> ReactivateDoctor(
+        [FromRoute] string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] ReactivateDoctorRequest? request = null,
+        CancellationToken ct = default)
+    {
+        var result = await _doctorAdminService.ReactivateDoctorAsync(
+            GetUserId(),
+            idOrCode,
+            request,
+            GetIp(),
+            ct);
+        return Ok(result);
+    }
+
+    private long? GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
             ?? User.FindFirstValue("sub");
 
         if (string.IsNullOrWhiteSpace(sub) || !long.TryParse(sub, out var userId))
         {
-            throw new UnauthorizedAccessException("Token không hợp lệ");
+            return null;
         }
 
         return userId;
+    }
+
+    private long GetRequiredUserId()
+    {
+        return GetUserId() ?? throw new UnauthorizedAccessException("Token không hợp lệ");
     }
 
     private string? GetIp() =>
