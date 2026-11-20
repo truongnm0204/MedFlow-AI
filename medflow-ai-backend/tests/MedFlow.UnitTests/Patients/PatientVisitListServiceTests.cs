@@ -169,6 +169,7 @@ public sealed class PatientVisitListServiceTests : IDisposable
             OwnerPatientId = ownerId,
             MemberPatientId = memberId,
             VerificationStatus = "VERIFIED",
+            VerificationMethod = "OTP",
             RevokedAt = revoked ? FixedNow.UtcDateTime : null,
         });
         _db.SaveChanges();
