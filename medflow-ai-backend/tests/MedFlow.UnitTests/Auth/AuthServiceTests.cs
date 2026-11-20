@@ -175,6 +175,7 @@ public sealed class AuthServiceTests : IDisposable
         public List<(long UserId, string? CreatedByIp)> GeneratedSessions { get; } = [];
         public List<(string RawToken, string? IpAddress)> RotatedTokens { get; } = [];
         public List<(string RawToken, string? IpAddress)> RevokedTokens { get; } = [];
+        public List<(long UserId, string? IpAddress)> RevokedUsers { get; } = [];
 
         public RotateResult NextRotateResult { get; set; } = new() { Success = false };
 
@@ -206,7 +207,10 @@ public sealed class AuthServiceTests : IDisposable
         }
 
         public Task RevokeAllForUserAsync(long userId, string? ipAddress, CancellationToken ct = default)
-            => throw new NotSupportedException();
+        {
+            RevokedUsers.Add((userId, ipAddress));
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingEmailSender : IEmailSender
@@ -437,21 +441,21 @@ public sealed class AuthServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task LoginAsync_GoogleAccountWithoutPasswordHash_ThrowsGenericUnauthorized()
+    public async Task LoginAsync_GoogleAccountWithoutPasswordHash_ThrowsUnauthorized()
     {
         var user = await SeedUserAsync(email: "google@medflow.test");
         user.AuthProvider = "GOOGLE";
         user.PasswordHash = null;
         await _db.SaveChangesAsync();
 
-        var exception = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             _sut.LoginAsync(new LoginRequest
             {
-                Email = user.Email,
+                Email = "google@medflow.test",
                 Password = DefaultPassword,
             }, "127.0.0.1"));
 
-        Assert.Equal("Sai thông tin đăng nhập", exception.Message);
+        Assert.Equal("Sai thông tin đăng nhập", ex.Message);
     }
 
     [Theory]
@@ -649,6 +653,38 @@ public sealed class AuthServiceTests : IDisposable
 
         Assert.Equal("Refresh token không hợp lệ", ex.Message);
         Assert.Empty(_audit.Entries);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_LockedUserAfterRotation_RevokesSessionsAndThrowsUnauthorized()
+    {
+        var user = await SeedUserAsync(
+            email: "locked-refresh@medflow.test",
+            status: AccountStatus.LOCKED);
+        _sessions.NextRotateResult = new RotateResult
+        {
+            Success = true,
+            User = user,
+            Entity = new AuthSession
+            {
+                Id = 100,
+                UserId = user.Id,
+                ExpiresAt = DateTime.UtcNow.AddDays(7),
+            },
+            RawToken = "must-not-be-returned",
+        };
+
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.RefreshAsync(new RefreshRequest
+            {
+                RefreshToken = "locked-user-token",
+            }, "10.0.0.12"));
+
+        Assert.Equal("Refresh token không hợp lệ", ex.Message);
+        var revoked = Assert.Single(_sessions.RevokedUsers);
+        Assert.Equal(user.Id, revoked.UserId);
+        Assert.Equal("10.0.0.12", revoked.IpAddress);
+        Assert.Empty(_jwt.Calls);
     }
 
     [Fact]
