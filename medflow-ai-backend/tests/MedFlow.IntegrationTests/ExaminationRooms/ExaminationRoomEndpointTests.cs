@@ -465,4 +465,87 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
             }
         }
     }
+
+    // ==========================================
+    // Deactivate & Reactivate Room Endpoint Tests (#180 / M2-060)
+    // ==========================================
+
+    [Fact]
+    public async Task CheckDependencies_Unauthenticated_Returns401()
+    {
+        var response = await Client.GetAsync("/api/v1/admin/examination-rooms/1/dependencies");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CheckDependencies_PatientRole_Returns403()
+    {
+        var token = GenerateToken(999, "patient_test@medflow.test", "PATIENT");
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/examination-rooms/1/dependencies");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeactivateExaminationRoom_Unauthenticated_Returns401()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-rooms/1/deactivate");
+        request.Content = JsonContent.Create(new DeactivateExaminationRoomRequest());
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeactivateExaminationRoom_PatientRole_Returns403()
+    {
+        var token = GenerateToken(999, "patient_test@medflow.test", "PATIENT");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-rooms/1/deactivate");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new DeactivateExaminationRoomRequest());
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeactivateExaminationRoom_DeleteAlias_Unauthenticated_Returns401()
+    {
+        var response = await Client.DeleteAsync("/api/v1/admin/examination-rooms/1");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReactivateExaminationRoom_Unauthenticated_Returns401()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-rooms/1/reactivate");
+        request.Content = JsonContent.Create(new ReactivateExaminationRoomRequest());
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReactivateExaminationRoom_PatientRole_Returns403()
+    {
+        var token = GenerateToken(999, "patient_test@medflow.test", "PATIENT");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-rooms/1/reactivate");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new ReactivateExaminationRoomRequest());
+
+        var response = await Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
 }
