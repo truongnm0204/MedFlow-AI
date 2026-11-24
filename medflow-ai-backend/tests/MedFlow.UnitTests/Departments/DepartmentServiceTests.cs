@@ -2,6 +2,8 @@ using MedFlow.Application.DTOs.Departments;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Departments;
 using MedFlow.Domain.Entities;
+using MedFlow.Domain.Enums;
+using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 
@@ -18,29 +20,29 @@ public sealed class DepartmentServiceTests : IDisposable
 
         private static NotSupportedException NotUsed() => new("Not needed for DepartmentService unit tests.");
 
-        public DbSet<User> Users => throw NotUsed();
-        public DbSet<Role> Roles => throw NotUsed();
+        public DbSet<User> Users => Set<User>();
+        public DbSet<Role> Roles => Set<Role>();
         public DbSet<Permission> Permissions => throw NotUsed();
-        public DbSet<UserRole> UserRoles => throw NotUsed();
+        public DbSet<UserRole> UserRoles => Set<UserRole>();
         public DbSet<RolePermission> RolePermissions => throw NotUsed();
         public DbSet<Patient> Patients => throw NotUsed();
-        public DbSet<Staff> Staff => throw NotUsed();
-        public DbSet<Doctor> Doctors => throw NotUsed();
+        public DbSet<Staff> Staff => Set<Staff>();
+        public DbSet<Doctor> Doctors => Set<Doctor>();
         public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => throw NotUsed();
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
-        public DbSet<AuditLog> AuditLogs => throw NotUsed();
+        public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
         public DbSet<Hospital> Hospitals => throw NotUsed();
         public DbSet<Department> Departments => Set<Department>();
-        public DbSet<HospitalRoom> HospitalRooms => throw NotUsed();
+        public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => throw NotUsed();
-        public DbSet<Service> Services => throw NotUsed();
+        public DbSet<Service> Services => Set<Service>();
         public DbSet<ServicePrice> ServicePrices => throw NotUsed();
-        public DbSet<ExaminationSlot> ExaminationSlots => throw NotUsed();
+        public DbSet<ExaminationSlot> ExaminationSlots => Set<ExaminationSlot>();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
-        public DbSet<Appointment> Appointments => throw NotUsed();
+        public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
-        public DbSet<Visit> Visits => throw NotUsed();
+        public DbSet<Visit> Visits => Set<Visit>();
         public DbSet<QueueEntry> QueueEntries => throw NotUsed();
         public DbSet<Payment> Payments => throw NotUsed();
 
@@ -49,32 +51,33 @@ public sealed class DepartmentServiceTests : IDisposable
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Ignore<User>();
-            modelBuilder.Ignore<Role>();
             modelBuilder.Ignore<Permission>();
-            modelBuilder.Ignore<UserRole>();
             modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Patient>();
-            modelBuilder.Ignore<Staff>();
-            modelBuilder.Ignore<Doctor>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<AuditLog>();
             modelBuilder.Ignore<Hospital>();
-            modelBuilder.Ignore<HospitalRoom>();
             modelBuilder.Ignore<Specialty>();
-            modelBuilder.Ignore<Service>();
             modelBuilder.Ignore<ServicePrice>();
-            modelBuilder.Ignore<ExaminationSlot>();
             modelBuilder.Ignore<HospitalPolicy>();
-            modelBuilder.Ignore<Appointment>();
             modelBuilder.Ignore<PatientFamilyLink>();
-            modelBuilder.Ignore<Visit>();
             modelBuilder.Ignore<QueueEntry>();
             modelBuilder.Ignore<Payment>();
 
+            modelBuilder.Entity<User>().HasKey(u => u.Id);
+            modelBuilder.Entity<Role>().HasKey(r => r.Id);
+            modelBuilder.Entity<UserRole>().HasKey(ur => new { ur.UserId, ur.RoleId });
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
+            modelBuilder.Entity<HospitalRoom>().HasKey(r => r.Id);
+            modelBuilder.Entity<Service>().HasKey(s => s.Id);
+            modelBuilder.Entity<Staff>().HasKey(s => s.Id);
+            modelBuilder.Entity<Doctor>().HasKey(d => d.Id);
+            modelBuilder.Entity<ExaminationSlot>().HasKey(s => s.Id);
+            modelBuilder.Entity<Appointment>().HasKey(a => a.Id);
+            modelBuilder.Entity<Visit>().HasKey(v => v.Id);
+            modelBuilder.Entity<AuditLog>().HasKey(a => a.Id);
+            modelBuilder.Entity<AuditLog>().Ignore(a => a.IpAddress);
         }
     }
 
@@ -118,6 +121,40 @@ public sealed class DepartmentServiceTests : IDisposable
             new Department { Id = 12, HospitalId = 1, DepartmentCode = "DEP-012", Name = "Khoa Mắt", IsActive = true },
             new Department { Id = 13, HospitalId = 1, DepartmentCode = "DEP-013", Name = "Khoa Da liễu", IsActive = false },
             new Department { Id = 14, HospitalId = 2, DepartmentCode = "DEP-014", Name = "Khoa Y học cổ truyền", IsActive = false }
+        );
+
+        _dbContext.Roles.AddRange(
+            new Role { Id = 1, Code = "HOSPITAL_ADMIN", Name = "Hospital Admin" },
+            new Role { Id = 2, Code = "SYSTEM_ADMIN", Name = "System Admin" }
+        );
+
+        _dbContext.Users.AddRange(
+            new User { Id = 11, Email = "admin1@test.com", AccountStatus = AccountStatus.ACTIVE },
+            new User { Id = 12, Email = "admin2@test.com", AccountStatus = AccountStatus.ACTIVE },
+            new User { Id = 13, Email = "sysadmin@test.com", AccountStatus = AccountStatus.ACTIVE }
+        );
+
+        _dbContext.UserRoles.AddRange(
+            new UserRole { UserId = 11, RoleId = 1 },
+            new UserRole { UserId = 12, RoleId = 1 },
+            new UserRole { UserId = 13, RoleId = 2 }
+        );
+
+        _dbContext.Staff.AddRange(
+            new Staff { Id = 1, UserId = 11, HospitalId = 1, StaffCode = "STF-001", FullName = "Admin 1", DepartmentId = 1 },
+            new Staff { Id = 2, UserId = 12, HospitalId = 2, StaffCode = "STF-002", FullName = "Admin 2", DepartmentId = 14 },
+            new Staff { Id = 3, UserId = 13, HospitalId = null, StaffCode = "STF-003", FullName = "System Admin" },
+            new Staff { Id = 10, UserId = null, HospitalId = 1, StaffCode = "DOC-STF-01", FullName = "Bác sĩ Tiêu hóa", DepartmentId = 6 }
+        );
+
+        // Department 5 has an active room
+        _dbContext.HospitalRooms.Add(
+            new HospitalRoom { Id = 101, DepartmentId = 5, RoomCode = "101", Name = "Phòng 101", RoomType = "EXAMINATION", Status = "ACTIVE" }
+        );
+
+        // Department 6 has an active doctor
+        _dbContext.Doctors.Add(
+            new Doctor { Id = 201, StaffId = 10, HospitalId = 1, DoctorCode = "DOC-201", IsActive = true }
         );
         _dbContext.SaveChanges();
     }
@@ -560,5 +597,190 @@ public sealed class DepartmentServiceTests : IDisposable
 
         Assert.Equal(2, result.HospitalId);
         Assert.Equal("MedFlow Cơ sở 2", result.Facility);
+    }
+
+    [Fact]
+    public async Task CheckDependencies_EmptyIdOrCode_ThrowsArgumentException()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _service.CheckDepartmentDependenciesAsync(11, "   "));
+    }
+
+    [Fact]
+    public async Task CheckDependencies_NotFound_ThrowsNotFoundException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.CheckDepartmentDependenciesAsync(11, "9999"));
+    }
+
+    [Fact]
+    public async Task CheckDependencies_CrossHospital_ThrowsForbiddenException()
+    {
+        // Dept 14 belongs to Hospital 2, User 11 is HospitalAdmin of Hospital 1
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CheckDepartmentDependenciesAsync(11, "14"));
+    }
+
+    [Fact]
+    public async Task CheckDependencies_WithActiveRooms_ReturnsCanDeactivateFalse()
+    {
+        // Dept 5 has Room 101 active
+        var result = await _service.CheckDepartmentDependenciesAsync(11, "5");
+
+        Assert.False(result.CanDeactivate);
+        Assert.Equal(1, result.ActiveRoomsCount);
+        Assert.NotNull(result.BlockingReason);
+        Assert.Contains("buồng khám", result.BlockingReason);
+    }
+
+    [Fact]
+    public async Task CheckDependencies_WithActiveDoctors_ReturnsCanDeactivateFalse()
+    {
+        // Dept 6 has Doctor 201 active
+        var result = await _service.CheckDepartmentDependenciesAsync(11, "6");
+
+        Assert.False(result.CanDeactivate);
+        Assert.Equal(1, result.ActiveDoctorsCount);
+        Assert.NotNull(result.BlockingReason);
+        Assert.Contains("bác sĩ", result.BlockingReason);
+    }
+
+    [Fact]
+    public async Task CheckDependencies_CleanDepartment_ReturnsCanDeactivateTrue()
+    {
+        // Dept 3 has no rooms, doctors, or slots
+        var result = await _service.CheckDepartmentDependenciesAsync(11, "3");
+
+        Assert.True(result.CanDeactivate);
+        Assert.Equal(0, result.ActiveRoomsCount);
+        Assert.Equal(0, result.ActiveDoctorsCount);
+        Assert.Null(result.BlockingReason);
+    }
+
+    [Fact]
+    public async Task DeactivateDepartment_EmptyIdOrCode_ThrowsArgumentException()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _service.DeactivateDepartmentAsync(11, ""));
+    }
+
+    [Fact]
+    public async Task DeactivateDepartment_NotFound_ThrowsNotFoundException()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.DeactivateDepartmentAsync(11, "NON_EXISTENT_DEP"));
+    }
+
+    [Fact]
+    public async Task DeactivateDepartment_CrossHospital_ThrowsForbiddenException()
+    {
+        // Dept 14 is in Hospital 2, User 11 is HospitalAdmin in Hospital 1
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.DeactivateDepartmentAsync(11, "14"));
+    }
+
+    [Fact]
+    public async Task DeactivateDepartment_AlreadyInactive_ThrowsConflictException()
+    {
+        // Dept 13 is already inactive (IsActive = false)
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.DeactivateDepartmentAsync(11, "13"));
+
+        Assert.Contains("ngừng hoạt động", ex.Message);
+    }
+
+    [Fact]
+    public async Task DeactivateDepartment_HasActiveRooms_ThrowsConflictException()
+    {
+        // Dept 5 has Room 101 active
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.DeactivateDepartmentAsync(11, "5"));
+
+        Assert.Contains("buồng khám", ex.Message);
+    }
+
+    [Fact]
+    public async Task DeactivateDepartment_HasActiveDoctors_ThrowsConflictException()
+    {
+        // Dept 6 has Doctor 201 active
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.DeactivateDepartmentAsync(11, "6"));
+
+        Assert.Contains("bác sĩ", ex.Message);
+    }
+
+    [Fact]
+    public async Task DeactivateDepartment_CleanDepartment_DeactivatesAndWritesAuditLog()
+    {
+        // Dept 3 is clean and active
+        var request = new DeactivateDepartmentRequest(
+            Reason: "RESTRUCTURING",
+            Note: "Tái cơ cấu khoa nội tiết"
+        );
+
+        var result = await _service.DeactivateDepartmentAsync(11, "3", request, "127.0.0.1");
+
+        Assert.Equal(3, result.Id);
+        Assert.False(result.IsActive);
+        Assert.Equal("INACTIVE", result.Status);
+        Assert.Contains("Đã ngừng hoạt động khoa phòng", result.Message);
+
+        var deptInDb = await _dbContext.Departments.FindAsync(3L);
+        Assert.NotNull(deptInDb);
+        Assert.False(deptInDb.IsActive);
+
+        var auditLog = await _dbContext.AuditLogs
+            .FirstOrDefaultAsync(a => a.Action == "DEPARTMENT_DEACTIVATED" && a.EntityId == "3");
+        Assert.NotNull(auditLog);
+        Assert.Equal(11, auditLog.ActorUserId);
+        Assert.Contains("RESTRUCTURING", auditLog.ChangeData);
+    }
+
+    [Fact]
+    public async Task ReactivateDepartment_AlreadyActive_ThrowsConflictException()
+    {
+        // Dept 1 is active
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ReactivateDepartmentAsync(11, "1"));
+
+        Assert.Contains("hoạt động", ex.Message);
+    }
+
+    [Fact]
+    public async Task ReactivateDepartment_InactiveDepartment_ReactivatesAndWritesAuditLog()
+    {
+        // Dept 13 is inactive
+        var request = new ReactivateDepartmentRequest(Reason: "Mở lại khoa da liễu");
+
+        var result = await _service.ReactivateDepartmentAsync(11, "13", request, "127.0.0.1");
+
+        Assert.Equal(13, result.Id);
+        Assert.True(result.IsActive);
+        Assert.Equal("ACTIVE", result.Status);
+
+        var deptInDb = await _dbContext.Departments.FindAsync(13L);
+        Assert.NotNull(deptInDb);
+        Assert.True(deptInDb.IsActive);
+
+        var auditLog = await _dbContext.AuditLogs
+            .FirstOrDefaultAsync(a => a.Action == "DEPARTMENT_REACTIVATED" && a.EntityId == "13");
+        Assert.NotNull(auditLog);
+        Assert.Equal(11, auditLog.ActorUserId);
+    }
+
+    [Fact]
+    public async Task UpdateDepartmentAsync_WhenDeactivatingWithActiveDependencies_ThrowsConflictException()
+    {
+        // Dept 5 has active Room 101, updating to IsActive = false should be rejected
+        var request = new UpdateDepartmentRequest(
+            Code: "DEP-005",
+            Name: "Khoa Xét nghiệm Cập nhật",
+            IsActive: false
+        );
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateDepartmentAsync(5, request));
+
+        Assert.Contains("buồng khám", ex.Message);
     }
 }

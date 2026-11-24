@@ -50,20 +50,22 @@ register -> user PENDING + patient + user_roles(PATIENT) + challenge PENDING (1 
 verify-otp -> challenge VERIFIED -> user ACTIVE + email_verified_at
 ```
 
-### Login + refresh rotation
+### Login + refresh rotation (ADR-0048)
 
 ```
-login   -> check ACTIVE + locked_until -> JWT access 60min + refresh row (hash)
+login   -> check ACTIVE + locked_until -> JWT access 60min + auth_sessions row (SHA-256 hash)
 request -> 401 -> POST /refresh
-refresh -> lookup token_hash -> ExecuteUpdateAsync atomic revoke + insert new
-        -> neu updated=0 -> reuse -> revoke toan bo family + audit REFRESH_REUSE_DETECTED
+refresh -> 1 DB transaction: lookup token_hash -> generate candidate in-memory
+        -> conditional ExecuteUpdateAsync (RevokedAt == null && ExpiresAt > now) + insert new session
+        -> neu updated=0 -> reuse -> RevokeAllForUserAsync + audit REFRESH_REUSE_DETECTED (khong tao orphan row)
 logout  -> revoke token (idempotent)
 ```
 
 ### Brute force + rate limit
 
 - `failed_login_attempts` + `locked_until`: 5 lan sai -> khoa 15 phut.
-- Rate limit: `auth` 5/min/IP, `otp` 10/min/IP; resend throttle 45s/email.
+- Rate limit tach rieng theo endpoint va phan vung theo IP client (`RemoteIpAddress` sau `UseForwardedHeaders` voi `KnownProxies`/`KnownIPNetworks` tuong minh): `auth-login` (10/min/IP), `auth-register` (5/min/IP), `auth-refresh` (30/min/IP), `otp-verify` (10/min/IP), `otp-resend` (5/min/IP), tra `429 ProblemDetails` + `Retry-After`; resend throttle 45s/email.
+- HTTPS redirection tat trong `Development` va `Test` de giu nguyen `Authorization` header qua Vite HTTP proxy; bat buoc `UseHsts()` + `UseHttpsRedirection()` trong `Production`.
 - Audit log cho moi su kien: `REGISTER`, `LOGIN_SUCCESS`, `LOGIN_FAILED`, `OTP_VERIFY`, `OTP_RESEND`, `LOGOUT`, `REFRESH_REUSE_DETECTED`, `EMAIL_SEND_FAILED`.
 
 ## Frontend — React 19
@@ -87,17 +89,20 @@ src/features/{feature}/
 - `lib/axios.ts` — apiClient + 401 interceptor.
 - `components/layout/` — `app-header`, `public-navbar`, `patient-navbar`, `user-menu`, `patient-footer`.
 
-### Axios 401 -> refresh single-flight
+### Axios 401 -> single-flight + Web Locks + error-classified refresh (ADR-0048)
 
 ```
-request -> 401 -> interceptor
-                | refreshPromise == null -> tao moi, goi /refresh
-                | refreshPromise != null -> reuse promise dang chay
-       <- refresh OK -> retry request goc voi access token moi
-       <- refresh fail -> clear store -> redirect /login
+request -> 401 -> interceptor (bo qua /auth/login|register|refresh|verify-otp|resend-otp|logout)
+                | refreshPromise == null -> withCrossTabLock('medflow:auth:refresh')
+                |   -> re-read localStorage: neu tab khac da rotate -> tai su dung token moi
+                |   -> neu chua -> POST /auth/refresh (kiem tra sessionEpoch/userId chong stale response)
+                | refreshPromise != null -> reuse promise dang chay trong tab
+       <- refresh OK -> retry request goc voi access token moi (toi da 1 lan)
+       <- refresh 401/403 hoac mat refresh token -> clearAuth + redirect /login?returnUrl=...
+       <- refresh 429/5xx/timeout/network -> giu nguyen phien, ton trong Retry-After cooldown
 ```
 
-State: Zustand `useAuthStore` persist `medflow.auth`; axios doc token tu store.
+State: Zustand `useAuthStore` persist `medflow.auth` kem `sessionEpoch` + dong bo da tab qua `storage` event va `BroadcastChannel` (khong ghi nguoc gay vong lap); tu dong `queryClient.clear()` dọn PHI cache khi tab khac logout.
 
 ## Database — schema `medflow`
 
@@ -125,7 +130,7 @@ Test DB: `medflow_test` — cung DDL + migration; `TestWebAppFactory` set `Conne
   - `Auth:JwtSecret`
   - `Auth:OtpSecret`
   - `Smtp:Password` (Gmail App Password)
-- Frontend: `vite.config.ts` proxy `/api` -> `http://localhost:5000`.
+- Frontend: `vite.config.ts` proxy `/api` -> `VITE_API_PROXY_TARGET` (mac dinh `http://localhost:5168`, tuy chon HTTPS).
 
 ## Testing
 

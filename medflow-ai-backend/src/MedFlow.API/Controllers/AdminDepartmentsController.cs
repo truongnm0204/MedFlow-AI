@@ -1,7 +1,10 @@
+using System.Security.Claims;
 using MedFlow.Application.DTOs.Departments;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Exceptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace MedFlow.API.Controllers;
 
@@ -98,6 +101,33 @@ public sealed class AdminDepartmentsController : ControllerBase
             var result = await _departmentService.UpdateDepartmentAsync(id, request, ct);
             return Ok(result);
         }
+        catch (NotFoundException ex)
+        {
+            return NotFound(new ProblemDetails
+            {
+                Title = "Không tìm thấy khoa phòng",
+                Detail = ex.Message,
+                Status = StatusCodes.Status404NotFound
+            });
+        }
+        catch (ForbiddenException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new ProblemDetails
+            {
+                Title = "Không có quyền thao tác",
+                Detail = ex.Message,
+                Status = StatusCodes.Status403Forbidden
+            });
+        }
+        catch (ConflictException ex)
+        {
+            return Conflict(new ProblemDetails
+            {
+                Title = "Xung đột dữ liệu",
+                Detail = ex.Message,
+                Status = StatusCodes.Status409Conflict
+            });
+        }
         catch (KeyNotFoundException ex)
         {
             return NotFound(new ProblemDetails
@@ -125,5 +155,93 @@ public sealed class AdminDepartmentsController : ControllerBase
                 Status = StatusCodes.Status409Conflict
             });
         }
+    }
+
+    /// <summary>GET /api/v1/admin/departments/{idOrCode}/dependencies — Kiểm tra các ràng buộc phụ thuộc của khoa phòng.</summary>
+    [HttpGet("{idOrCode}/dependencies")]
+    [ProducesResponseType<DepartmentDependencySummaryDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<DepartmentDependencySummaryDto>> CheckDependencies(
+        [FromRoute] string idOrCode,
+        CancellationToken ct)
+    {
+        var result = await _departmentService.CheckDepartmentDependenciesAsync(GetUserId(), idOrCode, ct);
+        return Ok(result);
+    }
+
+    /// <summary>POST|PATCH|PUT /api/v1/admin/departments/{idOrCode}/deactivate (cùng alias DELETE /api/v1/admin/departments/{idOrCode}) — Ngừng hoạt động khoa phòng (UC47 / #172).</summary>
+    [HttpPost("{idOrCode}/deactivate")]
+    [HttpPatch("{idOrCode}/deactivate")]
+    [HttpPut("{idOrCode}/deactivate")]
+    [HttpDelete("{idOrCode}")]
+    [ProducesResponseType<DeactivateDepartmentResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<DeactivateDepartmentResponseDto>> DeactivateDepartment(
+        [FromRoute] string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] DeactivateDepartmentRequest? request = null,
+        CancellationToken ct = default)
+    {
+        var result = await _departmentService.DeactivateDepartmentAsync(
+            GetUserId(),
+            idOrCode,
+            request ?? new DeactivateDepartmentRequest(),
+            GetIp(),
+            ct);
+        return Ok(result);
+    }
+
+    /// <summary>POST|PATCH|PUT /api/v1/admin/departments/{idOrCode}/reactivate — Kích hoạt lại khoa phòng đã ngừng hoạt động (UC47 / #172).</summary>
+    [HttpPost("{idOrCode}/reactivate")]
+    [HttpPatch("{idOrCode}/reactivate")]
+    [HttpPut("{idOrCode}/reactivate")]
+    [ProducesResponseType<DeactivateDepartmentResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<DeactivateDepartmentResponseDto>> ReactivateDepartment(
+        [FromRoute] string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] ReactivateDepartmentRequest? request = null,
+        CancellationToken ct = default)
+    {
+        var result = await _departmentService.ReactivateDepartmentAsync(
+            GetUserId(),
+            idOrCode,
+            request,
+            GetIp(),
+            ct);
+        return Ok(result);
+    }
+
+    private long? GetUserId()
+    {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue("sub");
+
+        if (string.IsNullOrWhiteSpace(sub) || !long.TryParse(sub, out var userId))
+        {
+            return null;
+        }
+
+        return userId;
+    }
+
+    private string? GetIp()
+    {
+        if (Request.Headers.TryGetValue("X-Forwarded-For", out var forwardedFor) &&
+            !string.IsNullOrWhiteSpace(forwardedFor))
+        {
+            return forwardedFor.ToString().Split(',')[0].Trim();
+        }
+
+        return HttpContext.Connection.RemoteIpAddress?.ToString();
     }
 }
