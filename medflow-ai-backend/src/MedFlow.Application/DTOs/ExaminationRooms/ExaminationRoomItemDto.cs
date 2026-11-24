@@ -14,5 +14,9 @@ public sealed record ExaminationRoomItemDto(
     int? Capacity,
     string Status,
     bool IsAvailable,
-    bool IsActive
+    bool IsActive,
+    int? AssignedDoctorsCount = 0,
+    int? ActiveVisitsCount = 0,
+    int? ActiveSlotsCount = 0,
+    bool? HasActiveDependencies = false
 );
