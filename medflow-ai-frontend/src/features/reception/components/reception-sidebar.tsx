@@ -1,5 +1,17 @@
+import type { LucideIcon } from 'lucide-react';
+import {
+  Calendar,
+  ChevronsLeft,
+  ChevronsRight,
+  ClipboardCheck,
+  Layers,
+  LayoutDashboard,
+  ShieldCheck,
+  Users,
+} from 'lucide-react';
 import { useState } from 'react';
 
+import { useAuthStore } from '@/features/auth/store/auth.store';
 import { MedflowLogo } from '@/shared/components/layout/medflow-logo';
 
 interface ReceptionSidebarProps {
@@ -7,38 +19,43 @@ interface ReceptionSidebarProps {
   onItemSelect?: (item: string) => void;
 }
 
-const NAV_ITEMS = [
+interface ReceptionNavItem {
+  id: string;
+  label: string;
+  badge?: string;
+  icon: LucideIcon;
+}
+
+const NAV_ITEMS: ReceptionNavItem[] = [
   {
     id: 'dashboard',
     label: 'Tổng quan quầy tiếp đón',
-    icon: 'M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z',
+    icon: LayoutDashboard,
   },
   {
     id: 'check-in',
     label: 'Check-in & Tiếp nhận',
-    badge: '8 chờ',
-    icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
+    icon: ClipboardCheck,
   },
   {
     id: 'queue',
     label: 'Hàng đợi khám',
-    badge: '14',
-    icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10',
+    icon: Layers,
   },
   {
     id: 'patients',
     label: 'Hồ sơ bệnh nhân',
-    icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z',
+    icon: Users,
   },
   {
     id: 'identity-claims',
     label: 'Xác minh hồ sơ',
-    icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
+    icon: ShieldCheck,
   },
   {
     id: 'appointments',
     label: 'Lịch hẹn hôm nay',
-    icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
+    icon: Calendar,
   },
 ];
 
@@ -47,26 +64,29 @@ export function ReceptionSidebar({
   onItemSelect,
 }: ReceptionSidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const user = useAuthStore((s) => s.user);
+  const staffDisplayName = user?.fullName?.trim() || 'Nhân viên tiếp đón';
+  const subLabel = user?.staffCode?.trim()
+    ? `Mã NV: ${user.staffCode.trim()}`
+    : 'Quầy tiếp đón ngoại trú';
 
   return (
     <aside
       aria-label="Điều hướng quầy tiếp đón"
-      className={`bg-white border-r border-slate-200 flex flex-col transition-all duration-200 select-none ${
+      className={`flex flex-col border-r border-border bg-white transition-all duration-200 select-none ${
         isCollapsed ? 'w-[68px]' : 'w-[260px]'
       }`}
     >
       {/* Brand + collapse */}
       <div
-        className={`relative h-16 border-b border-slate-200 flex items-center ${
+        className={`relative flex h-16 items-center border-b border-border ${
           isCollapsed ? 'justify-center px-2' : 'justify-between px-4'
         }`}
       >
         <div className="flex items-center gap-2.5 overflow-hidden">
-          <MedflowLogo variant="full" className="h-9 w-auto flex-shrink-0" linkToHome={false} />
+          <MedflowLogo variant="full" className="h-9 w-auto shrink-0" linkToHome={false} />
           {!isCollapsed && (
-            <div className="text-[9px] font-mono text-slate-400 uppercase truncate">
-              Quầy tiếp đón • CS1
-            </div>
+            <div className="truncate font-mono text-[9px] text-sub uppercase">Quầy tiếp đón</div>
           )}
         </div>
         <button
@@ -76,89 +96,71 @@ export function ReceptionSidebar({
           aria-expanded={!isCollapsed}
           className={
             isCollapsed
-              ? 'absolute -right-3 top-1/2 -translate-y-1/2 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-xs hover:bg-slate-100 hover:text-slate-700 transition-colors'
-              : 'p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors'
+              ? 'absolute top-1/2 -right-3 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-white text-sub shadow-xs transition-colors hover:bg-slate-100 hover:text-ink focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none'
+              : 'rounded-md p-1 text-sub transition-colors hover:bg-slate-100 hover:text-ink focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none'
           }
           title={isCollapsed ? 'Mở rộng' : 'Thu gọn'}
         >
-          <svg
-            aria-hidden="true"
-            className="w-4 h-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="2"
-              d={isCollapsed ? 'M13 5l7 7-7 7M5 5l7 7-7 7' : 'M11 19l-7-7 7-7m8 14l-7-7 7-7'}
-            />
-          </svg>
+          {isCollapsed ? (
+            <ChevronsRight aria-hidden="true" className="h-4 w-4" />
+          ) : (
+            <ChevronsLeft aria-hidden="true" className="h-4 w-4" />
+          )}
         </button>
       </div>
 
       {/* Role identity */}
       {!isCollapsed && (
-        <div className="m-3 p-3 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-emerald-100 border border-emerald-200 text-emerald-700 flex items-center justify-center font-bold text-xs">
+        <div className="m-3 flex items-center gap-2.5 rounded-xl border border-emerald-100 bg-emerald-50 p-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-100 text-xs font-bold text-emerald-700">
             LT
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-[9px] font-mono uppercase text-emerald-700 font-bold tracking-wider">
+          <div className="min-w-0 flex-1">
+            <div className="font-mono text-[9px] font-bold tracking-wider text-emerald-700 uppercase">
               Reception Desk
             </div>
-            <div className="text-xs font-bold text-slate-800 truncate">Nhân viên tiếp đón</div>
-            <div className="text-[10px] text-slate-500">Quầy số 1 • Sảnh A</div>
+            <div className="truncate text-xs font-bold text-ink">{staffDisplayName}</div>
+            <div className="truncate text-[10px] text-sub">{subLabel}</div>
           </div>
-          <span className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-200" />
         </div>
       )}
 
       {/* Nav */}
-      <nav className="px-3 py-2 space-y-1 flex-1">
+      <nav aria-label="Menu nghiệp vụ tiếp đón" className="flex-1 space-y-1 px-3 py-2">
         {!isCollapsed && (
-          <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono mb-1">
+          <div className="mb-1 px-2 font-mono text-[10px] font-bold tracking-wider text-sub uppercase">
             Nghiệp vụ tiếp đón
           </div>
         )}
         {NAV_ITEMS.map((item) => {
           const isActive = activeItem === item.id;
+          const Icon = item.icon;
           return (
             <button
               key={item.id}
               type="button"
               onClick={() => onItemSelect?.(item.id)}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+              aria-current={isActive ? 'page' : undefined}
+              className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs font-semibold transition-all focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:outline-none ${
                 isActive
                   ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/30'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                  : 'text-sub hover:bg-slate-50 hover:text-ink'
               }`}
               title={item.label}
             >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <svg
+              <div className="flex min-w-0 items-center gap-2.5">
+                <Icon
                   aria-hidden="true"
-                  className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d={item.icon}
-                  />
-                </svg>
+                  className={`h-4 w-4 shrink-0 ${isActive ? 'text-white' : 'text-sub'}`}
+                />
                 {!isCollapsed && <span className="truncate">{item.label}</span>}
               </div>
               {!isCollapsed && item.badge && (
                 <span
-                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                  className={`rounded-full px-1.5 py-0.5 font-mono text-[10px] font-bold ${
                     isActive
                       ? 'bg-white/20 text-white'
-                      : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      : 'border border-emerald-200 bg-emerald-50 text-emerald-700'
                   }`}
                 >
                   {item.badge}
@@ -170,22 +172,19 @@ export function ReceptionSidebar({
       </nav>
 
       {/* Footer */}
-      <div className="p-3 bg-slate-50 border-t border-slate-200">
+      <div className="border-t border-border bg-canvas p-3">
         {!isCollapsed ? (
-          <div className="p-2 rounded-lg bg-white border border-slate-200 text-[10px] space-y-1 shadow-2xs">
-            <div className="flex items-center justify-between text-slate-700 font-semibold">
-              <span>HIS SYNC: ONLINE</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <div className="space-y-1 rounded-lg border border-border bg-white p-2 text-[10px] shadow-2xs">
+            <div className="flex items-center justify-between font-semibold text-ink">
+              <span>Quầy tiếp đón ngoại trú</span>
             </div>
-            <div className="flex items-center justify-between font-mono text-slate-400">
-              <span>Ca sáng 07:30–11:30</span>
-              <span className="text-emerald-600 font-semibold">#104</span>
+            <div className="flex items-center justify-between font-mono text-sub">
+              <span>100% Non-BHYT</span>
+              <span className="font-semibold text-emerald-700">1900 6868</span>
             </div>
           </div>
         ) : (
-          <div className="flex justify-center" title="HIS Sync Online">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-200 animate-pulse" />
-          </div>
+          <div className="flex justify-center font-mono text-[9px] font-bold text-sub">LT</div>
         )}
       </div>
     </aside>

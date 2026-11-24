@@ -57,6 +57,15 @@ export function ClinicalSidebar({
   const canAccessAdminPortal = hasAnyRole(userRoles, ['HOSPITAL_ADMIN', 'SYSTEM_ADMIN']);
 
   const isAdmin = variant === 'admin';
+  const displayName =
+    user?.fullName?.trim() ||
+    user?.email?.split('@')[0] ||
+    (isAdmin ? 'Quản trị cơ sở' : 'Bác sĩ lâm sàng');
+  const roleSubLabel = user?.staffCode?.trim()
+    ? `Mã NV: ${user.staffCode.trim()}`
+    : isAdmin
+      ? 'Quản trị hệ thống HIS'
+      : 'Bàn khám ngoại trú';
 
   // Admin navigation structure
   const adminItems: SidebarNavItem[] = [
@@ -337,34 +346,24 @@ export function ClinicalSidebar({
 
         {/* Role Identity Card */}
         {!isCollapsed && (
-          <div className="m-3 p-3 rounded-xl bg-sky-50/70 border border-sky-100 flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-sky-100 border border-sky-200 text-primary flex items-center justify-center font-bold text-xs shrink-0">
+          <div className="m-3 flex items-center gap-2.5 rounded-xl border border-sky-100 bg-sky-50/70 p-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-sky-200 bg-sky-100 text-xs font-bold text-primary">
               {isAdmin ? 'AD' : 'LS'}
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-[9px] font-mono uppercase text-primary font-bold tracking-wider truncate">
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-mono text-[9px] font-bold tracking-wider text-primary uppercase">
                 {isAdmin ? 'QUẢN TRỊ CƠ SỞ' : 'Doctor Workbench'}
               </div>
-              <div className="text-xs font-bold text-slate-800 truncate">
-                {isAdmin
-                  ? (user?.fullName ?? user?.email ?? 'DS. Nguyễn Văn Quản')
-                  : 'BS. CKII Lâm Sàng'}
-              </div>
-              <div className="text-[10px] text-slate-500 truncate">
-                {isAdmin ? 'Cơ sở 1 • Quản trị HIS' : 'P.102 • Khám Tự Nguyện'}
-              </div>
+              <div className="truncate text-xs font-bold text-ink">{displayName}</div>
+              <div className="truncate text-[10px] text-sub">{roleSubLabel}</div>
             </div>
-            <span
-              className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-emerald-200 shrink-0 animate-pulse"
-              title="Trực tuyến"
-            />
           </div>
         )}
 
         {/* Navigation Group 1 */}
-        <div className="px-3 py-2 space-y-1">
+        <div className="space-y-1 px-3 py-2">
           {!isCollapsed && (
-            <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono mb-1">
+            <div className="mb-1 px-2 font-mono text-[10px] font-bold tracking-wider text-sub uppercase">
               {primarySectionTitle}
             </div>
           )}
@@ -372,9 +371,9 @@ export function ClinicalSidebar({
         </div>
 
         {/* Navigation Group 2 */}
-        <div className="px-3 py-2 space-y-1">
+        <div className="space-y-1 px-3 py-2">
           {!isCollapsed && (
-            <div className="px-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono mb-1">
+            <div className="mb-1 px-2 font-mono text-[10px] font-bold tracking-wider text-sub uppercase">
               {secondarySectionTitle}
             </div>
           )}
@@ -382,22 +381,21 @@ export function ClinicalSidebar({
         </div>
       </div>
 
-      {/* Footer Status */}
-      <div className="p-3 bg-slate-50 border-t border-border">
+      {/* Footer Info */}
+      <div className="border-t border-border bg-canvas p-3">
         {!isCollapsed ? (
-          <div className="p-2 rounded-lg bg-white border border-border text-[10px] space-y-1 shadow-2xs">
-            <div className="flex items-center justify-between text-slate-700 font-semibold">
-              <span>HIS SYNC: ONLINE</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <div className="space-y-1 rounded-lg border border-border bg-white p-2 text-[10px] shadow-2xs">
+            <div className="flex items-center justify-between font-semibold text-ink">
+              <span>{isAdmin ? 'Quản trị hệ thống HIS' : 'Bàn khám Ngoại trú'}</span>
             </div>
-            <div className="flex items-center justify-between font-mono text-slate-400">
-              <span>v4.2.0-PROD</span>
-              <span className="text-primary font-semibold">Hotline: 1900 6868</span>
+            <div className="flex items-center justify-between font-mono text-sub">
+              <span>100% Non-BHYT</span>
+              <span className="font-semibold text-primary">Hotline: 1900 6868</span>
             </div>
           </div>
         ) : (
-          <div className="flex justify-center" title="HIS Sync Online">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-200 animate-pulse" />
+          <div className="flex justify-center font-mono text-[9px] font-bold text-sub">
+            {isAdmin ? 'ADM' : 'HIS'}
           </div>
         )}
       </div>

@@ -176,57 +176,41 @@ export function PatientFooter() {
 
 export function ClinicalStatusBar() {
   return (
-    <footer className="h-9 bg-white border-t border-slate-200 px-6 flex items-center justify-between text-[11px] text-slate-600 select-none z-30 flex-shrink-0">
-      {/* Left: Engine Connectivity */}
+    <footer className="z-30 flex h-9 shrink-0 items-center justify-between border-t border-border bg-white px-6 text-[11px] text-sub select-none">
+      {/* Left: Clinical Mode Info */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1.5 font-medium text-slate-700">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span>
-            HIS Core: Kết nối ổn định{' '}
-            <strong className="font-mono text-emerald-600 font-semibold">(18ms)</strong>
-          </span>
-        </div>
-        <span className="text-slate-300">•</span>
-        <span className="text-slate-600">
-          PACS/DICOM: <strong className="text-sky-600 font-semibold">Sẵn sàng</strong>
+        <span className="font-semibold text-ink">Phân hệ Lâm sàng Ngoại trú MedFlow AI</span>
+        <span className="hidden text-slate-300 sm:inline" aria-hidden="true">
+          •
         </span>
-        <span className="text-slate-300 hidden md:inline">•</span>
-        <span className="hidden md:inline text-slate-600">
-          HL7 Engine: <span className="text-emerald-700 font-mono font-bold">ACTIVE</span>
-        </span>
-      </div>
-
-      {/* Center: Outpatient Tag */}
-      <div className="hidden xl:flex items-center gap-2">
-        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 uppercase tracking-wide">
+        <span className="hidden rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold tracking-wide text-emerald-800 uppercase sm:inline">
           Chế độ 100% Non-BHYT
         </span>
-        <span className="text-slate-500 text-[11px]">Bàn khám Ngoại trú P.102</span>
       </div>
 
       {/* Right: Keyboard Shortcuts */}
       <div className="flex items-center gap-3">
-        <div className="hidden lg:flex items-center gap-2 text-slate-500 font-mono text-[10px]">
+        <div className="hidden items-center gap-2 font-mono text-[10px] text-sub lg:flex">
           <span>
-            <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-700 font-bold">
+            <kbd className="rounded border border-border bg-canvas px-1.5 py-0.5 font-bold text-ink">
               F1
             </kbd>{' '}
             Hàng đợi
           </span>
           <span>
-            <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-700 font-bold">
+            <kbd className="rounded border border-border bg-canvas px-1.5 py-0.5 font-bold text-ink">
               F2
             </kbd>{' '}
             Vào khám
           </span>
           <span>
-            <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-700 font-bold">
+            <kbd className="rounded border border-border bg-canvas px-1.5 py-0.5 font-bold text-ink">
               F4
             </kbd>{' '}
             Kê toa
           </span>
           <span>
-            <kbd className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-700 font-bold">
+            <kbd className="rounded border border-border bg-canvas px-1.5 py-0.5 font-bold text-ink">
               Ctrl+K
             </kbd>{' '}
             Tìm

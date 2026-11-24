@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppointmentReminderBanner } from '../components/appointment-reminder-banner';
 import { AppointmentReminderModal } from '../components/appointment-reminder-modal';
 import { NotificationBellPopover } from '../components/notification-bell-popover';
-import { APPOINTMENT_REMINDERS_MOCK } from '../data/appointment-reminder-mock';
+import {
+  APPOINTMENT_REMINDERS_MOCK,
+  PATIENT_NOTIFICATIONS_MOCK,
+} from '../data/appointment-reminder-mock';
 
 describe('Appointment Reminder Components', () => {
   const mockReminder = APPOINTMENT_REMINDERS_MOCK[0];
@@ -74,8 +77,20 @@ describe('Appointment Reminder Components', () => {
   });
 
   describe('NotificationBellPopover', () => {
-    it('renders unread badge and opens notification list on click', () => {
+    it('defaults to empty state without unread badge when no notifications are provided', () => {
       render(<NotificationBellPopover />);
+
+      expect(screen.queryByTestId('unread-badge')).not.toBeInTheDocument();
+
+      const bellBtn = screen.getByRole('button', { name: 'Thông báo' });
+      fireEvent.click(bellBtn);
+
+      expect(screen.getByRole('menu', { name: /Danh sách thông báo/i })).toBeInTheDocument();
+      expect(screen.getByText('Bạn không có thông báo nào.')).toBeInTheDocument();
+    });
+
+    it('renders unread badge and opens notification list on click', () => {
+      render(<NotificationBellPopover initialNotifications={PATIENT_NOTIFICATIONS_MOCK} />);
 
       const badge = screen.getByTestId('unread-badge');
       expect(badge).toHaveTextContent('1');
@@ -88,7 +103,7 @@ describe('Appointment Reminder Components', () => {
     });
 
     it('marks all as read when clicking mark all button', () => {
-      render(<NotificationBellPopover />);
+      render(<NotificationBellPopover initialNotifications={PATIENT_NOTIFICATIONS_MOCK} />);
 
       const bellBtn = screen.getByRole('button', { name: /Thông báo/i });
       fireEvent.click(bellBtn);
@@ -100,7 +115,7 @@ describe('Appointment Reminder Components', () => {
     });
 
     it('opens reminder modal when clicking on appointment notification', () => {
-      render(<NotificationBellPopover />);
+      render(<NotificationBellPopover initialNotifications={PATIENT_NOTIFICATIONS_MOCK} />);
 
       const bellBtn = screen.getByRole('button', { name: /Thông báo/i });
       fireEvent.click(bellBtn);
