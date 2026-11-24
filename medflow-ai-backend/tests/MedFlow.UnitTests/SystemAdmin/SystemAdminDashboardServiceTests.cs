@@ -354,6 +354,53 @@ public sealed class SystemAdminDashboardServiceTests : IDisposable
         Assert.Equal(
             ["STAFF_ACCOUNTS", "ROLES_PERMISSIONS"],
             result.AllowedModules.Select(m => m.ModuleCode).ToArray());
+        Assert.Equal(6, result.Metrics.TotalUsers);
+        Assert.Equal(3, result.RoleSummaries.Count);
+        Assert.Equal(0, result.Metrics.TotalHospitals);
+        Assert.Equal(0, result.Metrics.ActiveDepartments);
+        Assert.Equal(0, result.Metrics.TotalAuditLogs);
+        Assert.Equal(0, result.Metrics.RecentAuditCount24h);
+        Assert.Empty(result.RecentAuditLogs);
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_AuditReadOnly_RedactsUserRoleAndHospitalMetrics()
+    {
+        var toRemove = _dbContext.RolePermissions
+            .Where(rp => rp.RoleId == 1 && (rp.PermissionId == 1 || rp.PermissionId == 2))
+            .ToList();
+        _dbContext.RolePermissions.RemoveRange(toRemove);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _service.GetDashboardAsync(13, new GetSystemAdminDashboardRequest());
+
+        Assert.Equal(["AUDIT_READ"], result.AdminProfile.Permissions);
+        var auditModule = Assert.Single(result.AllowedModules);
+        Assert.Equal("AUDIT_LOGS", auditModule.ModuleCode);
+        Assert.Empty(result.RoleSummaries);
+        Assert.Equal(0, result.Metrics.TotalUsers);
+        Assert.Equal(0, result.Metrics.ActiveUsers);
+        Assert.Equal(0, result.Metrics.LockedOrInactiveUsers);
+        Assert.Equal(0, result.Metrics.TotalStaffAccounts);
+        Assert.Equal(0, result.Metrics.ActiveStaffAccounts);
+        Assert.Equal(0, result.Metrics.InactiveOrLockedStaffAccounts);
+        Assert.Equal(0, result.Metrics.TotalRoles);
+        Assert.Equal(0, result.Metrics.TotalPermissions);
+        Assert.Equal(0, result.Metrics.TotalHospitals);
+        Assert.Equal(0, result.Metrics.ActiveDepartments);
+        Assert.Equal(5, result.Metrics.TotalAuditLogs);
+        Assert.Equal(3, result.Metrics.RecentAuditCount24h);
+        Assert.Equal(5, result.RecentAuditLogs.Count);
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_EmptyRolePermissions_FailsClosedWithForbiddenException()
+    {
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions);
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDashboardAsync(13, new GetSystemAdminDashboardRequest()));
     }
 
     [Fact]

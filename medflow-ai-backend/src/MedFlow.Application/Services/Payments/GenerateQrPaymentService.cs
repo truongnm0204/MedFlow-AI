@@ -1,14 +1,17 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Payments;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
-using MedFlow.Application.Services.Appointments;
+using MedFlow.Application.Options;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Options;
 
 namespace MedFlow.Application.Services.Payments;
 
@@ -32,11 +35,16 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly QrPaymentOptions _qrOptions;
 
-    public GenerateQrPaymentService(IApplicationDbContext db, TimeProvider? timeProvider = null)
+    public GenerateQrPaymentService(
+        IApplicationDbContext db,
+        TimeProvider? timeProvider = null,
+        IOptions<QrPaymentOptions>? qrOptions = null)
     {
         _db = db;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _qrOptions = qrOptions?.Value ?? new QrPaymentOptions();
     }
 
     public Task<GenerateQrPaymentResponseDto> CreateAsync(
@@ -173,12 +181,12 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             .Where(r => roleIds.Contains(r.Id))
             .Select(r => r.Code)
             .ToListAsync(ct);
-        return codes.Any(c => string.Equals(c, "PATIENT", StringComparison.OrdinalIgnoreCase));
+        return codes.Any(c => string.Equals(c, RoleNames.Patient, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task ExpireStalePendingAsync(long visitId, CancellationToken ct)
     {
-        var cutoff = Clock().AddMinutes(-PendingExpiryMinutes);
+        var cutoff = Clock().AddMinutes(-_qrOptions.PendingExpiryMinutes);
         var stale = await _db.Payments
             .Where(p => p.VisitId == visitId
                 && p.Status != null
@@ -279,7 +287,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
     }
 
     private DateTime Clock()
-        => AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        => HospitalClock.GetNow(_timeProvider);
 
     private static string CodeFor(long paymentId) =>
         "MF" + paymentId.ToString(CultureInfo.InvariantCulture);

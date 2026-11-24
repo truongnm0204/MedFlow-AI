@@ -1,6 +1,7 @@
 using MedFlow.Application.DTOs.Payments;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
@@ -100,13 +101,33 @@ public sealed class VisitChargesService : IVisitChargesService
             .Select(r => r.Code)
             .ToListAsync(ct);
 
-        var isSystemAdmin = HasRole(roleCodes, "SYSTEM_ADMIN");
-        var isHospitalAdmin = HasRole(roleCodes, "HOSPITAL_ADMIN");
-        var isReception = HasRole(roleCodes, "RECEPTION");
-        var isPatient = HasRole(roleCodes, "PATIENT");
+        var isSystemAdmin = HasRole(roleCodes, RoleNames.SystemAdmin);
+        var isHospitalAdmin = HasRole(roleCodes, RoleNames.HospitalAdmin);
+        var isReception = HasRole(roleCodes, RoleNames.Reception);
+        var isPatient = HasRole(roleCodes, RoleNames.Patient);
 
         if (isSystemAdmin || isHospitalAdmin || isReception)
         {
+            var permissionCodes = roleIds.Count == 0
+                ? []
+                : await (
+                    from rp in _db.RolePermissions.AsNoTracking()
+                    join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
+                    where roleIds.Contains(rp.RoleId)
+                    select p.Code).ToListAsync(ct);
+
+            var permSet = new HashSet<string>(permissionCodes, StringComparer.OrdinalIgnoreCase);
+            var hasRequiredPerm = isSystemAdmin
+                ? permSet.Contains(PermissionCodes.PaymentView) ||
+                  permSet.Contains(PermissionCodes.AuditRead) ||
+                  permSet.Contains(PermissionCodes.HospitalConfig)
+                : permSet.Contains(PermissionCodes.PaymentView) ||
+                  permSet.Contains(PermissionCodes.PatientCheckin) ||
+                  permSet.Contains(PermissionCodes.HospitalConfig);
+
+            if (!hasRequiredPerm)
+                throw new ForbiddenException(ForbiddenMessage);
+
             var staff = await _db.Staff.AsNoTracking().FirstOrDefaultAsync(s => s.UserId == actorUserId, ct);
             if (staff is not null && !string.Equals(staff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
                 throw new ForbiddenException(InactiveStaffMessage);

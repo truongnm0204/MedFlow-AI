@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Patients;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,7 +9,7 @@ namespace MedFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/patients")]
-[Authorize(Roles = "PATIENT")]
+[Authorize(Roles = RoleNames.Patient)]
 public sealed class PatientsController : ControllerBase
 {
     private readonly IPatientProfileService _profileService;

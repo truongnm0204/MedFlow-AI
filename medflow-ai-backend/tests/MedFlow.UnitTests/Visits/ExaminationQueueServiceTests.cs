@@ -164,13 +164,17 @@ public sealed class ExaminationQueueServiceTests : IDisposable
             new Permission { Id = 3, Code = "PATIENT_CHECKIN" },
             new Permission { Id = 4, Code = "VISIT_ASSIGN" },
             new Permission { Id = 5, Code = "QUEUE_MANAGE" },
-            new Permission { Id = 10, Code = "UNRELATED_PERMISSION" });
+            new Permission { Id = 6, Code = "MEDICAL_RECORD_WRITE" },
+            new Permission { Id = 10, Code = "UNRELATED_PERMISSION" },
+            new Permission { Id = 11, Code = "HOSPITAL_CONFIG" });
 
         _db.RolePermissions.AddRange(
+            new RolePermission { RoleId = 2, PermissionId = 6 },
             new RolePermission { RoleId = 3, PermissionId = 3 },
             new RolePermission { RoleId = 3, PermissionId = 4 },
             new RolePermission { RoleId = 3, PermissionId = 5 },
-            new RolePermission { RoleId = 6, PermissionId = 5 });
+            new RolePermission { RoleId = 6, PermissionId = 5 },
+            new RolePermission { RoleId = 7, PermissionId = 11 });
 
         _db.Hospitals.AddRange(
             new Hospital { Id = 1, HospitalCode = "HOS-01", Name = "Bệnh viện MedFlow 1", IsActive = true },
@@ -466,7 +470,7 @@ public sealed class ExaminationQueueServiceTests : IDisposable
 
         Assert.Equal("2026-10-22", result.QueueDate);
         Assert.Equal("Bệnh viện MedFlow 1", result.FacilityName);
-        Assert.Equal("Ca sáng (07:00 - 11:30)", result.ShiftLabel);
+        Assert.Equal("Ca sáng (07:30 - 11:30)", result.ShiftLabel);
 
         // Hospital 1 has 2 QueueServicePoints (sp-1 -> RM-001, sp-2 -> RM-003) + 1 unlinked EXAMINATION room (sp-room-2 -> RM-002).
         // Diagnostic room RM-005 (sp-3) and Hospital 2 room RM-201 (sp-20) must be excluded.
@@ -2541,5 +2545,29 @@ public sealed class ExaminationQueueServiceTests : IDisposable
         Assert.Equal("CALLED", call2.Outcome);
         Assert.Equal("q-083", call2.CalledEntry!.Id);
         Assert.Equal("FIFO", call2.SelectionReason);
+    }
+
+    [Fact]
+    public async Task ExaminationQueueService_ClearedRolePermissionsOrMissingStaffHospitalId_FailsClosedWithForbidden()
+    {
+        var staff = await _db.Staff.SingleAsync(s => s.UserId == 5);
+        staff.HospitalId = null;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetExaminationQueueAsync(actorUserId: 5));
+
+        staff.HospitalId = 1;
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        foreach (var actorId in new[] { 5L, 11L, 13L })
+        {
+            await Assert.ThrowsAsync<ForbiddenException>(() =>
+                _service.GetExaminationQueueAsync(actorUserId: actorId));
+        }
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDoctorAssignedQueueAsync(actorUserId: 3));
     }
 }

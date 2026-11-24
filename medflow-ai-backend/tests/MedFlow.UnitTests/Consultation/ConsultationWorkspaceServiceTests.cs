@@ -3682,4 +3682,44 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
                     AdditionalOrderReason: "Chỉ định bổ sung",
                     ClinicalProgressionNote: "Cập nhật diễn biến nhưng không có quyền ghi bệnh án")));
     }
+
+    [Fact]
+    public async Task RecordDiagnosis_WhenIcd10CatalogEmpty_ThrowsValidationExceptionAndNeverWritesDemoIcd10()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        _db.Icd10Codes.RemoveRange(_db.Icd10Codes.ToList());
+        await _db.SaveChangesAsync();
+
+        var baselineDiagnoses = await _db.VisitDiagnoses.CountAsync();
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.RecordDiagnosisAsync(
+                actorUserId: 3,
+                visitIdOrCode: "VIS-202610-0011",
+                request: new RecordDiagnosisRequest(
+                    PrimaryIcd10Code: "K29.5",
+                    PrimaryClinicalDiagnosis: "Viêm dạ dày mạn tính",
+                    ClinicalConclusion: "Viêm dạ dày mạn tính")));
+
+        Assert.Contains("ICD-10", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(baselineDiagnoses, await _db.VisitDiagnoses.CountAsync());
+        Assert.False(await _db.VisitDiagnoses.AnyAsync(d => d.VisitId == 11 && d.CatalogVersion == "DEMO-ICD10"));
+    }
+
+    [Fact]
+    public async Task WorkspaceOperations_WhenRolePermissionsEmpty_FailClosedWithForbiddenException()
+    {
+        _db.RolePermissions.RemoveRange(_db.RolePermissions.ToList());
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetWorkspaceAsync(3, "VIS-202610-0011"));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011"));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.SearchIcd10CodesAsync(3, query: "K29"));
+    }
 }

@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.ExaminationSlots;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -20,8 +22,16 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
     public const string ActionKeepExisting = "KEEP_EXISTING";
     public const string ActionRescheduleRequired = "RESCHEDULE_REQUIRED";
 
+    private const string UnknownFacilityFallback = "Chưa cập nhật";
     private const int MinOtherNoteLength = 5;
     private const int MaxNoteLength = 500;
+
+    private static readonly string[] AllowedSlotAdminPermissions =
+    [
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.QueueManage,
+    ];
 
     private static readonly IReadOnlyDictionary<string, string> CloseReasonLabels =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -42,6 +52,7 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
     }
 
     public async Task<ExaminationSlotAdminListResponseDto> GetExaminationSlotListAsync(
+        long actorUserId,
         GetExaminationSlotListRequest request,
         CancellationToken ct = default)
     {
@@ -57,10 +68,21 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             throw new ArgumentException("Số lượng bản ghi trên một trang phải từ 1 đến 100.", nameof(request.PageSize));
         }
 
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
+
         var baseQuery = _db.ExaminationSlots.AsNoTracking();
+        if (!isSystemAdmin && actorHospitalId.HasValue)
+        {
+            var scopedHospitalId = actorHospitalId.Value;
+            baseQuery = baseQuery.Where(s =>
+                (s.Room != null && (s.Room.HospitalId == scopedHospitalId || (s.Room.Department != null && s.Room.Department.HospitalId == scopedHospitalId))) ||
+                (s.Doctor != null && (s.Doctor.HospitalId == scopedHospitalId || (s.Doctor.Staff != null && s.Doctor.Staff.HospitalId == scopedHospitalId))) ||
+                (s.Service != null && (s.Service.HospitalId == scopedHospitalId || (s.Service.Department != null && s.Service.Department.HospitalId == scopedHospitalId))));
+        }
 
         // 1. Calculate overall metrics across all examination slots
-        var nowLocal = _timeProvider.GetLocalNow().DateTime;
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var today = nowLocal.Date;
         var in7Days = today.AddDays(8); // next 7 full days
 
@@ -113,6 +135,8 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
                 .ThenInclude(d => d!.Specialty)
             .Include(s => s.Service)
                 .ThenInclude(srv => srv!.Specialty)
+            .Include(s => s.Service)
+                .ThenInclude(srv => srv!.Department)
             .Include(s => s.Room)
                 .ThenInclude(r => r!.Department)
             .AsQueryable();
@@ -260,12 +284,14 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             ? await TryLoadClosureMetadataMapAsync(closedSlotIds, ct)
             : new Dictionary<long, SlotClosureMetadata>();
 
+        var hospitalsById = await LoadHospitalsByIdAsync(pageEntities, ct);
+
         // 6. Map to DTOs
         var items = pageEntities.Select(slot =>
         {
             var booked = pageAppointments.TryGetValue(slot.Id, out var count) ? count : 0;
             closureMetadataMap.TryGetValue(slot.Id, out var closureMeta);
-            return MapSlotToItemDto(slot, booked, closureMeta);
+            return MapSlotToItemDto(slot, booked, closureMeta, hospitalsById);
         }).ToList();
 
         return new ExaminationSlotAdminListResponseDto(
@@ -279,6 +305,7 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
     }
 
     public async Task<ExaminationSlotAdminItemDto> CreateExaminationSlotAsync(
+        long actorUserId,
         CreateExaminationSlotRequest request,
         CancellationToken ct = default)
     {
@@ -341,6 +368,17 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             throw new ArgumentException("Trạng thái khung giờ không hợp lệ.", nameof(request.Status));
         }
 
+        if (!request.ServiceId.HasValue &&
+            string.IsNullOrWhiteSpace(request.ServiceCode) &&
+            !request.DoctorId.HasValue &&
+            string.IsNullOrWhiteSpace(request.DoctorCode))
+        {
+            throw new ArgumentException("Vui lòng chỉ định dịch vụ khám hoặc bác sĩ cho khung giờ khám.");
+        }
+
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
+
         // 3. Resolve & validate entities
         Service? service = null;
         if (request.ServiceId.HasValue)
@@ -352,6 +390,7 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
 
             service = await _db.Services
                 .Include(s => s.Specialty)
+                .Include(s => s.Department)
                 .FirstOrDefaultAsync(s => s.Id == request.ServiceId.Value, ct);
 
             if (service == null)
@@ -364,6 +403,7 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             var sCode = request.ServiceCode.Trim().ToLowerInvariant();
             service = await _db.Services
                 .Include(s => s.Specialty)
+                .Include(s => s.Department)
                 .FirstOrDefaultAsync(s => s.ServiceCode.ToLower() == sCode, ct);
 
             if (service == null)
@@ -455,6 +495,8 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             throw new ArgumentException("Vui lòng chỉ định dịch vụ khám hoặc bác sĩ cho khung giờ khám.");
         }
 
+        EnsureReferencedEntitiesHospitalScope(service, doctor, room, isSystemAdmin, actorHospitalId);
+
         // 4. Check for schedule conflicts (Doctor or Room overlapping)
         if (doctor != null)
         {
@@ -513,7 +555,8 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
 
         var specialty = doctor?.Specialty?.Name ?? service?.Specialty?.Name ?? string.Empty;
         var roomCode = room?.RoomCode ?? room?.Name ?? string.Empty;
-        var facility = room?.Department?.Name ?? "MedFlow Cơ sở 1";
+        var slotHospitalId = ResolveEntitiesHospitalId(service, doctor, room) ?? actorHospitalId;
+        var facility = room?.Department?.Name ?? await LoadHospitalNameAsync(slotHospitalId, ct);
 
         return new ExaminationSlotAdminItemDto(
             Id: slot.Id,
@@ -540,6 +583,7 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
     }
 
     public async Task<ExaminationSlotAdminItemDto> UpdateExaminationSlotAsync(
+        long actorUserId,
         long id,
         UpdateExaminationSlotRequest request,
         CancellationToken ct = default)
@@ -598,10 +642,14 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             }
         }
 
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
+
         var slot = await _db.ExaminationSlots
             .Include(s => s.Doctor).ThenInclude(d => d!.Staff)
             .Include(s => s.Doctor).ThenInclude(d => d!.Specialty)
             .Include(s => s.Service).ThenInclude(srv => srv!.Specialty)
+            .Include(s => s.Service).ThenInclude(srv => srv!.Department)
             .Include(s => s.Room).ThenInclude(r => r!.Department)
             .FirstOrDefaultAsync(s => s.Id == id, ct);
 
@@ -610,11 +658,14 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             throw new KeyNotFoundException($"Không tìm thấy khung giờ khám với ID {id}.");
         }
 
+        EnsureSlotHospitalOwnership(slot, isSystemAdmin, actorHospitalId);
+
         // Check active bookings count (Do not invalidate existing bookings)
         var activeBookings = await _db.Appointments.AsNoTracking()
             .CountAsync(a => a.SlotId == id && (a.Status == null || a.Status.ToUpper() != "CANCELLED"), ct);
 
         // 1. Resolve & validate time window
+        var todayLocal = HospitalClock.GetNow(_timeProvider).Date;
         DateTime targetStart;
         DateTime targetEnd;
 
@@ -627,7 +678,7 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
                  !string.IsNullOrWhiteSpace(request.StartTime) ||
                  !string.IsNullOrWhiteSpace(request.EndTime))
         {
-            var baseDate = slot.StartsAt ?? DateTime.Today;
+            var baseDate = slot.StartsAt ?? todayLocal;
 
             if (!string.IsNullOrWhiteSpace(request.Date))
             {
@@ -666,7 +717,7 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
         }
         else
         {
-            targetStart = slot.StartsAt ?? DateTime.Today;
+            targetStart = slot.StartsAt ?? todayLocal;
             targetEnd = slot.EndsAt ?? targetStart.AddMinutes(30);
         }
 
@@ -723,6 +774,7 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
 
             service = await _db.Services
                 .Include(s => s.Specialty)
+                .Include(s => s.Department)
                 .FirstOrDefaultAsync(s => s.Id == request.ServiceId.Value, ct);
 
             if (service == null)
@@ -737,6 +789,7 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             var sCode = request.ServiceCode.Trim().ToLowerInvariant();
             service = await _db.Services
                 .Include(s => s.Specialty)
+                .Include(s => s.Department)
                 .FirstOrDefaultAsync(s => s.ServiceCode.ToLower() == sCode, ct);
 
             if (service == null)
@@ -834,6 +887,8 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             throw new ArgumentException("Buồng khám đang ngừng hoạt động.");
         }
 
+        EnsureReferencedEntitiesHospitalScope(service, doctor, room, isSystemAdmin, actorHospitalId);
+
         // 4. Check conflicts on update (excluding current slot id)
         if (targetDoctorId.HasValue && targetStatus != "CLOSED")
         {
@@ -890,7 +945,8 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
 
         var specialty = doctor?.Specialty?.Name ?? service?.Specialty?.Name ?? string.Empty;
         var roomCode = room?.RoomCode ?? room?.Name ?? string.Empty;
-        var facility = room?.Department?.Name ?? "MedFlow Cơ sở 1";
+        var slotHospitalId = ResolveEntitiesHospitalId(service, doctor, room) ?? actorHospitalId;
+        var facility = room?.Department?.Name ?? await LoadHospitalNameAsync(slotHospitalId, ct);
 
         string displayStatus;
         if (targetStatus == "CLOSED")
@@ -1048,7 +1104,8 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             CloseNote: normalizedNote,
             AffectedBookingsAction: effectiveAction);
 
-        var itemDto = MapSlotToItemDto(slot, activeBookingsCount, closureMeta);
+        var hospitalsById = await LoadHospitalsByIdAsync([slot], ct);
+        var itemDto = MapSlotToItemDto(slot, activeBookingsCount, closureMeta, hospitalsById);
         var warningMessage = hasDependentBookings
             ? effectiveAction == ActionRescheduleRequired
                 ? $"Khung giờ SLT-{slot.Id:D3} có {activeBookingsCount} lượt đặt hẹn phụ thuộc đã được gắn cờ yêu cầu liên hệ dời lịch (RESCHEDULE_REQUIRED)."
@@ -1183,6 +1240,7 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             CloseNote: normalizedNote,
             AffectedBookingsAction: effectiveAction);
 
+        var hospitalsById = await LoadHospitalsByIdAsync(slots, ct);
         var updatedDtos = new List<ExaminationSlotAdminItemDto>(slots.Count);
         foreach (var slot in slots)
         {
@@ -1232,7 +1290,7 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
                 ipAddress: ipAddress,
                 occurredAt: nowUtc);
 
-            updatedDtos.Add(MapSlotToItemDto(slot, slotBookedCount, closureMeta));
+            updatedDtos.Add(MapSlotToItemDto(slot, slotBookedCount, closureMeta, hospitalsById));
         }
 
         await _db.SaveChangesAsync(ct);
@@ -1367,7 +1425,8 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
 
         await _db.SaveChangesAsync(ct);
 
-        var itemDto = MapSlotToItemDto(slot, activeBookingsCount, closureMeta: null);
+        var hospitalsById = await LoadHospitalsByIdAsync([slot], ct);
+        var itemDto = MapSlotToItemDto(slot, activeBookingsCount, closureMeta: null, hospitalsById);
         return BuildCloseSlotResponse(
             itemDto,
             message: "Khung giờ khám đã được mở lại thành công.",
@@ -1389,7 +1448,8 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
     private static ExaminationSlotAdminItemDto MapSlotToItemDto(
         ExaminationSlot slot,
         int booked,
-        SlotClosureMetadata? closureMeta)
+        SlotClosureMetadata? closureMeta,
+        IReadOnlyDictionary<long, string> hospitalsById)
     {
         var maxCap = slot.Capacity ?? 0;
         var startsAt = slot.StartsAt;
@@ -1414,7 +1474,13 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
                         ?? string.Empty;
 
         var room = slot.Room?.RoomCode ?? slot.Room?.Name ?? string.Empty;
-        var facility = slot.Room?.Department?.Name ?? "MedFlow Cơ sở 1";
+        var slotHospitalId = ResolveSlotHospitalId(slot);
+        var hospitalName = slotHospitalId.HasValue &&
+                           hospitalsById.TryGetValue(slotHospitalId.Value, out var hName) &&
+                           !string.IsNullOrWhiteSpace(hName)
+            ? hName.Trim()
+            : null;
+        var facility = slot.Room?.Department?.Name ?? hospitalName ?? UnknownFacilityFallback;
 
         var rawStatus = (slot.Status ?? string.Empty).Trim().ToUpperInvariant();
         string displayStatus;
@@ -1716,12 +1782,87 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
     }
 
     private static long? ResolveSlotHospitalId(ExaminationSlot slot) =>
-        slot.Room?.HospitalId
-        ?? slot.Room?.Department?.HospitalId
-        ?? slot.Doctor?.HospitalId
-        ?? slot.Doctor?.Staff?.HospitalId
-        ?? slot.Service?.HospitalId
-        ?? slot.Service?.Department?.HospitalId;
+        ResolveEntitiesHospitalId(slot.Service, slot.Doctor, slot.Room);
+
+    private static long? ResolveEntitiesHospitalId(
+        Service? service,
+        Doctor? doctor,
+        HospitalRoom? room) =>
+        room?.HospitalId
+        ?? room?.Department?.HospitalId
+        ?? doctor?.HospitalId
+        ?? doctor?.Staff?.HospitalId
+        ?? service?.HospitalId
+        ?? service?.Department?.HospitalId;
+
+    private async Task<Dictionary<long, string>> LoadHospitalsByIdAsync(
+        IEnumerable<ExaminationSlot> slots,
+        CancellationToken ct)
+    {
+        var hospitalIds = slots
+            .Select(ResolveSlotHospitalId)
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToList();
+
+        if (hospitalIds.Count == 0)
+        {
+            return new Dictionary<long, string>();
+        }
+
+        return await _db.Hospitals
+            .AsNoTracking()
+            .Where(h => hospitalIds.Contains(h.Id))
+            .ToDictionaryAsync(h => h.Id, h => h.Name, ct);
+    }
+
+    private async Task<string> LoadHospitalNameAsync(long? hospitalId, CancellationToken ct)
+    {
+        if (!hospitalId.HasValue)
+        {
+            return UnknownFacilityFallback;
+        }
+
+        var name = await _db.Hospitals
+            .AsNoTracking()
+            .Where(h => h.Id == hospitalId.Value)
+            .Select(h => h.Name)
+            .FirstOrDefaultAsync(ct);
+
+        return !string.IsNullOrWhiteSpace(name) ? name.Trim() : UnknownFacilityFallback;
+    }
+
+    private static void EnsureReferencedEntitiesHospitalScope(
+        Service? service,
+        Doctor? doctor,
+        HospitalRoom? room,
+        bool isSystemAdmin,
+        long? actorHospitalId)
+    {
+        if (isSystemAdmin || !actorHospitalId.HasValue)
+        {
+            return;
+        }
+
+        var serviceHospitalId = service?.HospitalId ?? service?.Department?.HospitalId;
+        if (serviceHospitalId.HasValue && serviceHospitalId.Value != actorHospitalId.Value)
+        {
+            throw new ForbiddenException("Bạn không có quyền sử dụng dịch vụ khám thuộc cơ sở y tế khác.");
+        }
+
+        var doctorHospitalId = doctor?.HospitalId ?? doctor?.Staff?.HospitalId;
+        if (doctorHospitalId.HasValue && doctorHospitalId.Value != actorHospitalId.Value)
+        {
+            throw new ForbiddenException("Bạn không có quyền phân công bác sĩ thuộc cơ sở y tế khác.");
+        }
+
+        var roomHospitalId = room?.HospitalId ?? room?.Department?.HospitalId;
+        if (roomHospitalId.HasValue && roomHospitalId.Value != actorHospitalId.Value)
+        {
+            throw new ForbiddenException("Bạn không có quyền gán buồng khám thuộc cơ sở y tế khác.");
+        }
+    }
 
     private static void EnsureSlotHospitalOwnership(
         ExaminationSlot slot,
@@ -1734,7 +1875,7 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
         }
 
         var slotHospitalId = ResolveSlotHospitalId(slot);
-        if (slotHospitalId.HasValue && slotHospitalId.Value != actorHospitalId.Value)
+        if (!slotHospitalId.HasValue || slotHospitalId.Value != actorHospitalId.Value)
         {
             throw new ForbiddenException("Bạn không có quyền thao tác khung giờ khám thuộc cơ sở y tế khác.");
         }
@@ -1745,94 +1886,96 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
         DateTime nowUtc,
         CancellationToken ct)
     {
-        if (!actorUserId.HasValue)
-        {
-            return (true, null);
-        }
-
-        if (actorUserId.Value <= 0)
+        if (!actorUserId.HasValue || actorUserId.Value <= 0)
         {
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
         }
 
-        try
+        var actorUser = await _db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == actorUserId.Value, ct)
+            ?? throw new NotFoundException("User", actorUserId.Value);
+
+        if (actorUser.AccountStatus != AccountStatus.ACTIVE)
         {
-            var hasAnyUsers = await _db.Users.AsNoTracking().AnyAsync(ct);
-            if (!hasAnyUsers)
-            {
-                return (true, null);
-            }
+            throw new ForbiddenException("Tài khoản quản trị không ở trạng thái hoạt động.");
+        }
 
-            var actorUser = await _db.Users
-                .AsNoTracking()
-                .FirstOrDefaultAsync(u => u.Id == actorUserId.Value, ct)
-                ?? throw new NotFoundException("User", actorUserId.Value);
+        if (actorUser.LockedUntil.HasValue && actorUser.LockedUntil.Value > nowUtc)
+        {
+            throw new ForbiddenException("Tài khoản quản trị đang bị tạm khóa.");
+        }
 
-            if (actorUser.AccountStatus != AccountStatus.ACTIVE)
-            {
-                throw new ForbiddenException("Tài khoản quản trị không ở trạng thái hoạt động.");
-            }
+        var actorRoleIds = await _db.UserRoles
+            .AsNoTracking()
+            .Where(ur => ur.UserId == actorUserId.Value)
+            .Select(ur => ur.RoleId)
+            .ToListAsync(ct);
 
-            if (actorUser.LockedUntil.HasValue && actorUser.LockedUntil.Value > nowUtc)
-            {
-                throw new ForbiddenException("Tài khoản quản trị đang bị tạm khóa.");
-            }
-
-            var actorRoleIds = await _db.UserRoles
-                .AsNoTracking()
-                .Where(ur => ur.UserId == actorUserId.Value)
-                .Select(ur => ur.RoleId)
-                .ToListAsync(ct);
-
-            var actorRoleCodes = await _db.Roles
+        var actorRoleCodes = actorRoleIds.Count == 0
+            ? []
+            : await _db.Roles
                 .AsNoTracking()
                 .Where(r => actorRoleIds.Contains(r.Id))
                 .Select(r => r.Code)
                 .ToListAsync(ct);
 
-            var isSystemAdmin = actorRoleCodes.Any(c =>
-                string.Equals(c, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase));
-            var isHospitalAdmin = actorRoleCodes.Any(c =>
-                string.Equals(c, "HOSPITAL_ADMIN", StringComparison.OrdinalIgnoreCase));
+        var isSystemAdmin = actorRoleCodes.Any(c =>
+            string.Equals(c, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase));
+        var isHospitalAdmin = actorRoleCodes.Any(c =>
+            string.Equals(c, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase));
 
-            if (!isSystemAdmin && !isHospitalAdmin)
-            {
-                throw new ForbiddenException("Người dùng không có quyền quản trị khung giờ khám.");
-            }
-
-            var actorStaff = await _db.Staff
-                .AsNoTracking()
-                .FirstOrDefaultAsync(s => s.UserId == actorUserId.Value, ct);
-
-            if (actorStaff is not null &&
-                !string.Equals(actorStaff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ForbiddenException("Hồ sơ nhân sự của quản trị viên không ở trạng thái hoạt động.");
-            }
-
-            if (!isSystemAdmin)
-            {
-                if (actorStaff is null || !actorStaff.HospitalId.HasValue)
-                {
-                    throw new ForbiddenException("Tài khoản quản trị bệnh viện chưa được gán cơ sở y tế.");
-                }
-
-                var hospital = await _db.Hospitals
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(h => h.Id == actorStaff.HospitalId.Value, ct);
-
-                if (hospital is not null && hospital.IsActive == false)
-                {
-                    throw new ForbiddenException("Cơ sở y tế của quản trị viên đang ngừng hoạt động.");
-                }
-            }
-
-            return (isSystemAdmin, actorStaff?.HospitalId);
-        }
-        catch (NotSupportedException)
+        if (!isSystemAdmin && !isHospitalAdmin)
         {
-            return (true, null);
+            throw new ForbiddenException("Người dùng không có quyền quản trị khung giờ khám.");
         }
+
+        var permissionCodes = actorRoleIds.Count == 0
+            ? []
+            : await (
+                from rp in _db.RolePermissions.AsNoTracking()
+                join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
+                where actorRoleIds.Contains(rp.RoleId)
+                select p.Code).ToListAsync(ct);
+
+        var permSet = new HashSet<string>(permissionCodes, StringComparer.OrdinalIgnoreCase);
+        if (!AllowedSlotAdminPermissions.Any(permSet.Contains))
+        {
+            throw new ForbiddenException("Tài khoản quản trị chưa được cấp quyền quản lý khung giờ khám.");
+        }
+
+        var actorStaff = await _db.Staff
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.UserId == actorUserId.Value, ct);
+
+        if (actorStaff is not null &&
+            !string.IsNullOrWhiteSpace(actorStaff.Status) &&
+            !string.Equals(actorStaff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ForbiddenException("Hồ sơ nhân sự của quản trị viên không ở trạng thái hoạt động.");
+        }
+
+        if (!isSystemAdmin)
+        {
+            if (actorStaff is null || !actorStaff.HospitalId.HasValue)
+            {
+                throw new ForbiddenException("Tài khoản quản trị bệnh viện chưa được gán cơ sở y tế.");
+            }
+
+            var hospital = await _db.Hospitals
+                .AsNoTracking()
+                .FirstOrDefaultAsync(h => h.Id == actorStaff.HospitalId.Value, ct)
+                ?? throw new NotFoundException("Hospital", actorStaff.HospitalId.Value);
+
+            if (hospital.IsActive == false)
+            {
+                throw new ForbiddenException("Cơ sở y tế của quản trị viên đang ngừng hoạt động.");
+            }
+
+            return (false, actorStaff.HospitalId.Value);
+        }
+
+        return (true, actorStaff?.HospitalId);
     }
 
     private void TryAddSlotAuditLog(
@@ -1978,4 +2121,3 @@ public sealed class ExaminationSlotAdminService : IExaminationSlotAdminService
             AffectedBookingsAction: affectedBookingsAction);
     }
 }
-

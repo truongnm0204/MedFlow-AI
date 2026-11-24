@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.SystemAdmin;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,7 +11,7 @@ namespace MedFlow.API.Controllers;
 [Route("api/v1/admin/roles")]
 [Route("api/v1/system-admin/roles")]
 [Route("api/v1/roles")]
-[Authorize(Roles = "SYSTEM_ADMIN")]
+[Authorize(Roles = RoleNames.SystemAdmin)]
 public sealed class AdminRolesController : ControllerBase
 {
     private readonly IRoleCatalogService _roleCatalogService;

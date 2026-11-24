@@ -1,7 +1,9 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Reports;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -11,17 +13,14 @@ namespace MedFlow.Application.Services.Reports;
 
 public sealed class OperationalReportService : IOperationalReportService
 {
-    private const string HospitalAdminRoleCode = "HOSPITAL_ADMIN";
-    private const string SystemAdminRoleCode = "SYSTEM_ADMIN";
     private const int MaxReportRangeDays = 366;
-    private static readonly TimeSpan VietnamUtcOffset = TimeSpan.FromHours(7);
 
     private static readonly HashSet<string> AllowedReportPermissions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "REPORT_VIEW",
-        "HOSPITAL_CONFIG",
-        "PAYMENT_VIEW",
-        "QUEUE_MANAGE",
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.PaymentView,
+        PermissionCodes.QueueManage,
+        PermissionCodes.AuditRead,
     };
 
     private static readonly int[] OperationalHours = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
@@ -64,8 +63,8 @@ public sealed class OperationalReportService : IOperationalReportService
             throw new ValidationException("Mã cơ sở y tế lọc báo cáo không hợp lệ.");
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var todayVn = DateOnly.FromDateTime(ToVietnamLocal(nowUtc));
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var todayVn = DateOnly.FromDateTime(HospitalClock.GetNow(_timeProvider));
 
         var effectiveTo = request.ToDate ?? (request.FromDate.HasValue
             ? (request.FromDate.Value.AddDays(6) > todayVn && request.FromDate.Value <= todayVn
@@ -113,36 +112,33 @@ public sealed class OperationalReportService : IOperationalReportService
             .ToListAsync(ct);
 
         var isSystemAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, SystemAdminRoleCode, StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase));
         var isHospitalAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, HospitalAdminRoleCode, StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase));
 
         if (!isSystemAdmin && !isHospitalAdmin)
         {
             throw new ForbiddenException("Người dùng không có quyền xem báo cáo vận hành (UC56).");
         }
 
-        if (!isSystemAdmin)
-        {
-            var allRolePermissions = await _db.RolePermissions
+        var rolePermIds = await _db.RolePermissions
+            .AsNoTracking()
+            .Where(rp => actorRoleIds.Contains(rp.RoleId))
+            .Select(rp => rp.PermissionId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var permCodes = rolePermIds.Count == 0
+            ? []
+            : await _db.Permissions
                 .AsNoTracking()
-                .Where(rp => actorRoleIds.Contains(rp.RoleId))
+                .Where(p => rolePermIds.Contains(p.Id))
+                .Select(p => p.Code)
                 .ToListAsync(ct);
 
-            if (allRolePermissions.Count > 0)
-            {
-                var permIds = allRolePermissions.Select(rp => rp.PermissionId).ToHashSet();
-                var permCodes = await _db.Permissions
-                    .AsNoTracking()
-                    .Where(p => permIds.Contains(p.Id))
-                    .Select(p => p.Code)
-                    .ToListAsync(ct);
-
-                if (!permCodes.Any(code => AllowedReportPermissions.Contains(code)))
-                {
-                    throw new ForbiddenException("Vai trò hiện tại chưa được cấp quyền truy cập báo cáo vận hành.");
-                }
-            }
+        if (!permCodes.Any(code => AllowedReportPermissions.Contains(code)))
+        {
+            throw new ForbiddenException("Vai trò hiện tại chưa được cấp quyền truy cập báo cáo vận hành.");
         }
 
         long? scopedHospitalId;
@@ -302,7 +298,7 @@ public sealed class OperationalReportService : IOperationalReportService
                     return false;
                 }
 
-                var localDate = DateOnly.FromDateTime(ToVietnamLocal(refTimestamp.Value));
+                var localDate = DateOnly.FromDateTime(HospitalClock.EnsureHospitalLocal(refTimestamp.Value));
                 if (localDate < effectiveFrom || localDate > effectiveTo)
                 {
                     return false;
@@ -337,7 +333,7 @@ public sealed class OperationalReportService : IOperationalReportService
                 continue;
             }
 
-            var localCheckIn = ToVietnamLocal(visit.CheckedInAt!.Value);
+            var localCheckIn = HospitalClock.EnsureHospitalLocal(visit.CheckedInAt!.Value);
             var localDate = DateOnly.FromDateTime(localCheckIn);
             if (localDate < effectiveFrom || localDate > effectiveTo)
             {
@@ -541,16 +537,6 @@ public sealed class OperationalReportService : IOperationalReportService
         DateTime LocalCheckIn,
         DateOnly LocalDate,
         long? DepartmentId);
-
-    private static DateTime ToVietnamLocal(DateTime timestamp)
-    {
-        if (timestamp.Kind == DateTimeKind.Local)
-        {
-            return timestamp.ToUniversalTime().Add(VietnamUtcOffset);
-        }
-
-        return timestamp.Add(VietnamUtcOffset);
-    }
 
     private static bool IsSlotInHospitalScope(
         ExaminationSlot slot,

@@ -1,9 +1,11 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.DoctorDashboard;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Visits;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -13,18 +15,17 @@ namespace MedFlow.Application.Services.Doctors;
 
 public sealed class DoctorDashboardService : IDoctorDashboardService
 {
-    private const string DoctorRoleCode = "DOCTOR";
+    private const string DoctorRoleCode = RoleNames.Doctor;
     private const string DefaultRoomCode = "P.102";
     private const string DefaultRoomName = "Phòng khám ngoại trú";
     private const string DefaultDepartmentName = "Khoa Khám bệnh";
-    private const string DefaultShiftLabel = "Ca sáng 07:30–11:30";
 
-    private static readonly string[] FallbackDoctorPermissions =
+    private static readonly string[] AllowedDashboardPermissions =
     [
-        "DIAGNOSTIC_ORDER",
-        "MEDICAL_RECORD_WRITE",
-        "PAYMENT_VIEW",
-        "PRESCRIPTION_ISSUE",
+        PermissionCodes.MedicalRecordWrite,
+        PermissionCodes.QueueManage,
+        PermissionCodes.DiagnosticOrder,
+        PermissionCodes.PrescriptionIssue,
     ];
 
     private static readonly HashSet<string> ValidStatuses = new(StringComparer.OrdinalIgnoreCase)
@@ -107,8 +108,8 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
             ? null
             : request.Keyword.Trim();
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = _timeProvider.GetLocalNow().DateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
 
         var actorUser = await _db.Users
@@ -214,9 +215,15 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
             .OrderBy(code => code, StringComparer.Ordinal)
             .ToList();
 
-        if (actorPermissionCodes.Count == 0 && allRolePermissions.Count == 0)
+        var permissionSet = new HashSet<string>(actorPermissionCodes, StringComparer.OrdinalIgnoreCase);
+        var hasMedicalRecordWrite = permissionSet.Contains(PermissionCodes.MedicalRecordWrite);
+        var hasQueueManage = permissionSet.Contains(PermissionCodes.QueueManage);
+        var hasDiagnosticOrder = permissionSet.Contains(PermissionCodes.DiagnosticOrder);
+        var hasPrescriptionIssue = permissionSet.Contains(PermissionCodes.PrescriptionIssue);
+
+        if (!permissionSet.Overlaps(AllowedDashboardPermissions))
         {
-            actorPermissionCodes = [.. FallbackDoctorPermissions];
+            throw new ForbiddenException("Tài khoản bác sĩ chưa được cấp quyền truy cập bảng điều khiển lâm sàng.");
         }
 
         var departments = await _db.Departments
@@ -312,7 +319,7 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
                 ? $"Khoa {actorDoctor.Specialty.Name}"
                 : DefaultDepartmentName);
 
-        var shiftLabel = ResolveShiftLabel(doctorSlots, nowLocal.Date);
+        var shiftLabel = ResolveShiftLabel(doctorSlots, nowLocal);
 
         var fullName = !string.IsNullOrWhiteSpace(actorStaff.FullName)
             ? actorStaff.FullName.Trim()
@@ -388,40 +395,55 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
                 (q.AppointmentId.HasValue && scopedAppointmentIds.Contains(q.AppointmentId.Value)))
             .ToList();
 
-        var fullAssignedQueue = BuildAssignedQueue(
-            scopedVisits,
-            scopedAppointments,
-            doctorSlotsById,
-            servicesById,
-            patientsById,
-            scopedQueueEntries,
-            today);
+        var canViewQueue = hasMedicalRecordWrite || hasQueueManage || hasPrescriptionIssue;
+        var canViewDiagnostics = hasDiagnosticOrder;
+
+        var fullAssignedQueue = canViewQueue
+            ? BuildAssignedQueue(
+                scopedVisits,
+                scopedAppointments,
+                doctorSlotsById,
+                servicesById,
+                patientsById,
+                scopedQueueEntries,
+                today)
+            : [];
 
         var diagnosticServices = services
             .Where(s => string.Equals(s.ServiceType, "DIAGNOSTIC", StringComparison.OrdinalIgnoreCase))
             .OrderBy(s => s.Id)
             .ToList();
 
-        var fullPendingDiagnostics = BuildPendingDiagnostics(
-            scopedVisits,
-            patientsById,
-            scopedQueueEntries,
-            diagnosticServices);
+        var fullPendingDiagnostics = canViewDiagnostics
+            ? BuildPendingDiagnostics(
+                scopedVisits,
+                patientsById,
+                scopedQueueEntries,
+                diagnosticServices)
+            : [];
 
-        var assignedWaitingCount = fullAssignedQueue.Count(e =>
-            string.Equals(e.Status, "WAITING", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(e.Status, "CALLED", StringComparison.OrdinalIgnoreCase));
+        var assignedWaitingCount = canViewQueue
+            ? fullAssignedQueue.Count(e =>
+                string.Equals(e.Status, "WAITING", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(e.Status, "CALLED", StringComparison.OrdinalIgnoreCase))
+            : 0;
 
-        var inConsultationCount = fullAssignedQueue.Count(e =>
-            string.Equals(e.Status, "IN_CONSULTATION", StringComparison.OrdinalIgnoreCase));
+        var inConsultationCount = canViewQueue
+            ? fullAssignedQueue.Count(e =>
+                string.Equals(e.Status, "IN_CONSULTATION", StringComparison.OrdinalIgnoreCase))
+            : 0;
 
         var awaitingResultsQueueCount = fullAssignedQueue.Count(e =>
             string.Equals(e.Status, "AWAITING_RESULTS", StringComparison.OrdinalIgnoreCase));
 
-        var pendingLabResultsCount = Math.Max(awaitingResultsQueueCount, fullPendingDiagnostics.Count);
+        var pendingLabResultsCount = canViewDiagnostics
+            ? Math.Max(awaitingResultsQueueCount, fullPendingDiagnostics.Count)
+            : 0;
 
-        var completedTodayCount = fullAssignedQueue.Count(e =>
-            string.Equals(e.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase));
+        var completedTodayCount = canViewQueue
+            ? fullAssignedQueue.Count(e =>
+                string.Equals(e.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase))
+            : 0;
 
         var stats = new DoctorStatsDto(
             AssignedWaiting: assignedWaitingCount,
@@ -552,8 +574,9 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
 
     private static string ResolveShiftLabel(
         IReadOnlyList<ExaminationSlot> doctorSlots,
-        DateTime todayDate)
+        DateTime nowLocal)
     {
+        var todayDate = nowLocal.Date;
         var tomorrowDate = todayDate.AddDays(1);
 
         var todayOpenSlots = doctorSlots
@@ -567,7 +590,7 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
 
         if (todayOpenSlots.Count == 0)
         {
-            return DefaultShiftLabel;
+            return HospitalShiftRules.ResolveDashboardShiftLabel(nowLocal);
         }
 
         var minStart = todayOpenSlots.First().StartsAt!.Value;

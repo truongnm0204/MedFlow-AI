@@ -172,12 +172,14 @@ public sealed class CheckInScheduledPatientServiceTests : IDisposable
         _db.Permissions.AddRange(
             new Permission { Id = 3, Code = "PATIENT_CHECKIN" },
             new Permission { Id = 4, Code = "VISIT_ASSIGN" },
-            new Permission { Id = 5, Code = "QUEUE_MANAGE" });
+            new Permission { Id = 5, Code = "QUEUE_MANAGE" },
+            new Permission { Id = 11, Code = "HOSPITAL_CONFIG" });
 
         _db.RolePermissions.AddRange(
             new RolePermission { RoleId = 3, PermissionId = 3 },
             new RolePermission { RoleId = 3, PermissionId = 4 },
-            new RolePermission { RoleId = 6, PermissionId = 3 });
+            new RolePermission { RoleId = 6, PermissionId = 3 },
+            new RolePermission { RoleId = 7, PermissionId = 11 });
 
         _db.Hospitals.AddRange(
             new Hospital
@@ -1242,5 +1244,32 @@ public sealed class CheckInScheduledPatientServiceTests : IDisposable
 
         var sysAdminView = await _service.GetCheckInResultByVisitAsync(13, checkedIn.VisitCode);
         Assert.Equal(checkedIn.VisitId, sysAdminView.VisitId);
+    }
+
+    [Fact]
+    public async Task CheckInScheduledPatientAsync_ClearedRolePermissionsOrMissingStaffHospitalId_FailsClosedWithForbidden()
+    {
+        var staff = await _db.Staff.SingleAsync(s => s.UserId == 5);
+        staff.HospitalId = null;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CheckInScheduledPatientAsync(
+                actorUserId: 5,
+                appointmentIdOrCode: "APT-202610-0100",
+                request: new CheckInScheduledPatientRequest(IsIdentityVerified: true)));
+
+        staff.HospitalId = 1;
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        foreach (var actorId in new[] { 5L, 11L, 13L })
+        {
+            await Assert.ThrowsAsync<ForbiddenException>(() =>
+                _service.CheckInScheduledPatientAsync(
+                    actorUserId: actorId,
+                    appointmentIdOrCode: "APT-202610-0100",
+                    request: new CheckInScheduledPatientRequest(IsIdentityVerified: true)));
+        }
     }
 }

@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
-using MedFlow.Domain.Exceptions;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Persistence;
@@ -8,8 +8,10 @@ using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Application.Services.Visits;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
+using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 
@@ -25,27 +27,20 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
     public const string QueueEntryEntityType = "QUEUE_ENTRY";
     public const string DiagnosticOrderEntityType = "DIAGNOSTIC_ORDER";
 
-    private const string DiagnosticStaffRoleCode = "DIAGNOSTIC_STAFF";
+    private const string DiagnosticStaffRoleCode = RoleNames.DiagnosticStaff;
     private const string DefaultDepartmentName = "Khoa Cận lâm sàng & Chẩn đoán hình ảnh";
-
-    private static readonly string[] FallbackDiagnosticPermissions =
-    [
-        "DIAGNOSTIC_RESULT_WRITE",
-        "QUEUE_MANAGE",
-        "DIAGNOSTIC_ORDER",
-    ];
 
     private static readonly string[] AllowedReadPermissions =
     [
-        "QUEUE_MANAGE",
-        "DIAGNOSTIC_RESULT_WRITE",
-        "DIAGNOSTIC_ORDER",
+        PermissionCodes.QueueManage,
+        PermissionCodes.DiagnosticResultWrite,
+        PermissionCodes.DiagnosticOrder,
     ];
 
     private static readonly string[] AllowedManagePermissions =
     [
-        "QUEUE_MANAGE",
-        "DIAGNOSTIC_RESULT_WRITE",
+        PermissionCodes.QueueManage,
+        PermissionCodes.DiagnosticResultWrite,
     ];
 
     private static readonly HashSet<string> AllowedCategories = new(StringComparer.OrdinalIgnoreCase)
@@ -2431,7 +2426,7 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
         ];
     }
 
-    private static DiagnosticQueueEntryItemDto ResolveEntryDtoFromDataset(
+    private DiagnosticQueueEntryItemDto ResolveEntryDtoFromDataset(
         string idOrCode,
         long hospitalId,
         HospitalDiagnosticQueueDataset dataset)
@@ -2641,7 +2636,7 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
         return false;
     }
 
-    private static bool MatchesRawOrderIdentifier(DiagnosticOrder order, string identifier)
+    private bool MatchesRawOrderIdentifier(DiagnosticOrder order, string identifier)
     {
         if (long.TryParse(identifier, NumberStyles.None, CultureInfo.InvariantCulture, out var numericId))
         {
@@ -2654,7 +2649,9 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
             return order.Id == doId;
         }
 
-        var orderDate = order.OrderedAt.HasValue ? DateOnly.FromDateTime(order.OrderedAt.Value) : DateOnly.FromDateTime(DateTime.UtcNow);
+        var orderDate = order.OrderedAt.HasValue
+            ? DateOnly.FromDateTime(order.OrderedAt.Value)
+            : HospitalClock.GetToday(_timeProvider);
         var formatted = FormatOrderCode(order, orderDate);
         var clsCode = $"CLS-{orderDate:yyyy}-{order.Id:D4}";
 
@@ -3257,11 +3254,6 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
             .OrderBy(code => code, StringComparer.Ordinal)
             .ToList();
 
-        if (actorPermissionCodes.Count == 0 && allRolePermissions.Count == 0)
-        {
-            actorPermissionCodes = [.. FallbackDiagnosticPermissions];
-        }
-
         var hasReadPermission = actorPermissionCodes.Any(code =>
             AllowedReadPermissions.Any(allowed => string.Equals(code, allowed, StringComparison.OrdinalIgnoreCase)));
 
@@ -3739,12 +3731,7 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
     }
 
     private static string ResolveShiftLabel(DateTime nowLocal)
-    {
-        var hour = nowLocal.Hour;
-        if (hour < 12) return "Ca sáng (07:00 - 12:00)";
-        if (hour < 17) return "Ca chiều (13:00 - 17:00)";
-        return "Ca trực tối (17:00 - 21:00)";
-    }
+        => HospitalShiftRules.ResolveQueueShiftLabel(nowLocal, includeDiagnosticEvening: true);
 
     private static string FormatQueueStatusLabel(string status) => status switch
     {

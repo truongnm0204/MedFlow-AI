@@ -1,7 +1,9 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.SystemAdmin;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -11,8 +13,8 @@ namespace MedFlow.Application.Services.SystemAdmin;
 
 public sealed class StaffAccountListService : IStaffAccountListService
 {
-    private const string SystemAdminRoleCode = "SYSTEM_ADMIN";
-    private const string HospitalAdminRoleCode = "HOSPITAL_ADMIN";
+    private const string SystemAdminRoleCode = RoleNames.SystemAdmin;
+    private const string HospitalAdminRoleCode = RoleNames.HospitalAdmin;
     private const string ActiveStatus = "ACTIVE";
     private const string LockedStatus = "LOCKED";
     private const string DisabledStatus = "DISABLED";
@@ -44,7 +46,7 @@ public sealed class StaffAccountListService : IStaffAccountListService
         ArgumentNullException.ThrowIfNull(request);
         ValidateRequest(request);
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         var access = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
         var effectiveHospitalId = ResolveHospitalScope(request.HospitalId, access);
 
@@ -167,11 +169,19 @@ public sealed class StaffAccountListService : IStaffAccountListService
             throw new ForbiddenException("Tài khoản quản trị đang bị tạm khóa.");
         }
 
-        var actorRoleCodes = await _db.UserRoles
+        var actorRoleIds = await _db.UserRoles
             .AsNoTracking()
             .Where(ur => ur.UserId == actorUserId)
-            .Select(ur => ur.Role.Code)
+            .Select(ur => ur.RoleId)
             .ToListAsync(ct);
+
+        var actorRoleCodes = actorRoleIds.Count == 0
+            ? []
+            : await _db.Roles
+                .AsNoTracking()
+                .Where(r => actorRoleIds.Contains(r.Id))
+                .Select(r => r.Code)
+                .ToListAsync(ct);
 
         var isSystemAdmin = actorRoleCodes.Any(code =>
             string.Equals(code, SystemAdminRoleCode, StringComparison.OrdinalIgnoreCase));
@@ -181,6 +191,18 @@ public sealed class StaffAccountListService : IStaffAccountListService
         if (!isSystemAdmin && !isHospitalAdmin)
         {
             throw new ForbiddenException("Người dùng không có quyền xem danh sách tài khoản nhân sự.");
+        }
+
+        var hasAdminListPerm = actorRoleIds.Count > 0 && await (
+            from rp in _db.RolePermissions.AsNoTracking()
+            join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
+            where actorRoleIds.Contains(rp.RoleId) &&
+                  (p.Code.ToUpper() == PermissionCodes.UserManage || p.Code.ToUpper() == PermissionCodes.HospitalConfig)
+            select rp.PermissionId).AnyAsync(ct);
+
+        if (!hasAdminListPerm)
+        {
+            throw new ForbiddenException("Tài khoản quản trị chưa được cấp quyền xem danh sách tài khoản nhân sự.");
         }
 
         var actorStaff = await _db.Staff

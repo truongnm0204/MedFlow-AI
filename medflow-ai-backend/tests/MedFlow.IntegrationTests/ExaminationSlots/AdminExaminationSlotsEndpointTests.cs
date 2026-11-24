@@ -65,7 +65,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationSlotList_InvalidPage_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/examination-slots?page=0&pageSize=10");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -81,7 +81,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [InlineData(105)]
     public async Task GetExaminationSlotList_InvalidPageSize_Returns400(int pageSize)
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/admin/examination-slots?page=1&pageSize={pageSize}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -94,7 +94,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationSlotList_HospitalAdminRole_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/examination-slots?page=1&pageSize=10");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -122,7 +122,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationSlotList_SystemAdminRole_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(2, "system_admin01@medflow.test", "SYSTEM_ADMIN");
+        var token = GenerateToken(13, "system_admin01@medflow.test", "SYSTEM_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/examination-slots?page=1&pageSize=10");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -146,7 +146,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationSlotList_AliasRouteAdminSlots_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/slots?page=1&pageSize=10");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -169,7 +169,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationSlotList_WithFilters_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/examination-slots?status=OPEN&page=1&pageSize=5");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -250,7 +250,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateExaminationSlot_InvalidTime_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new CreateExaminationSlotRequest(
             ServiceId: 1,
             DoctorId: 1,
@@ -274,7 +274,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [InlineData(105)]
     public async Task CreateExaminationSlot_InvalidCapacity_Returns400(int capacity)
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new CreateExaminationSlotRequest(
             ServiceId: 1,
             DoctorId: 1,
@@ -296,7 +296,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateExaminationSlot_MissingServiceAndDoctor_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new CreateExaminationSlotRequest(
             Date: "2026-11-20",
             StartTime: "10:00",
@@ -315,7 +315,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateExaminationSlot_HospitalAdminRole_CreatesSlotSuccessfully_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new CreateExaminationSlotRequest(
             ServiceId: 1,
             DoctorId: 1,
@@ -370,7 +370,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateExaminationSlot_AliasRoute_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new CreateExaminationSlotRequest(
             ServiceId: 1,
             RoomId: 1,
@@ -417,7 +417,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateExaminationSlot_DoctorScheduleConflict_Returns409_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         // First slot created
         var firstPayload = new CreateExaminationSlotRequest(
@@ -519,7 +519,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [InlineData(-1)]
     public async Task UpdateExaminationSlot_InvalidId_Returns400(long id)
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new UpdateExaminationSlotRequest(Capacity: 10);
 
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/admin/examination-slots/{id}");
@@ -537,7 +537,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [InlineData(105)]
     public async Task UpdateExaminationSlot_InvalidCapacity_Returns400(int capacity)
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new UpdateExaminationSlotRequest(Capacity: capacity);
 
         using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-slots/1");
@@ -552,7 +552,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationSlot_InvalidTime_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new UpdateExaminationSlotRequest(
             StartTime: "11:30",
             EndTime: "10:30" // End before start
@@ -570,7 +570,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationSlot_NonExistentId_Returns404_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new UpdateExaminationSlotRequest(Capacity: 10);
 
         using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-slots/999999");
@@ -594,7 +594,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationSlot_HospitalAdminRole_UpdatesSlotSuccessfully_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         // Create a unique test slot first
         var createPayload = new CreateExaminationSlotRequest(
@@ -658,7 +658,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationSlot_AliasRoute_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         var createPayload = new CreateExaminationSlotRequest(
             ServiceId: 1,
@@ -717,7 +717,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationSlot_DoctorConflict_Returns409_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         // Create Slot A: Doctor 1 at 2026-12-12 09:00 - 09:30
         var slotAPayload = new CreateExaminationSlotRequest(
@@ -1182,4 +1182,3 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
         }
     }
 }
-

@@ -1,12 +1,14 @@
 namespace MedFlow.Application.Services.Policies;
 
-internal static class QueuePolicyKeys
+public static class QueuePolicyKeys
 {
     public const string PolicyType = "QUEUE";
+    public const string DiagnosticPolicyType = "DIAGNOSTIC";
 
     public const string GraceMinutes = "grace_minutes";
     public const string ExpectedDurationMinutes = "expected_duration_minutes";
     public const string SafetyBufferMinutes = "safety_buffer_minutes";
+    public const string FinalResultRequired = "final_result_required";
     public const string WalkinPriorityRatio = "walkin_priority_ratio";
     public const string PublicNumberImmutable = "public_number_immutable";
     public const string ManualPriorityRequiresVerification = "manual_priority_requires_verification";
@@ -21,6 +23,8 @@ internal static class QueuePolicyKeys
     public const int DefaultSafetyBufferMinutes = 5;
     public const int DefaultPriorityWeight = 3;
     public const int DefaultNormalWeight = 1;
+    public const int MinRatioWeight = 1;
+    public const int MaxRatioWeight = 10;
     public const bool DefaultPublicNumberImmutable = true;
     public const bool DefaultManualPriorityRequiresVerification = true;
 }

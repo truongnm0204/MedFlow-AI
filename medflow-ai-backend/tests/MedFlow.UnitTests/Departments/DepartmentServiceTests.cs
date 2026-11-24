@@ -22,9 +22,9 @@ public sealed class DepartmentServiceTests : IDisposable
 
         public DbSet<User> Users => Set<User>();
         public DbSet<Role> Roles => Set<Role>();
-        public DbSet<Permission> Permissions => throw NotUsed();
+        public DbSet<Permission> Permissions => Set<Permission>();
         public DbSet<UserRole> UserRoles => Set<UserRole>();
-        public DbSet<RolePermission> RolePermissions => throw NotUsed();
+        public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
         public DbSet<Patient> Patients => throw NotUsed();
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => Set<Doctor>();
@@ -32,7 +32,7 @@ public sealed class DepartmentServiceTests : IDisposable
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
-        public DbSet<Hospital> Hospitals => throw NotUsed();
+        public DbSet<Hospital> Hospitals => Set<Hospital>();
         public DbSet<Department> Departments => Set<Department>();
         public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => throw NotUsed();
@@ -51,13 +51,10 @@ public sealed class DepartmentServiceTests : IDisposable
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Ignore<Permission>();
-            modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Patient>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<Hospital>();
             modelBuilder.Ignore<Specialty>();
             modelBuilder.Ignore<ServicePrice>();
             modelBuilder.Ignore<HospitalPolicy>();
@@ -67,7 +64,10 @@ public sealed class DepartmentServiceTests : IDisposable
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Role>().HasKey(r => r.Id);
+            modelBuilder.Entity<Permission>().HasKey(p => p.Id);
             modelBuilder.Entity<UserRole>().HasKey(ur => new { ur.UserId, ur.RoleId });
+            modelBuilder.Entity<RolePermission>().HasKey(rp => new { rp.RoleId, rp.PermissionId });
+            modelBuilder.Entity<Hospital>().HasKey(h => h.Id);
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
             modelBuilder.Entity<HospitalRoom>().HasKey(r => r.Id);
             modelBuilder.Entity<Service>().HasKey(s => s.Id);
@@ -106,6 +106,11 @@ public sealed class DepartmentServiceTests : IDisposable
 
     private void SeedTestData()
     {
+        _dbContext.Hospitals.AddRange(
+            new Hospital { Id = 1, HospitalCode = "HOS-01", Name = "Bệnh viện Đa khoa MedFlow Hà Nội", IsActive = true },
+            new Hospital { Id = 2, HospitalCode = "HOS-02", Name = "Bệnh viện Đa khoa MedFlow Đà Nẵng", IsActive = true }
+        );
+
         _dbContext.Departments.AddRange(
             new Department { Id = 1, HospitalId = 1, DepartmentCode = "DEP-001", Name = "Khoa Nội Tiêu hóa", IsActive = true },
             new Department { Id = 2, HospitalId = 1, DepartmentCode = "DEP-002", Name = "Khoa Khám bệnh", IsActive = true },
@@ -128,23 +133,33 @@ public sealed class DepartmentServiceTests : IDisposable
             new Role { Id = 2, Code = "SYSTEM_ADMIN", Name = "System Admin" }
         );
 
+        _dbContext.Permissions.Add(new Permission { Id = 1, Code = "HOSPITAL_CONFIG" });
+
+        _dbContext.RolePermissions.AddRange(
+            new RolePermission { RoleId = 1, PermissionId = 1 },
+            new RolePermission { RoleId = 2, PermissionId = 1 }
+        );
+
         _dbContext.Users.AddRange(
             new User { Id = 11, Email = "admin1@test.com", AccountStatus = AccountStatus.ACTIVE },
             new User { Id = 12, Email = "admin2@test.com", AccountStatus = AccountStatus.ACTIVE },
-            new User { Id = 13, Email = "sysadmin@test.com", AccountStatus = AccountStatus.ACTIVE }
+            new User { Id = 13, Email = "sysadmin@test.com", AccountStatus = AccountStatus.ACTIVE },
+            new User { Id = 14, Email = "unassigned_admin@test.com", AccountStatus = AccountStatus.ACTIVE }
         );
 
         _dbContext.UserRoles.AddRange(
             new UserRole { UserId = 11, RoleId = 1 },
             new UserRole { UserId = 12, RoleId = 1 },
-            new UserRole { UserId = 13, RoleId = 2 }
+            new UserRole { UserId = 13, RoleId = 2 },
+            new UserRole { UserId = 14, RoleId = 1 }
         );
 
         _dbContext.Staff.AddRange(
-            new Staff { Id = 1, UserId = 11, HospitalId = 1, StaffCode = "STF-001", FullName = "Admin 1", DepartmentId = 1 },
-            new Staff { Id = 2, UserId = 12, HospitalId = 2, StaffCode = "STF-002", FullName = "Admin 2", DepartmentId = 14 },
-            new Staff { Id = 3, UserId = 13, HospitalId = null, StaffCode = "STF-003", FullName = "System Admin" },
-            new Staff { Id = 10, UserId = null, HospitalId = 1, StaffCode = "DOC-STF-01", FullName = "Bác sĩ Tiêu hóa", DepartmentId = 6 }
+            new Staff { Id = 1, UserId = 11, HospitalId = 1, StaffCode = "STF-001", FullName = "Admin 1", DepartmentId = 1, Status = "ACTIVE" },
+            new Staff { Id = 2, UserId = 12, HospitalId = 2, StaffCode = "STF-002", FullName = "Admin 2", DepartmentId = 14, Status = "ACTIVE" },
+            new Staff { Id = 3, UserId = 13, HospitalId = null, StaffCode = "STF-003", FullName = "System Admin", Status = "ACTIVE" },
+            new Staff { Id = 4, UserId = 14, HospitalId = null, StaffCode = "STF-004", FullName = "Unassigned Hospital Admin", Status = "ACTIVE" },
+            new Staff { Id = 10, UserId = null, HospitalId = 1, StaffCode = "DOC-STF-01", FullName = "Bác sĩ Tiêu hóa", DepartmentId = 6, Status = "ACTIVE" }
         );
 
         // Department 5 has an active room
@@ -164,7 +179,7 @@ public sealed class DepartmentServiceTests : IDisposable
     {
         var request = new GetDepartmentListRequest(Page: 1, PageSize: 10);
 
-        var result = await _service.GetDepartmentListAsync(request);
+        var result = await _service.GetDepartmentListAsync(13, request);
 
         Assert.NotNull(result);
         Assert.Equal(14, result.Total);
@@ -184,14 +199,14 @@ public sealed class DepartmentServiceTests : IDisposable
     public async Task GetDepartmentListAsync_FiltersByKeyword_MatchesCodeOrName()
     {
         var requestByCode = new GetDepartmentListRequest(Keyword: "DEP-003");
-        var resultByCode = await _service.GetDepartmentListAsync(requestByCode);
+        var resultByCode = await _service.GetDepartmentListAsync(13, requestByCode);
 
         Assert.Single(resultByCode.Data);
         Assert.Equal("DEP-003", resultByCode.Data[0].Code);
         Assert.Equal("Khoa Nội tiết", resultByCode.Data[0].Name);
 
         var requestByName = new GetDepartmentListRequest(Keyword: "tiêu hóa");
-        var resultByName = await _service.GetDepartmentListAsync(requestByName);
+        var resultByName = await _service.GetDepartmentListAsync(13, requestByName);
 
         Assert.Single(resultByName.Data);
         Assert.Equal("Khoa Nội Tiêu hóa", resultByName.Data[0].Name);
@@ -201,14 +216,14 @@ public sealed class DepartmentServiceTests : IDisposable
     public async Task GetDepartmentListAsync_FiltersByIsActive_TrueAndFalse()
     {
         var activeRequest = new GetDepartmentListRequest(IsActive: true, PageSize: 20);
-        var activeResult = await _service.GetDepartmentListAsync(activeRequest);
+        var activeResult = await _service.GetDepartmentListAsync(13, activeRequest);
 
         Assert.Equal(12, activeResult.Total);
         Assert.All(activeResult.Data, item => Assert.True(item.IsActive));
         Assert.All(activeResult.Data, item => Assert.Equal("ACTIVE", item.Status));
 
         var inactiveRequest = new GetDepartmentListRequest(IsActive: false);
-        var inactiveResult = await _service.GetDepartmentListAsync(inactiveRequest);
+        var inactiveResult = await _service.GetDepartmentListAsync(13, inactiveRequest);
 
         Assert.Equal(2, inactiveResult.Total);
         Assert.All(inactiveResult.Data, item => Assert.False(item.IsActive));
@@ -219,12 +234,12 @@ public sealed class DepartmentServiceTests : IDisposable
     public async Task GetDepartmentListAsync_FiltersByStatus_ActiveAndInactive()
     {
         var statusActiveRequest = new GetDepartmentListRequest(Status: "ACTIVE", PageSize: 20);
-        var statusActiveResult = await _service.GetDepartmentListAsync(statusActiveRequest);
+        var statusActiveResult = await _service.GetDepartmentListAsync(13, statusActiveRequest);
 
         Assert.Equal(12, statusActiveResult.Total);
 
         var statusInactiveRequest = new GetDepartmentListRequest(Status: "INACTIVE");
-        var statusInactiveResult = await _service.GetDepartmentListAsync(statusInactiveRequest);
+        var statusInactiveResult = await _service.GetDepartmentListAsync(13, statusInactiveRequest);
 
         Assert.Equal(2, statusInactiveResult.Total);
     }
@@ -233,18 +248,18 @@ public sealed class DepartmentServiceTests : IDisposable
     public async Task GetDepartmentListAsync_FiltersByHospitalId()
     {
         var requestHospital2 = new GetDepartmentListRequest(HospitalId: 2);
-        var result = await _service.GetDepartmentListAsync(requestHospital2);
+        var result = await _service.GetDepartmentListAsync(13, requestHospital2);
 
         Assert.Single(result.Data);
         Assert.Equal("DEP-014", result.Data[0].Code);
-        Assert.Equal("MedFlow Cơ sở 2", result.Data[0].Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Đà Nẵng", result.Data[0].Facility);
     }
 
     [Fact]
     public async Task GetDepartmentListAsync_PaginatesToSecondPage()
     {
         var requestPage2 = new GetDepartmentListRequest(Page: 2, PageSize: 10);
-        var result = await _service.GetDepartmentListAsync(requestPage2);
+        var result = await _service.GetDepartmentListAsync(13, requestPage2);
 
         Assert.Equal(2, result.Page);
         Assert.Equal(4, result.Data.Count);
@@ -259,7 +274,7 @@ public sealed class DepartmentServiceTests : IDisposable
     {
         var request = new GetDepartmentListRequest(Page: page, PageSize: pageSize);
 
-        await Assert.ThrowsAsync<ArgumentException>(() => _service.GetDepartmentListAsync(request));
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.GetDepartmentListAsync(13, request));
     }
 
     [Theory]
@@ -270,14 +285,14 @@ public sealed class DepartmentServiceTests : IDisposable
     {
         var request = new GetDepartmentListRequest(Page: page, PageSize: pageSize);
 
-        await Assert.ThrowsAsync<ArgumentException>(() => _service.GetDepartmentListAsync(request));
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.GetDepartmentListAsync(13, request));
     }
 
     [Fact]
     public async Task GetDepartmentListAsync_NoMatch_ReturnsEmptyDataAndCorrectTotal()
     {
         var request = new GetDepartmentListRequest(Keyword: "Không Tồn Tại 9999");
-        var result = await _service.GetDepartmentListAsync(request);
+        var result = await _service.GetDepartmentListAsync(13, request);
 
         Assert.Empty(result.Data);
         Assert.Equal(0, result.Total);
@@ -291,14 +306,14 @@ public sealed class DepartmentServiceTests : IDisposable
     {
         var request = new CreateDepartmentRequest("dep-new-01", "  Khoa Cấp cứu  ", HospitalId: 1, IsActive: true);
 
-        var result = await _service.CreateDepartmentAsync(request);
+        var result = await _service.CreateDepartmentAsync(13, request);
 
         Assert.NotNull(result);
         Assert.True(result.Id > 0);
         Assert.Equal("DEP-NEW-01", result.Code);
         Assert.Equal("Khoa Cấp cứu", result.Name);
         Assert.Equal(1, result.HospitalId);
-        Assert.Equal("MedFlow Cơ sở 1", result.Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Hà Nội", result.Facility);
         Assert.True(result.IsActive);
         Assert.Equal("ACTIVE", result.Status);
 
@@ -315,7 +330,7 @@ public sealed class DepartmentServiceTests : IDisposable
     {
         var request = new CreateDepartmentRequest(code!, "Khoa Hồi sức");
 
-        await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDepartmentAsync(request));
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDepartmentAsync(13, request));
     }
 
     [Fact]
@@ -324,7 +339,7 @@ public sealed class DepartmentServiceTests : IDisposable
         var longCode = new string('A', 41);
         var request = new CreateDepartmentRequest(longCode, "Khoa Hồi sức");
 
-        await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDepartmentAsync(request));
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDepartmentAsync(13, request));
     }
 
     [Theory]
@@ -335,7 +350,7 @@ public sealed class DepartmentServiceTests : IDisposable
     {
         var request = new CreateDepartmentRequest("DEP-ICU", name!);
 
-        await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDepartmentAsync(request));
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDepartmentAsync(13, request));
     }
 
     [Fact]
@@ -344,7 +359,7 @@ public sealed class DepartmentServiceTests : IDisposable
         var longName = new string('B', 201);
         var request = new CreateDepartmentRequest("DEP-ICU", longName);
 
-        await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDepartmentAsync(request));
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDepartmentAsync(13, request));
     }
 
     [Fact]
@@ -352,7 +367,7 @@ public sealed class DepartmentServiceTests : IDisposable
     {
         var request = new CreateDepartmentRequest("dep-001", "Khoa Trùng Mã", HospitalId: 1);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateDepartmentAsync(request));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateDepartmentAsync(13, request));
         Assert.Contains("đã tồn tại trong cơ sở này", ex.Message);
     }
 
@@ -362,12 +377,12 @@ public sealed class DepartmentServiceTests : IDisposable
         // DEP-001 exists in HospitalId 1, creating in HospitalId 2 should succeed
         var request = new CreateDepartmentRequest("DEP-001", "Khoa Nội Tiêu hóa CS2", HospitalId: 2);
 
-        var result = await _service.CreateDepartmentAsync(request);
+        var result = await _service.CreateDepartmentAsync(13, request);
 
         Assert.NotNull(result);
         Assert.Equal("DEP-001", result.Code);
         Assert.Equal(2, result.HospitalId);
-        Assert.Equal("MedFlow Cơ sở 2", result.Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Đà Nẵng", result.Facility);
     }
 
     [Fact]
@@ -375,7 +390,7 @@ public sealed class DepartmentServiceTests : IDisposable
     {
         var request = new CreateDepartmentRequest("DEP-INACT", "Khoa Tạm Dừng", HospitalId: 1, IsActive: false);
 
-        var result = await _service.CreateDepartmentAsync(request);
+        var result = await _service.CreateDepartmentAsync(13, request);
 
         Assert.False(result.IsActive);
         Assert.Equal("INACTIVE", result.Status);
@@ -395,7 +410,7 @@ public sealed class DepartmentServiceTests : IDisposable
             IsActive: false
         );
 
-        var result = await _service.UpdateDepartmentAsync(1, request);
+        var result = await _service.UpdateDepartmentAsync(13, 1, request);
 
         Assert.NotNull(result);
         Assert.Equal(1, result.Id);
@@ -404,7 +419,7 @@ public sealed class DepartmentServiceTests : IDisposable
         Assert.Equal(1, result.HospitalId);
         Assert.False(result.IsActive);
         Assert.Equal("INACTIVE", result.Status);
-        Assert.Equal("MedFlow Cơ sở 1", result.Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Hà Nội", result.Facility);
 
         // Verify persisted entity in DbContext
         var entity = await _dbContext.Departments.FindAsync(1L);
@@ -424,7 +439,7 @@ public sealed class DepartmentServiceTests : IDisposable
             IsActive: true
         );
 
-        var result = await _service.UpdateDepartmentAsync(1, request);
+        var result = await _service.UpdateDepartmentAsync(13, 1, request);
 
         Assert.NotNull(result);
         Assert.Equal("DEP-001", result.Code);
@@ -442,7 +457,7 @@ public sealed class DepartmentServiceTests : IDisposable
             IsActive: true
         );
 
-        var result = await _service.UpdateDepartmentAsync(1, request);
+        var result = await _service.UpdateDepartmentAsync(13, 1, request);
 
         Assert.NotNull(result);
         Assert.Equal("DEP-001", result.Code);
@@ -456,7 +471,7 @@ public sealed class DepartmentServiceTests : IDisposable
     {
         var request = new UpdateDepartmentRequest(Code: "DEP-001", Name: "Khoa Hợp Lệ");
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateDepartmentAsync(id, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateDepartmentAsync(13, id, request));
         Assert.Contains("ID khoa phòng phải lớn hơn 0", ex.Message);
     }
 
@@ -466,14 +481,14 @@ public sealed class DepartmentServiceTests : IDisposable
     {
         var request = new UpdateDepartmentRequest(Code: "DEP-999", Name: "Khoa Không Tồn Tại");
 
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateDepartmentAsync(9999, request));
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateDepartmentAsync(13, 9999, request));
         Assert.Contains("Không tìm thấy khoa phòng với ID 9999", ex.Message);
     }
 
     [Fact]
     public async Task UpdateDepartmentAsync_WithNullRequest_ThrowsArgumentNullException()
     {
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.UpdateDepartmentAsync(1, null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.UpdateDepartmentAsync(13, 1, null!));
     }
 
     [Theory]
@@ -484,7 +499,7 @@ public sealed class DepartmentServiceTests : IDisposable
     {
         var request = new UpdateDepartmentRequest(Code: code!, Name: "Khoa Hợp Lệ");
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateDepartmentAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateDepartmentAsync(13, 1, request));
         Assert.Contains("Mã khoa phòng không được để trống", ex.Message);
     }
 
@@ -494,7 +509,7 @@ public sealed class DepartmentServiceTests : IDisposable
         var longCode = new string('A', 41);
         var request = new UpdateDepartmentRequest(Code: longCode, Name: "Khoa Hợp Lệ");
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateDepartmentAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateDepartmentAsync(13, 1, request));
         Assert.Contains("Mã khoa phòng không được vượt quá 40 ký tự", ex.Message);
     }
 
@@ -506,7 +521,7 @@ public sealed class DepartmentServiceTests : IDisposable
     {
         var request = new UpdateDepartmentRequest(Code: "DEP-001", Name: name!);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateDepartmentAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateDepartmentAsync(13, 1, request));
         Assert.Contains("Tên khoa phòng không được để trống", ex.Message);
     }
 
@@ -516,7 +531,7 @@ public sealed class DepartmentServiceTests : IDisposable
         var longName = new string('B', 201);
         var request = new UpdateDepartmentRequest(Code: "DEP-001", Name: longName);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateDepartmentAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateDepartmentAsync(13, 1, request));
         Assert.Contains("Tên khoa phòng không được vượt quá 200 ký tự", ex.Message);
     }
 
@@ -530,7 +545,7 @@ public sealed class DepartmentServiceTests : IDisposable
             HospitalId: 1
         );
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.UpdateDepartmentAsync(1, request));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.UpdateDepartmentAsync(13, 1, request));
         Assert.Contains("đã tồn tại trong cơ sở y tế này", ex.Message);
     }
 
@@ -545,12 +560,12 @@ public sealed class DepartmentServiceTests : IDisposable
             IsActive: true
         );
 
-        var result = await _service.UpdateDepartmentAsync(14, request);
+        var result = await _service.UpdateDepartmentAsync(13, 14, request);
 
         Assert.NotNull(result);
         Assert.Equal("DEP-001", result.Code);
         Assert.Equal(2, result.HospitalId);
-        Assert.Equal("MedFlow Cơ sở 2", result.Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Đà Nẵng", result.Facility);
     }
 
     [Fact]
@@ -561,7 +576,7 @@ public sealed class DepartmentServiceTests : IDisposable
             Name: "   Khoa Chuẩn Hóa Dữ Liệu   "
         );
 
-        var result = await _service.UpdateDepartmentAsync(1, request);
+        var result = await _service.UpdateDepartmentAsync(13, 1, request);
 
         Assert.Equal("DEP-NORM-01", result.Code);
         Assert.Equal("Khoa Chuẩn Hóa Dữ Liệu", result.Name);
@@ -577,7 +592,7 @@ public sealed class DepartmentServiceTests : IDisposable
             IsActive: null
         );
 
-        var result = await _service.UpdateDepartmentAsync(13, request);
+        var result = await _service.UpdateDepartmentAsync(13, 13, request);
 
         Assert.False(result.IsActive);
         Assert.Equal("INACTIVE", result.Status);
@@ -593,10 +608,10 @@ public sealed class DepartmentServiceTests : IDisposable
             HospitalId: null
         );
 
-        var result = await _service.UpdateDepartmentAsync(14, request);
+        var result = await _service.UpdateDepartmentAsync(13, 14, request);
 
         Assert.Equal(2, result.HospitalId);
-        Assert.Equal("MedFlow Cơ sở 2", result.Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Đà Nẵng", result.Facility);
     }
 
     [Fact]
@@ -779,8 +794,48 @@ public sealed class DepartmentServiceTests : IDisposable
         );
 
         var ex = await Assert.ThrowsAsync<ConflictException>(() =>
-            _service.UpdateDepartmentAsync(5, request));
+            _service.UpdateDepartmentAsync(13, 5, request));
 
         Assert.Contains("buồng khám", ex.Message);
+    }
+
+    [Fact]
+    public async Task CreateDepartmentAsync_SystemAdminWithoutHospitalId_ThrowsValidationException()
+    {
+        var request = new CreateDepartmentRequest("DEP-NO-HOSP", "Khoa Thiếu Cơ Sở", HospitalId: null);
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateDepartmentAsync(13, request));
+    }
+
+    [Fact]
+    public async Task CreateDepartmentAsync_NonExistentHospitalId_ThrowsNotFoundException()
+    {
+        var request = new CreateDepartmentRequest("DEP-MISSING-HOSP", "Khoa Không Có Viện", HospitalId: 999);
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.CreateDepartmentAsync(13, request));
+    }
+
+    [Fact]
+    public async Task CreateDepartmentAsync_HospitalAdminCrossHospitalOrMissingStaffHospital_ThrowsForbiddenException()
+    {
+        var crossRequest = new CreateDepartmentRequest("DEP-CROSS", "Khoa Vượt Quyền", HospitalId: 2);
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CreateDepartmentAsync(11, crossRequest));
+
+        var unassignedRequest = new CreateDepartmentRequest("DEP-UNASSIGNED", "Khoa Chưa Gán Viện", HospitalId: null);
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CreateDepartmentAsync(14, unassignedRequest));
+    }
+
+    [Fact]
+    public async Task DeactivateDepartment_MissingHospitalConfigPermission_FailsClosedWithForbiddenException()
+    {
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions);
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.DeactivateDepartmentAsync(11, "3"));
     }
 }

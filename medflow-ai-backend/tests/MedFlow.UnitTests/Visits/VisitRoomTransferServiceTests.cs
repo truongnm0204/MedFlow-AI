@@ -848,4 +848,25 @@ public sealed class VisitRoomTransferServiceTests : IDisposable
                 new TransferVisitRoomRequest(TargetRoomId: 2, Reason: "Đổi BS", TargetDoctorId: 3),
                 null));
     }
+
+    [Fact]
+    public async Task VisitRoomTransfer_ClearedRolePermissionsOrMissingStaffHospitalId_FailsClosedWithForbidden()
+    {
+        var staff = await _db.Staff.SingleAsync(s => s.UserId == 5);
+        staff.HospitalId = null;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetCompatibleRoomsAsync(5, "100"));
+
+        staff.HospitalId = 1;
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        foreach (var actorId in new[] { 5L, 11L, 13L })
+        {
+            await Assert.ThrowsAsync<ForbiddenException>(() =>
+                _service.GetCompatibleRoomsAsync(actorId, "100"));
+        }
+    }
 }

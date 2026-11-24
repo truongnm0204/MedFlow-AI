@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Departments;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Exceptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -11,7 +12,7 @@ namespace MedFlow.API.Controllers;
 [ApiController]
 [Route("api/v1/admin/departments")]
 [Route("api/v1/departments")]
-[Authorize(Roles = "HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+[Authorize(Roles = $"{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class AdminDepartmentsController : ControllerBase
 {
     private readonly IDepartmentService _departmentService;
@@ -33,7 +34,7 @@ public sealed class AdminDepartmentsController : ControllerBase
     {
         try
         {
-            var result = await _departmentService.GetDepartmentListAsync(request, ct);
+            var result = await _departmentService.GetDepartmentListAsync(RequireUserId(), request, ct);
             return Ok(result);
         }
         catch (ArgumentException ex)
@@ -60,7 +61,7 @@ public sealed class AdminDepartmentsController : ControllerBase
     {
         try
         {
-            var result = await _departmentService.CreateDepartmentAsync(request, ct);
+            var result = await _departmentService.CreateDepartmentAsync(RequireUserId(), request, ct);
             return StatusCode(StatusCodes.Status201Created, result);
         }
         catch (ArgumentException ex)
@@ -98,7 +99,7 @@ public sealed class AdminDepartmentsController : ControllerBase
     {
         try
         {
-            var result = await _departmentService.UpdateDepartmentAsync(id, request, ct);
+            var result = await _departmentService.UpdateDepartmentAsync(RequireUserId(), id, request, ct);
             return Ok(result);
         }
         catch (NotFoundException ex)
@@ -168,7 +169,7 @@ public sealed class AdminDepartmentsController : ControllerBase
         [FromRoute] string idOrCode,
         CancellationToken ct)
     {
-        var result = await _departmentService.CheckDepartmentDependenciesAsync(GetUserId(), idOrCode, ct);
+        var result = await _departmentService.CheckDepartmentDependenciesAsync(RequireUserId(), idOrCode, ct);
         return Ok(result);
     }
 
@@ -189,7 +190,7 @@ public sealed class AdminDepartmentsController : ControllerBase
         CancellationToken ct = default)
     {
         var result = await _departmentService.DeactivateDepartmentAsync(
-            GetUserId(),
+            RequireUserId(),
             idOrCode,
             request ?? new DeactivateDepartmentRequest(),
             GetIp(),
@@ -213,12 +214,23 @@ public sealed class AdminDepartmentsController : ControllerBase
         CancellationToken ct = default)
     {
         var result = await _departmentService.ReactivateDepartmentAsync(
-            GetUserId(),
+            RequireUserId(),
             idOrCode,
             request,
             GetIp(),
             ct);
         return Ok(result);
+    }
+
+    private long RequireUserId()
+    {
+        var userId = GetUserId();
+        if (!userId.HasValue || userId.Value <= 0)
+        {
+            throw new UnauthorizedAccessException("Token không hợp lệ.");
+        }
+
+        return userId.Value;
     }
 
     private long? GetUserId()

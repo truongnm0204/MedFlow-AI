@@ -1,7 +1,8 @@
 using System.Security.Claims;
-using MedFlow.Domain.Exceptions;
 using MedFlow.Application.DTOs.ExaminationRooms;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
+using MedFlow.Domain.Exceptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -12,7 +13,7 @@ namespace MedFlow.API.Controllers;
 [Route("api/v1/admin/examination-rooms")]
 [Route("api/v1/admin/rooms")]
 [Route("api/v1/examination-rooms")]
-[Authorize(Roles = "HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+[Authorize(Roles = $"{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class AdminExaminationRoomsController : ControllerBase
 {
     private readonly IExaminationRoomService _examinationRoomService;
@@ -34,7 +35,7 @@ public sealed class AdminExaminationRoomsController : ControllerBase
     {
         try
         {
-            var result = await _examinationRoomService.GetExaminationRoomListAsync(request, ct);
+            var result = await _examinationRoomService.GetExaminationRoomListAsync(RequireUserId(), request, ct);
             return Ok(result);
         }
         catch (ArgumentException ex)
@@ -62,7 +63,7 @@ public sealed class AdminExaminationRoomsController : ControllerBase
     {
         try
         {
-            var result = await _examinationRoomService.CreateExaminationRoomAsync(request, ct);
+            var result = await _examinationRoomService.CreateExaminationRoomAsync(RequireUserId(), request, ct);
             return StatusCode(StatusCodes.Status201Created, result);
         }
         catch (KeyNotFoundException ex)
@@ -109,7 +110,7 @@ public sealed class AdminExaminationRoomsController : ControllerBase
     {
         try
         {
-            var result = await _examinationRoomService.UpdateExaminationRoomAsync(id, request, ct);
+            var result = await _examinationRoomService.UpdateExaminationRoomAsync(RequireUserId(), id, request, ct);
             return Ok(result);
         }
         catch (ForbiddenException ex)
@@ -172,7 +173,7 @@ public sealed class AdminExaminationRoomsController : ControllerBase
     {
         try
         {
-            var result = await _examinationRoomService.CheckExaminationRoomDependenciesAsync(GetUserId(), idOrCode, ct);
+            var result = await _examinationRoomService.CheckExaminationRoomDependenciesAsync(RequireUserId(), idOrCode, ct);
             return Ok(result);
         }
         catch (ForbiddenException ex)
@@ -223,7 +224,7 @@ public sealed class AdminExaminationRoomsController : ControllerBase
         try
         {
             var result = await _examinationRoomService.DeactivateExaminationRoomAsync(
-                GetUserId(),
+                RequireUserId(),
                 idOrCode,
                 request ?? new DeactivateExaminationRoomRequest(),
                 GetIp(),
@@ -286,7 +287,7 @@ public sealed class AdminExaminationRoomsController : ControllerBase
         try
         {
             var result = await _examinationRoomService.ReactivateExaminationRoomAsync(
-                GetUserId(),
+                RequireUserId(),
                 idOrCode,
                 request ?? new ReactivateExaminationRoomRequest(),
                 GetIp(),
@@ -329,6 +330,17 @@ public sealed class AdminExaminationRoomsController : ControllerBase
                 Status = StatusCodes.Status400BadRequest
             });
         }
+    }
+
+    private long RequireUserId()
+    {
+        var userId = GetUserId();
+        if (!userId.HasValue || userId.Value <= 0)
+        {
+            throw new UnauthorizedAccessException("Token không hợp lệ.");
+        }
+
+        return userId.Value;
     }
 
     private long? GetUserId()

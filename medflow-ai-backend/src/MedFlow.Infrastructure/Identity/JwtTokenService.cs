@@ -11,10 +11,12 @@ namespace MedFlow.Infrastructure.Identity;
 public class JwtTokenService : IJwtTokenService
 {
     private readonly IConfiguration _configuration;
+    private readonly TimeProvider _timeProvider;
 
-    public JwtTokenService(IConfiguration configuration)
+    public JwtTokenService(IConfiguration configuration, TimeProvider? timeProvider = null)
     {
         _configuration = configuration;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public JwtTokenResult GenerateAccessToken(User user, IEnumerable<string> roles)
@@ -24,7 +26,8 @@ public class JwtTokenService : IJwtTokenService
         var issuer = _configuration["Jwt:Issuer"] ?? "MedFlow";
         var audience = _configuration["Jwt:Audience"] ?? "MedFlow";
         var expiryMinutes = int.TryParse(_configuration["Jwt:AccessTokenExpiryMinutes"], out var m) ? m : 60;
-        var expiresAt = DateTime.UtcNow.AddMinutes(expiryMinutes);
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var expiresAt = nowUtc.AddMinutes(expiryMinutes);
 
         var claims = new List<Claim>
         {

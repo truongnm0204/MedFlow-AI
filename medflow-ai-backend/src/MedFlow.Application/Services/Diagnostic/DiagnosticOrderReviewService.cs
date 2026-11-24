@@ -7,6 +7,7 @@ using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Application.Services.Visits;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -20,20 +21,14 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
     public const string DiagnosticOrderConfirmedAction = "DIAGNOSTIC_ORDER_CONFIRMED";
     public const string DiagnosticOrderEntityType = "DIAGNOSTIC_ORDER";
 
-    private const string DiagnosticStaffRoleCode = "DIAGNOSTIC_STAFF";
+    private const string DiagnosticStaffRoleCode = RoleNames.DiagnosticStaff;
     private const string DefaultDepartmentName = "Khoa Cận lâm sàng";
 
     private static readonly string[] AllowedConfirmPermissions =
     [
-        "QUEUE_MANAGE",
-        "DIAGNOSTIC_RESULT_WRITE",
-        "DIAGNOSTIC_ORDER",
-    ];
-
-    private static readonly string[] FallbackDiagnosticPermissions =
-    [
-        "DIAGNOSTIC_RESULT_WRITE",
-        "QUEUE_MANAGE",
+        PermissionCodes.QueueManage,
+        PermissionCodes.DiagnosticResultWrite,
+        PermissionCodes.DiagnosticOrder,
     ];
 
     private static readonly HashSet<string> ValidCategories = new(StringComparer.OrdinalIgnoreCase)
@@ -1317,11 +1312,6 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(code => code, StringComparer.Ordinal)
             .ToList();
-
-        if (actorPermissionCodes.Count == 0 && allRolePermissions.Count == 0)
-        {
-            actorPermissionCodes = [.. FallbackDiagnosticPermissions];
-        }
 
         var hasRequiredPermission = actorPermissionCodes.Any(code =>
             AllowedConfirmPermissions.Any(allowed => string.Equals(code, allowed, StringComparison.OrdinalIgnoreCase)));

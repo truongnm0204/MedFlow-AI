@@ -273,4 +273,43 @@ public sealed class PatientProfileServiceTests : IDisposable
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             _sut.GetPersonalProfileAsync(4));
     }
+
+    [Fact]
+    public async Task GetPersonalProfileAsync_HospitalClockMidnightBoundary_ComputesAgeUsingVietnamDate()
+    {
+        var user = new User
+        {
+            Id = 5,
+            Email = "birthday@medflow.test",
+            AccountStatus = AccountStatus.ACTIVE,
+        };
+
+        var patient = new Patient
+        {
+            Id = 50,
+            UserId = 5,
+            PatientCode = "PAT-0005",
+            FullName = "Hoàng Thị E",
+            DateOfBirth = new DateOnly(2000, 11, 9),
+            Status = "ACTIVE",
+            User = user,
+        };
+
+        _db.Users.Add(user);
+        _db.Patients.Add(patient);
+        await _db.SaveChangesAsync();
+
+        // 2026-11-08 18:00 UTC == 2026-11-09 01:00 Vietnam time -> already turned 26 in Vietnam!
+        var sutWithClock = new PatientProfileService(
+            _db,
+            new FixedTimeProvider(new DateTimeOffset(2026, 11, 8, 18, 0, 0, TimeSpan.Zero)));
+
+        var profile = await sutWithClock.GetPersonalProfileAsync(5);
+        Assert.Equal(26, profile.Age);
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+    }
 }

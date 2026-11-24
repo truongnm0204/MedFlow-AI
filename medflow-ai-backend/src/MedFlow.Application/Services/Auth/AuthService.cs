@@ -1,12 +1,16 @@
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Auth;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Options;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace MedFlow.Application.Services.Auth;
 
@@ -18,11 +22,9 @@ public class AuthService : IAuthService
     private readonly IConfiguration _configuration;
     private readonly AuthOtpService _otpService;
     private readonly IAuditLogger _audit;
+    private readonly AuthSecurityOptions _options;
+    private readonly TimeProvider _timeProvider;
     private readonly PasswordHasher<User> _passwordHasher = new();
-
-    private const int MaxLoginAttempts = 5;
-    private static readonly TimeSpan LockDuration = TimeSpan.FromMinutes(15);
-    private static readonly TimeSpan OtpTtl = TimeSpan.FromMinutes(5);
 
     public AuthService(
         IApplicationDbContext db,
@@ -30,7 +32,9 @@ public class AuthService : IAuthService
         IAuthSessionService sessionService,
         IConfiguration configuration,
         AuthOtpService otpService,
-        IAuditLogger audit)
+        IAuditLogger audit,
+        IOptions<AuthSecurityOptions>? authOptions = null,
+        TimeProvider? timeProvider = null)
     {
         _db = db;
         _jwtService = jwtService;
@@ -38,6 +42,8 @@ public class AuthService : IAuthService
         _configuration = configuration;
         _otpService = otpService;
         _audit = audit;
+        _options = authOptions?.Value ?? new AuthSecurityOptions();
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     // ── Register ──────────────────────────────────────────────────────────
@@ -82,13 +88,14 @@ public class AuthService : IAuthService
     }
 
     private async Task<Role> GetDefaultRoleAsync(CancellationToken ct)
-        => await _db.Roles.FirstOrDefaultAsync(r => r.Code == "PATIENT", ct)
-            ?? throw new InvalidOperationException("Role PATIENT not seeded.");
+        => await _db.Roles.FirstOrDefaultAsync(r => r.Code == RoleNames.Patient, ct)
+            ?? throw new InvalidOperationException($"Role {RoleNames.Patient} not seeded.");
 
     private (string otp, AuthVerificationChallenge challenge) CreateOtpChallenge(string email)
     {
         var otpSecret = AuthCryptoHelpers.GetOtpSecret(_configuration);
         var otp = AuthCryptoHelpers.GenerateOtp();
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         var challenge = new AuthVerificationChallenge
         {
             Purpose = ChallengePurpose.REGISTER_EMAIL,
@@ -96,7 +103,9 @@ public class AuthService : IAuthService
             RecipientFingerprint = AuthCryptoHelpers.ComputeHmacBytes(email, otpSecret),
             SecretHash = AuthCryptoHelpers.ComputeHmacHex(otp, otpSecret),
             Status = ChallengeStatus.PENDING,
-            ExpiresAt = DateTime.UtcNow.Add(OtpTtl),
+            MaxAttempts = _options.OtpMaxAttempts,
+            CreatedAt = nowUtc,
+            ExpiresAt = nowUtc.AddMinutes(_options.OtpTtlMinutes),
         };
         return (otp, challenge);
     }
@@ -132,7 +141,7 @@ public class AuthService : IAuthService
     }
 
     private Task SendOtpEmailAfterCommitAsync(string email, string fullName, string otp, long userId, CancellationToken ct)
-        => _otpService.SendOtpAndAuditAsync(email, fullName, otp, userId, ct);
+        => _otpService.SendOtpAndAuditAsync(email, fullName, otp, userId, ct, _options.OtpTtlMinutes);
 
     // ── Login ─────────────────────────────────────────────────────────────
     public async Task<LoginResponse> LoginAsync(LoginRequest request, string? ipAddress, CancellationToken ct = default)
@@ -183,16 +192,17 @@ public class AuthService : IAuthService
 
     private void ApplyLockoutRules(User user)
     {
-        if (user.LockedUntil.HasValue && user.LockedUntil > DateTime.UtcNow)
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        if (user.LockedUntil.HasValue && user.LockedUntil > nowUtc)
             throw new ValidationException("Tài khoản đang bị khóa, vui lòng thử lại sau");
     }
 
     private async Task RecordFailedLoginAsync(User user, string? ipAddress, CancellationToken ct)
     {
         user.FailedLoginAttempts++;
-        if (user.FailedLoginAttempts >= MaxLoginAttempts)
+        if (user.FailedLoginAttempts >= _options.MaxLoginAttempts)
         {
-            user.LockedUntil = DateTime.UtcNow.Add(LockDuration);
+            user.LockedUntil = HospitalClock.GetUtcNow(_timeProvider).AddMinutes(_options.LockoutDurationMinutes);
             user.FailedLoginAttempts = 0;
         }
         _audit.Add(user.Id, "LOGIN_FAILED", "USER", user.Id.ToString(), null, ipAddress);
@@ -205,8 +215,9 @@ public class AuthService : IAuthService
         var roles = user.UserRoles.Select(ur => ur.Role.Code).ToArray();
         var accessToken = _jwtService.GenerateAccessToken(user, roles);
         var refresh = await _sessionService.GenerateAsync(user.Id, ipAddress, ct);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         return (accessToken.AccessToken,
-            (int)(accessToken.ExpiresAt - DateTime.UtcNow).TotalSeconds,
+            (int)(accessToken.ExpiresAt - nowUtc).TotalSeconds,
             refresh.RawToken, roles);
     }
 
@@ -235,8 +246,9 @@ public class AuthService : IAuthService
         if (!result.Success || result.Entity is null || result.User is null)
             throw new UnauthorizedAccessException("Refresh token không hợp lệ");
 
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         if (result.User.AccountStatus != AccountStatus.ACTIVE ||
-            (result.User.LockedUntil.HasValue && result.User.LockedUntil.Value > DateTime.UtcNow))
+            (result.User.LockedUntil.HasValue && result.User.LockedUntil.Value > nowUtc))
         {
             await _sessionService.RevokeAllForUserAsync(result.User.Id, ipAddress, ct);
             throw new UnauthorizedAccessException("Refresh token không hợp lệ");
@@ -251,7 +263,7 @@ public class AuthService : IAuthService
 
         return new RefreshResponse(
             accessToken.AccessToken,
-            (int)(accessToken.ExpiresAt - DateTime.UtcNow).TotalSeconds,
+            (int)(accessToken.ExpiresAt - nowUtc).TotalSeconds,
             result.RawToken!,
             GetRefreshExpirySeconds());
     }
@@ -294,7 +306,7 @@ public class AuthService : IAuthService
 
     private async Task<string> GeneratePatientCodeAsync(CancellationToken ct)
     {
-        var code = $"PAT-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
+        var code = $"PAT-{HospitalClock.GetNow(_timeProvider):yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
         var exists = await _db.Patients.AnyAsync(p => p.PatientCode == code, ct);
         return exists ? await GeneratePatientCodeAsync(ct) : code;
     }

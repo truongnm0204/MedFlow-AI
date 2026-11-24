@@ -5,6 +5,7 @@ using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -19,17 +20,18 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
 
     private static readonly string[] AllowedOperatorRoles =
     [
-        "RECEPTION",
-        "HOSPITAL_ADMIN",
-        "SYSTEM_ADMIN",
+        RoleNames.Reception,
+        RoleNames.HospitalAdmin,
+        RoleNames.SystemAdmin,
     ];
 
     private static readonly string[] AllowedPermissionCodes =
     [
-        "VISIT_ASSIGN",
-        "PATIENT_CHECKIN",
-        "QUEUE_MANAGE",
-        "HOSPITAL_CONFIG",
+        PermissionCodes.VisitAssign,
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.QueueManage,
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.UserManage,
     ];
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -80,7 +82,7 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
         var candidateRooms = await _db.HospitalRooms
             .AsNoTracking()
             .Include(r => r.Department)
-            .Where(r => (r.HospitalId ?? 1L) == context.VisitHospitalId &&
+            .Where(r => r.HospitalId == context.VisitHospitalId &&
                         r.RoomType != null &&
                         r.RoomType.ToUpper() == "EXAMINATION" &&
                         (!context.RequiredDepartmentId.HasValue || r.DepartmentId == context.RequiredDepartmentId.Value))
@@ -248,7 +250,7 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
                 .AsNoTracking()
                 .Include(r => r.Department)
                 .Where(r => r.RoomCode.ToUpper() == targetRoomCode)
-                .OrderByDescending(r => (r.HospitalId ?? 1L) == context.VisitHospitalId)
+                .OrderByDescending(r => r.HospitalId == context.VisitHospitalId)
                 .ThenBy(r => r.Id)
                 .FirstOrDefaultAsync(ct);
 
@@ -258,7 +260,12 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
             }
         }
 
-        var targetHospitalId = targetRoom.HospitalId ?? 1L;
+        if (!targetRoom.HospitalId.HasValue)
+        {
+            throw new ValidationException("Phòng khám đích chưa được cấu hình cơ sở y tế.");
+        }
+
+        var targetHospitalId = targetRoom.HospitalId.Value;
         if (!operatorAccess.IsSystemAdmin && targetHospitalId != operatorAccess.ActorHospitalId!.Value)
         {
             throw new ForbiddenException("Không thể chuyển bệnh nhân sang phòng khám thuộc cơ sở y tế khác.");
@@ -318,8 +325,8 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
                 .FirstOrDefaultAsync(d => d.Id == request.TargetDoctorId.Value, ct)
                 ?? throw new NotFoundException("Doctor", request.TargetDoctorId.Value);
 
-            var doctorHospitalId = targetDoctor.HospitalId ?? targetDoctor.Staff?.HospitalId ?? 1L;
-            if (doctorHospitalId != context.VisitHospitalId)
+            var doctorHospitalId = targetDoctor.HospitalId ?? targetDoctor.Staff?.HospitalId;
+            if (!doctorHospitalId.HasValue || doctorHospitalId.Value != context.VisitHospitalId)
             {
                 throw new ForbiddenException("Bác sĩ được chọn không thuộc cơ sở y tế của lượt khám.");
             }
@@ -551,37 +558,35 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
         }
 
         var isSystemAdmin = actorRoleCodes.Any(code =>
-            string.Equals(code, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(code, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase));
 
-        if (!isSystemAdmin && actorRoleIds.Count > 0)
-        {
-            var rolePermissionIds = await _db.RolePermissions
+        var rolePermissionIds = actorRoleIds.Count > 0
+            ? await _db.RolePermissions
                 .AsNoTracking()
                 .Where(rp => actorRoleIds.Contains(rp.RoleId))
                 .Select(rp => rp.PermissionId)
                 .Distinct()
-                .ToListAsync(ct);
+                .ToListAsync(ct)
+            : [];
 
-            if (rolePermissionIds.Count > 0)
-            {
-                var permissionCodes = await _db.Permissions
-                    .AsNoTracking()
-                    .Where(p => rolePermissionIds.Contains(p.Id))
-                    .Select(p => p.Code)
-                    .ToListAsync(ct);
+        if (rolePermissionIds.Count == 0)
+        {
+            throw new ForbiddenException("Vai trò hiện tại chưa được cấp quyền điều chuyển phòng khám (VISIT_ASSIGN).");
+        }
 
-                if (permissionCodes.Count > 0)
-                {
-                    var hasPermission = permissionCodes.Any(code =>
-                        AllowedPermissionCodes.Any(allowed =>
-                            string.Equals(code, allowed, StringComparison.OrdinalIgnoreCase)));
+        var permissionCodes = await _db.Permissions
+            .AsNoTracking()
+            .Where(p => rolePermissionIds.Contains(p.Id))
+            .Select(p => p.Code)
+            .ToListAsync(ct);
 
-                    if (!hasPermission)
-                    {
-                        throw new ForbiddenException("Vai trò hiện tại chưa được cấp quyền điều chuyển phòng khám (VISIT_ASSIGN).");
-                    }
-                }
-            }
+        var hasPermission = permissionCodes.Any(code =>
+            AllowedPermissionCodes.Any(allowed =>
+                string.Equals(code, allowed, StringComparison.OrdinalIgnoreCase)));
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenException("Vai trò hiện tại chưa được cấp quyền điều chuyển phòng khám (VISIT_ASSIGN).");
         }
 
         var actorStaff = await _db.Staff
@@ -658,12 +663,13 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
             : null;
 
         var visitHospitalId = currentRoom?.HospitalId
+            ?? currentRoom?.Department?.HospitalId
             ?? assignedDoctor?.HospitalId
             ?? assignedDoctor?.Staff?.HospitalId
             ?? appointment?.Slot?.Service?.HospitalId
             ?? checkedInStaff?.HospitalId
             ?? operatorAccess.ActorHospitalId
-            ?? 1L;
+            ?? throw new ValidationException("Không xác định được cơ sở y tế của lượt khám.");
 
         if (!operatorAccess.IsSystemAdmin && visitHospitalId != operatorAccess.ActorHospitalId!.Value)
         {

@@ -691,6 +691,19 @@ public sealed class DiagnosticServiceExecutionServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DiagnosticStaffWithZeroRolePermissions_FailsClosedWith403()
+    {
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions.ToList());
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetExecutionsAsync(7));
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.StartServiceExecutionAsync(7, "DIA-202610-0012"));
+    }
+
+    [Fact]
     public async Task InactiveOrLockedAccounts_Throw403()
     {
         await Assert.ThrowsAsync<ForbiddenException>(() => _service.GetExecutionsAsync(14)); // locked

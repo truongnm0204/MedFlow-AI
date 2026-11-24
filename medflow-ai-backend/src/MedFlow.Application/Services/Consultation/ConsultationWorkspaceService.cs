@@ -9,6 +9,7 @@ using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Application.Services.Visits;
 using MedFlow.Application.Services.Visits.Queueing;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -18,17 +19,18 @@ namespace MedFlow.Application.Services.Consultation;
 
 public sealed partial class ConsultationWorkspaceService : IConsultationWorkspaceService
 {
-    private const string DoctorRoleCode = "DOCTOR";
-    private const string PermissionMedicalRecordWrite = "MEDICAL_RECORD_WRITE";
-    private const string PermissionDiagnosticOrder = "DIAGNOSTIC_ORDER";
-    private const string PermissionPrescriptionIssue = "PRESCRIPTION_ISSUE";
+    private const string DoctorRoleCode = RoleNames.Doctor;
+    private const string PermissionMedicalRecordWrite = PermissionCodes.MedicalRecordWrite;
+    private const string PermissionDiagnosticOrder = PermissionCodes.DiagnosticOrder;
+    private const string PermissionPrescriptionIssue = PermissionCodes.PrescriptionIssue;
 
-    private static readonly string[] FallbackDoctorPermissions =
+    private static readonly string[] AllowedWorkspacePermissions =
     [
-        PermissionDiagnosticOrder,
-        PermissionMedicalRecordWrite,
-        "PAYMENT_VIEW",
-        PermissionPrescriptionIssue,
+        PermissionCodes.MedicalRecordWrite,
+        PermissionCodes.DiagnosticOrder,
+        PermissionCodes.PrescriptionIssue,
+        PermissionCodes.QueueManage,
+        PermissionCodes.PatientProfileRead,
     ];
 
     private static readonly JsonSerializerOptions AuditJsonOptions = new()
@@ -3666,101 +3668,78 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         ValidatedDiagnosisInput validated,
         CancellationToken ct)
     {
-        List<Icd10Code> catalogRows;
-        try
+        var catalogRows = await _db.Icd10Codes
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        if (catalogRows.Count == 0)
         {
-            catalogRows = await _db.Icd10Codes
-                .AsNoTracking()
-                .ToListAsync(ct);
-        }
-        catch (NotSupportedException)
-        {
-            catalogRows = [];
+            throw new ValidationException("Danh mục mã bệnh ICD-10 chưa được cấu hình trên hệ thống.");
         }
 
         var resolved = new List<ResolvedDiagnosisItem>(validated.Items.Count);
-        var hasCatalog = catalogRows.Count > 0;
-
-        var byId = hasCatalog
-            ? catalogRows.ToDictionary(c => c.Id)
-            : new Dictionary<long, Icd10Code>();
-
-        var byCode = hasCatalog
-            ? catalogRows
-                .Where(c => !string.IsNullOrWhiteSpace(c.Code))
-                .GroupBy(c => c.Code!.Trim().ToUpperInvariant(), StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, Icd10Code>(StringComparer.OrdinalIgnoreCase);
+        var byId = catalogRows.ToDictionary(c => c.Id);
+        var byCode = catalogRows
+            .Where(c => !string.IsNullOrWhiteSpace(c.Code))
+            .GroupBy(c => c.Code!.Trim().ToUpperInvariant(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
         var seenIds = new HashSet<long>();
         var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var item in validated.Items)
         {
-            long? resolvedId = item.Icd10CodeId;
-            string resolvedCode;
-            string resolvedName;
-            string resolvedVersion;
+            Icd10Code? matchedById = null;
+            Icd10Code? matchedByCode = null;
 
-            if (hasCatalog)
+            if (item.Icd10CodeId.HasValue &&
+                !byId.TryGetValue(item.Icd10CodeId.Value, out matchedById))
             {
-                Icd10Code? matchedById = null;
-                Icd10Code? matchedByCode = null;
-
-                if (item.Icd10CodeId.HasValue &&
-                    !byId.TryGetValue(item.Icd10CodeId.Value, out matchedById))
-                {
-                    throw new ValidationException(
-                        $"Không tìm thấy mã bệnh ICD-10 có ID = {item.Icd10CodeId.Value} trong danh mục.");
-                }
-
-                if (!string.IsNullOrWhiteSpace(item.Code) &&
-                    !byCode.TryGetValue(item.Code, out matchedByCode))
-                {
-                    throw new ValidationException(
-                        $"Mã bệnh ICD-10 '{item.Code}' không tồn tại trong danh mục hệ thống.");
-                }
-
-                if (matchedById is not null &&
-                    matchedByCode is not null &&
-                    matchedById.Id != matchedByCode.Id)
-                {
-                    throw new ValidationException(
-                        $"Mã ICD-10 '{item.Code}' không khớp với ID danh mục {item.Icd10CodeId!.Value} ({matchedById.Code}).");
-                }
-
-                var matched = matchedById ?? matchedByCode!;
-                var matchedCode = matched.Code?.Trim().ToUpperInvariant() ?? item.Code ?? string.Empty;
-
-                if (matched.IsSelectable == false)
-                {
-                    throw new ValidationException(
-                        $"Mã ICD-10 '{matchedCode}' là nhóm chương/mục không được phép chọn trực tiếp (is_selectable = false).");
-                }
-
-                if (item.IsPrimary && matched.NotPrimaryDx == true)
-                {
-                    throw new ValidationException(
-                        $"Mã ICD-10 '{matchedCode}' không được phép chọn làm chẩn đoán chính (not_primary_dx = true).");
-                }
-
-                resolvedId = matched.Id;
-                resolvedCode = matchedCode;
-                resolvedName = !string.IsNullOrWhiteSpace(item.Name)
-                    ? item.Name
-                    : (matched.NameVi?.Trim() ?? matchedCode);
-                resolvedVersion = !string.IsNullOrWhiteSpace(matched.CatalogVersion)
-                    ? matched.CatalogVersion.Trim()
-                    : "ICD-10-VN";
-            }
-            else
-            {
-                resolvedCode = item.Code ?? $"ICD-{item.Icd10CodeId!.Value}";
-                resolvedName = item.Name ?? item.ClinicalDiagnosis ?? resolvedCode;
-                resolvedVersion = "DEMO-ICD10";
+                throw new ValidationException(
+                    $"Không tìm thấy mã bệnh ICD-10 có ID = {item.Icd10CodeId.Value} trong danh mục.");
             }
 
-            if (resolvedId.HasValue && !seenIds.Add(resolvedId.Value))
+            if (!string.IsNullOrWhiteSpace(item.Code) &&
+                !byCode.TryGetValue(item.Code, out matchedByCode))
+            {
+                throw new ValidationException(
+                    $"Mã bệnh ICD-10 '{item.Code}' không tồn tại trong danh mục hệ thống.");
+            }
+
+            if (matchedById is not null &&
+                matchedByCode is not null &&
+                matchedById.Id != matchedByCode.Id)
+            {
+                throw new ValidationException(
+                    $"Mã ICD-10 '{item.Code}' không khớp với ID danh mục {item.Icd10CodeId!.Value} ({matchedById.Code}).");
+            }
+
+            var matched = matchedById ?? matchedByCode
+                ?? throw new ValidationException("Vui lòng chọn mã bệnh ICD-10 hợp lệ từ danh mục hệ thống.");
+            var matchedCode = matched.Code?.Trim().ToUpperInvariant() ?? item.Code ?? string.Empty;
+
+            if (matched.IsSelectable == false)
+            {
+                throw new ValidationException(
+                    $"Mã ICD-10 '{matchedCode}' là nhóm chương/mục không được phép chọn trực tiếp (is_selectable = false).");
+            }
+
+            if (item.IsPrimary && matched.NotPrimaryDx == true)
+            {
+                throw new ValidationException(
+                    $"Mã ICD-10 '{matchedCode}' không được phép chọn làm chẩn đoán chính (not_primary_dx = true).");
+            }
+
+            var resolvedId = matched.Id;
+            var resolvedCode = matchedCode;
+            var resolvedName = !string.IsNullOrWhiteSpace(item.Name)
+                ? item.Name
+                : (matched.NameVi?.Trim() ?? matchedCode);
+            var resolvedVersion = !string.IsNullOrWhiteSpace(matched.CatalogVersion)
+                ? matched.CatalogVersion.Trim()
+                : "ICD-10-VN";
+
+            if (!seenIds.Add(resolvedId))
             {
                 throw new ValidationException("Danh sách chẩn đoán không được chứa mã bệnh ICD-10 trùng lặp.");
             }
@@ -4012,9 +3991,10 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             .Select(rp => permissionsById[rp.PermissionId])
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        if (actorPermissions.Count == 0 && allRolePermissions.Count == 0)
+        if (!actorPermissions.Overlaps(AllowedWorkspacePermissions))
         {
-            actorPermissions = FallbackDoctorPermissions.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            throw new ForbiddenException(
+                "Tài khoản bác sĩ chưa được cấp quyền truy cập không gian khám lâm sàng.");
         }
 
         if (string.Equals(requiredPermission, PermissionMedicalRecordWrite, StringComparison.OrdinalIgnoreCase) &&

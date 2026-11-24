@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -8,7 +9,7 @@ using Microsoft.AspNetCore.Mvc.ModelBinding;
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = "DIAGNOSTIC_STAFF")]
+[Authorize(Roles = RoleNames.DiagnosticStaff)]
 public sealed class DiagnosticResultsController : ControllerBase
 {
     private readonly IDiagnosticResultEntryService _resultEntryService;

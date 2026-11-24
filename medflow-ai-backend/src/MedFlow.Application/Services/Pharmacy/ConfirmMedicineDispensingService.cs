@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Pharmacy;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -13,8 +15,8 @@ namespace MedFlow.Application.Services.Pharmacy;
 
 public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensingService
 {
-    private const string PharmacyStaffRoleCode = "PHARMACY_STAFF";
-    private const string MedicineDispensePermissionCode = "MEDICINE_DISPENSE";
+    private const string PharmacyStaffRoleCode = RoleNames.PharmacyStaff;
+    private const string MedicineDispensePermissionCode = PermissionCodes.MedicineDispense;
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
@@ -34,7 +36,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
         string? ipAddress = null)
     {
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var today = DateOnly.FromDateTime(nowUtc);
+        var today = HospitalClock.GetToday(_timeProvider);
         var (staff, hospital) = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
 
         var prescription = await ResolvePrescriptionAsync(idOrCode, hospital.Id, ct);
@@ -178,7 +180,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
 
         var checks = new List<PharmacistHandoverCheckDto>
         {
-            new("chk-1", "1. Đã đối chiếu đúng nhân thân người nhận, số lô, hàm lượng và số lượng thực xuất.", true),
+            new("chk-1", "1. Đã đối chiếu đúng nhân thân người nhận, số lô, hàm lượng và số lượng thực xuất.", isAlreadyDispensed),
             new("chk-2", "2. Người nhận thuốc đã nghe rõ, hiểu các cảnh báo an toàn & hướng dẫn sử dụng.", canDispense),
             new("chk-3", "3. Đã kiểm tra niêm phong túi thuốc & gắn tem QR định danh đúng chuẩn GPP.", canDispense)
         };
@@ -195,7 +197,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             Phone: patient.Phone ?? "Chưa cập nhật",
             ReceiverName: $"{patient.FullName} (Chính chủ người bệnh)",
             Relationship: "Bản thân",
-            IsIdentityVerified: true
+            IsIdentityVerified: isAlreadyDispensed
         );
 
         var rxCode = prescription.PrescriptionCode ?? $"RX-{prescription.Id:D6}";
@@ -258,7 +260,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
         }
 
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var today = DateOnly.FromDateTime(nowUtc);
+        var today = HospitalClock.GetToday(_timeProvider);
         var (staff, hospital) = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
 
         var prescription = await ResolvePrescriptionAsync(idOrCode, hospital.Id, ct);
@@ -771,19 +773,15 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             throw new ForbiddenException("Cơ sở y tế được gán cho dược sĩ hiện đang ngừng hoạt động.");
         }
 
-        var rolePermissionsConfigured = await _db.RolePermissions.AsNoTracking().AnyAsync(ct);
-        if (rolePermissionsConfigured)
-        {
-            var hasMedicineDispensePermission = await (
-                from rp in _db.RolePermissions.AsNoTracking()
-                join permission in _db.Permissions.AsNoTracking() on rp.PermissionId equals permission.Id
-                where actorRoleIds.Contains(rp.RoleId) && permission.Code.ToUpper() == MedicineDispensePermissionCode
-                select rp).AnyAsync(ct);
+        var hasMedicineDispensePermission = await (
+            from rp in _db.RolePermissions.AsNoTracking()
+            join permission in _db.Permissions.AsNoTracking() on rp.PermissionId equals permission.Id
+            where actorRoleIds.Contains(rp.RoleId) && permission.Code.ToUpper() == MedicineDispensePermissionCode
+            select rp).AnyAsync(ct);
 
-            if (!hasMedicineDispensePermission)
-            {
-                throw new ForbiddenException("Dược sĩ chưa được phân quyền cấp phát thuốc (MEDICINE_DISPENSE).");
-            }
+        if (!hasMedicineDispensePermission)
+        {
+            throw new ForbiddenException("Dược sĩ chưa được phân quyền cấp phát thuốc (MEDICINE_DISPENSE).");
         }
 
         return (actorStaff, hospital);

@@ -4,6 +4,7 @@ using System.Text.Json;
 using MedFlow.Application.DTOs.Pharmacy;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -13,14 +14,14 @@ namespace MedFlow.Application.Services.Pharmacy;
 
 public sealed class PrescriptionSearchService : IPrescriptionSearchService
 {
-    private const string PharmacyStaffRoleCode = "PHARMACY_STAFF";
+    private const string PharmacyStaffRoleCode = RoleNames.PharmacyStaff;
     private const string AuditEntityType = "PRESCRIPTION";
     private const string AuditSearchAction = "PRESCRIPTION_SEARCH";
     private const string AuditViewAction = "PRESCRIPTION_VIEW";
     private const string AuditSearchReason = "Tra cứu danh sách đơn thuốc nhà thuốc (UC44)";
     private const string AuditViewReason = "Xem chi tiết đơn thuốc nhà thuốc (UC44)";
 
-    private const string MedicineDispensePermissionCode = "MEDICINE_DISPENSE";
+    private const string MedicineDispensePermissionCode = PermissionCodes.MedicineDispense;
 
     private static readonly HashSet<string> ValidStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -423,24 +424,17 @@ public sealed class PrescriptionSearchService : IPrescriptionSearchService
             throw new ForbiddenException("Cơ sở y tế được gán cho dược sĩ hiện đang ngừng hoạt động.");
         }
 
-        var rolePermissionsConfigured = await _db.RolePermissions
-            .AsNoTracking()
-            .AnyAsync(ct);
+        var hasMedicineDispensePermission = await (
+            from rp in _db.RolePermissions.AsNoTracking()
+            join permission in _db.Permissions.AsNoTracking()
+                on rp.PermissionId equals permission.Id
+            where actorRoleIds.Contains(rp.RoleId) &&
+                  permission.Code.ToUpper() == MedicineDispensePermissionCode
+            select rp).AnyAsync(ct);
 
-        if (rolePermissionsConfigured)
+        if (!hasMedicineDispensePermission)
         {
-            var hasMedicineDispensePermission = await (
-                from rp in _db.RolePermissions.AsNoTracking()
-                join permission in _db.Permissions.AsNoTracking()
-                    on rp.PermissionId equals permission.Id
-                where actorRoleIds.Contains(rp.RoleId) &&
-                      permission.Code.ToUpper() == MedicineDispensePermissionCode
-                select rp).AnyAsync(ct);
-
-            if (!hasMedicineDispensePermission)
-            {
-                throw new ForbiddenException("Người dùng không có quyền thực hiện tra cứu đơn thuốc.");
-            }
+            throw new ForbiddenException("Người dùng không có quyền thực hiện tra cứu đơn thuốc.");
         }
 
         return hospitalId;

@@ -1,39 +1,47 @@
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Auth;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Options;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace MedFlow.Application.Services.Auth;
 
 /// <summary>OTP challenge: verify + resend — tách từ AuthService để giữ file nhỏ.</summary>
 public class AuthOtpService
 {
+    private const int DefaultMaxAttempts = 5;
+
     private readonly IApplicationDbContext _db;
     private readonly IEmailSender _emailSender;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AuthOtpService> _logger;
     private readonly IAuditLogger _audit;
-
-    private static readonly TimeSpan OtpTtl = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan ResendThrottle = TimeSpan.FromSeconds(45);
+    private readonly AuthSecurityOptions _options;
+    private readonly TimeProvider _timeProvider;
 
     public AuthOtpService(
         IApplicationDbContext db,
         IEmailSender emailSender,
         IConfiguration configuration,
         ILogger<AuthOtpService> logger,
-        IAuditLogger audit)
+        IAuditLogger audit,
+        IOptions<AuthSecurityOptions>? authOptions = null,
+        TimeProvider? timeProvider = null)
     {
         _db = db;
         _emailSender = emailSender;
         _configuration = configuration;
         _logger = logger;
         _audit = audit;
+        _options = authOptions?.Value ?? new AuthSecurityOptions();
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<VerifyOtpResponse> VerifyOtpAsync(VerifyOtpRequest request, CancellationToken ct = default)
@@ -48,14 +56,18 @@ public class AuthOtpService
         var challenge = await GetLatestPendingChallengeAsync(user.Id, ChallengePurpose.REGISTER_EMAIL, ct)
             ?? throw new ValidationException("OTP đã hết hạn hoặc không tồn tại");
 
-        if (challenge.ExpiresAt <= DateTime.UtcNow)
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        if (challenge.ExpiresAt <= nowUtc)
         {
             challenge.Status = ChallengeStatus.EXPIRED;
             await _db.SaveChangesAsync(ct);
             throw new ValidationException("OTP đã hết hạn, vui lòng yêu cầu mã mới");
         }
 
-        if (challenge.Attempts >= challenge.MaxAttempts)
+        var maxAttempts = challenge.MaxAttempts != DefaultMaxAttempts
+            ? challenge.MaxAttempts
+            : _options.OtpMaxAttempts;
+        if (challenge.Attempts >= maxAttempts)
         {
             challenge.Status = ChallengeStatus.LOCKED;
             await _db.SaveChangesAsync(ct);
@@ -73,9 +85,9 @@ public class AuthOtpService
         }
 
         challenge.Status = ChallengeStatus.VERIFIED;
-        challenge.VerifiedAt = DateTime.UtcNow;
+        challenge.VerifiedAt = nowUtc;
         user.AccountStatus = AccountStatus.ACTIVE;
-        user.EmailVerifiedAt = DateTime.UtcNow;
+        user.EmailVerifiedAt = nowUtc;
 
         _audit.Add(user.Id, "OTP_VERIFY", "USER", user.Id.ToString(), null, null);
         await _db.SaveChangesAsync(ct);
@@ -96,8 +108,10 @@ public class AuthOtpService
             throw new ValidationException("Tài khoản đã được kích hoạt, vui lòng đăng nhập");
 
         var latest = await GetLatestPendingChallengeAsync(user.Id, ChallengePurpose.REGISTER_EMAIL, ct);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var resendThrottle = TimeSpan.FromSeconds(_options.OtpResendThrottleSeconds);
 
-        if (latest is not null && latest.CreatedAt > DateTime.UtcNow.Subtract(ResendThrottle))
+        if (latest is not null && latest.CreatedAt > nowUtc.Subtract(resendThrottle))
             throw new ValidationException("Vui lòng đợi trước khi gửi lại");
 
         if (latest is not null)
@@ -114,14 +128,16 @@ public class AuthOtpService
             RecipientFingerprint = AuthCryptoHelpers.ComputeHmacBytes(emailLower, otpSecret),
             SecretHash = AuthCryptoHelpers.ComputeHmacHex(otp, otpSecret),
             Status = ChallengeStatus.PENDING,
-            ExpiresAt = DateTime.UtcNow.Add(OtpTtl),
+            MaxAttempts = _options.OtpMaxAttempts,
+            CreatedAt = nowUtc,
+            ExpiresAt = nowUtc.AddMinutes(_options.OtpTtlMinutes),
         });
 
         _audit.Add(user.Id, "OTP_RESEND", "USER", user.Id.ToString(), null, null);
         await _db.SaveChangesAsync(ct);
 
         var patient = await _db.Patients.FirstOrDefaultAsync(p => p.UserId == user.Id, ct);
-        await SendOtpAndAuditAsync(emailLower, patient?.FullName ?? emailLower, otp, user.Id, ct);
+        await SendOtpAndAuditAsync(emailLower, patient?.FullName ?? emailLower, otp, user.Id, ct, _options.OtpTtlMinutes);
 
         return new ResendOtpResponse();
     }
@@ -136,7 +152,9 @@ public class AuthOtpService
             throw new UnauthorizedAccessException("Tài khoản người dùng hiện không ở trạng thái hoạt động.");
 
         var latest = await GetLatestPendingChallengeAsync(user.Id, ChallengePurpose.IDENTITY_CLAIM, ct);
-        if (latest is not null && latest.CreatedAt > DateTime.UtcNow.Subtract(ResendThrottle))
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var resendThrottle = TimeSpan.FromSeconds(_options.OtpResendThrottleSeconds);
+        if (latest is not null && latest.CreatedAt > nowUtc.Subtract(resendThrottle))
             throw new ValidationException("Vui lòng đợi trước khi gửi lại OTP.");
 
         if (latest is not null)
@@ -144,7 +162,7 @@ public class AuthOtpService
 
         var otpSecret = AuthCryptoHelpers.GetOtpSecret(_configuration);
         var otp = AuthCryptoHelpers.GenerateOtp();
-        var expiresAt = DateTime.UtcNow.Add(OtpTtl);
+        var expiresAt = nowUtc.AddMinutes(_options.OtpTtlMinutes);
 
         _db.AuthVerificationChallenges.Add(new AuthVerificationChallenge
         {
@@ -154,6 +172,8 @@ public class AuthOtpService
             RecipientFingerprint = AuthCryptoHelpers.ComputeHmacBytes(user.Email.ToLowerInvariant(), otpSecret),
             SecretHash = AuthCryptoHelpers.ComputeHmacHex(otp, otpSecret),
             Status = ChallengeStatus.PENDING,
+            MaxAttempts = _options.OtpMaxAttempts,
+            CreatedAt = nowUtc,
             ExpiresAt = expiresAt,
         });
 
@@ -161,7 +181,7 @@ public class AuthOtpService
         await _db.SaveChangesAsync(ct);
 
         var patient = await _db.Patients.FirstOrDefaultAsync(p => p.UserId == user.Id, ct);
-        await SendOtpAndAuditAsync(user.Email, patient?.FullName ?? user.Email, otp, user.Id, ct);
+        await SendOtpAndAuditAsync(user.Email, patient?.FullName ?? user.Email, otp, user.Id, ct, _options.OtpTtlMinutes);
 
         return expiresAt;
     }
@@ -172,14 +192,18 @@ public class AuthOtpService
         var challenge = await GetLatestPendingChallengeAsync(userId, ChallengePurpose.IDENTITY_CLAIM, ct)
             ?? throw new ValidationException("OTP đã hết hạn hoặc không tồn tại.");
 
-        if (challenge.ExpiresAt <= DateTime.UtcNow)
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        if (challenge.ExpiresAt <= nowUtc)
         {
             challenge.Status = ChallengeStatus.EXPIRED;
             await _db.SaveChangesAsync(ct);
             throw new ValidationException("OTP đã hết hạn, vui lòng yêu cầu mã mới.");
         }
 
-        if (challenge.Attempts >= challenge.MaxAttempts)
+        var maxAttempts = challenge.MaxAttempts != DefaultMaxAttempts
+            ? challenge.MaxAttempts
+            : _options.OtpMaxAttempts;
+        if (challenge.Attempts >= maxAttempts)
         {
             challenge.Status = ChallengeStatus.LOCKED;
             await _db.SaveChangesAsync(ct);
@@ -196,15 +220,22 @@ public class AuthOtpService
         }
 
         challenge.Status = ChallengeStatus.VERIFIED;
-        challenge.VerifiedAt = DateTime.UtcNow;
+        challenge.VerifiedAt = nowUtc;
         _audit.Add(userId, "IDENTITY_CLAIM_OTP_VERIFIED", "USER", userId.ToString(), null, null);
         await _db.SaveChangesAsync(ct);
     }
 
     /// <summary>Gửi OTP + audit nếu fail.</summary>
-    internal async Task SendOtpAndAuditAsync(string email, string fullName, string otp, long userId, CancellationToken ct)
+    internal async Task SendOtpAndAuditAsync(
+        string email,
+        string fullName,
+        string otp,
+        long userId,
+        CancellationToken ct,
+        int? otpTtlMinutes = null)
     {
-        var sent = await OtpEmailBuilder.SendAsync(_emailSender, _logger, email, fullName, otp, ct);
+        var ttlMinutes = otpTtlMinutes ?? _options.OtpTtlMinutes;
+        var sent = await OtpEmailBuilder.SendAsync(_emailSender, _logger, email, fullName, otp, ct, ttlMinutes);
         if (!sent)
         {
             _audit.Add(userId, "EMAIL_SEND_FAILED", "USER", userId.ToString(), null, null);

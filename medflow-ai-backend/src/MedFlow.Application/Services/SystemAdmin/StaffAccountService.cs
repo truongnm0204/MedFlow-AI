@@ -1,9 +1,11 @@
 using EmailAddressAttribute = System.ComponentModel.DataAnnotations.EmailAddressAttribute;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.SystemAdmin;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -14,8 +16,8 @@ namespace MedFlow.Application.Services.SystemAdmin;
 
 public sealed partial class StaffAccountService : IStaffAccountService
 {
-    private const string SystemAdminRoleCode = "SYSTEM_ADMIN";
-    private const string PatientRoleCode = "PATIENT";
+    private const string SystemAdminRoleCode = RoleNames.SystemAdmin;
+    private const string PatientRoleCode = RoleNames.Patient;
     private const string CreatedAction = "STAFF_ACCOUNT_CREATED";
 
     private static readonly EmailAddressAttribute EmailValidator = new();
@@ -47,7 +49,7 @@ public sealed partial class StaffAccountService : IStaffAccountService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         await EnsureSystemAdminAccessAsync(actorUserId, nowUtc, ct);
 
         var input = ValidateAndNormalize(request);
@@ -183,6 +185,17 @@ public sealed partial class StaffAccountService : IStaffAccountService
         if (!hasSystemAdminRole)
         {
             throw new ForbiddenException("Người dùng không có quyền tạo tài khoản nhân sự.");
+        }
+
+        var hasUserManagePerm = roleIds.Count > 0 && await (
+            from rp in _db.RolePermissions.AsNoTracking()
+            join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
+            where roleIds.Contains(rp.RoleId) && p.Code.ToUpper() == PermissionCodes.UserManage
+            select rp.PermissionId).AnyAsync(ct);
+
+        if (!hasUserManagePerm)
+        {
+            throw new ForbiddenException("Tài khoản quản trị chưa được cấp quyền quản lý người dùng (USER_MANAGE).");
         }
 
         var actorStaff = await _db.Staff
@@ -360,8 +373,8 @@ public sealed partial class StaffAccountService : IStaffAccountService
 
     private static string MapRoleCode(string roleCode) => roleCode switch
     {
-        "TECHNICIAN" => "DIAGNOSTIC_STAFF",
-        "RECEPTIONIST" => "RECEPTION",
+        "TECHNICIAN" => RoleNames.DiagnosticStaff,
+        "RECEPTIONIST" => RoleNames.Reception,
         _ => roleCode,
     };
 

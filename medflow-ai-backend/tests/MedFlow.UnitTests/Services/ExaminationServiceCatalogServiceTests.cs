@@ -479,4 +479,62 @@ public sealed class ExaminationServiceCatalogServiceTests : IDisposable
         await Assert.ThrowsAsync<NotFoundException>(() => _sut.GetByIdOrCodeAsync("DIA-CBC"));
         await Assert.ThrowsAsync<NotFoundException>(() => _sut.GetByIdOrCodeAsync("999"));
     }
+
+    [Fact]
+    public async Task GetByIdOrCodeAsync_WhenNoActiveRoomsOrBlankRoomLocation_NeverFallsBackToDemoPlaceholder()
+    {
+        _db.Services.Add(new Service
+        {
+            Id = 50,
+            HospitalId = 1,
+            DepartmentId = 1, // OPD has no active examination rooms
+            SpecialtyId = 5,
+            ServiceCode = "EX-OPD-01",
+            Name = "Khám Nội tổng quát",
+            ServiceType = "EXAMINATION",
+            AllowsOnlineBooking = true,
+            IsActive = true,
+        });
+
+        _db.Departments.Add(new Department
+        {
+            Id = 50,
+            HospitalId = 1,
+            DepartmentCode = "ENT",
+            Name = "Khoa Tai Mũi Họng",
+            IsActive = true,
+        });
+        _db.HospitalRooms.Add(new HospitalRoom
+        {
+            Id = 50,
+            HospitalId = 1,
+            DepartmentId = 50,
+            RoomCode = "RM-305",
+            Name = "Phòng Khám 305",
+            RoomType = "EXAMINATION",
+            Location = null,
+            Capacity = 2,
+            Status = "ACTIVE",
+        });
+        _db.Services.Add(new Service
+        {
+            Id = 51,
+            HospitalId = 1,
+            DepartmentId = 50,
+            SpecialtyId = 5,
+            ServiceCode = "EX-ENT-01",
+            Name = "Khám Tai Mũi Họng",
+            ServiceType = "EXAMINATION",
+            AllowsOnlineBooking = true,
+            IsActive = true,
+        });
+        await _db.SaveChangesAsync();
+
+        var noRoomDto = await _sut.GetByIdOrCodeAsync("EX-OPD-01");
+        Assert.Equal("Chưa cập nhật", noRoomDto.Location);
+
+        var blankLocDto = await _sut.GetByIdOrCodeAsync("EX-ENT-01");
+        Assert.Equal("Khu Khám Ngoại trú (Phòng 305)", blankLocDto.Location);
+        Assert.DoesNotContain("Khu Demo", blankLocDto.Location, StringComparison.OrdinalIgnoreCase);
+    }
 }

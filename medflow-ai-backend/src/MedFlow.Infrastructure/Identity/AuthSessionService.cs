@@ -13,24 +13,30 @@ public class AuthSessionService : IAuthSessionService
 {
     private readonly MedFlowDbContext _db;
     private readonly IConfiguration _configuration;
+    private readonly TimeProvider _timeProvider;
 
-    public AuthSessionService(MedFlowDbContext db, IConfiguration configuration)
+    public AuthSessionService(
+        MedFlowDbContext db,
+        IConfiguration configuration,
+        TimeProvider? timeProvider = null)
     {
         _db = db;
         _configuration = configuration;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<AuthSessionResult> GenerateAsync(long userId, string? createdByIp, CancellationToken ct = default)
     {
         var expiryDays = int.TryParse(_configuration["Jwt:RefreshTokenExpiryDays"], out var d) ? d : 7;
         var rawToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
         var entity = new AuthSession
         {
             UserId = userId,
             RefreshTokenHash = ComputeHash(rawToken),
-            ExpiresAt = DateTime.UtcNow.AddDays(expiryDays),
+            ExpiresAt = now.AddDays(expiryDays),
             CreatedByIp = createdByIp,
-            CreatedAt = DateTime.UtcNow,
+            CreatedAt = now,
         };
         _db.AuthSessions.Add(entity);
         await _db.SaveChangesAsync(ct);
@@ -55,7 +61,7 @@ public class AuthSessionService : IAuthSessionService
         if (existing is null)
             return new RotateResult();
 
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
 
         // Reuse: token đã bị revoke nhưng vẫn được gửi lên → thu hồi toàn bộ family (không có grace period).
         if (existing.RevokedAt is not null)
@@ -161,13 +167,13 @@ public class AuthSessionService : IAuthSessionService
         if (token is null || token.RevokedAt is not null)
             return;
 
-        token.RevokedAt = DateTime.UtcNow;
+        token.RevokedAt = _timeProvider.GetUtcNow().UtcDateTime;
         token.RevokedByIp = ipAddress;
         await _db.SaveChangesAsync(ct);
     }
 
     public Task RevokeAllForUserAsync(long userId, string? ipAddress, CancellationToken ct = default)
-        => RevokeActiveSessionsCoreAsync(userId, ipAddress, DateTime.UtcNow, _db.Database.IsRelational(), ct);
+        => RevokeActiveSessionsCoreAsync(userId, ipAddress, _timeProvider.GetUtcNow().UtcDateTime, _db.Database.IsRelational(), ct);
 
     private async Task RevokeActiveSessionsCoreAsync(
         long userId,

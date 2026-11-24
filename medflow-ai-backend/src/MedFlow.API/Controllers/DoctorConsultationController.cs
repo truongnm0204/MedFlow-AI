@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Consultation;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -8,7 +9,7 @@ using Microsoft.AspNetCore.Mvc.ModelBinding;
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = "DOCTOR")]
+[Authorize(Roles = RoleNames.Doctor)]
 public sealed class DoctorConsultationController : ControllerBase
 {
     private readonly IConsultationWorkspaceService _consultationWorkspaceService;

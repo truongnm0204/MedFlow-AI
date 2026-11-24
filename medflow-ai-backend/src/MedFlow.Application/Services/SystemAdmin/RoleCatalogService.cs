@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.SystemAdmin;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -13,10 +15,10 @@ namespace MedFlow.Application.Services.SystemAdmin;
 
 public sealed class RoleCatalogService : IRoleCatalogService
 {
-    private const string SystemAdminRoleCode = "SYSTEM_ADMIN";
-    private const string UserManagePermissionCode = "USER_MANAGE";
-    private const string PrescriptionIssuePermissionCode = "PRESCRIPTION_ISSUE";
-    private const string MedicineDispensePermissionCode = "MEDICINE_DISPENSE";
+    private const string SystemAdminRoleCode = RoleNames.SystemAdmin;
+    private const string UserManagePermissionCode = PermissionCodes.UserManage;
+    private const string PrescriptionIssuePermissionCode = PermissionCodes.PrescriptionIssue;
+    private const string MedicineDispensePermissionCode = PermissionCodes.MedicineDispense;
     private const string RoleCreatedAction = "ROLE_CREATED";
     private const string RolePermissionsUpdatedAction = "ROLE_PERMISSIONS_UPDATED";
     private const string RoleUpdatedAction = "ROLE_UPDATED";
@@ -219,7 +221,7 @@ public sealed class RoleCatalogService : IRoleCatalogService
                 "Trạng thái vai trò (status) không hợp lệ. Chỉ chấp nhận ACTIVE hoặc INACTIVE.");
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
 
         await EnsureSystemAdminAccessAsync(actorUserId, nowUtc, ct);
 
@@ -302,7 +304,7 @@ public sealed class RoleCatalogService : IRoleCatalogService
             throw new ValidationException("Mã định danh vai trò không hợp lệ.");
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
 
         await EnsureSystemAdminAccessAsync(actorUserId, nowUtc, ct);
 
@@ -324,7 +326,7 @@ public sealed class RoleCatalogService : IRoleCatalogService
         long actorUserId,
         CancellationToken ct = default)
     {
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
 
         await EnsureSystemAdminAccessAsync(actorUserId, nowUtc, ct);
 
@@ -441,7 +443,7 @@ public sealed class RoleCatalogService : IRoleCatalogService
                 "Vai trò SYSTEM_ADMIN bắt buộc giữ quyền USER_MANAGE để tránh khóa quyền quản trị hệ thống.");
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
 
         var actorHospitalId = await EnsureSystemAdminAccessAsync(actorUserId, nowUtc, ct);
 
@@ -794,7 +796,7 @@ public sealed class RoleCatalogService : IRoleCatalogService
             }
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
 
         var actorHospitalId = await EnsureSystemAdminAccessAsync(actorUserId, nowUtc, ct);
 
@@ -1162,7 +1164,7 @@ public sealed class RoleCatalogService : IRoleCatalogService
                 .ToList();
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
 
         var actorHospitalId = await EnsureSystemAdminAccessAsync(actorUserId, nowUtc, ct);
 

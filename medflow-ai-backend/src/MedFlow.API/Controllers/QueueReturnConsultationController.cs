@@ -1,13 +1,14 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = "DOCTOR,RECEPTION,HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+[Authorize(Roles = $"{RoleNames.Doctor},{RoleNames.Reception},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class QueueReturnConsultationController : ControllerBase
 {
     private readonly IExaminationQueueService _examinationQueueService;

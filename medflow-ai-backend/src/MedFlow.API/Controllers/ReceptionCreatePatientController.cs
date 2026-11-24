@@ -1,5 +1,6 @@
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -7,7 +8,7 @@ namespace MedFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/reception/patients")]
-[Authorize(Roles = "RECEPTION,HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+[Authorize(Roles = $"{RoleNames.Reception},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class ReceptionCreatePatientController : ControllerBase
 {
     private readonly ICreatePatientAtReceptionService _service;

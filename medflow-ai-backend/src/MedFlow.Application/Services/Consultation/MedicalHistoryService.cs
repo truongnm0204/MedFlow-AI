@@ -5,6 +5,7 @@ using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Visits;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -14,7 +15,7 @@ namespace MedFlow.Application.Services.Consultation;
 
 public sealed class MedicalHistoryService : IMedicalHistoryService
 {
-    private const string DoctorRoleCode = "DOCTOR";
+    private const string DoctorRoleCode = RoleNames.Doctor;
     private const string AuditActionMedicalHistoryViewed = "MEDICAL_HISTORY_VIEWED";
     private const string DefaultAllergiesSummary = "Chưa ghi nhận tiền sử dị ứng";
 
@@ -33,8 +34,8 @@ public sealed class MedicalHistoryService : IMedicalHistoryService
 
     private static readonly HashSet<string> RequiredDoctorPermissions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "MEDICAL_RECORD_WRITE",
-        "PATIENT_PROFILE_READ",
+        PermissionCodes.MedicalRecordWrite,
+        PermissionCodes.PatientProfileRead,
     };
 
     private readonly IApplicationDbContext _db;
@@ -1165,21 +1166,24 @@ public sealed class MedicalHistoryService : IMedicalHistoryService
             throw new ForbiddenException("Người dùng không có quyền xem lịch sử khám bệnh của Bác sĩ.");
         }
 
-        var allRolePermissions = await TryQueryAsync(() => _db.RolePermissions.AsNoTracking().ToListAsync(ct));
-        if (allRolePermissions.Count > 0)
+        var allPermissions = await _db.Permissions
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        var allRolePermissions = await _db.RolePermissions
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        var permissionsById = allPermissions.ToDictionary(p => p.Id, p => p.Code);
+
+        var actorPermissionCodes = allRolePermissions
+            .Where(rp => actorRoleIds.Contains(rp.RoleId) && permissionsById.ContainsKey(rp.PermissionId))
+            .Select(rp => permissionsById[rp.PermissionId])
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (!actorPermissionCodes.Overlaps(RequiredDoctorPermissions))
         {
-            var allPermissions = await TryQueryAsync(() => _db.Permissions.AsNoTracking().ToListAsync(ct));
-            var permissionsById = allPermissions.ToDictionary(p => p.Id, p => p.Code);
-
-            var actorPermissionCodes = allRolePermissions
-                .Where(rp => actorRoleIds.Contains(rp.RoleId) && permissionsById.ContainsKey(rp.PermissionId))
-                .Select(rp => permissionsById[rp.PermissionId])
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            if (!actorPermissionCodes.Overlaps(RequiredDoctorPermissions))
-            {
-                throw new ForbiddenException("Tài khoản bác sĩ chưa được cấp quyền truy cập hồ sơ bệnh án lâm sàng.");
-            }
+            throw new ForbiddenException("Tài khoản bác sĩ chưa được cấp quyền truy cập hồ sơ bệnh án lâm sàng.");
         }
 
         var actorStaff = await _db.Staff

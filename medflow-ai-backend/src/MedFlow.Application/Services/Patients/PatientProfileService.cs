@@ -1,3 +1,4 @@
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Patients;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
@@ -19,10 +20,14 @@ public sealed class PatientProfileService : IPatientProfileService
     ];
 
     private readonly IApplicationDbContext _db;
+    private readonly TimeProvider _timeProvider;
 
-    public PatientProfileService(IApplicationDbContext db)
+    public PatientProfileService(
+        IApplicationDbContext db,
+        TimeProvider? timeProvider = null)
     {
         _db = db;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<PatientProfileResponse> GetPersonalProfileAsync(
@@ -33,15 +38,17 @@ public sealed class PatientProfileService : IPatientProfileService
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
 
         var patient = await PatientSelfResolver.LoadActiveAsync(_db, userId, ct);
+        var user = patient.User
+            ?? throw new UnauthorizedAccessException("Tài khoản bệnh nhân chưa kích hoạt hoặc đã bị khóa.");
 
         var email = !string.IsNullOrWhiteSpace(patient.Email)
             ? patient.Email
-            : patient.User.Email;
+            : user.Email;
 
-        var isEmailVerified = patient.User.EmailVerifiedAt.HasValue;
+        var isEmailVerified = user.EmailVerifiedAt.HasValue;
         var isIdentityVerified = !string.IsNullOrWhiteSpace(patient.IdentificationHash);
         var maskedIdentification = isIdentityVerified ? MaskedVerifiedIdentityText : null;
-        var age = CalculateAge(patient.DateOfBirth);
+        var age = CalculateAge(patient.DateOfBirth, HospitalClock.GetToday(_timeProvider));
 
         return new PatientProfileResponse(
             Id: patient.Id,
@@ -63,12 +70,11 @@ public sealed class PatientProfileService : IPatientProfileService
         );
     }
 
-    private static int? CalculateAge(DateOnly? dateOfBirth)
+    private static int? CalculateAge(DateOnly? dateOfBirth, DateOnly today)
     {
         if (!dateOfBirth.HasValue)
             return null;
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var dob = dateOfBirth.Value;
         var age = today.Year - dob.Year;
 

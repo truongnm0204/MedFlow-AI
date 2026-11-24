@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -9,7 +10,7 @@ using Microsoft.AspNetCore.Mvc.ModelBinding;
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = "RECEPTION,HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+[Authorize(Roles = $"{RoleNames.Reception},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class ReceptionCheckInController : ControllerBase
 {
     private readonly ICheckInScheduledPatientService _checkInService;

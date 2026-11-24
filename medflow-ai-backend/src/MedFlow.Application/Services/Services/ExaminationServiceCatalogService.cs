@@ -1,4 +1,5 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Domain.Entities;
@@ -70,10 +71,14 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
     ];
 
     private readonly IApplicationDbContext _db;
+    private readonly TimeProvider _timeProvider;
 
-    public ExaminationServiceCatalogService(IApplicationDbContext db)
+    public ExaminationServiceCatalogService(
+        IApplicationDbContext db,
+        TimeProvider? timeProvider = null)
     {
         _db = db;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<ServiceSearchResponseDto> SearchAsync(
@@ -118,7 +123,7 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
             .OrderBy(s => s.Id)
             .ToListAsync(ct);
 
-        var now = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+        var now = HospitalClock.GetNow(_timeProvider);
         var mapped = services
             .Select(s => (Entity: s, Dto: MapToDto(s, now)))
             .ToList();
@@ -213,7 +218,7 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
         if (service is null)
             throw new NotFoundException("ExaminationService", normalized);
 
-        var now = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+        var now = HospitalClock.GetNow(_timeProvider);
         return MapToDto(service, now);
     }
 
@@ -385,7 +390,7 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
             string.Equals(specialtyCode, "GI", StringComparison.OrdinalIgnoreCase))
         {
             return (
-                Location: ResolveDepartmentLocation(service, "Khu Khám Ngoại trú - Tầng 1, Khu Demo (Phòng 101-102)"),
+                Location: ResolveDepartmentLocation(service),
                 Tags: isFollowUp
                     ? ["Tái khám chuyên khoa", "Theo dõi đáp ứng điều trị"]
                     : ["Bác sĩ CKII", "Tư vấn chế độ ăn"],
@@ -408,7 +413,7 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
             string.Equals(specialtyCode, "CARD", StringComparison.OrdinalIgnoreCase))
         {
             return (
-                Location: ResolveDepartmentLocation(service, "Khu Khám Ngoại trú - Tầng 1, Khu Demo (Phòng 201-202)"),
+                Location: ResolveDepartmentLocation(service),
                 Tags: isFollowUp
                     ? ["Tái khám tim mạch", "Điều chỉnh phác đồ"]
                     : ["Đo điện tim cơ bản", "Bác sĩ chuyên khoa"],
@@ -428,7 +433,7 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
         }
 
         return (
-            Location: ResolveDepartmentLocation(service, "Khu Khám Ngoại trú - Tầng 1, Khu Demo"),
+            Location: ResolveDepartmentLocation(service),
             Tags: ["Bác sĩ chuyên khoa", "Đặt lịch trực tuyến"],
             PreparationNotes:
             [
@@ -442,7 +447,7 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
             StandardSteps: DefaultStandardSteps);
     }
 
-    private static string ResolveDepartmentLocation(Service service, string fallbackLocation)
+    private static string ResolveDepartmentLocation(Service service)
     {
         var activeRooms = service.Department?.HospitalRooms?
             .Where(r =>
@@ -452,16 +457,18 @@ public class ExaminationServiceCatalogService : IExaminationServiceCatalogServic
             .ToList();
 
         if (activeRooms is null || activeRooms.Count == 0)
-            return fallbackLocation;
+            return "Chưa cập nhật";
 
         var rawLocation = activeRooms
             .Select(r => r.Location?.Trim())
-            .FirstOrDefault(loc => !string.IsNullOrWhiteSpace(loc)) ?? "Tầng 1, Khu Demo";
+            .FirstOrDefault(loc => !string.IsNullOrWhiteSpace(loc));
 
-        var baseLocation = rawLocation.StartsWith("Khu ", StringComparison.OrdinalIgnoreCase) ||
-                           rawLocation.StartsWith("Trung tâm ", StringComparison.OrdinalIgnoreCase)
-            ? rawLocation
-            : $"Khu Khám Ngoại trú - {rawLocation}";
+        var baseLocation = string.IsNullOrWhiteSpace(rawLocation)
+            ? "Khu Khám Ngoại trú"
+            : rawLocation.StartsWith("Khu ", StringComparison.OrdinalIgnoreCase) ||
+              rawLocation.StartsWith("Trung tâm ", StringComparison.OrdinalIgnoreCase)
+                ? rawLocation
+                : $"Khu Khám Ngoại trú - {rawLocation}";
 
         var labels = activeRooms
             .Select(ExtractRoomLabel)

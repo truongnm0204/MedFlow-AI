@@ -825,4 +825,38 @@ public sealed class PrepareMedicinesServiceTests : IDisposable
 
         Assert.Equal("VIỆN PHÍ CHỜ THANH TOÁN / TỰ NGUYỆN", context.PaymentBadge);
     }
+
+    [Fact]
+    public async Task GetPreparationContext_BatchShelfLocation_ReturnsFallbackPlaceholderInsteadOfFabricatedCoordinates()
+    {
+        var context = await _service.GetPreparationContextAsync(10, "RX-2026-0415-0088");
+
+        var batches = context.Items.SelectMany(i => i.AvailableBatches).ToList();
+        Assert.NotEmpty(batches);
+        Assert.All(batches, b =>
+        {
+            Assert.Equal("Chưa cập nhật", b.ShelfLocation);
+            Assert.DoesNotContain("Kệ M-", b.ShelfLocation);
+        });
+    }
+
+    [Fact]
+    public async Task ValidateAccess_WhenRolePermissionsTableEmpty_ThrowsForbiddenException()
+    {
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetPreparationContextAsync(10, "RX-2026-0415-0088"));
+
+        var request = new PreparePrescriptionRequest(
+            Items:
+            [
+                new PrepareMedicineItemRequest(201, 11, "NX-2026-EARLIEST", 28),
+                new PrepareMedicineItemRequest(202, 20, "BM-2027", 56),
+            ]);
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.PreparePrescriptionAsync(10, "RX-2026-0415-0088", request));
+    }
 }

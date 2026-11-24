@@ -668,6 +668,20 @@ public sealed class MedicalHistoryServiceTests : IDisposable
             _service.GetByPatientAsync(
                 actorUserId: 3,
                 patientIdOrCode: "PAT-0001"));
+
+        // Completely empty RolePermissions table must ALSO fail-closed with 403
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions.ToList());
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetByPatientAsync(
+                actorUserId: 3,
+                patientIdOrCode: "PAT-0001"));
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetByVisitAsync(
+                actorUserId: 3,
+                visitIdOrCode: "VIS-202610-0001"));
     }
 
     [Theory]

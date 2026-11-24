@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.SystemAdmin;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -13,8 +15,6 @@ namespace MedFlow.Application.Services.SystemAdmin;
 
 public sealed class StaffAccountAdminService : IStaffAccountAdminService
 {
-    private const string SystemAdminRoleCode = "SYSTEM_ADMIN";
-    private const string UserManagePermissionCode = "USER_MANAGE";
     private const string DeactivatedAction = "STAFF_ACCOUNT_DEACTIVATED";
     private const string StaffEntityType = "STAFF";
 
@@ -65,7 +65,7 @@ public sealed class StaffAccountAdminService : IStaffAccountAdminService
             throw new ValidationException("Lý do vô hiệu hóa phải từ 5 đến 500 ký tự.");
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         await EnsureSystemAdminAccessAsync(actorUserId, nowUtc, ct);
 
         var target = await _db.Staff
@@ -107,7 +107,7 @@ public sealed class StaffAccountAdminService : IStaffAccountAdminService
                      ActiveVisitStatuses.Contains(v.Status.ToUpper()),
                 ct);
 
-            var nowLocal = DateTime.SpecifyKind(nowUtc.AddHours(7), DateTimeKind.Unspecified);
+            var nowLocal = HospitalClock.GetNow(_timeProvider);
             futureSlotCount = await _db.ExaminationSlots.CountAsync(
                 s => s.DoctorId == target.Doctor.Id &&
                      s.StartsAt.HasValue &&
@@ -205,7 +205,7 @@ public sealed class StaffAccountAdminService : IStaffAccountAdminService
         var hasSystemAdminRole = await (
             from userRole in _db.UserRoles.AsNoTracking()
             join role in _db.Roles.AsNoTracking() on userRole.RoleId equals role.Id
-            where userRole.UserId == actorUserId && role.Code.ToUpper() == SystemAdminRoleCode
+            where userRole.UserId == actorUserId && role.Code.ToUpper() == RoleNames.SystemAdmin
             select userRole).AnyAsync(ct);
 
         if (!hasSystemAdminRole)
@@ -217,7 +217,7 @@ public sealed class StaffAccountAdminService : IStaffAccountAdminService
             from userRole in _db.UserRoles.AsNoTracking()
             join rolePermission in _db.RolePermissions.AsNoTracking() on userRole.RoleId equals rolePermission.RoleId
             join permission in _db.Permissions.AsNoTracking() on rolePermission.PermissionId equals permission.Id
-            where userRole.UserId == actorUserId && permission.Code.ToUpper() == UserManagePermissionCode
+            where userRole.UserId == actorUserId && permission.Code.ToUpper() == PermissionCodes.UserManage
             select userRole).AnyAsync(ct);
 
         if (!hasUserManagePermission)

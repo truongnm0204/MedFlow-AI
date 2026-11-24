@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.HospitalAdmin;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Policies;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -13,15 +15,12 @@ namespace MedFlow.Application.Services.HospitalAdmin;
 
 public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardService
 {
-    private const string HospitalAdminRoleCode = "HOSPITAL_ADMIN";
-    private const string DefaultShiftLabel = "Ca hành chính • Đồng bộ cấu hình HIS trực tuyến";
-
-    private static readonly string[] FallbackHospitalAdminPermissions =
+    private static readonly string[] AllowedDashboardPermissions =
     [
-        "HOSPITAL_CONFIG",
-        "PAYMENT_VIEW",
-        "QUEUE_MANAGE",
-        "VISIT_ASSIGN",
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.QueueManage,
+        PermissionCodes.PaymentView,
     ];
 
     private static readonly HashSet<string> ValidCategories = new(StringComparer.OrdinalIgnoreCase)
@@ -92,7 +91,7 @@ public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardServi
             ? null
             : request.Keyword.Trim();
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
 
         var actorUser = await _db.Users
             .AsNoTracking()
@@ -128,7 +127,7 @@ public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardServi
             .OrderBy(c => c, StringComparer.Ordinal)
             .ToList();
 
-        if (!actorRoleCodes.Any(c => string.Equals(c, HospitalAdminRoleCode, StringComparison.OrdinalIgnoreCase)))
+        if (!actorRoleCodes.Any(c => string.Equals(c, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase)))
         {
             throw new ForbiddenException("Người dùng không có quyền truy cập bảng điều khiển Quản trị bệnh viện.");
         }
@@ -176,10 +175,17 @@ public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardServi
             .OrderBy(code => code, StringComparer.Ordinal)
             .ToList();
 
-        if (actorPermissionCodes.Count == 0 && allRolePermissions.Count == 0)
+        var permissionSet = new HashSet<string>(actorPermissionCodes, StringComparer.OrdinalIgnoreCase);
+        if (!AllowedDashboardPermissions.Any(permissionSet.Contains))
         {
-            actorPermissionCodes = [.. FallbackHospitalAdminPermissions];
+            throw new ForbiddenException("Tài khoản quản trị bệnh viện chưa được cấp quyền truy cập bảng điều khiển.");
         }
+
+        var hasConfig = permissionSet.Contains(PermissionCodes.HospitalConfig);
+        var hasSlotOrQueue = hasConfig ||
+                             permissionSet.Contains(PermissionCodes.VisitAssign) ||
+                             permissionSet.Contains(PermissionCodes.QueueManage);
+        var hasPaymentOrConfig = hasConfig || permissionSet.Contains(PermissionCodes.PaymentView);
 
         var fullName = !string.IsNullOrWhiteSpace(actorStaff.FullName)
             ? actorStaff.FullName
@@ -270,7 +276,7 @@ public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardServi
             .GroupBy(a => a.SlotId!.Value)
             .ToDictionary(g => g.Key, g => g.Count());
 
-        var nowLocal = _timeProvider.GetLocalNow().DateTime;
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var today = nowLocal.Date;
         var tomorrow = today.AddDays(1);
 
@@ -289,14 +295,14 @@ public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardServi
         var reviewSlotsCount = scopedSlots.Count(s => IsSlotNeedsReview(s, appointmentCountMap));
 
         var stats = new HospitalAdminStatsDto(
-            ActiveDepartments: activeDepartments,
-            TotalDepartments: totalDepartments,
-            ActiveRooms: activeRooms,
-            TotalRooms: totalRooms,
-            ActiveDoctors: activeDoctors,
-            OnlineServicesCount: onlineServicesCount,
-            OpenSlotsToday: openSlotsTodayCount,
-            ReviewSlotsCount: reviewSlotsCount);
+            ActiveDepartments: hasConfig ? activeDepartments : 0,
+            TotalDepartments: hasConfig ? totalDepartments : 0,
+            ActiveRooms: hasConfig ? activeRooms : 0,
+            TotalRooms: hasConfig ? totalRooms : 0,
+            ActiveDoctors: hasConfig ? activeDoctors : 0,
+            OnlineServicesCount: hasPaymentOrConfig ? onlineServicesCount : 0,
+            OpenSlotsToday: hasSlotOrQueue ? openSlotsTodayCount : 0,
+            ReviewSlotsCount: hasSlotOrQueue ? reviewSlotsCount : 0);
 
         var policyRows = await _db.HospitalPolicies
             .AsNoTracking()
@@ -364,7 +370,10 @@ public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardServi
             policyUpdatedLabel,
             hospitalVisitCount,
             reviewSlotsCount,
-            nowUtc);
+            nowUtc,
+            hasConfig,
+            hasSlotOrQueue,
+            hasPaymentOrConfig);
 
         IEnumerable<HospitalConfigWorklistItemDto> filteredWorklist = fullWorklist;
 
@@ -401,12 +410,14 @@ public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardServi
             scopedSlots,
             appointmentCountMap,
             bookingWindowDays,
-            cancelHours);
+            cancelHours,
+            hasConfig,
+            hasSlotOrQueue);
 
         return new HospitalAdminDashboardResponseDto(
             FacilityName: hospital.Name,
             FacilityCode: hospital.HospitalCode,
-            ShiftLabel: DefaultShiftLabel,
+            ShiftLabel: HospitalShiftRules.ResolveDashboardShiftLabel(nowLocal),
             Stats: stats,
             Worklist: worklist,
             QuickActions: quickActions,
@@ -431,205 +442,223 @@ public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardServi
         string policyUpdatedLabel,
         int hospitalVisitCount,
         int reviewSlotsCount,
-        DateTime nowUtc)
+        DateTime nowUtc,
+        bool hasConfig,
+        bool hasSlotOrQueue,
+        bool hasPaymentOrConfig)
     {
         var items = new List<HospitalConfigWorklistItemDto>();
 
-        foreach (var dept in departments)
+        if (hasConfig)
         {
-            var deptRoomCount = rooms.Count(r => r.DepartmentId == dept.Id);
-            var deptDoctorCount = doctors.Count(d => d.Staff != null && d.Staff.DepartmentId == dept.Id);
-            var isActive = dept.IsActive == true;
-            var code = !string.IsNullOrWhiteSpace(dept.DepartmentCode)
-                ? dept.DepartmentCode
-                : $"DEP-{dept.Id:D3}";
+            foreach (var dept in departments)
+            {
+                var deptRoomCount = rooms.Count(r => r.DepartmentId == dept.Id);
+                var deptDoctorCount = doctors.Count(d => d.Staff != null && d.Staff.DepartmentId == dept.Id);
+                var isActive = dept.IsActive == true;
+                var code = !string.IsNullOrWhiteSpace(dept.DepartmentCode)
+                    ? dept.DepartmentCode
+                    : $"DEP-{dept.Id:D3}";
 
-            items.Add(new HospitalConfigWorklistItemDto(
-                Id: $"cfg-dep-{dept.Id:D3}",
-                Code: code,
-                Name: dept.Name,
-                Category: "DEPARTMENT_ROOM",
-                DepartmentOrScope: hospital.Name,
-                MetricLabel: isActive
-                    ? $"{deptRoomCount:D2} buồng khám • {deptDoctorCount:D2} BS"
-                    : "Tạm ngừng hoạt động khoa phòng",
-                UpdatedAt: "Hôm nay",
-                Status: isActive ? "ACTIVE" : "MAINTENANCE",
-                Route: "/admin/departments"));
+                items.Add(new HospitalConfigWorklistItemDto(
+                    Id: $"cfg-dep-{dept.Id:D3}",
+                    Code: code,
+                    Name: dept.Name,
+                    Category: "DEPARTMENT_ROOM",
+                    DepartmentOrScope: hospital.Name,
+                    MetricLabel: isActive
+                        ? $"{deptRoomCount:D2} buồng khám • {deptDoctorCount:D2} BS"
+                        : "Tạm ngừng hoạt động khoa phòng",
+                    UpdatedAt: "Hôm nay",
+                    Status: isActive ? "ACTIVE" : "MAINTENANCE",
+                    Route: "/admin/departments"));
+            }
+
+            foreach (var room in rooms)
+            {
+                var isRoomActive = string.Equals(room.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase);
+                var code = !string.IsNullOrWhiteSpace(room.RoomCode)
+                    ? room.RoomCode
+                    : $"RM-{room.Id:D3}";
+
+                var deptName = room.DepartmentId.HasValue && departmentsById.TryGetValue(room.DepartmentId.Value, out var dept)
+                    ? dept.Name
+                    : hospital.Name;
+
+                var scope = !string.IsNullOrWhiteSpace(room.Location)
+                    ? $"{deptName} • {room.Location}"
+                    : deptName;
+
+                items.Add(new HospitalConfigWorklistItemDto(
+                    Id: $"cfg-rm-{room.Id:D3}",
+                    Code: code,
+                    Name: room.Name,
+                    Category: "DEPARTMENT_ROOM",
+                    DepartmentOrScope: scope,
+                    MetricLabel: isRoomActive
+                        ? $"Sức chứa {room.Capacity ?? 1} • Đang hoạt động"
+                        : "Tạm ngừng bảo trì thiết bị",
+                    UpdatedAt: "Hôm nay",
+                    Status: isRoomActive ? "ACTIVE" : "MAINTENANCE",
+                    Route: "/admin/rooms"));
+            }
+
+            foreach (var doc in doctors)
+            {
+                var isDoctorActive = doc.IsActive &&
+                    (doc.Staff == null || string.Equals(doc.Staff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase));
+
+                var code = !string.IsNullOrWhiteSpace(doc.DoctorCode)
+                    ? doc.DoctorCode
+                    : $"DOC-{doc.Id:D4}";
+
+                var rawStaffName = doc.Staff?.FullName;
+                var doctorName = !string.IsNullOrWhiteSpace(rawStaffName)
+                    ? (!string.IsNullOrWhiteSpace(doc.ProfessionalTitle) &&
+                       !rawStaffName.StartsWith(doc.ProfessionalTitle, StringComparison.OrdinalIgnoreCase)
+                        ? $"{doc.ProfessionalTitle} {rawStaffName}"
+                        : rawStaffName)
+                    : code;
+
+                var scope = doc.Staff?.DepartmentId != null &&
+                            departmentsById.TryGetValue(doc.Staff.DepartmentId.Value, out var docDept)
+                    ? docDept.Name
+                    : (!string.IsNullOrWhiteSpace(doc.Specialty?.Name) ? doc.Specialty.Name : hospital.Name);
+
+                var licenseLabel = !string.IsNullOrWhiteSpace(doc.LicenseNumber)
+                    ? doc.LicenseNumber
+                    : "Đang cập nhật";
+
+                items.Add(new HospitalConfigWorklistItemDto(
+                    Id: $"cfg-doc-{doc.Id:D4}",
+                    Code: code,
+                    Name: doctorName,
+                    Category: "DOCTOR_SERVICE",
+                    DepartmentOrScope: scope,
+                    MetricLabel: isDoctorActive
+                        ? $"CCHN {licenseLabel} • Đang mở"
+                        : "Tạm ngừng lịch khám",
+                    UpdatedAt: "Hôm nay",
+                    Status: isDoctorActive ? "ACTIVE" : "MAINTENANCE",
+                    Route: "/admin/doctors"));
+            }
         }
 
-        foreach (var room in rooms)
+        if (hasPaymentOrConfig)
         {
-            var isRoomActive = string.Equals(room.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase);
-            var code = !string.IsNullOrWhiteSpace(room.RoomCode)
-                ? room.RoomCode
-                : $"RM-{room.Id:D3}";
+            foreach (var service in services)
+            {
+                var isServiceActive = service.IsActive ?? true;
+                var code = !string.IsNullOrWhiteSpace(service.ServiceCode)
+                    ? service.ServiceCode
+                    : $"SRV-{service.Id:D3}";
 
-            var deptName = room.DepartmentId.HasValue && departmentsById.TryGetValue(room.DepartmentId.Value, out var dept)
-                ? dept.Name
-                : hospital.Name;
+                var scope = service.DepartmentId.HasValue &&
+                            departmentsById.TryGetValue(service.DepartmentId.Value, out var srvDept)
+                    ? srvDept.Name
+                    : hospital.Name;
 
-            var scope = !string.IsNullOrWhiteSpace(room.Location)
-                ? $"{deptName} • {room.Location}"
-                : deptName;
+                var activePrice = ResolveActivePrice(service.ServicePrices, nowUtc);
+                var bookingModeLabel = (service.AllowsOnlineBooking ?? false)
+                    ? "Mở đặt hẹn online"
+                    : "Đặt tại quầy";
 
-            items.Add(new HospitalConfigWorklistItemDto(
-                Id: $"cfg-rm-{room.Id:D3}",
-                Code: code,
-                Name: room.Name,
-                Category: "DEPARTMENT_ROOM",
-                DepartmentOrScope: scope,
-                MetricLabel: isRoomActive
-                    ? $"Sức chứa {room.Capacity ?? 1} • Đang hoạt động"
-                    : "Tạm ngừng bảo trì thiết bị",
-                UpdatedAt: "Hôm nay",
-                Status: isRoomActive ? "ACTIVE" : "MAINTENANCE",
-                Route: "/admin/rooms"));
+                items.Add(new HospitalConfigWorklistItemDto(
+                    Id: $"cfg-srv-{service.Id:D3}",
+                    Code: code,
+                    Name: service.Name,
+                    Category: "DOCTOR_SERVICE",
+                    DepartmentOrScope: scope,
+                    MetricLabel: isServiceActive
+                        ? $"{FormatVndPrice(activePrice)} • {bookingModeLabel}"
+                        : "Tạm ngừng cung cấp dịch vụ",
+                    UpdatedAt: "Hôm nay",
+                    Status: isServiceActive ? "ACTIVE" : "MAINTENANCE",
+                    Route: "/admin/services"));
+            }
         }
 
-        foreach (var doc in doctors)
+        if (hasSlotOrQueue)
         {
-            var isDoctorActive = doc.IsActive &&
-                (doc.Staff == null || string.Equals(doc.Staff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase));
+            var representativeSlots = scopedSlots
+                .OrderByDescending(s => IsSlotNeedsReview(s, appointmentCountMap))
+                .ThenBy(s => s.StartsAt)
+                .ThenBy(s => s.Id)
+                .Take(3);
 
-            var code = !string.IsNullOrWhiteSpace(doc.DoctorCode)
-                ? doc.DoctorCode
-                : $"DOC-{doc.Id:D4}";
+            foreach (var slot in representativeSlots)
+            {
+                var needsReview = IsSlotNeedsReview(slot, appointmentCountMap);
+                var srvName = slot.ServiceId.HasValue && servicesById.TryGetValue(slot.ServiceId.Value, out var slotSrv)
+                    ? slotSrv.Name
+                    : "Khám chuyên khoa";
 
-            var rawStaffName = doc.Staff?.FullName;
-            var doctorName = !string.IsNullOrWhiteSpace(rawStaffName)
-                ? (!string.IsNullOrWhiteSpace(doc.ProfessionalTitle) &&
-                   !rawStaffName.StartsWith(doc.ProfessionalTitle, StringComparison.OrdinalIgnoreCase)
-                    ? $"{doc.ProfessionalTitle} {rawStaffName}"
-                    : rawStaffName)
-                : code;
+                var timeWindow = slot.StartsAt.HasValue && slot.EndsAt.HasValue
+                    ? $"({slot.StartsAt.Value:HH:mm} - {slot.EndsAt.Value:HH:mm})"
+                    : string.Empty;
 
-            var scope = doc.Staff?.DepartmentId != null &&
-                        departmentsById.TryGetValue(doc.Staff.DepartmentId.Value, out var docDept)
-                ? docDept.Name
-                : (!string.IsNullOrWhiteSpace(doc.Specialty?.Name) ? doc.Specialty.Name : hospital.Name);
+                var slotName = string.IsNullOrEmpty(timeWindow)
+                    ? $"Khung giờ {srvName}"
+                    : $"Khung giờ {srvName} {timeWindow}";
 
-            var licenseLabel = !string.IsNullOrWhiteSpace(doc.LicenseNumber)
-                ? doc.LicenseNumber
-                : "Đang cập nhật";
+                var roomLabel = slot.RoomId.HasValue && roomsById.TryGetValue(slot.RoomId.Value, out var slotRoom)
+                    ? slotRoom.RoomCode
+                    : "Chưa gán phòng";
 
-            items.Add(new HospitalConfigWorklistItemDto(
-                Id: $"cfg-doc-{doc.Id:D4}",
-                Code: code,
-                Name: doctorName,
-                Category: "DOCTOR_SERVICE",
-                DepartmentOrScope: scope,
-                MetricLabel: isDoctorActive
-                    ? $"CCHN {licenseLabel} • Đang mở"
-                    : "Tạm ngừng lịch khám",
-                UpdatedAt: "Hôm nay",
-                Status: isDoctorActive ? "ACTIVE" : "MAINTENANCE",
-                Route: "/admin/doctors"));
+                var deptName = slot.RoomId.HasValue &&
+                               roomsById.TryGetValue(slot.RoomId.Value, out var r2) &&
+                               r2.DepartmentId.HasValue &&
+                               departmentsById.TryGetValue(r2.DepartmentId.Value, out var d2)
+                    ? d2.Name
+                    : hospital.Name;
+
+                var bookedCount = appointmentCountMap.TryGetValue(slot.Id, out var b) ? b : 0;
+                var capacity = slot.Capacity ?? 0;
+
+                items.Add(new HospitalConfigWorklistItemDto(
+                    Id: $"cfg-slt-{slot.Id:D3}",
+                    Code: $"SLT-{slot.Id:D3}",
+                    Name: slotName,
+                    Category: "SLOT_SCHEDULE",
+                    DepartmentOrScope: $"{deptName} • {roomLabel}",
+                    MetricLabel: needsReview
+                        ? $"Đã đặt {bookedCount}/{capacity} • Cần rà soát sức chứa"
+                        : $"Đã đặt {bookedCount}/{capacity} • Đang mở nhận khách",
+                    UpdatedAt: "Hôm nay",
+                    Status: needsReview ? "NEEDS_REVIEW" : "ACTIVE",
+                    Route: "/admin/slots"));
+            }
         }
 
-        foreach (var service in services)
+        if (hasConfig)
         {
-            var isServiceActive = service.IsActive ?? true;
-            var code = !string.IsNullOrWhiteSpace(service.ServiceCode)
-                ? service.ServiceCode
-                : $"SRV-{service.Id:D3}";
-
-            var scope = service.DepartmentId.HasValue &&
-                        departmentsById.TryGetValue(service.DepartmentId.Value, out var srvDept)
-                ? srvDept.Name
-                : hospital.Name;
-
-            var activePrice = ResolveActivePrice(service.ServicePrices, nowUtc);
-            var bookingModeLabel = (service.AllowsOnlineBooking ?? false)
-                ? "Mở đặt hẹn online"
-                : "Đặt tại quầy";
-
             items.Add(new HospitalConfigWorklistItemDto(
-                Id: $"cfg-srv-{service.Id:D3}",
-                Code: code,
-                Name: service.Name,
-                Category: "DOCTOR_SERVICE",
-                DepartmentOrScope: scope,
-                MetricLabel: isServiceActive
-                    ? $"{FormatVndPrice(activePrice)} • {bookingModeLabel}"
-                    : "Tạm ngừng cung cấp dịch vụ",
-                UpdatedAt: "Hôm nay",
-                Status: isServiceActive ? "ACTIVE" : "MAINTENANCE",
-                Route: "/admin/services"));
-        }
-
-        var representativeSlots = scopedSlots
-            .OrderByDescending(s => IsSlotNeedsReview(s, appointmentCountMap))
-            .ThenBy(s => s.StartsAt)
-            .ThenBy(s => s.Id)
-            .Take(3);
-
-        foreach (var slot in representativeSlots)
-        {
-            var needsReview = IsSlotNeedsReview(slot, appointmentCountMap);
-            var srvName = slot.ServiceId.HasValue && servicesById.TryGetValue(slot.ServiceId.Value, out var slotSrv)
-                ? slotSrv.Name
-                : "Khám chuyên khoa";
-
-            var timeWindow = slot.StartsAt.HasValue && slot.EndsAt.HasValue
-                ? $"({slot.StartsAt.Value:HH:mm} - {slot.EndsAt.Value:HH:mm})"
-                : string.Empty;
-
-            var slotName = string.IsNullOrEmpty(timeWindow)
-                ? $"Khung giờ {srvName}"
-                : $"Khung giờ {srvName} {timeWindow}";
-
-            var roomLabel = slot.RoomId.HasValue && roomsById.TryGetValue(slot.RoomId.Value, out var slotRoom)
-                ? slotRoom.RoomCode
-                : "Chưa gán phòng";
-
-            var deptName = slot.RoomId.HasValue &&
-                           roomsById.TryGetValue(slot.RoomId.Value, out var r2) &&
-                           r2.DepartmentId.HasValue &&
-                           departmentsById.TryGetValue(r2.DepartmentId.Value, out var d2)
-                ? d2.Name
-                : hospital.Name;
-
-            var bookedCount = appointmentCountMap.TryGetValue(slot.Id, out var b) ? b : 0;
-            var capacity = slot.Capacity ?? 0;
-
-            items.Add(new HospitalConfigWorklistItemDto(
-                Id: $"cfg-slt-{slot.Id:D3}",
-                Code: $"SLT-{slot.Id:D3}",
-                Name: slotName,
-                Category: "SLOT_SCHEDULE",
-                DepartmentOrScope: $"{deptName} • {roomLabel}",
-                MetricLabel: needsReview
-                    ? $"Đã đặt {bookedCount}/{capacity} • Cần rà soát sức chứa"
-                    : $"Đã đặt {bookedCount}/{capacity} • Đang mở nhận khách",
-                UpdatedAt: "Hôm nay",
-                Status: needsReview ? "NEEDS_REVIEW" : "ACTIVE",
+                Id: "cfg-pol-apt",
+                Code: "POL-APT",
+                Name: "Chính sách đặt lịch & hủy hẹn ngoại trú",
+                Category: "POLICY_REPORT",
+                DepartmentOrScope: $"Toàn {hospital.Name}",
+                MetricLabel: $"Đặt trước {bookingWindowDays} ngày • Hủy trước {cancelHours} giờ",
+                UpdatedAt: policyUpdatedLabel,
+                Status: "ACTIVE",
                 Route: "/admin/slots"));
         }
 
-        items.Add(new HospitalConfigWorklistItemDto(
-            Id: "cfg-pol-apt",
-            Code: "POL-APT",
-            Name: "Chính sách đặt lịch & hủy hẹn ngoại trú",
-            Category: "POLICY_REPORT",
-            DepartmentOrScope: $"Toàn {hospital.Name}",
-            MetricLabel: $"Đặt trước {bookingWindowDays} ngày • Hủy trước {cancelHours} giờ",
-            UpdatedAt: policyUpdatedLabel,
-            Status: "ACTIVE",
-            Route: "/admin/slots"));
-
-        items.Add(new HospitalConfigWorklistItemDto(
-            Id: "cfg-rpt-ops",
-            Code: "RPT-OPS",
-            Name: "Báo cáo lượt khám & công suất theo khoa",
-            Category: "POLICY_REPORT",
-            DepartmentOrScope: $"{hospital.Name} • {hospitalVisitCount} lượt",
-            MetricLabel: reviewSlotsCount > 0
-                ? $"Có {reviewSlotsCount} slot cần rà soát • Cần làm mới"
-                : "Vận hành ổn định • Đã đồng bộ",
-            UpdatedAt: "Hôm nay",
-            Status: reviewSlotsCount > 0 ? "NEEDS_REVIEW" : "ACTIVE",
-            Route: "/admin/reports"));
+        if (hasPaymentOrConfig)
+        {
+            items.Add(new HospitalConfigWorklistItemDto(
+                Id: "cfg-rpt-ops",
+                Code: "RPT-OPS",
+                Name: "Báo cáo lượt khám & công suất theo khoa",
+                Category: "POLICY_REPORT",
+                DepartmentOrScope: $"{hospital.Name} • {hospitalVisitCount} lượt",
+                MetricLabel: hasSlotOrQueue && reviewSlotsCount > 0
+                    ? $"Có {reviewSlotsCount} slot cần rà soát • Cần làm mới"
+                    : "Vận hành ổn định • Đã đồng bộ",
+                UpdatedAt: "Hôm nay",
+                Status: hasSlotOrQueue && reviewSlotsCount > 0 ? "NEEDS_REVIEW" : "ACTIVE",
+                Route: "/admin/reports"));
+        }
 
         return items;
     }
@@ -638,10 +667,10 @@ public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardServi
         IReadOnlyCollection<string> permissionCodes)
     {
         var permissionSet = new HashSet<string>(permissionCodes, StringComparer.OrdinalIgnoreCase);
-        var hasHospitalConfig = permissionSet.Contains("HOSPITAL_CONFIG");
+        var hasHospitalConfig = permissionSet.Contains(PermissionCodes.HospitalConfig);
         var hasReportsAccess = hasHospitalConfig ||
-                               permissionSet.Contains("PAYMENT_VIEW") ||
-                               permissionSet.Contains("QUEUE_MANAGE");
+                               permissionSet.Contains(PermissionCodes.PaymentView) ||
+                               permissionSet.Contains(PermissionCodes.QueueManage);
 
         var actions = new List<HospitalAdminQuickActionDto>();
 
@@ -720,57 +749,68 @@ public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardServi
         IReadOnlyList<ExaminationSlot> scopedSlots,
         IReadOnlyDictionary<long, int> appointmentCountMap,
         int bookingWindowDays,
-        int cancelHours)
+        int cancelHours,
+        bool hasConfig,
+        bool hasSlotOrQueue)
     {
         var alerts = new List<HospitalPolicyAlertItemDto>();
 
-        var alertSlot = scopedSlots.FirstOrDefault(s => IsSlotNeedsReview(s, appointmentCountMap));
-        if (alertSlot is not null)
+        if (hasSlotOrQueue)
         {
-            var booked = appointmentCountMap.TryGetValue(alertSlot.Id, out var count) ? count : 0;
-            var capacity = alertSlot.Capacity ?? 0;
-            var roomCode = alertSlot.RoomId.HasValue && roomsById.TryGetValue(alertSlot.RoomId.Value, out var room)
-                ? room.RoomCode
-                : "Chưa gán phòng";
-            var srvName = alertSlot.ServiceId.HasValue && servicesById.TryGetValue(alertSlot.ServiceId.Value, out var srv)
-                ? srv.Name
-                : "Khám ngoại trú";
-            var timeWindow = alertSlot.StartsAt.HasValue && alertSlot.EndsAt.HasValue
-                ? $"{alertSlot.StartsAt.Value:HH:mm} - {alertSlot.EndsAt.Value:HH:mm}"
-                : "Hôm nay";
+            var alertSlot = scopedSlots.FirstOrDefault(s => IsSlotNeedsReview(s, appointmentCountMap));
+            if (alertSlot is not null)
+            {
+                var booked = appointmentCountMap.TryGetValue(alertSlot.Id, out var count) ? count : 0;
+                var capacity = alertSlot.Capacity ?? 0;
+                var roomCode = alertSlot.RoomId.HasValue && roomsById.TryGetValue(alertSlot.RoomId.Value, out var room)
+                    ? room.RoomCode
+                    : "Chưa gán phòng";
+                var srvName = alertSlot.ServiceId.HasValue && servicesById.TryGetValue(alertSlot.ServiceId.Value, out var srv)
+                    ? srv.Name
+                    : "Khám ngoại trú";
+                var timeWindow = alertSlot.StartsAt.HasValue && alertSlot.EndsAt.HasValue
+                    ? $"{alertSlot.StartsAt.Value:HH:mm} - {alertSlot.EndsAt.Value:HH:mm}"
+                    : "Hôm nay";
 
-            alerts.Add(new HospitalPolicyAlertItemDto(
-                Id: $"alert-slt-{alertSlot.Id:D3}",
-                Code: $"SLT-{alertSlot.Id:D3}",
-                Title: $"Khung giờ {srvName} {timeWindow} cần rà soát vận hành",
-                Detail: $"Đã đặt {booked}/{capacity} lượt tại {roomCode} • Khuyến nghị rà soát sức chứa hoặc mở thêm slot dự phòng.",
-                Severity: "WARNING",
-                Route: "/admin/slots"));
+                alerts.Add(new HospitalPolicyAlertItemDto(
+                    Id: $"alert-slt-{alertSlot.Id:D3}",
+                    Code: $"SLT-{alertSlot.Id:D3}",
+                    Title: $"Khung giờ {srvName} {timeWindow} cần rà soát vận hành",
+                    Detail: $"Đã đặt {booked}/{capacity} lượt tại {roomCode} • Khuyến nghị rà soát sức chứa hoặc mở thêm slot dự phòng.",
+                    Severity: "WARNING",
+                    Route: "/admin/slots"));
+            }
         }
 
-        var maintenanceRoom = rooms.FirstOrDefault(r => !string.Equals(r.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase));
-        if (maintenanceRoom is not null)
+        if (hasConfig)
         {
-            var roomCode = !string.IsNullOrWhiteSpace(maintenanceRoom.RoomCode)
-                ? maintenanceRoom.RoomCode
-                : $"RM-{maintenanceRoom.Id:D3}";
+            var maintenanceRoom = rooms.FirstOrDefault(r => !string.Equals(r.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase));
+            if (maintenanceRoom is not null)
+            {
+                var roomCode = !string.IsNullOrWhiteSpace(maintenanceRoom.RoomCode)
+                    ? maintenanceRoom.RoomCode
+                    : $"RM-{maintenanceRoom.Id:D3}";
 
-            alerts.Add(new HospitalPolicyAlertItemDto(
-                Id: $"alert-rm-{maintenanceRoom.Id:D3}",
-                Code: roomCode,
-                Title: $"{maintenanceRoom.Name} đang tạm ngừng bảo trì",
-                Detail: $"Cần điều phối bệnh nhân đặt hẹn tại {roomCode} sang buồng khám dự phòng cùng chuyên khoa.",
-                Severity: "WARNING",
-                Route: "/admin/rooms"));
+                alerts.Add(new HospitalPolicyAlertItemDto(
+                    Id: $"alert-rm-{maintenanceRoom.Id:D3}",
+                    Code: roomCode,
+                    Title: $"{maintenanceRoom.Name} đang tạm ngừng bảo trì",
+                    Detail: $"Cần điều phối bệnh nhân đặt hẹn tại {roomCode} sang buồng khám dự phòng cùng chuyên khoa.",
+                    Severity: "WARNING",
+                    Route: "/admin/rooms"));
+            }
         }
 
-        alerts.Add(new HospitalPolicyAlertItemDto(
-            Id: "alert-pol-apt",
-            Code: "POL-APT",
-            Title: $"Chính sách đặt lịch trước {bookingWindowDays} ngày & hủy trước {cancelHours} giờ đang hiệu lực",
-            Detail: "Áp dụng đồng bộ trên Cổng Bệnh nhân và Quầy Tiếp đón ngoại trú.",
-            Severity: "ACTIVE",
-            Route: "/admin/reports"));
+        if (hasConfig || hasSlotOrQueue)
+        {
+            alerts.Add(new HospitalPolicyAlertItemDto(
+                Id: "alert-pol-apt",
+                Code: "POL-APT",
+                Title: $"Chính sách đặt lịch trước {bookingWindowDays} ngày & hủy trước {cancelHours} giờ đang hiệu lực",
+                Detail: "Áp dụng đồng bộ trên Cổng Bệnh nhân và Quầy Tiếp đón ngoại trú.",
+                Severity: "ACTIVE",
+                Route: "/admin/reports"));
+        }
 
         return alerts;
     }

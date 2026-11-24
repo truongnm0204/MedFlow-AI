@@ -615,6 +615,52 @@ public sealed class HospitalAdminDashboardServiceTests : IDisposable
         var singleAction = Assert.Single(result.QuickActions);
         Assert.Equal("view-operational-reports", singleAction.Id);
         Assert.Equal("UC56", singleAction.UcCode);
+
+        Assert.Equal(0, result.Stats.ActiveDepartments);
+        Assert.Equal(0, result.Stats.TotalDepartments);
+        Assert.Equal(0, result.Stats.ActiveRooms);
+        Assert.Equal(0, result.Stats.TotalRooms);
+        Assert.Equal(0, result.Stats.ActiveDoctors);
+        Assert.Equal(2, result.Stats.OnlineServicesCount);
+        Assert.Equal(0, result.Stats.OpenSlotsToday);
+        Assert.Equal(0, result.Stats.ReviewSlotsCount);
+        Assert.Empty(result.PolicyAlerts);
+        Assert.DoesNotContain(result.Worklist, w => w.Category == "DEPARTMENT_ROOM" || w.Category == "SLOT_SCHEDULE" || w.Code == "POL-APT" || w.Id.StartsWith("cfg-doc-", StringComparison.Ordinal));
+        Assert.Contains(result.Worklist, w => w.Code == "RPT-OPS");
+        Assert.Contains(result.Worklist, w => w.Id.StartsWith("cfg-srv-", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_VisitAssignOnlyPermission_FiltersToSlotDataOnly()
+    {
+        var toRemove = _dbContext.RolePermissions
+            .Where(rp => rp.RoleId == 2 && rp.PermissionId != 4) // Keep only VISIT_ASSIGN (id=4)
+            .ToList();
+        _dbContext.RolePermissions.RemoveRange(toRemove);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _service.GetDashboardAsync(11, new GetHospitalAdminDashboardRequest());
+
+        Assert.Equal(["VISIT_ASSIGN"], result.AdminProfile.Permissions);
+        Assert.Equal(0, result.Stats.ActiveDepartments);
+        Assert.Equal(0, result.Stats.ActiveRooms);
+        Assert.Equal(0, result.Stats.ActiveDoctors);
+        Assert.Equal(0, result.Stats.OnlineServicesCount);
+        Assert.Equal(2, result.Stats.OpenSlotsToday);
+        Assert.Equal(2, result.Stats.ReviewSlotsCount);
+        Assert.All(result.Worklist, w => Assert.Equal("SLOT_SCHEDULE", w.Category));
+        Assert.DoesNotContain(result.PolicyAlerts, a => a.Code == "RM-104");
+        Assert.Contains(result.PolicyAlerts, a => a.Code == "POL-APT");
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_EmptyRolePermissions_FailsClosedWithForbiddenException()
+    {
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions);
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDashboardAsync(11, new GetHospitalAdminDashboardRequest()));
     }
 
     [Fact]

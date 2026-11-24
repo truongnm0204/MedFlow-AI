@@ -793,4 +793,22 @@ public sealed class VisitTicketServiceTests : IDisposable
         await Assert.ThrowsAsync<ConflictException>(() =>
             _service.GetExaminationTicketAsync(5, "1"));
     }
+
+    [Fact]
+    public async Task GetExaminationTicketAsync_ClearedRolePermissionsOrMissingStaffHospitalId_FailsClosedWithForbidden()
+    {
+        var staff = await _db.Staff.SingleAsync(s => s.UserId == 5);
+        staff.HospitalId = null;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetExaminationTicketAsync(5, "1"));
+
+        staff.HospitalId = 1;
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetExaminationTicketAsync(5, "1"));
+    }
 }

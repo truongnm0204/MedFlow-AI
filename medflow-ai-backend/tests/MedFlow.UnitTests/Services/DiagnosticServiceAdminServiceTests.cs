@@ -701,6 +701,13 @@ public sealed class DiagnosticServiceAdminServiceTests : IDisposable
         Assert.DoesNotContain(options.Specialties, s => s.Id == 5);
     }
 
+    [Fact]
+    public async Task GetDiagnosticServiceListAsync_WithoutHospitalConfigPermission_ThrowsForbidden()
+    {
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDiagnosticServiceListAsync(20, new GetDiagnosticServiceListAdminRequest()));
+    }
+
     public void Dispose()
     {
         _dbContext.Dispose();

@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
@@ -34,8 +35,8 @@ public sealed class CreatePatientAtReceptionService : ICreatePatientAtReceptionS
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var now = _time.GetUtcNow().UtcDateTime;
-        var today = DateOnly.FromDateTime(now);
+        var now = HospitalClock.GetUtcNowUnspecified(_time);
+        var today = HospitalClock.GetToday(_time);
 
         var fullName = request.FullName?.Trim() ?? string.Empty;
         var address = request.Address?.Trim() ?? string.Empty;
@@ -85,7 +86,7 @@ public sealed class CreatePatientAtReceptionService : ICreatePatientAtReceptionS
             masked = new string('*', 8) + canonicalId[^4..];
         }
 
-        var prefix = $"BN-{now.Year}-";
+        var prefix = $"BN-{today.Year}-";
         var lastCode = await _db.Patients
             .Where(p => p.PatientCode.StartsWith(prefix))
             .OrderByDescending(p => p.PatientCode.Length)

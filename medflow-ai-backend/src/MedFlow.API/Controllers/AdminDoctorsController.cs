@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Doctors;
 using MedFlow.Application.Services.Doctors;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -9,7 +10,7 @@ namespace MedFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/admin/doctors")]
-[Authorize(Roles = "HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+[Authorize(Roles = $"{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class AdminDoctorsController : ControllerBase
 {
     private readonly IDoctorAdminService _doctorAdminService;
@@ -28,7 +29,7 @@ public sealed class AdminDoctorsController : ControllerBase
         [FromQuery] GetDoctorListAdminRequest request,
         CancellationToken ct)
     {
-        var result = await _doctorAdminService.GetDoctorListAsync(request, ct);
+        var result = await _doctorAdminService.GetDoctorListAsync(GetRequiredUserId(), request, ct);
         return Ok(result);
     }
 
@@ -46,7 +47,7 @@ public sealed class AdminDoctorsController : ControllerBase
     {
         try
         {
-            var result = await _doctorAdminService.CreateDoctorAsync(request, ct);
+            var result = await _doctorAdminService.CreateDoctorAsync(GetRequiredUserId(), request, ct);
             return StatusCode(StatusCodes.Status201Created, result);
         }
         catch (KeyNotFoundException ex)
@@ -117,7 +118,7 @@ public sealed class AdminDoctorsController : ControllerBase
         CancellationToken ct = default)
     {
         var result = await _doctorAdminService.DeactivateDoctorAsync(
-            GetUserId(),
+            GetRequiredUserId(),
             idOrCode,
             request ?? new DeactivateDoctorRequest(),
             GetIp(),
@@ -141,7 +142,7 @@ public sealed class AdminDoctorsController : ControllerBase
         CancellationToken ct = default)
     {
         var result = await _doctorAdminService.ReactivateDoctorAsync(
-            GetUserId(),
+            GetRequiredUserId(),
             idOrCode,
             request,
             GetIp(),
@@ -171,4 +172,3 @@ public sealed class AdminDoctorsController : ControllerBase
         HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
         ?? HttpContext.Connection.RemoteIpAddress?.ToString();
 }
-

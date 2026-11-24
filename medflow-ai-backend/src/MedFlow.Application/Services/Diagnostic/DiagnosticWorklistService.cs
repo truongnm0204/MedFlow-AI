@@ -1,11 +1,13 @@
 using System.Globalization;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Application.Services.Visits;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -15,17 +17,10 @@ namespace MedFlow.Application.Services.Diagnostic;
 
 public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
 {
-    private const string DiagnosticStaffRoleCode = "DIAGNOSTIC_STAFF";
-    private const string DefaultShiftLabel = "Ca sáng • Đồng bộ trực tiếp với phòng khám";
+    private const string DiagnosticStaffRoleCode = RoleNames.DiagnosticStaff;
     private const string DefaultDepartmentName = "Khoa Cận lâm sàng";
     private const int MaxIdentifierLength = 60;
     private const int MaxKeywordLength = 100;
-
-    private static readonly string[] FallbackDiagnosticPermissions =
-    [
-        "DIAGNOSTIC_RESULT_WRITE",
-        "QUEUE_MANAGE",
-    ];
 
     private static readonly HashSet<string> ValidCategories = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -91,8 +86,8 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
         var effectiveRequest = request ?? new GetDiagnosticWorklistRequest();
         var filter = ValidateAndNormalizeRequest(effectiveRequest);
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var todayLocal = DateOnly.FromDateTime(nowLocal);
 
         var actorContext = await ResolveAuthorizedDiagnosticStaffAsync(actorUserId, nowUtc, ct);
@@ -135,12 +130,13 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
 
         var quickActions = BuildQuickActions(actorContext.StaffProfile.Permissions);
         var effectiveDateString = filter.FilterDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var shiftLabel = HospitalShiftRules.ResolveQueueShiftLabel(nowLocal, includeDiagnosticEvening: true);
 
         return new DiagnosticWorklistResponseDto(
             FacilityName: actorContext.Hospital.Name,
             FacilityCode: actorContext.Hospital.HospitalCode,
             DepartmentName: actorContext.DepartmentName,
-            ShiftLabel: DefaultShiftLabel,
+            ShiftLabel: shiftLabel,
             EffectiveDate: effectiveDateString,
             GeneratedAtUtc: nowUtc,
             TotalCount: totalCount,
@@ -168,8 +164,8 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
 
         var normalizedIdentifier = ValidateOrderIdentifier(orderIdOrCode);
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var todayLocal = DateOnly.FromDateTime(nowLocal);
 
         var actorContext = await ResolveAuthorizedDiagnosticStaffAsync(actorUserId, nowUtc, ct);
@@ -581,14 +577,10 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
             .OrderBy(code => code, StringComparer.Ordinal)
             .ToList();
 
-        if (actorPermissionCodes.Count == 0 && allRolePermissions.Count == 0)
-        {
-            actorPermissionCodes = [.. FallbackDiagnosticPermissions];
-        }
-        else if (!actorPermissionCodes.Any(code =>
-                     string.Equals(code, "QUEUE_MANAGE", StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(code, "DIAGNOSTIC_RESULT_WRITE", StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(code, "DIAGNOSTIC_ORDER", StringComparison.OrdinalIgnoreCase)))
+        if (!actorPermissionCodes.Any(code =>
+                string.Equals(code, PermissionCodes.QueueManage, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(code, PermissionCodes.DiagnosticResultWrite, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(code, PermissionCodes.DiagnosticOrder, StringComparison.OrdinalIgnoreCase)))
         {
             throw new ForbiddenException("Nhân viên cận lâm sàng không có quyền truy cập danh sách chỉ định cận lâm sàng.");
         }

@@ -954,7 +954,7 @@ public sealed class PrescriptionSearchServiceTests : IDisposable
     [Fact]
     public async Task SearchAsync_FallbackPermissions_GrantedWhenRolePermissionsTableEmpty()
     {
-        // Create an isolated context with no role permissions seeded
+        // Fail-closed regression: empty RolePermissions table must deny access
         var options = new DbContextOptionsBuilder<TestPharmacyDbContext>()
             .UseInMemoryDatabase(databaseName: $"FallbackPermTests_{Guid.NewGuid()}")
             .Options;
@@ -968,10 +968,20 @@ public sealed class PrescriptionSearchServiceTests : IDisposable
         emptyRolePermDb.SaveChanges();
 
         var service = new PrescriptionSearchService(emptyRolePermDb);
-        var result = await service.SearchAsync(50, new GetPrescriptionSearchRequest());
+        await Assert.ThrowsAsync<ForbiddenException>(() => service.SearchAsync(50, new GetPrescriptionSearchRequest()));
+        await Assert.ThrowsAsync<ForbiddenException>(() => service.GetByIdAsync(50, "101"));
+    }
 
-        Assert.NotNull(result);
-        Assert.Equal(0, result.TotalCount);
+    [Fact]
+    public async Task SearchAsync_SystemAdminRole_ThrowsForbiddenException()
+    {
+        _dbContext.Roles.Add(new Role { Id = 99, Code = "SYSTEM_ADMIN", Name = "Quản trị hệ thống" });
+        _dbContext.Users.Add(new User { Id = 99, Email = "sysadmin@medflow.test", AccountStatus = AccountStatus.ACTIVE });
+        _dbContext.UserRoles.Add(new UserRole { UserId = 99, RoleId = 99 });
+        _dbContext.Staff.Add(new Staff { Id = 99, UserId = 99, HospitalId = 1, Status = "ACTIVE" });
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() => _service.SearchAsync(99, new GetPrescriptionSearchRequest()));
     }
 
     [Fact]

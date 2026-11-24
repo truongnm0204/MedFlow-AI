@@ -1,13 +1,14 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Payments;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = "PATIENT")]
+[Authorize(Roles = RoleNames.Patient)]
 public sealed class VisitQrPaymentsController : ControllerBase
 {
     private readonly IGenerateQrPaymentService _service;

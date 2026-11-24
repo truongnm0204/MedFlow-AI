@@ -5,6 +5,7 @@ using MedFlow.Application.DTOs.Pharmacy;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Domain.Entities;
 using MedFlow.IntegrationTests.Auth;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace MedFlow.IntegrationTests.Pharmacy;
@@ -109,7 +110,7 @@ public sealed class PharmacyDashboardEndpointTests : AuthTestBase
             Assert.False(string.IsNullOrWhiteSpace(payload.FacilityCode));
             Assert.NotEmpty(payload.QuickActions);
             Assert.NotEmpty(payload.PrescriptionQueue);
-            Assert.NotEmpty(payload.FefoBatchAlerts);
+            Assert.NotNull(payload.FefoBatchAlerts);
             Assert.True(payload.PrescriptionQueue.Count <= 5);
         }
         else
@@ -170,6 +171,66 @@ public sealed class PharmacyDashboardEndpointTests : AuthTestBase
             Assert.True(
                 response.StatusCode is HttpStatusCode.InternalServerError or HttpStatusCode.ServiceUnavailable,
                 $"Unexpected status code: {response.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task GetDashboard_WhenGenuineLowStockBatchExists_ReturnsLowStockAlert_WhenDatabaseAvailable()
+    {
+        if (!await Db.Database.CanConnectAsync())
+        {
+            return;
+        }
+
+        var staff = await Db.Staff.AsNoTracking().FirstOrDefaultAsync(s => s.UserId == 9);
+        if (staff?.HospitalId is not long hospitalId)
+        {
+            return;
+        }
+
+        var medicine = await Db.Medicines.AsNoTracking()
+            .OrderBy(m => m.Id)
+            .FirstOrDefaultAsync(m => m.HospitalId == hospitalId);
+        if (medicine is null)
+        {
+            return;
+        }
+
+        var tempBatch = new MedicineBatch
+        {
+            MedicineId = medicine.Id,
+            BatchNumber = $"LOT-LOW-{Guid.NewGuid():N}"[..18].ToUpperInvariant(),
+            ExpiryDate = new DateOnly(2028, 12, 31),
+            QuantityOnHand = 10m,
+            IsBlocked = false,
+        };
+
+        Db.MedicineBatches.Add(tempBatch);
+        await Db.SaveChangesAsync();
+
+        try
+        {
+            var token = GenerateToken(9, "pharmacy_staff01@medflow.test", "PHARMACY_STAFF");
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                "/api/v1/pharmacy/dashboard/summary?queueLimit=5");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var response = await Client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            var payload = await response.Content.ReadFromJsonAsync<PharmacyDashboardResponseDto>();
+            Assert.NotNull(payload);
+            Assert.Contains(
+                payload.FefoBatchAlerts,
+                alert => alert.BatchCode == tempBatch.BatchNumber && alert.Status == "LOW_STOCK");
+        }
+        finally
+        {
+            Db.ChangeTracker.Clear();
+            await Db.MedicineBatches
+                .Where(b => b.Id == tempBatch.Id)
+                .ExecuteDeleteAsync();
         }
     }
 }

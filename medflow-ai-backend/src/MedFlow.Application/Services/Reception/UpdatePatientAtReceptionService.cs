@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
@@ -15,10 +16,14 @@ public sealed partial class UpdatePatientAtReceptionService : IUpdatePatientAtRe
     private static readonly string[] AllowedGenders = ["MALE", "FEMALE", "OTHER"];
 
     private readonly IApplicationDbContext _db;
+    private readonly TimeProvider _timeProvider;
 
-    public UpdatePatientAtReceptionService(IApplicationDbContext db)
+    public UpdatePatientAtReceptionService(
+        IApplicationDbContext db,
+        TimeProvider? timeProvider = null)
     {
         _db = db;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<UpdatePatientResponseDto> UpdatePatientAsync(
@@ -43,7 +48,7 @@ public sealed partial class UpdatePatientAtReceptionService : IUpdatePatientAtRe
         if (fullName.Length is < 2 or > 200)
             throw new ValidationException("Họ tên phải từ 2 đến 200 ký tự.");
 
-        if (request.DateOfBirth is { } dob && dob > DateOnly.FromDateTime(DateTime.UtcNow))
+        if (request.DateOfBirth is { } dob && dob > HospitalClock.GetToday(_timeProvider))
             throw new ValidationException("Ngày sinh không được ở tương lai.");
 
         var gender = string.IsNullOrWhiteSpace(request.Gender) ? null : request.Gender.Trim().ToUpperInvariant();
@@ -105,7 +110,7 @@ public sealed partial class UpdatePatientAtReceptionService : IUpdatePatientAtRe
             patient.Email,
             masked,
             patient.BloodType,
-            DateTime.UtcNow);
+            HospitalClock.GetUtcNowUnspecified(_timeProvider));
     }
 
     [GeneratedRegex(@"^0[35789]\d{8}$")]

@@ -192,6 +192,9 @@ public sealed class AdminStaffAccountsEndpointTests : IClassFixture<TestWebAppFa
             new Role { Id = 3, Code = "RECEPTION", Name = "Nhân viên tiếp đón" },
             new Role { Id = 7, Code = "SYSTEM_ADMIN", Name = "Quản trị hệ thống" });
 
+        db.Permissions.Add(new Permission { Id = 12, Code = "USER_MANAGE" });
+        db.RolePermissions.Add(new RolePermission { RoleId = 7, PermissionId = 12 });
+
         db.Users.AddRange(
             new User { Id = 1, Email = "patient01@medflow.test", AccountStatus = AccountStatus.ACTIVE },
             new User { Id = 3, Email = "doctor01@medflow.test", AccountStatus = AccountStatus.ACTIVE },
@@ -246,9 +249,9 @@ public sealed class AdminStaffAccountsEndpointTests : IClassFixture<TestWebAppFa
 
         public DbSet<User> Users => Set<User>();
         public DbSet<Role> Roles => Set<Role>();
-        public DbSet<Permission> Permissions => throw NotUsed();
+        public DbSet<Permission> Permissions => Set<Permission>();
         public DbSet<UserRole> UserRoles => Set<UserRole>();
-        public DbSet<RolePermission> RolePermissions => throw NotUsed();
+        public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
         public DbSet<Patient> Patients => Set<Patient>();
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => throw NotUsed();
@@ -275,8 +278,6 @@ public sealed class AdminStaffAccountsEndpointTests : IClassFixture<TestWebAppFa
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Ignore<Permission>();
-            modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Doctor>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<ExaminationSlot>();
@@ -299,6 +300,11 @@ public sealed class AdminStaffAccountsEndpointTests : IClassFixture<TestWebAppFa
 
             modelBuilder.Entity<Role>().HasKey(r => r.Id);
             modelBuilder.Entity<Role>().Ignore(r => r.RolePermissions);
+            modelBuilder.Entity<Permission>().HasKey(p => p.Id);
+            modelBuilder.Entity<Permission>().Ignore(p => p.RolePermissions);
+            modelBuilder.Entity<RolePermission>().HasKey(rp => new { rp.RoleId, rp.PermissionId });
+            modelBuilder.Entity<RolePermission>().Ignore(rp => rp.Role);
+            modelBuilder.Entity<RolePermission>().Ignore(rp => rp.Permission);
 
             modelBuilder.Entity<UserRole>().HasKey(ur => new { ur.UserId, ur.RoleId });
             modelBuilder.Entity<UserRole>()

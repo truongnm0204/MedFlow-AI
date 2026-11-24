@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Reports;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,7 +9,7 @@ namespace MedFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/admin/reports/operational")]
-[Authorize(Roles = "HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+[Authorize(Roles = $"{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class AdminOperationalReportsController(
     IOperationalReportService reportService) : ControllerBase
 {

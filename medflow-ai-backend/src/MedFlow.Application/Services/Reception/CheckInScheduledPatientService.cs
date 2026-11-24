@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
@@ -9,6 +10,7 @@ using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Visits;
 using MedFlow.Application.Services.Visits.Queueing;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -34,9 +36,19 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
 
     private static readonly string[] HospitalAdminAllowedPermissions =
     [
-        PatientCheckInPermissionCode,
-        "VISIT_ASSIGN",
-        "QUEUE_MANAGE",
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.QueueManage,
+        PermissionCodes.HospitalConfig,
+    ];
+
+    private static readonly string[] SystemAdminAllowedPermissions =
+    [
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.QueueManage,
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.UserManage,
     ];
 
     private readonly IApplicationDbContext _db;
@@ -129,8 +141,8 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
             }
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
 
         var actor = await EnsureCheckInActorAccessAsync(actorUserId, nowUtc, ct);
@@ -181,7 +193,9 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
             throw new ForbiddenException("Bạn không có quyền thực hiện check-in cho lịch hẹn thuộc cơ sở y tế khác.");
         }
 
-        var effectiveHospitalId = appointmentHospitalId ?? actor.ActorHospitalId ?? 1L;
+        var effectiveHospitalId = appointmentHospitalId
+            ?? actor.ActorHospitalId
+            ?? throw new ValidationException("Không xác định được cơ sở y tế của lịch hẹn khám.");
 
         var patient = appointment.Patient ?? (appointment.PatientId.HasValue
             ? await _db.Patients.FirstOrDefaultAsync(p => p.Id == appointment.PatientId.Value, ct)
@@ -785,11 +799,11 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
             .ToListAsync(ct);
 
         var isSystemAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase));
         var isHospitalAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, "HOSPITAL_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase));
         var isReception = actorRoleCodes.Any(c =>
-            string.Equals(c, "RECEPTION", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.Reception, StringComparison.OrdinalIgnoreCase));
 
         if (!isSystemAdmin && !isHospitalAdmin && !isReception)
         {
@@ -797,43 +811,57 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
                 "Người dùng không có quyền thực hiện check-in lịch hẹn tại quầy tiếp đón.");
         }
 
-        if (!isSystemAdmin && actorRoleIds.Count > 0)
-        {
-            var rolePermissionIds = await _db.RolePermissions
+        var rolePermissionIds = actorRoleIds.Count > 0
+            ? await _db.RolePermissions
                 .AsNoTracking()
                 .Where(rp => actorRoleIds.Contains(rp.RoleId))
                 .Select(rp => rp.PermissionId)
-                .ToListAsync(ct);
+                .Distinct()
+                .ToListAsync(ct)
+            : [];
 
-            if (rolePermissionIds.Count > 0)
+        if (rolePermissionIds.Count == 0)
+        {
+            throw new ForbiddenException(
+                "Vai trò hiện tại chưa được cấp quyền tiếp nhận bệnh nhân (PATIENT_CHECKIN).");
+        }
+
+        var permissionCodes = await _db.Permissions
+            .AsNoTracking()
+            .Where(p => rolePermissionIds.Contains(p.Id))
+            .Select(p => p.Code)
+            .ToListAsync(ct);
+
+        if (isSystemAdmin)
+        {
+            var hasAllowedPermission = permissionCodes.Any(c =>
+                SystemAdminAllowedPermissions.Any(allowed =>
+                    string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)));
+            if (!hasAllowedPermission)
             {
-                var permissionCodes = await _db.Permissions
-                    .AsNoTracking()
-                    .Where(p => rolePermissionIds.Contains(p.Id))
-                    .Select(p => p.Code)
-                    .ToListAsync(ct);
-
-                if (isReception && !isHospitalAdmin)
-                {
-                    var hasCheckInPermission = permissionCodes.Any(c =>
-                        string.Equals(c, PatientCheckInPermissionCode, StringComparison.OrdinalIgnoreCase));
-                    if (!hasCheckInPermission)
-                    {
-                        throw new ForbiddenException(
-                            "Vai trò tiếp đón chưa được cấp quyền thực hiện check-in bệnh nhân (PATIENT_CHECKIN).");
-                    }
-                }
-                else if (isHospitalAdmin)
-                {
-                    var hasAllowedPermission = permissionCodes.Any(c =>
-                        HospitalAdminAllowedPermissions.Any(allowed =>
-                            string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)));
-                    if (!hasAllowedPermission)
-                    {
-                        throw new ForbiddenException(
-                            "Vai trò hiện tại chưa được cấp quyền tiếp nhận bệnh nhân (PATIENT_CHECKIN).");
-                    }
-                }
+                throw new ForbiddenException(
+                    "Vai trò hiện tại chưa được cấp quyền tiếp nhận bệnh nhân (PATIENT_CHECKIN).");
+            }
+        }
+        else if (isHospitalAdmin)
+        {
+            var hasAllowedPermission = permissionCodes.Any(c =>
+                HospitalAdminAllowedPermissions.Any(allowed =>
+                    string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)));
+            if (!hasAllowedPermission)
+            {
+                throw new ForbiddenException(
+                    "Vai trò hiện tại chưa được cấp quyền tiếp nhận bệnh nhân (PATIENT_CHECKIN).");
+            }
+        }
+        else
+        {
+            var hasCheckInPermission = permissionCodes.Any(c =>
+                string.Equals(c, PermissionCodes.PatientCheckin, StringComparison.OrdinalIgnoreCase));
+            if (!hasCheckInPermission)
+            {
+                throw new ForbiddenException(
+                    "Vai trò tiếp đón chưa được cấp quyền thực hiện check-in bệnh nhân (PATIENT_CHECKIN).");
             }
         }
 
@@ -1221,7 +1249,7 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
 
         var effectiveHospitalId = associatedHospitalIds.FirstOrDefault(hId => hId.HasValue)
             ?? actor.ActorHospitalId
-            ?? 1L;
+            ?? throw new ValidationException("Không xác định được cơ sở y tế của lượt khám.");
 
         if (appointment is not null)
         {

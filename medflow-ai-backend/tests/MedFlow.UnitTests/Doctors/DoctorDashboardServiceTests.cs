@@ -693,6 +693,63 @@ public sealed class DoctorDashboardServiceTests : IDisposable
         Assert.Equal(["MEDICAL_RECORD_WRITE"], result.DoctorProfile.Permissions);
         Assert.Equal(2, result.QuickActions.Count);
         Assert.Equal(["call-next", "open-consultation"], result.QuickActions.Select(a => a.Id).ToArray());
+        Assert.Equal(5, result.AssignedQueue.Count);
+        Assert.Empty(result.PendingDiagnostics);
+        Assert.Equal(0, result.Stats.PendingLabResults);
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_DiagnosticOrderOnlyPermission_FiltersOutQueueAndRetainsPendingDiagnostics()
+    {
+        var extraPerms = _dbContext.RolePermissions
+            .Where(rp => rp.RoleId == 2 && rp.PermissionId != 7) // Keep only DIAGNOSTIC_ORDER (id=7)
+            .ToList();
+        _dbContext.RolePermissions.RemoveRange(extraPerms);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _service.GetDashboardAsync(3, new GetDoctorDashboardRequest());
+
+        Assert.Equal(["DIAGNOSTIC_ORDER"], result.DoctorProfile.Permissions);
+        Assert.Empty(result.AssignedQueue);
+        Assert.Equal(0, result.Stats.AssignedWaiting);
+        Assert.Equal(0, result.Stats.InConsultation);
+        Assert.Equal(0, result.Stats.CompletedToday);
+        Assert.Equal(2, result.PendingDiagnostics.Count);
+        Assert.Equal(2, result.Stats.PendingLabResults);
+        Assert.Equal(["create-diagnostic"], result.QuickActions.Select(a => a.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_EmptyRolePermissionsOrPaymentViewOnly_ThrowsForbiddenException()
+    {
+        // 1. Only PAYMENT_VIEW (id=14) -> not sufficient for clinical dashboard
+        var nonPaymentPerms = _dbContext.RolePermissions
+            .Where(rp => rp.RoleId == 2 && rp.PermissionId != 14)
+            .ToList();
+        _dbContext.RolePermissions.RemoveRange(nonPaymentPerms);
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDashboardAsync(3, new GetDoctorDashboardRequest()));
+
+        // 2. Completely empty RolePermissions table -> fail-closed 403 (never FallbackDoctorPermissions)
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions.ToList());
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDashboardAsync(3, new GetDoctorDashboardRequest()));
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_NoOpenSlotsInAfternoon_ResolvesAfternoonShiftLabelViaHospitalClock()
+    {
+        _dbContext.ExaminationSlots.RemoveRange(_dbContext.ExaminationSlots.Where(s => s.DoctorId == 1));
+        await _dbContext.SaveChangesAsync();
+
+        // FixedNowUtc is 09:00 UTC == 16:00 Vietnam time (afternoon shift)
+        var result = await _service.GetDashboardAsync(3, new GetDoctorDashboardRequest());
+
+        Assert.Equal("Ca chiều 13:30–16:30", result.ShiftLabel);
     }
 
     [Fact]

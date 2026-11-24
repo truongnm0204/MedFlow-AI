@@ -1,4 +1,5 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Appointments;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Doctors;
@@ -11,8 +12,7 @@ namespace MedFlow.Application.Services.Appointments;
 
 internal static class AppointmentReadModel
 {
-    private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
-    public static readonly TimeSpan AfternoonShiftStart = new(12, 0, 0);
+    public static readonly TimeSpan AfternoonShiftStart = HospitalShiftRules.AfternoonCutoffSpan;
     public const string FeePolicyNoteText = "Giá niêm yết dịch vụ khám • Không áp dụng BHYT";
 
     internal sealed record ScopeMember(
@@ -202,8 +202,13 @@ internal static class AppointmentReadModel
             : item.QueueNumber;
 
     public static string FormatVietnamTimestamp(DateTime local)
-        => new DateTimeOffset(DateTime.SpecifyKind(local, DateTimeKind.Unspecified), VietnamOffset)
+    {
+        var unspecified = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+        return new DateTimeOffset(
+                unspecified,
+                HospitalClock.TimeZone.GetUtcOffset(unspecified))
             .ToString("yyyy-MM-ddTHH:mm:sszzz", CultureInfo.InvariantCulture);
+    }
 
     public static string FormatRelationshipLabel(string? relationship)
     {
@@ -285,7 +290,7 @@ internal static class AppointmentReadModel
                 ? $"Ngày mai, {ddMmYyyy}"
                 : ddMmYyyy;
 
-        var shiftLabel = start.TimeOfDay < AfternoonShiftStart ? "Ca Sáng" : "Ca Chiều";
+        var shiftLabel = start.TimeOfDay < HospitalShiftRules.AfternoonCutoffSpan ? "Ca Sáng" : "Ca Chiều";
         var scheduledDateFullLabel = $"{AppointmentSlotService.FormatFullWeekday(start.DayOfWeek)}, {ddMmYyyy} ({shiftLabel})";
         var scheduledTimeRange = $"{start.ToString("HH:mm", vi)} - {end.ToString("HH:mm", vi)}";
 

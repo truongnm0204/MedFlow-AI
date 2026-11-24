@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,7 +9,7 @@ namespace MedFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/doctor/assigned-queue")]
-[Authorize(Roles = "DOCTOR")]
+[Authorize(Roles = RoleNames.Doctor)]
 public sealed class DoctorQueueController : ControllerBase
 {
     private readonly IExaminationQueueService _examinationQueueService;

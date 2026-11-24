@@ -297,7 +297,7 @@ public sealed class ExaminationQueueEndpointTests : AuthTestBase
             return Task.FromResult(new ExaminationQueueResponseDto(
                 QueueDate: request?.QueueDate ?? "2026-10-22",
                 FacilityName: "Bệnh viện Đa khoa Trung tâm MedFlow",
-                ShiftLabel: "Ca sáng (07:00 - 11:30)",
+                ShiftLabel: "Ca sáng (07:30 - 11:30)",
                 GeneratedAtUtc: new DateTime(2026, 10, 22, 2, 0, 0, DateTimeKind.Utc),
                 Stats: new ExaminationQueueStatsDto(
                     TotalEntries: 2,

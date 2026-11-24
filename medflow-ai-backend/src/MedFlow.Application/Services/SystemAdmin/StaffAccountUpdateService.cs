@@ -1,8 +1,10 @@
 using EmailAddressAttribute = System.ComponentModel.DataAnnotations.EmailAddressAttribute;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.SystemAdmin;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -16,15 +18,15 @@ public sealed class StaffAccountUpdateService : IStaffAccountUpdateService
     private const string ActiveStatus = "ACTIVE";
     private const string DisabledStatus = "DISABLED";
     private const string LockedStatus = "LOCKED";
-    private const string PatientRoleCode = "PATIENT";
-    private const string SystemAdminRoleCode = "SYSTEM_ADMIN";
+    private const string PatientRoleCode = RoleNames.Patient;
+    private const string SystemAdminRoleCode = RoleNames.SystemAdmin;
     private const string UpdatedAction = "STAFF_ACCOUNT_UPDATED";
 
     private static readonly EmailAddressAttribute EmailValidator = new();
     private static readonly HashSet<string> BaselineInactiveRoleCodes =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            "SECURITY_AUDITOR",
+            RoleNames.SecurityAuditor,
         };
     private static readonly JsonSerializerOptions AuditJsonOptions = new()
     {
@@ -55,7 +57,7 @@ public sealed class StaffAccountUpdateService : IStaffAccountUpdateService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         await EnsureSystemAdminAccessAsync(actorUserId, nowUtc, ct);
         EnsureHasChanges(request);
 
@@ -275,15 +277,30 @@ public sealed class StaffAccountUpdateService : IStaffAccountUpdateService
             throw new ForbiddenException("Tài khoản quản trị hệ thống đang bị tạm khóa.");
         }
 
-        var hasSystemAdminRole = await (
-            from assignment in _db.UserRoles.AsNoTracking()
-            join role in _db.Roles.AsNoTracking() on assignment.RoleId equals role.Id
-            where assignment.UserId == actorUserId && role.Code.ToUpper() == SystemAdminRoleCode
-            select assignment.UserId).AnyAsync(ct);
+        var roleIds = await _db.UserRoles
+            .AsNoTracking()
+            .Where(ur => ur.UserId == actorUserId)
+            .Select(ur => ur.RoleId)
+            .ToListAsync(ct);
+
+        var hasSystemAdminRole = roleIds.Count > 0 && await _db.Roles
+            .AsNoTracking()
+            .AnyAsync(r => roleIds.Contains(r.Id) && r.Code.ToUpper() == SystemAdminRoleCode, ct);
 
         if (!hasSystemAdminRole)
         {
             throw new ForbiddenException("Người dùng không có quyền cập nhật tài khoản nhân sự.");
+        }
+
+        var hasUserManagePerm = await (
+            from rp in _db.RolePermissions.AsNoTracking()
+            join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
+            where roleIds.Contains(rp.RoleId) && p.Code.ToUpper() == PermissionCodes.UserManage
+            select rp.PermissionId).AnyAsync(ct);
+
+        if (!hasUserManagePerm)
+        {
+            throw new ForbiddenException("Tài khoản quản trị chưa được cấp quyền quản lý người dùng (USER_MANAGE).");
         }
 
         var actorStaff = await _db.Staff
@@ -724,8 +741,8 @@ public sealed class StaffAccountUpdateService : IStaffAccountUpdateService
 
     private static string MapRoleCode(string roleCode) => roleCode switch
     {
-        "TECHNICIAN" => "DIAGNOSTIC_STAFF",
-        "RECEPTIONIST" => "RECEPTION",
+        "TECHNICIAN" => RoleNames.DiagnosticStaff,
+        "RECEPTIONIST" => RoleNames.Reception,
         _ => roleCode,
     };
 

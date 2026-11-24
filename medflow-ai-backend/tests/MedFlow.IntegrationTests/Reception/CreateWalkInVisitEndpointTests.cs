@@ -67,6 +67,7 @@ public sealed class CreateWalkInVisitEndpointTests : AuthTestBase
                 PatientId: "1",
                 DepartmentId: "2",
                 ServiceId: "1",
+                IsIdentityVerified: true,
                 ReasonForVisit: "Đau thượng vị sau ăn.")));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -91,6 +92,7 @@ public sealed class CreateWalkInVisitEndpointTests : AuthTestBase
                 PatientId: "1",
                 DepartmentId: "2",
                 ServiceId: "1",
+                IsIdentityVerified: true,
                 ReasonForVisit: "Đau thượng vị sau ăn."),
             userId,
             email,
@@ -113,6 +115,7 @@ public sealed class CreateWalkInVisitEndpointTests : AuthTestBase
                 PatientId: "1",
                 DepartmentId: "2",
                 ServiceId: "1",
+                IsIdentityVerified: true,
                 ReasonForVisit: "Khám tiêu hóa vãng lai."),
             userId: 1,
             email: "patient01@medflow.test",
@@ -141,6 +144,7 @@ public sealed class CreateWalkInVisitEndpointTests : AuthTestBase
                    new CreateWalkInVisitRequest(
                        DepartmentId: "2",
                        ServiceId: "1",
+                       IsIdentityVerified: true,
                        ReasonForVisit: "Đau thượng vị sau ăn.")))
         {
             var res = await Client.SendAsync(req);
@@ -157,6 +161,7 @@ public sealed class CreateWalkInVisitEndpointTests : AuthTestBase
                        PatientId: "1",
                        DepartmentId: "2",
                        ServiceId: "1",
+                       IsIdentityVerified: true,
                        ReasonForVisit: "AB")))
         {
             var res = await Client.SendAsync(req);
@@ -171,13 +176,14 @@ public sealed class CreateWalkInVisitEndpointTests : AuthTestBase
                        DepartmentId: "2",
                        ServiceId: "1",
                        ClinicalPriority: "EMERGENCY",
+                       IsIdentityVerified: true,
                        ReasonForVisit: "Đau thượng vị cấp tính.")))
         {
             var res = await Client.SendAsync(req);
             Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
         }
 
-        // Identity not verified
+        // Identity not verified (explicit false)
         using (var req = AuthedPost(
                    "/api/v1/reception/visits/walk-in",
                    new CreateWalkInVisitRequest(
@@ -188,6 +194,32 @@ public sealed class CreateWalkInVisitEndpointTests : AuthTestBase
                        ReasonForVisit: "Đau thượng vị sau ăn.")))
         {
             var res = await Client.SendAsync(req);
+            Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        }
+
+        // Omitted isIdentityVerified defaults to false -> 400 BadRequest
+        using (var req = AuthedPost(
+                   "/api/v1/reception/visits/walk-in",
+                   new CreateWalkInVisitRequest(
+                       PatientId: "1",
+                       DepartmentId: "2",
+                       ServiceId: "1",
+                       ReasonForVisit: "Đau thượng vị sau ăn.")))
+        {
+            var res = await Client.SendAsync(req);
+            Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        }
+
+        // Empty payload {} -> 400 BadRequest
+        using (var emptyReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/reception/visits/walk-in")
+        {
+            Content = JsonContent.Create(new { }),
+        })
+        {
+            emptyReq.Headers.Authorization = new AuthenticationHeaderValue(
+                "Bearer",
+                GenerateToken(5, "reception01@medflow.test", "RECEPTION"));
+            var res = await Client.SendAsync(emptyReq);
             Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
         }
     }
@@ -249,7 +281,8 @@ public sealed class CreateWalkInVisitEndpointTests : AuthTestBase
                 PaymentMethod: "VIETQR",
                 BloodPressure: "120/80",
                 HeartRate: 76,
-                Temperature: 36.7);
+                Temperature: 36.7,
+                IsIdentityVerified: true);
 
             using var createReq = AuthedPost("/api/v1/reception/visits/walk-in", payload);
             var createRes = await Client.SendAsync(createReq);

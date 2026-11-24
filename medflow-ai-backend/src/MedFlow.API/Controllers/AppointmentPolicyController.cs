@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Policies;
 using MedFlow.Application.Services.Policies;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,7 +9,7 @@ namespace MedFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/admin/appointment-policy")]
-[Authorize(Roles = "HOSPITAL_ADMIN")]
+[Authorize(Roles = RoleNames.HospitalAdmin)]
 public sealed class AppointmentPolicyController : ControllerBase
 {
     private readonly IAppointmentPolicyService _service;

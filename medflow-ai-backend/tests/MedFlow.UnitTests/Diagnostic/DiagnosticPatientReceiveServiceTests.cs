@@ -1320,5 +1320,12 @@ public sealed class DiagnosticPatientReceiveServiceTests : IDisposable
         var exMissingQueueManage = await Assert.ThrowsAsync<ForbiddenException>(() =>
             _service.ReceiveDiagnosticPatientAsync(7, "DIA-202610-0013"));
         Assert.Contains("QUEUE_MANAGE", exMissingQueueManage.Message);
+
+        // Completely empty RolePermissions table -> fail-closed 403 (never FallbackDiagnosticPermissions)
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions.ToList());
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetOrdersForReceiveAsync(7));
     }
 }

@@ -1195,6 +1195,15 @@ public sealed class DiagnosticQueueServiceTests : IDisposable
         // Non-diagnostic queue entry (Entry 30 is APPOINTMENT) -> 409 Conflict
         await Assert.ThrowsAsync<ConflictException>(() =>
             _service.GetDiagnosticQueueEntryByIdOrCodeAsync(7, "30"));
+
+        // Genuine DIAGNOSTIC_STAFF user (7) with 0 RolePermissions across table -> fail-closed 403
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions.ToList());
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDiagnosticQueueAsync(7));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CallNextDiagnosticPatientAsync(7, "sp-501"));
     }
 
     [Theory]

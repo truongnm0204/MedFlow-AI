@@ -1,3 +1,5 @@
+using MedFlow.Application.Services.Policies;
+
 namespace MedFlow.Application.Services.Visits.Queueing;
 
 public static class QueueFairnessRotation

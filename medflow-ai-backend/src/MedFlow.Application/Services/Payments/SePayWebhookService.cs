@@ -1,10 +1,10 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Payments;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
-using MedFlow.Application.Services.Appointments;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
@@ -74,7 +74,7 @@ public sealed class SePayWebhookService : ISePayWebhookService
             TransferAmount = amount,
             ReferenceCode = referenceCode,
             Outcome = PaymentGatewayOutcomes.Unmatched,
-            ReceivedAt = _timeProvider.GetUtcNow().UtcDateTime,
+            ReceivedAt = HospitalClock.GetUtcNow(_timeProvider),
         };
 
         if (payment is not null)
@@ -192,7 +192,7 @@ public sealed class SePayWebhookService : ISePayWebhookService
                 currency = VisitChargesService.CurrencyVnd,
                 outcome,
             }),
-            OccurredAt = _timeProvider.GetUtcNow().UtcDateTime,
+            OccurredAt = HospitalClock.GetUtcNow(_timeProvider),
         });
     }
 
@@ -209,7 +209,7 @@ public sealed class SePayWebhookService : ISePayWebhookService
             return DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified);
         }
 
-        return AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        return HospitalClock.GetNow(_timeProvider);
     }
 
     private static string? Normalize(string? status) =>

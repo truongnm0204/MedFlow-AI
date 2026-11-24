@@ -1,4 +1,5 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Appointments;
 using MedFlow.Application.DTOs.Doctors;
 using MedFlow.Application.DTOs.Services;
@@ -793,7 +794,7 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
         }
         else
         {
-            timeRange = isMorning ? "07:30 - 11:30" : "13:30 - 16:30";
+            timeRange = isMorning ? HospitalShiftRules.MorningTimeRange : HospitalShiftRules.AfternoonTimeRange;
             checkInWindow = "Không mở tiếp đón";
         }
 

@@ -680,4 +680,42 @@ public sealed class ConfirmMedicineDispensingServiceTests : IDisposable
         Assert.Equal("RX-2026-0003", result.RxCode);
         Assert.Equal(55, result.DispenseId);
     }
+
+    [Fact]
+    public async Task ConfirmDispenseAsync_DefaultRequestOmittingVerificationFlags_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.ConfirmDispenseAsync(10, "RX-2026-0001", new ConfirmDispenseRequest()));
+    }
+
+    [Fact]
+    public async Task GetDispenseContextAsync_ReceiverIdentityVerifiedAndCheck1_AreFalseUntilDispensed()
+    {
+        var undispensed = await _service.GetDispenseContextAsync(10, "RX-2026-0001");
+        Assert.False(undispensed.Receiver.IsIdentityVerified);
+        Assert.False(undispensed.Checks.Single(c => c.Id == "chk-1").Checked);
+
+        var dispensed = await _service.GetDispenseContextAsync(10, "RX-2026-0003");
+        Assert.True(dispensed.Receiver.IsIdentityVerified);
+        Assert.True(dispensed.Checks.Single(c => c.Id == "chk-1").Checked);
+    }
+
+    [Fact]
+    public async Task ValidateAccess_WhenRolePermissionsTableEmpty_ThrowsForbiddenException()
+    {
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDispenseContextAsync(10, "RX-2026-0001"));
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.ConfirmDispenseAsync(
+                10,
+                "RX-2026-0001",
+                new ConfirmDispenseRequest(IsIdentityVerified: true, ChecksConfirmed: true)));
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDispensingResultAsync(10, "55"));
+    }
 }

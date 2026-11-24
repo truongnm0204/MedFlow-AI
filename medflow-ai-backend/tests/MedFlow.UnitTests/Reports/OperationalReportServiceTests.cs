@@ -120,10 +120,12 @@ public sealed class OperationalReportServiceTests : IDisposable
             new Role { Id = 3, Code = "RECEPTION", Name = "Reception" });
 
         db.Permissions.AddRange(
-            new Permission { Id = 1, Code = "REPORT_VIEW" },
-            new Permission { Id = 2, Code = "HOSPITAL_CONFIG" });
+            new Permission { Id = 1, Code = "HOSPITAL_CONFIG" },
+            new Permission { Id = 2, Code = "AUDIT_READ" });
 
-        db.RolePermissions.Add(new RolePermission { RoleId = 1, PermissionId = 1 });
+        db.RolePermissions.AddRange(
+            new RolePermission { RoleId = 1, PermissionId = 1 },
+            new RolePermission { RoleId = 2, PermissionId = 2 });
 
         db.Users.AddRange(
             new User { Id = 11, Email = "hadmin1@medflow.test", AccountStatus = AccountStatus.ACTIVE },
@@ -354,6 +356,69 @@ public sealed class OperationalReportServiceTests : IDisposable
                 new GetOperationalReportRequest(
                     FromDate: new DateOnly(2026, 11, 25),
                     ToDate: new DateOnly(2026, 11, 24))));
+    }
+
+    [Fact]
+    public async Task GetOperationalReport_EmptyRolePermissions_FailsClosedForHospitalAndSystemAdmin()
+    {
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetOperationalReportAsync(11, new GetOperationalReportRequest()));
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetOperationalReportAsync(12, new GetOperationalReportRequest()));
+    }
+
+    [Fact]
+    public async Task GetOperationalReport_UnspecifiedLocalTimestamps_StaysOnSameHospitalDateWithoutDoubleOffset()
+    {
+        var eveningDay = new DateOnly(2026, 11, 18);
+        _db.ExaminationSlots.Add(new ExaminationSlot
+        {
+            Id = 5090,
+            ServiceId = 1001,
+            RoomId = 101,
+            StartsAt = new DateTime(2026, 11, 18, 18, 0, 0, DateTimeKind.Unspecified),
+            EndsAt = new DateTime(2026, 11, 18, 18, 30, 0, DateTimeKind.Unspecified),
+            Capacity = 5,
+            Status = "OPEN",
+        });
+        _db.Appointments.Add(new Appointment
+        {
+            Id = 7090,
+            SlotId = 5090,
+            Status = "CHECKED_IN",
+            BookedAt = new DateTime(2026, 11, 18, 17, 0, 0, DateTimeKind.Unspecified),
+        });
+        _db.Visits.Add(new Visit
+        {
+            Id = 9090,
+            VisitCode = "VIS-9090",
+            AppointmentId = 7090,
+            ExaminationRoomId = 101,
+            Status = "COMPLETED",
+            CheckedInAt = new DateTime(2026, 11, 18, 18, 30, 0, DateTimeKind.Unspecified),
+            CompletedAt = new DateTime(2026, 11, 18, 18, 50, 0, DateTimeKind.Unspecified),
+        });
+        await _db.SaveChangesAsync();
+
+        var sameDayReport = await _service.GetOperationalReportAsync(
+            11,
+            new GetOperationalReportRequest(FromDate: eveningDay, ToDate: eveningDay));
+
+        Assert.Equal(1, sameDayReport.Summary.TotalVisits);
+        Assert.Equal(1, sameDayReport.Summary.TotalAppointments);
+        var hour18 = Assert.Single(sameDayReport.HourlyIntake, h => h.Hour == "18:00");
+        Assert.Equal(1, hour18.Count);
+
+        var nextDay = eveningDay.AddDays(1);
+        var nextDayReport = await _service.GetOperationalReportAsync(
+            11,
+            new GetOperationalReportRequest(FromDate: nextDay, ToDate: nextDay));
+        Assert.Equal(0, nextDayReport.Summary.TotalVisits);
+        Assert.Equal(0, nextDayReport.Summary.TotalAppointments);
     }
 
     public void Dispose()

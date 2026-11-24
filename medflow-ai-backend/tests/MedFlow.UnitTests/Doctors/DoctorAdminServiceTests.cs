@@ -22,9 +22,9 @@ public sealed class DoctorAdminServiceTests : IDisposable
 
         public DbSet<User> Users => Set<User>();
         public DbSet<Role> Roles => Set<Role>();
-        public DbSet<Permission> Permissions => throw NotUsed();
+        public DbSet<Permission> Permissions => Set<Permission>();
         public DbSet<UserRole> UserRoles => Set<UserRole>();
-        public DbSet<RolePermission> RolePermissions => throw NotUsed();
+        public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
         public DbSet<Patient> Patients => throw NotUsed();
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => Set<Doctor>();
@@ -51,8 +51,6 @@ public sealed class DoctorAdminServiceTests : IDisposable
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Ignore<Permission>();
-            modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Patient>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
@@ -67,7 +65,9 @@ public sealed class DoctorAdminServiceTests : IDisposable
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Role>().HasKey(r => r.Id);
+            modelBuilder.Entity<Permission>().HasKey(p => p.Id);
             modelBuilder.Entity<UserRole>().HasKey(ur => new { ur.UserId, ur.RoleId });
+            modelBuilder.Entity<RolePermission>().HasKey(rp => new { rp.RoleId, rp.PermissionId });
             modelBuilder.Entity<Hospital>().HasKey(h => h.Id);
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
             modelBuilder.Entity<Specialty>().HasKey(s => s.Id);
@@ -186,6 +186,10 @@ public sealed class DoctorAdminServiceTests : IDisposable
 
         _db.Hospitals.AddRange(hosp1, hosp2);
         _db.Roles.AddRange(roleSysAdmin, roleHospAdmin, roleDoctor);
+        _db.Permissions.Add(new Permission { Id = 11, Code = "HOSPITAL_CONFIG" });
+        _db.RolePermissions.AddRange(
+            new RolePermission { RoleId = 1, PermissionId = 11 },
+            new RolePermission { RoleId = 2, PermissionId = 11 });
         _db.Departments.AddRange(dept1, dept2, dept3Inactive, dept4Hosp2);
         _db.Specialties.AddRange(spec1, spec2, spec3Inactive);
         _db.Users.AddRange(user1, user2, user3, user4, userHospAdmin1, userHospAdmin2, userSysAdmin);
@@ -205,7 +209,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     public async Task GetDoctorList_AllDoctors_ReturnsFullPaginatedList()
     {
         // Act
-        var result = await _service.GetDoctorListAsync(new GetDoctorListAdminRequest());
+        var result = await _service.GetDoctorListAsync(13, new GetDoctorListAdminRequest());
 
         // Assert
         Assert.NotNull(result);
@@ -232,7 +236,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     public async Task GetDoctorList_FilterByKeyword_ReturnsMatchingDoctors(string keyword, string expectedDoctorCode)
     {
         // Act
-        var result = await _service.GetDoctorListAsync(new GetDoctorListAdminRequest(Keyword: keyword));
+        var result = await _service.GetDoctorListAsync(13, new GetDoctorListAdminRequest(Keyword: keyword));
 
         // Assert
         Assert.Single(result.Data);
@@ -243,7 +247,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     public async Task GetDoctorList_FilterByDepartmentId_ReturnsOnlyDepartmentDoctors()
     {
         // Act: Filter by Khoa Tim Mạch (Id = 2)
-        var result = await _service.GetDoctorListAsync(new GetDoctorListAdminRequest(DepartmentId: 2));
+        var result = await _service.GetDoctorListAsync(13, new GetDoctorListAdminRequest(DepartmentId: 2));
 
         // Assert
         Assert.Single(result.Data);
@@ -255,7 +259,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     public async Task GetDoctorList_FilterBySpecialtyId_ReturnsOnlySpecialtyDoctors()
     {
         // Act: Filter by Tiêu hóa - Gan Mật (Id = 1)
-        var result = await _service.GetDoctorListAsync(new GetDoctorListAdminRequest(SpecialtyId: 1));
+        var result = await _service.GetDoctorListAsync(13, new GetDoctorListAdminRequest(SpecialtyId: 1));
 
         // Assert
         Assert.Equal(2, result.Total);
@@ -266,7 +270,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     public async Task GetDoctorList_FilterByIsActive_ReturnsMatchingActiveStatus()
     {
         // Act: Lọc bác sĩ tạm ngừng nhận lịch (IsActive = false)
-        var result = await _service.GetDoctorListAsync(new GetDoctorListAdminRequest(IsActive: false));
+        var result = await _service.GetDoctorListAsync(13, new GetDoctorListAdminRequest(IsActive: false));
 
         // Assert
         Assert.Single(result.Data);
@@ -278,8 +282,8 @@ public sealed class DoctorAdminServiceTests : IDisposable
     public async Task GetDoctorList_Pagination_ReturnsCorrectPageAndCount()
     {
         // Act: Page 1, PageSize 2
-        var page1 = await _service.GetDoctorListAsync(new GetDoctorListAdminRequest(Page: 1, PageSize: 2));
-        var page2 = await _service.GetDoctorListAsync(new GetDoctorListAdminRequest(Page: 2, PageSize: 2));
+        var page1 = await _service.GetDoctorListAsync(13, new GetDoctorListAdminRequest(Page: 1, PageSize: 2));
+        var page2 = await _service.GetDoctorListAsync(13, new GetDoctorListAdminRequest(Page: 2, PageSize: 2));
 
         // Assert
         Assert.Equal(3, page1.Total);
@@ -295,7 +299,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     public async Task GetDoctorList_NullRequest_ThrowsArgumentNullException()
     {
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.GetDoctorListAsync(null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.GetDoctorListAsync(13, null!));
     }
 
     [Theory]
@@ -309,6 +313,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
         int expectedPageSize)
     {
         var result = await _service.GetDoctorListAsync(
+            13,
             new GetDoctorListAdminRequest(Page: page, PageSize: pageSize));
 
         Assert.Equal(expectedPage, result.Page);
@@ -320,6 +325,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     public async Task GetDoctorList_NoMatch_ReturnsZeroTotalPages()
     {
         var result = await _service.GetDoctorListAsync(
+            13,
             new GetDoctorListAdminRequest(Keyword: "khong-ton-tai"));
 
         Assert.Equal(0, result.Total);
@@ -332,6 +338,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     public async Task GetDoctorList_PageBeyondLast_ReturnsEmptyDataWithTotals()
     {
         var result = await _service.GetDoctorListAsync(
+            13,
             new GetDoctorListAdminRequest(Page: 5, PageSize: 2));
 
         Assert.Empty(result.Data);
@@ -344,12 +351,14 @@ public sealed class DoctorAdminServiceTests : IDisposable
     public async Task GetDoctorList_CombinedFilters_AppliesAllConditions()
     {
         var activeInSpec1 = await _service.GetDoctorListAsync(
+            13,
             new GetDoctorListAdminRequest(SpecialtyId: 1, IsActive: true));
 
         Assert.Single(activeInSpec1.Data);
         Assert.Equal("DOC-0001", activeInSpec1.Data[0].DoctorCode);
 
         var bytInDept2 = await _service.GetDoctorListAsync(
+            13,
             new GetDoctorListAdminRequest(Keyword: "BYT", DepartmentId: 2));
 
         Assert.Single(bytInDept2.Data);
@@ -359,7 +368,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     [Fact]
     public async Task CreateDoctor_NullRequest_ThrowsArgumentNullException()
     {
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.CreateDoctorAsync(null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.CreateDoctorAsync(13, null!));
     }
 
     [Theory]
@@ -370,7 +379,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     {
         var request = new CreateDoctorRequest(DoctorCode: doctorCode, StaffId: 4);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, request));
         Assert.Equal("DoctorCode", ex.ParamName);
     }
 
@@ -378,11 +387,11 @@ public sealed class DoctorAdminServiceTests : IDisposable
     public async Task CreateDoctor_DoctorCodeTooShortOrTooLong_ThrowsArgumentException()
     {
         var tooShort = new CreateDoctorRequest(DoctorCode: "A", StaffId: 4);
-        var exShort = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(tooShort));
+        var exShort = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, tooShort));
         Assert.Equal("DoctorCode", exShort.ParamName);
 
         var tooLong = new CreateDoctorRequest(DoctorCode: new string('X', 41), StaffId: 4);
-        var exLong = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(tooLong));
+        var exLong = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, tooLong));
         Assert.Equal("DoctorCode", exLong.ParamName);
     }
 
@@ -391,7 +400,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     {
         var request = new CreateDoctorRequest(DoctorCode: "DOC-0099");
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, request));
         Assert.Equal("StaffId", ex.ParamName);
     }
 
@@ -402,7 +411,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     {
         var request = new CreateDoctorRequest(DoctorCode: "DOC-0099", StaffId: staffId);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, request));
         Assert.Equal("StaffId", ex.ParamName);
     }
 
@@ -410,10 +419,10 @@ public sealed class DoctorAdminServiceTests : IDisposable
     public async Task CreateDoctor_NonExistentStaff_ThrowsKeyNotFoundException()
     {
         var byId = new CreateDoctorRequest(DoctorCode: "DOC-0099", StaffId: 9999);
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateDoctorAsync(byId));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateDoctorAsync(13, byId));
 
         var byCode = new CreateDoctorRequest(DoctorCode: "DOC-0099", StaffCode: "NV-9999");
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateDoctorAsync(byCode));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateDoctorAsync(13, byCode));
     }
 
     [Fact]
@@ -421,7 +430,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     {
         var request = new CreateDoctorRequest(DoctorCode: "DOC-0099", StaffId: 5);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, request));
         Assert.Equal("StaffId", ex.ParamName);
     }
 
@@ -430,7 +439,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     {
         var request = new CreateDoctorRequest(DoctorCode: "doc-0001", StaffId: 4);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateDoctorAsync(request));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateDoctorAsync(13, request));
     }
 
     [Fact]
@@ -438,7 +447,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
     {
         var request = new CreateDoctorRequest(DoctorCode: "DOC-0099", StaffId: 1);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateDoctorAsync(request));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateDoctorAsync(13, request));
     }
 
     [Theory]
@@ -451,7 +460,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
             StaffId: 4,
             YearsOfExperience: experience);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, request));
         Assert.Equal("YearsOfExperience", ex.ParamName);
     }
 
@@ -462,28 +471,28 @@ public sealed class DoctorAdminServiceTests : IDisposable
             DoctorCode: "DOC-0099",
             StaffId: 4,
             ProfessionalTitle: new string('T', 121));
-        var exTitle = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(longTitle));
+        var exTitle = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, longTitle));
         Assert.Equal("ProfessionalTitle", exTitle.ParamName);
 
         var longLicense = new CreateDoctorRequest(
             DoctorCode: "DOC-0099",
             StaffId: 4,
             LicenseNumber: new string('L', 101));
-        var exLicense = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(longLicense));
+        var exLicense = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, longLicense));
         Assert.Equal("LicenseNumber", exLicense.ParamName);
 
         var longBio = new CreateDoctorRequest(
             DoctorCode: "DOC-0099",
             StaffId: 4,
             ProfessionalBio: new string('B', 1001));
-        var exBio = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(longBio));
+        var exBio = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, longBio));
         Assert.Equal("ProfessionalBio", exBio.ParamName);
 
         var longQualifications = new CreateDoctorRequest(
             DoctorCode: "DOC-0099",
             StaffId: 4,
             QualificationsSummary: new string('Q', 2001));
-        var exQual = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(longQualifications));
+        var exQual = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, longQualifications));
         Assert.Equal("QualificationsSummary", exQual.ParamName);
     }
 
@@ -495,7 +504,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
             StaffId: 4,
             Status: "UNKNOWN");
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, request));
         Assert.Equal("Status", ex.ParamName);
     }
 
@@ -506,13 +515,13 @@ public sealed class DoctorAdminServiceTests : IDisposable
             DoctorCode: "DOC-0099",
             StaffId: 4,
             DepartmentId: 999);
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateDoctorAsync(missingDept));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateDoctorAsync(13, missingDept));
 
         var missingSpec = new CreateDoctorRequest(
             DoctorCode: "DOC-0099",
             StaffId: 4,
             SpecialtyId: 999);
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateDoctorAsync(missingSpec));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateDoctorAsync(13, missingSpec));
     }
 
     [Fact]
@@ -522,14 +531,14 @@ public sealed class DoctorAdminServiceTests : IDisposable
             DoctorCode: "DOC-0099",
             StaffId: 4,
             DepartmentId: 3);
-        var exDept = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(inactiveDept));
+        var exDept = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, inactiveDept));
         Assert.Equal("DepartmentId", exDept.ParamName);
 
         var inactiveSpec = new CreateDoctorRequest(
             DoctorCode: "DOC-0099",
             StaffId: 4,
             SpecialtyId: 3);
-        var exSpec = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(inactiveSpec));
+        var exSpec = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateDoctorAsync(13, inactiveSpec));
         Assert.Equal("SpecialtyId", exSpec.ParamName);
     }
 
@@ -549,7 +558,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
             Phone: "0901234567",
             IsActive: true);
 
-        var result = await _service.CreateDoctorAsync(request);
+        var result = await _service.CreateDoctorAsync(13, request);
 
         Assert.NotNull(result);
         Assert.True(result.Id > 0);
@@ -594,7 +603,7 @@ public sealed class DoctorAdminServiceTests : IDisposable
             Portrait: "avatar-0246.png",
             Status: "SUSPENDED");
 
-        var result = await _service.CreateDoctorAsync(request);
+        var result = await _service.CreateDoctorAsync(13, request);
 
         Assert.NotNull(result);
         Assert.Equal("DOC-0246", result.DoctorCode);
@@ -894,12 +903,13 @@ public sealed class DoctorAdminServiceTests : IDisposable
 
         // Complete visit -> now test upcoming appointment blocking deactivation
         visit.Status = "COMPLETED";
+        var nowLocal = MedFlow.Application.Common.Time.HospitalClock.GetNow(TimeProvider.System);
         var futureSlot = new ExaminationSlot
         {
             Id = 200,
             DoctorId = 1,
-            StartsAt = DateTime.UtcNow.AddDays(2),
-            EndsAt = DateTime.UtcNow.AddDays(2).AddHours(1),
+            StartsAt = nowLocal.AddDays(2),
+            EndsAt = nowLocal.AddDays(2).AddHours(1),
             Status = "OPEN"
         };
         var appointment = new Appointment
@@ -991,12 +1001,13 @@ public sealed class DoctorAdminServiceTests : IDisposable
     [Fact]
     public async Task DeactivateDoctorAsync_DependentBookingsWithoutConfirmation_ThrowsConflictException()
     {
+        var nowLocal = MedFlow.Application.Common.Time.HospitalClock.GetNow(TimeProvider.System);
         var futureSlot = new ExaminationSlot
         {
             Id = 601,
             DoctorId = 1,
-            StartsAt = DateTime.UtcNow.AddDays(1),
-            EndsAt = DateTime.UtcNow.AddDays(1).AddMinutes(30),
+            StartsAt = nowLocal.AddDays(1),
+            EndsAt = nowLocal.AddDays(1).AddMinutes(30),
             Status = "OPEN"
         };
         var activeAppointment = new Appointment
@@ -1019,12 +1030,13 @@ public sealed class DoctorAdminServiceTests : IDisposable
     [Fact]
     public async Task DeactivateDoctorAsync_DependentBookingsWithConfirmation_ClosesSlotsAndSucceeds()
     {
+        var nowLocal = MedFlow.Application.Common.Time.HospitalClock.GetNow(TimeProvider.System);
         var futureSlot = new ExaminationSlot
         {
             Id = 602,
             DoctorId = 1,
-            StartsAt = DateTime.UtcNow.AddDays(2),
-            EndsAt = DateTime.UtcNow.AddDays(2).AddMinutes(30),
+            StartsAt = nowLocal.AddDays(2),
+            EndsAt = nowLocal.AddDays(2).AddMinutes(30),
             Status = "OPEN"
         };
         var activeAppointment = new Appointment
@@ -1121,5 +1133,122 @@ public sealed class DoctorAdminServiceTests : IDisposable
 
         var audit = await _db.AuditLogs.FirstOrDefaultAsync(a => a.Action == "DOCTOR_REACTIVATED" && a.EntityId == "1");
         Assert.NotNull(audit);
+    }
+
+    [Fact]
+    public async Task HospitalScoping_EnforcesStrictHospitalIdWithoutDefaultFallbackToHospitalOne()
+    {
+        // 1. Unassigned staff without HospitalId -> SYSTEM_ADMIN missing HospitalId throws ValidationException (never ?? 1L)
+        _db.Staff.Add(new Staff
+        {
+            Id = 50,
+            HospitalId = null,
+            StaffCode = "NV-UNASSIGNED-50",
+            FullName = "BS Chưa Gán Viện",
+            Status = "ACTIVE"
+        });
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateDoctorAsync(
+                actorUserId: 13,
+                request: new CreateDoctorRequest(DoctorCode: "DOC-0050", StaffId: 50)));
+
+        // 2. Non-existent HospitalId -> NotFoundException (404)
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.CreateDoctorAsync(
+                actorUserId: 13,
+                request: new CreateDoctorRequest(DoctorCode: "DOC-0050", StaffId: 50, HospitalId: 999)));
+
+        // 3. HOSPITAL_ADMIN (user 11, Hospital 1) passing another hospital's HospitalId (2) -> ForbiddenException (403)
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CreateDoctorAsync(
+                actorUserId: 11,
+                request: new CreateDoctorRequest(DoctorCode: "DOC-0050", StaffId: 50, HospitalId: 2)));
+
+        // 4. HOSPITAL_ADMIN without Staff.HospitalId -> ForbiddenException (403)
+        _db.Users.Add(new User { Id = 51, Email = "admin_no_hosp@medflow.vn", AccountStatus = AccountStatus.ACTIVE });
+        _db.UserRoles.Add(new UserRole { UserId = 51, RoleId = 2 });
+        _db.Staff.Add(new Staff
+        {
+            Id = 51,
+            UserId = 51,
+            HospitalId = null,
+            StaffCode = "NV-ADM-51",
+            FullName = "Admin Chưa Gán Viện",
+            Status = "ACTIVE"
+        });
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CreateDoctorAsync(
+                actorUserId: 51,
+                request: new CreateDoctorRequest(DoctorCode: "DOC-0050", StaffId: 4)));
+    }
+
+    [Fact]
+    public async Task GetDoctorListAsync_HospitalAdmin_IsolatesToAssignedHospitalOnly()
+    {
+        var staffHosp2 = new Staff
+        {
+            Id = 60,
+            HospitalId = 2,
+            DepartmentId = 4,
+            StaffCode = "NV-CS2-60",
+            FullName = "BS. Cơ sở 2",
+            Status = "ACTIVE"
+        };
+        var doctorHosp2 = new Doctor
+        {
+            Id = 60,
+            StaffId = 60,
+            HospitalId = 2,
+            DoctorCode = "DOC-CS2-60",
+            SpecialtyId = 1,
+            IsActive = true
+        };
+        _db.Staff.Add(staffHosp2);
+        _db.Doctors.Add(doctorHosp2);
+        await _db.SaveChangesAsync();
+
+        var hosp1List = await _service.GetDoctorListAsync(11, new GetDoctorListAdminRequest());
+        Assert.Equal(3, hosp1List.Total);
+        Assert.DoesNotContain(hosp1List.Data, d => d.DoctorCode == "DOC-CS2-60");
+
+        var hosp2List = await _service.GetDoctorListAsync(12, new GetDoctorListAdminRequest());
+        var singleHosp2 = Assert.Single(hosp2List.Data);
+        Assert.Equal("DOC-CS2-60", singleHosp2.DoctorCode);
+
+        var sysAdminList = await _service.GetDoctorListAsync(13, new GetDoctorListAdminRequest());
+        Assert.Equal(4, sysAdminList.Total);
+    }
+
+    [Fact]
+    public async Task DoctorAdminService_WhenRolePermissionsEmpty_FailsClosedWithForbidden()
+    {
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDoctorListAsync(11, new GetDoctorListAdminRequest()));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDoctorListAsync(13, new GetDoctorListAdminRequest()));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CreateDoctorAsync(13, new CreateDoctorRequest(DoctorCode: "DOC-EMPTY", StaffId: 4)));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.UpdateDoctorAsync(11, 1L, new UpdateDoctorAdminRequest(ProfessionalTitle: "TS.BS")));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.DeactivateDoctorAsync(11, "1", new DeactivateDoctorRequest()));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task DoctorAdminService_InvalidActorUserId_ThrowsUnauthorizedAccessException(long invalidActorId)
+    {
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.GetDoctorListAsync(invalidActorId, new GetDoctorListAdminRequest()));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.CreateDoctorAsync(invalidActorId, new CreateDoctorRequest(DoctorCode: "DOC-UNAUTH", StaffId: 4)));
     }
 }

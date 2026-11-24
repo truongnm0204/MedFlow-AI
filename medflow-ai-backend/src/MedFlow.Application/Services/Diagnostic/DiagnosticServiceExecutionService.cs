@@ -1,12 +1,14 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Application.Services.Visits;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -25,26 +27,20 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
     public const string ExecutionStatusUpdatedAction = "DIAGNOSTIC_SERVICE_STATUS_UPDATED";
     public const string ExecutionCancelledAction = "DIAGNOSTIC_SERVICE_EXECUTION_CANCELLED";
 
-    private const string DiagnosticStaffRoleCode = "DIAGNOSTIC_STAFF";
+    private const string DiagnosticStaffRoleCode = RoleNames.DiagnosticStaff;
     private const string DefaultDepartmentName = "Khoa Cận lâm sàng";
 
     private static readonly string[] AllowedReadPermissions =
     [
-        "QUEUE_MANAGE",
-        "DIAGNOSTIC_RESULT_WRITE",
-        "DIAGNOSTIC_ORDER",
+        PermissionCodes.QueueManage,
+        PermissionCodes.DiagnosticResultWrite,
+        PermissionCodes.DiagnosticOrder,
     ];
 
     private static readonly string[] AllowedMutationPermissions =
     [
-        "QUEUE_MANAGE",
-        "DIAGNOSTIC_RESULT_WRITE",
-    ];
-
-    private static readonly string[] FallbackDiagnosticPermissions =
-    [
-        "DIAGNOSTIC_RESULT_WRITE",
-        "QUEUE_MANAGE",
+        PermissionCodes.QueueManage,
+        PermissionCodes.DiagnosticResultWrite,
     ];
 
     private static readonly HashSet<string> ValidListStatuses = new(StringComparer.OrdinalIgnoreCase)
@@ -1722,11 +1718,6 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
             .OrderBy(code => code, StringComparer.Ordinal)
             .ToList();
 
-        if (actorPermissionCodes.Count == 0 && allRolePermissions.Count == 0)
-        {
-            actorPermissionCodes = [.. FallbackDiagnosticPermissions];
-        }
-
         var hasAnyReadPermission = actorPermissionCodes.Any(code =>
             AllowedReadPermissions.Any(allowed => string.Equals(code, allowed, StringComparison.OrdinalIgnoreCase)));
         if (!hasAnyReadPermission)
@@ -2603,7 +2594,7 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
 
                 if (string.Equals(log.Action, "DIAGNOSTIC_PATIENT_RECEIVED", StringComparison.OrdinalIgnoreCase) && !receivedAt.HasValue && log.OccurredAt != default)
                 {
-                    receivedAt = DateTime.SpecifyKind(log.OccurredAt.AddHours(7), DateTimeKind.Unspecified);
+                    receivedAt = HospitalClock.ConvertUtcToHospitalLocal(log.OccurredAt);
                 }
 
                 result[orderId] = new DiagnosticOrderAuditMetadata(
@@ -2705,7 +2696,7 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
                     }
                 }
 
-                var occurredLocal = DateTime.SpecifyKind(log.OccurredAt.AddHours(7), DateTimeKind.Unspecified);
+                var occurredLocal = HospitalClock.ConvertUtcToHospitalLocal(log.OccurredAt);
                 var actionKey = log.Action ?? string.Empty;
                 var isStart = string.Equals(actionKey, ExecutionStartedAction, StringComparison.OrdinalIgnoreCase);
                 var isComplete = string.Equals(actionKey, ExecutionCompletedAction, StringComparison.OrdinalIgnoreCase);

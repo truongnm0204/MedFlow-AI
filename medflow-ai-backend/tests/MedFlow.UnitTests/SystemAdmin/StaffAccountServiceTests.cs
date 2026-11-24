@@ -146,6 +146,16 @@ public sealed class StaffAccountServiceTests : IDisposable
             () => _service.CreateAsync(1, request, null));
     }
 
+    [Fact]
+    public async Task CreateAsync_WhenRolePermissionsEmpty_ThrowsForbidden()
+    {
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.CreateAsync(1, ValidRequest(), null));
+    }
+
     private static CreateStaffAccountRequest ValidRequest() => new()
     {
         StaffCode = "STF-0250",
@@ -167,6 +177,9 @@ public sealed class StaffAccountServiceTests : IDisposable
             new Role { Id = 3, Code = "DIAGNOSTIC_STAFF", Name = "Kỹ thuật viên" },
             new Role { Id = 4, Code = "PATIENT", Name = "Bệnh nhân" },
             new Role { Id = 5, Code = "SECURITY_AUDITOR", Name = "Kiểm toán viên" });
+
+        db.Permissions.Add(new Permission { Id = 12, Code = "USER_MANAGE" });
+        db.RolePermissions.Add(new RolePermission { RoleId = 1, PermissionId = 12 });
 
         db.Users.AddRange(
             new User
@@ -237,9 +250,9 @@ public sealed class StaffAccountServiceTests : IDisposable
 
         public DbSet<User> Users => Set<User>();
         public DbSet<Role> Roles => Set<Role>();
-        public DbSet<Permission> Permissions => throw NotUsed();
+        public DbSet<Permission> Permissions => Set<Permission>();
         public DbSet<UserRole> UserRoles => Set<UserRole>();
-        public DbSet<RolePermission> RolePermissions => throw NotUsed();
+        public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
         public DbSet<Patient> Patients => throw NotUsed();
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => throw NotUsed();
@@ -266,8 +279,6 @@ public sealed class StaffAccountServiceTests : IDisposable
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Ignore<Permission>();
-            modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Patient>();
             modelBuilder.Ignore<Doctor>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
@@ -292,6 +303,11 @@ public sealed class StaffAccountServiceTests : IDisposable
 
             modelBuilder.Entity<Role>().HasKey(r => r.Id);
             modelBuilder.Entity<Role>().Ignore(r => r.RolePermissions);
+            modelBuilder.Entity<Permission>().HasKey(p => p.Id);
+            modelBuilder.Entity<Permission>().Ignore(p => p.RolePermissions);
+            modelBuilder.Entity<RolePermission>().HasKey(rp => new { rp.RoleId, rp.PermissionId });
+            modelBuilder.Entity<RolePermission>().Ignore(rp => rp.Role);
+            modelBuilder.Entity<RolePermission>().Ignore(rp => rp.Permission);
 
             modelBuilder.Entity<UserRole>().HasKey(ur => new { ur.UserId, ur.RoleId });
             modelBuilder.Entity<UserRole>()

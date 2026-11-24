@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Patients;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
@@ -19,13 +20,16 @@ public sealed class FamilyProfileService : IFamilyProfileService
 
     private readonly IApplicationDbContext _db;
     private readonly IOptions<IdentityHashOptions>? _hashOptions;
+    private readonly TimeProvider _timeProvider;
 
     public FamilyProfileService(
         IApplicationDbContext db,
-        IOptions<IdentityHashOptions>? hashOptions = null)
+        IOptions<IdentityHashOptions>? hashOptions = null,
+        TimeProvider? timeProvider = null)
     {
         _db = db;
         _hashOptions = hashOptions;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<IReadOnlyList<FamilyMemberResponse>> GetFamilyMembersAsync(
@@ -563,7 +567,7 @@ public sealed class FamilyProfileService : IFamilyProfileService
             throw new ValidationException("Không thể gỡ liên kết do người thân đang có lịch hẹn khám chưa hoàn tất. Vui lòng hoàn tất hoặc hủy lịch hẹn trước khi gỡ hồ sơ.");
         }
 
-        link.RevokedAt = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+        link.RevokedAt = HospitalClock.GetUtcNowUnspecified(_timeProvider);
 
         await _db.SaveChangesAsync(ct);
     }
@@ -622,7 +626,7 @@ public sealed class FamilyProfileService : IFamilyProfileService
         return (null, code, false);
     }
 
-    private static FamilyMemberResponse BuildSelfResponse(Patient self)
+    private FamilyMemberResponse BuildSelfResponse(Patient self)
     {
         var isSelfVerified = !string.IsNullOrWhiteSpace(self.IdentificationHash);
         return new FamilyMemberResponse(
@@ -669,7 +673,7 @@ public sealed class FamilyProfileService : IFamilyProfileService
         );
     }
 
-    private static FamilyMemberResponse BuildMemberResponse(
+    private FamilyMemberResponse BuildMemberResponse(
         Patient self,
         Patient member,
         PatientFamilyLink link,
@@ -745,12 +749,12 @@ public sealed class FamilyProfileService : IFamilyProfileService
     private static string? FormatDate(DateOnly? date)
         => date?.ToString("dd/MM/yyyy");
 
-    private static int? CalculateAge(DateOnly? dateOfBirth)
+    private int? CalculateAge(DateOnly? dateOfBirth)
     {
         if (!dateOfBirth.HasValue)
             return null;
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = HospitalClock.GetToday(_timeProvider);
         var dob = dateOfBirth.Value;
         var age = today.Year - dob.Year;
 
@@ -851,7 +855,7 @@ public sealed class FamilyProfileService : IFamilyProfileService
         };
     }
 
-    private static DateOnly ParseBirthDate(string? birthDateStr, DateOnly? dateOfBirth)
+    private DateOnly ParseBirthDate(string? birthDateStr, DateOnly? dateOfBirth)
     {
         if (dateOfBirth.HasValue)
         {
@@ -882,9 +886,9 @@ public sealed class FamilyProfileService : IFamilyProfileService
         throw new ValidationException("Ngày sinh không hợp lệ (vui lòng kiểm tra lại ngày và tháng sinh trên lịch).");
     }
 
-    private static void ValidateBirthDate(DateOnly dob)
+    private void ValidateBirthDate(DateOnly dob)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = HospitalClock.GetToday(_timeProvider);
         if (dob > today)
             throw new ValidationException("Ngày sinh không được lớn hơn ngày hiện tại.");
 
@@ -896,11 +900,11 @@ public sealed class FamilyProfileService : IFamilyProfileService
     {
         for (var i = 0; i < 10; i++)
         {
-            var candidate = $"PAT-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
+            var candidate = $"PAT-{HospitalClock.GetNow(_timeProvider):yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
             if (!await _db.Patients.AnyAsync(p => p.PatientCode == candidate, ct))
                 return candidate;
         }
 
-        return $"PAT-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid():N}"[..20].ToUpperInvariant();
+        return $"PAT-{HospitalClock.GetNow(_timeProvider):yyyyMMdd}-{Guid.NewGuid():N}"[..20].ToUpperInvariant();
     }
 }
