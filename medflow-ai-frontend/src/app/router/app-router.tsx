@@ -71,6 +71,8 @@ import { ReceptionDashboardPage } from '@/features/reception/pages/reception-das
 import { PatientIdentityClaimPage } from '@/features/identity-claim/pages/patient-identity-claim-page';
 import { ReceptionIdentityClaimPage } from '@/features/identity-claim/pages/reception-identity-claim-page';
 import { WalkInVisitPage } from '@/features/reception/pages/walk-in-visit-page';
+import { AuditLogListPage } from '@/features/admin-audit/pages/audit-log-list-page';
+import { IntegrationConfigPage } from '@/features/admin-integrations/pages/integration-config-page';
 import { SystemAdminDashboardPage } from '@/features/system-admin/pages/system-admin-dashboard-page';
 import { DoctorReviewDiagnosticsPage } from '@/features/doctor/pages/doctor-review-diagnostics-page';
 import { DoctorDiagnosticResultsTrackingPage } from '@/features/doctor/pages/doctor-diagnostic-results-tracking-page';
@@ -1207,6 +1209,46 @@ export function AppRouter() {
           <RequireAuth>
             <RequireSystemAdmin>
               <SystemAdminDashboardPage />
+            </RequireSystemAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/audit-logs"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <AuditLogListPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/system-admin/audit-logs"
+        element={
+          <RequireAuth>
+            <RequireSystemAdmin>
+              <AuditLogListPage />
+            </RequireSystemAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/integrations"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <IntegrationConfigPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/system-admin/integrations"
+        element={
+          <RequireAuth>
+            <RequireSystemAdmin>
+              <IntegrationConfigPage />
             </RequireSystemAdmin>
           </RequireAuth>
         }

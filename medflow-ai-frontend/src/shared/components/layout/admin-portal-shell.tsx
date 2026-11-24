@@ -8,9 +8,11 @@ import {
   ClipboardList,
   CreditCard,
   DoorOpen,
+  FileSearch,
   LayoutDashboard,
   ListOrdered,
   Phone,
+  Plug,
   ShieldCheck,
   SlidersHorizontal,
   UserCheck,
@@ -40,7 +42,9 @@ export type AdminPortalTab =
   | 'Quản lý Slot khám'
   | 'Chính sách hẹn'
   | 'Chính sách hàng đợi'
+  | 'Cấu hình tích hợp'
   | 'Vai trò & Phân quyền'
+  | 'Nhật ký kiểm toán'
   | 'Báo cáo vận hành';
 
 export interface AdminPortalBreadcrumb {
@@ -69,7 +73,9 @@ const TABS: { name: AdminPortalTab; href?: string; icon: LucideIcon }[] = [
   { name: 'Quản lý Slot khám', href: '/admin/slots', icon: CalendarClock },
   { name: 'Chính sách hẹn', href: '/admin/policies', icon: SlidersHorizontal },
   { name: 'Chính sách hàng đợi', href: '/admin/queue-policy', icon: ListOrdered },
+  { name: 'Cấu hình tích hợp', href: '/admin/integrations', icon: Plug },
   { name: 'Vai trò & Phân quyền', href: '/admin/roles', icon: ShieldCheck },
+  { name: 'Nhật ký kiểm toán', href: '/admin/audit-logs', icon: FileSearch },
   { name: 'Báo cáo vận hành', href: '/admin/reports', icon: BarChart3 },
 ];
 
