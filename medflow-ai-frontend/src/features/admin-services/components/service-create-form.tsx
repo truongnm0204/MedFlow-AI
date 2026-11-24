@@ -1,4 +1,4 @@
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Microscope, ShieldCheck, Stethoscope } from 'lucide-react';
 import type { FieldErrors, UseFormRegister } from 'react-hook-form';
 
 import {
@@ -45,27 +45,30 @@ export function ServiceCreateForm({
             topNote="Đề xuất tự động theo chuẩn HIS (EX-x-xx)"
             error={errors.code?.message}
             hint={
-              <span className="flex items-center gap-1.5 text-sky-700 font-medium">
-                <span className="text-sky-600">🛡️</span>
-                Mã duy nhất, hợp lệ, chưa từng được gán cho dịch vụ khám khác.
+              <span className="flex items-center gap-1.5 font-medium text-primary">
+                <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+                <span>Mã duy nhất, hợp lệ, chưa từng được gán cho dịch vụ khám khác.</span>
               </span>
             }
           >
             <div className="relative mt-1.5 flex items-center">
-              <span className="pointer-events-none absolute left-3 flex items-center gap-0.5 text-sky-600 font-mono font-bold tracking-tighter">
-                <span className="inline-block h-3.5 w-0.5 bg-sky-500 rounded-xs" />
-                <span className="inline-block h-3.5 w-1 bg-sky-500 rounded-xs" />
-                <span className="inline-block h-3.5 w-0.5 bg-sky-500 rounded-xs" />
-                <span className="inline-block h-3.5 w-1.5 bg-sky-500 rounded-xs" />
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute left-3 flex items-center gap-0.5 font-mono font-bold tracking-tighter text-primary"
+              >
+                <span className="inline-block h-3.5 w-0.5 rounded-xs bg-primary" />
+                <span className="inline-block h-3.5 w-1 rounded-xs bg-primary" />
+                <span className="inline-block h-3.5 w-0.5 rounded-xs bg-primary" />
+                <span className="inline-block h-3.5 w-1.5 rounded-xs bg-primary" />
               </span>
               <input
                 id="service-code-input"
                 {...register('code')}
-                className={`${formControlClass} !mt-0 pl-10 pr-10 font-medium`}
+                className={`${formControlClass} !mt-0 pr-10 pl-10 font-medium`}
                 placeholder="EX-2-09"
               />
-              <span className="pointer-events-none absolute right-3 flex items-center text-sky-600">
-                <CheckCircle2 className="h-4 w-4 text-sky-600" />
+              <span className="pointer-events-none absolute right-3 flex items-center text-primary">
+                <CheckCircle2 className="h-4 w-4 text-primary" aria-hidden="true" />
               </span>
             </div>
           </FormField>
@@ -90,27 +93,29 @@ export function ServiceCreateForm({
             <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <button
                 type="button"
+                aria-pressed={category === 'Khám Lâm sàng'}
                 onClick={() => onCategoryChange('Khám Lâm sàng')}
-                className={`flex items-center justify-center gap-2 rounded-lg border p-3 text-xs font-semibold transition-all shadow-xs ${
+                className={`flex items-center justify-center gap-2 rounded-lg border p-3 text-xs font-semibold shadow-xs transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none ${
                   category === 'Khám Lâm sàng'
                     ? 'border-primary bg-sky-50/60 text-primary ring-1 ring-primary'
-                    : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    : 'border-border bg-white text-ink hover:border-slate-300'
                 }`}
               >
-                <span>🩺</span>
+                <Stethoscope className="h-4 w-4 shrink-0" aria-hidden="true" />
                 <span>Khám Lâm sàng (EXAMINATION)</span>
               </button>
 
               <button
                 type="button"
+                aria-pressed={category === 'Cận lâm sàng kỹ thuật'}
                 onClick={() => onCategoryChange('Cận lâm sàng kỹ thuật')}
-                className={`flex items-center justify-center gap-2 rounded-lg border p-3 text-xs font-semibold transition-all shadow-xs ${
+                className={`flex items-center justify-center gap-2 rounded-lg border p-3 text-xs font-semibold shadow-xs transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none ${
                   category === 'Cận lâm sàng kỹ thuật'
                     ? 'border-primary bg-sky-50/60 text-primary ring-1 ring-primary'
-                    : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    : 'border-border bg-white text-ink hover:border-slate-300'
                 }`}
               >
-                <span>🔬</span>
+                <Microscope className="h-4 w-4 shrink-0" aria-hidden="true" />
                 <span>Cận lâm sàng kỹ thuật (DIAGNOSTIC)</span>
               </button>
             </div>

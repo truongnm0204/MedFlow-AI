@@ -283,7 +283,7 @@ function DiagnosticResultEntryForm({
           value={reportFileUrl}
           disabled={!canSubmitResult || isSubmitting}
           onChange={(e) => setReportFileUrl(e.target.value)}
-          placeholder="https://pacs.medflow.vn/report/CLS-2026-xxxx.pdf"
+          placeholder="Nhập đường dẫn tệp báo cáo đính kèm (https://...)"
           className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2.5 font-mono text-xs text-ink placeholder:text-sub focus:border-primary focus:outline-none disabled:opacity-60"
         />
       </div>
@@ -501,7 +501,7 @@ function DiagnosticResultAmendForm({
             setReportFileUrlTouched(true);
             setReportFileUrl(event.target.value);
           }}
-          placeholder="https://pacs.medflow.vn/report/CLS-2026-xxxx.pdf"
+          placeholder="Nhập đường dẫn tệp báo cáo đính kèm (https://...)"
           className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2.5 font-mono text-xs text-ink placeholder:text-sub focus:border-primary focus:outline-none disabled:opacity-60"
         />
       </div>
