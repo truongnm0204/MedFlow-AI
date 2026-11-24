@@ -37,6 +37,7 @@ describe('BookingEntryPage (#619)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     useBookingStore.getState().reset();
+    vi.spyOn(hospitalApi, 'fetchHospitalsApi').mockResolvedValue(MOCK_HOSPITALS);
   });
 
   it('renders 3 hospital radios; Đà Nẵng disabled + "Tạm ngưng"; both mode buttons disabled', async () => {

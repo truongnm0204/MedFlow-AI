@@ -8,7 +8,7 @@ import { useAuthStore } from '@/features/auth/store/auth.store';
 import { canAccessRoute } from '@/features/auth/utils/rbac';
 
 import * as rolePermissionsApi from '../api/role-permissions.api';
-import { resetMockRolesCatalog } from '../data/role-mock-data';
+import { createMockRole, getMockRolesCatalog, resetMockRolesCatalog } from '../data/role-mock-data';
 import { RoleListPage } from '../pages/role-list-page';
 
 function makeAxiosError(status: number, detail: string): AxiosError {
@@ -44,6 +44,12 @@ describe('Create Role UI (M2-073 / Issue #235 / UC58)', () => {
   beforeEach(() => {
     resetMockRolesCatalog();
     useAuthStore.getState().clearAuth();
+    vi.spyOn(rolePermissionsApi, 'fetchRolesPermissionsCatalogApi').mockImplementation(async () =>
+      getMockRolesCatalog(),
+    );
+    vi.spyOn(rolePermissionsApi, 'createRoleApi').mockImplementation(async (payload) =>
+      createMockRole(payload),
+    );
   });
 
   afterEach(() => {

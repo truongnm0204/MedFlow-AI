@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppRouter } from '@/app/router/app-router';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import {
@@ -16,8 +17,10 @@ import {
   createMockDiagnosticOrder,
   openMockConsultationWorkspace,
   recordMockClinicalExamination,
+  resolveMockConsultationWorkspace,
   resolveMockDiagnosticOrderCatalog,
 } from '../data/consultation-workspace-mock';
+import { DOCTOR_ASSIGNED_QUEUE_MOCK } from '../data/doctor-assigned-queue-mock';
 import { DoctorConsultationWorkspacePage } from '../pages/doctor-consultation-workspace-page';
 import {
   ADDITIONAL_DIAGNOSTIC_REASON_PRESETS,
@@ -53,7 +56,7 @@ function renderWithRouter(initialEntry = '/doctor/consultation/VIS-2026-0212') {
 }
 
 function authenticateAsDoctor() {
-  localStorage.setItem('medflow.access_token', 'jwt-doctor');
+  localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-doctor');
   useAuthStore.setState({
     user: {
       id: 12,
@@ -193,6 +196,10 @@ describe('DoctorConsultationWorkspacePage (Issue #105 / UC31)', () => {
   });
 
   it('renders AWAITING_RESULTS and COMPLETED states with readOnlyReason and disabled write actions', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      const code = decodeURIComponent(String(url).split('/').pop() ?? '');
+      return { data: resolveMockConsultationWorkspace(code) };
+    });
     useAuthStore.setState({
       user: {
         id: 12,
@@ -306,6 +313,13 @@ describe('DoctorConsultationWorkspacePage (Issue #105 / UC31)', () => {
     unmount2();
 
     // 3. Authenticated Doctor navigates from /doctor/assigned-queue "Mở bàn khám A013" -> /doctor/consultation/VIS-2026-0213
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (url === '/doctor/assigned-queue') {
+        return { data: DOCTOR_ASSIGNED_QUEUE_MOCK };
+      }
+      const code = decodeURIComponent(String(url).split('/').pop() ?? '');
+      return { data: resolveMockConsultationWorkspace(code) };
+    });
     useAuthStore.setState({
       user: {
         id: 12,
@@ -334,6 +348,10 @@ describe('DoctorConsultationWorkspacePage (Issue #105 / UC31)', () => {
   });
 
   it('validates lookup bar input before navigating to another visit code', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      const code = decodeURIComponent(String(url).split('/').pop() ?? '');
+      return { data: resolveMockConsultationWorkspace(code) };
+    });
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });

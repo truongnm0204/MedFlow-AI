@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
+import { getHospitalTodayIso } from '@/shared/lib/hospital-date';
+
 import {
   fetchAvailableAppointmentSlots,
   fetchServiceAvailableShifts,
@@ -16,7 +18,7 @@ export function useAvailableSlots(
       'appointment-available-slots',
       params.doctorId ?? 'default',
       params.serviceId ?? 'default',
-      params.dateIso ?? '2026-10-13',
+      params.dateIso ?? getHospitalTodayIso(),
     ],
     queryFn: () => fetchAvailableAppointmentSlots(params),
     enabled: options?.enabled ?? true,
@@ -31,7 +33,7 @@ export function useServiceAvailableShifts(
     queryKey: [
       'appointment-service-shifts',
       params.serviceId ?? 'default',
-      params.dateIso ?? '2026-10-13',
+      params.dateIso ?? getHospitalTodayIso(),
     ],
     queryFn: () => fetchServiceAvailableShifts(params),
     enabled: options?.enabled ?? true,

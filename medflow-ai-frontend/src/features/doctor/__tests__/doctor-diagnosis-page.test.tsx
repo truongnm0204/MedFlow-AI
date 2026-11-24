@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import { ICD10_CATALOG_MOCK } from '../data/diagnosis-conclusion-mock';
@@ -87,7 +88,7 @@ function buildFixture(options?: {
 }
 
 function authenticateAsDoctor() {
-  localStorage.setItem('medflow.access_token', 'jwt-doctor');
+  localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-doctor');
   useAuthStore.setState({
     user: {
       id: 12,

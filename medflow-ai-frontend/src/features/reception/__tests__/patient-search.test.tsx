@@ -8,8 +8,62 @@ import { apiClient } from '@/shared/lib/axios';
 import { PatientSearchEmptyState } from '../components/patient-search-empty-state';
 import { PatientSearchFilterBar } from '../components/patient-search-filter-bar';
 import { PatientSearchResultTable } from '../components/patient-search-result-table';
-import { PATIENT_SEARCH_MOCK_DATA } from '../data/patient-search-mock';
 import { PatientSearchPage } from '../pages/patient-search-page';
+import type { PatientSearchResultItem } from '../types/patient-search.types';
+
+const PATIENT_SEARCH_MOCK_DATA: PatientSearchResultItem[] = [
+  {
+    id: 'pat-001',
+    patientCode: 'BN-2024-0018',
+    fullName: 'Nguyễn Văn An',
+    gender: 'MALE',
+    dateOfBirth: '1988-05-14',
+    identityCard: '001088012345',
+    phoneNumber: '0912345678',
+    healthInsuranceNumber: 'DN4010123456789',
+    address: 'Số 12 Phố Huế, P. Hàng Bài, Hoàn Kiếm, Hà Nội',
+    totalPastVisits: 6,
+    todayAppointment: {
+      id: 'apt-001',
+      time: '09:15',
+      doctorName: 'BS. CKII Trần Khánh',
+      department: 'Nội tổng quát',
+      roomName: 'P.102',
+      status: 'BOOKED',
+    },
+  },
+  {
+    id: 'pat-002',
+    patientCode: 'BN-2024-0042',
+    fullName: 'Trần Thị Bích',
+    gender: 'FEMALE',
+    dateOfBirth: '1962-11-20',
+    identityCard: '001162098765',
+    phoneNumber: '0987654321',
+    healthInsuranceNumber: 'HT2010987654321',
+    address: '45 Trần Phú, Ba Đình, Hà Nội',
+    totalPastVisits: 14,
+    todayAppointment: {
+      id: 'apt-002',
+      time: '08:30',
+      doctorName: 'BS. CKII Trần Khánh',
+      department: 'Nội tổng quát',
+      roomName: 'P.102',
+      status: 'CHECKED_IN',
+    },
+  },
+  {
+    id: 'pat-003',
+    patientCode: 'BN-2024-0071',
+    fullName: 'Lê Minh Cường',
+    gender: 'MALE',
+    dateOfBirth: '1995-03-08',
+    identityCard: '001095034567',
+    phoneNumber: '0903456789',
+    address: '88 Cầu Giấy, P. Dịch Vọng, Cầu Giấy, Hà Nội',
+    totalPastVisits: 1,
+  },
+];
 
 const defaultItems = [
   {

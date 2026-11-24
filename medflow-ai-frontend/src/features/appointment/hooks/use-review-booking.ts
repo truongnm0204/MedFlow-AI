@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { getHospitalTodayIso } from '@/shared/lib/hospital-date';
+
 import {
   confirmAppointmentBooking,
   fetchAppointmentReviewPreview,
@@ -18,7 +20,7 @@ export function useAppointmentReviewPreview(params: ReviewBookingQueryParams) {
       params.serviceId ?? 'default',
       params.serviceCode ?? 'default',
       params.patientId ?? 'pat-self',
-      params.dateIso ?? '2026-10-13',
+      params.dateIso ?? getHospitalTodayIso(),
       params.slotId ?? 'slot-0900',
       params.shiftId ?? 'shift-morning',
     ],

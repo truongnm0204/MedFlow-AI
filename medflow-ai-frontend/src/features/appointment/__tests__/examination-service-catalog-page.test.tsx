@@ -1,8 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient } from '@/shared/lib/axios';
+
+import { MOCK_EXAMINATION_SERVICES } from '../data/service-search-mock';
 import { ExaminationServiceCatalogPage } from '../pages/examination-service-catalog-page';
 
 function renderExaminationServiceCatalogPage() {
@@ -26,6 +29,57 @@ function renderExaminationServiceCatalogPage() {
 describe('ExaminationServiceCatalogPage (SCR-APT-03)', () => {
   beforeEach(() => {
     window.scrollTo = () => {};
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
+      if (url === '/examination-services') {
+        const params = (
+          config as {
+            params?: {
+              query?: string;
+              category?: string;
+              department?: string;
+              page?: number;
+              pageSize?: number;
+            };
+          }
+        )?.params;
+        const query = params?.query?.trim().toLowerCase() ?? '';
+        const category = params?.category ?? 'all';
+        const department = params?.department ?? 'all';
+        const filtered = MOCK_EXAMINATION_SERVICES.filter((srv) => {
+          if (category !== 'all' && srv.category !== category) return false;
+          if (department !== 'all' && srv.departmentId !== department) return false;
+          if (query) {
+            const haystack = `${srv.name} ${srv.serviceCode} ${srv.departmentName}`.toLowerCase();
+            if (!haystack.includes(query)) return false;
+          }
+          return true;
+        });
+        const page = params?.page ?? 1;
+        const pageSize = params?.pageSize ?? 6;
+        const start = (page - 1) * pageSize;
+        return {
+          data: {
+            data: filtered.slice(start, start + pageSize),
+            total: filtered.length,
+            page,
+            pageSize,
+            totalPages: Math.max(1, Math.ceil(filtered.length / pageSize)),
+          },
+        };
+      }
+      if (typeof url === 'string' && url.startsWith('/examination-services/')) {
+        const idOrCode = decodeURIComponent(url.replace('/examination-services/', ''));
+        const found = MOCK_EXAMINATION_SERVICES.find(
+          (srv) => srv.id === idOrCode || srv.serviceCode.toLowerCase() === idOrCode.toLowerCase(),
+        );
+        return { data: found ?? null };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('renders page header, breadcrumbs, search bar and initial 6 examination services', async () => {

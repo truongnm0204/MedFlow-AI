@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppRouter } from '@/app/router/app-router';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import * as pharmacyApi from '../api/pharmacy.api';
@@ -33,6 +34,7 @@ describe('PharmacyDashboardPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: PHARMACY_DASHBOARD_MOCK });
     useAuthStore.setState({
       user: null,
       accessToken: null,
@@ -208,7 +210,7 @@ describe('PharmacyDashboardPage', () => {
       },
     });
 
-    localStorage.setItem('medflow.access_token', 'live-jwt-token');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'live-jwt-token');
     useAuthStore.setState({
       user: {
         id: 9,

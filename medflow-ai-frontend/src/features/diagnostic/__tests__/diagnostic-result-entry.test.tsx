@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import {
@@ -64,6 +65,37 @@ describe('DiagnosticResultEntryPage (UC43)', () => {
     vi.restoreAllMocks();
     localStorage.clear();
     resetDiagnosticResultEntryMockState();
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
+      if (url === '/diagnostic/results') {
+        return {
+          data: resolveMockDiagnosticOrdersForResultEntry(
+            config?.params as GetDiagnosticOrdersForResultEntryParams | undefined,
+          ),
+        };
+      }
+      if (typeof url === 'string' && url.startsWith('/diagnostic/results/')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return { data: resolveMockDiagnosticResultEntryDetail(code) };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    vi.spyOn(apiClient, 'post').mockImplementation(async (url, body) => {
+      if (typeof url === 'string' && url.endsWith('/result')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return {
+          data: enterMockDiagnosticResult(code, body as EnterDiagnosticResultRequest),
+        };
+      }
+      if (typeof url === 'string' && url.endsWith('/result/amend')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return {
+          data: amendMockDiagnosticResult(code, body as UpdateDiagnosticResultRequest),
+        };
+      }
+      throw new Error(`Unexpected POST ${url}`);
+    });
 
     useAuthStore.setState({
       user: {
@@ -237,7 +269,7 @@ describe('DiagnosticResultEntryPage (UC43)', () => {
   });
 
   it('goi GET /diagnostic/results, GET /diagnostic/results/{code} va POST /diagnostic/orders/{code}/result khi co token', async () => {
-    localStorage.setItem('medflow.access_token', 'valid-diagnostic-jwt-token');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'valid-diagnostic-jwt-token');
 
     const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
       if (url === '/diagnostic/results') {
@@ -389,7 +421,7 @@ describe('DiagnosticResultEntryPage (UC43)', () => {
   });
 
   it('co token thi POST /result/amend va khong goi POST /result', async () => {
-    localStorage.setItem('medflow.access_token', 'valid-diagnostic-jwt-token');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'valid-diagnostic-jwt-token');
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
       if (url === '/diagnostic/results') {
@@ -449,7 +481,7 @@ describe('DiagnosticResultEntryPage (UC43)', () => {
   });
 
   it('an nut sua khi server tra canAmendResult false', async () => {
-    localStorage.setItem('medflow.access_token', 'valid-diagnostic-jwt-token');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'valid-diagnostic-jwt-token');
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
       if (url === '/diagnostic/results') {

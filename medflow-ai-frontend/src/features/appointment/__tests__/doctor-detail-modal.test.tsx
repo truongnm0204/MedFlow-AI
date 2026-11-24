@@ -1,9 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
+import { AxiosError } from 'axios';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { apiClient } from '@/shared/lib/axios';
 
 import { DoctorDetailModal } from '../components/doctor-detail-modal';
+import { getDoctorDetailById } from '../data/doctor-detail-mock';
 import { useBookingStore } from '../store/booking.store';
 
 function renderDoctorDetailModal({
@@ -35,6 +39,30 @@ function renderDoctorDetailModal({
 describe('DoctorDetailModal (SCR-APT-01-DETAIL)', () => {
   beforeEach(() => {
     useBookingStore.getState().reset();
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      const id = decodeURIComponent(String(url).replace('/doctors/', ''));
+      const found = getDoctorDetailById(id);
+      if (!found) {
+        throw new AxiosError(
+          'Not Found',
+          'ERR_BAD_REQUEST',
+          undefined,
+          {},
+          {
+            status: 404,
+            statusText: 'Not Found',
+            headers: {},
+            config: {} as never,
+            data: { status: 404 },
+          },
+        );
+      }
+      return { data: found };
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('renders modal header, summary info, education, experience and weekly schedule', async () => {

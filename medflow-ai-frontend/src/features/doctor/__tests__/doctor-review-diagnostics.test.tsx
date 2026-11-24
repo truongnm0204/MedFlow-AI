@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import { CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK } from '../data/consultation-workspace-mock';
@@ -195,7 +196,7 @@ describe('DoctorReviewDiagnosticsPage (UC35)', () => {
   });
 
   it('loads the visit diagnostic results and selects the first ready item', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: API_FIXTURE });
 
     renderReviewPage();
@@ -212,7 +213,7 @@ describe('DoctorReviewDiagnosticsPage (UC35)', () => {
   });
 
   it('shows the not-ready state when a pending result is selected', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: API_FIXTURE });
 
     renderReviewPage();
@@ -224,7 +225,7 @@ describe('DoctorReviewDiagnosticsPage (UC35)', () => {
   });
 
   it('blocks submit when the interpretation contains angle brackets', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: API_FIXTURE });
     const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {} });
 
@@ -243,7 +244,7 @@ describe('DoctorReviewDiagnosticsPage (UC35)', () => {
   });
 
   it('submits the trimmed interpretation and clears the textarea on success', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: API_FIXTURE });
     const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({
       data: {
@@ -272,7 +273,7 @@ describe('DoctorReviewDiagnosticsPage (UC35)', () => {
   });
 
   it('surfaces a 409 detail from the review endpoint', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: API_FIXTURE });
     vi.spyOn(apiClient, 'post').mockRejectedValue(
       new AxiosError(
@@ -301,7 +302,7 @@ describe('DoctorReviewDiagnosticsPage (UC35)', () => {
   });
 
   it('shows the disabled reason when the doctor cannot acknowledge results', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     vi.spyOn(apiClient, 'get').mockResolvedValue({
       data: {
         ...API_FIXTURE,
@@ -320,7 +321,7 @@ describe('DoctorReviewDiagnosticsPage (UC35)', () => {
   });
 
   it('hides the review form when the doctor lacks MEDICAL_RECORD_WRITE', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: API_FIXTURE });
 
     // Empty explicitPermissions falls back to the DOCTOR role, which includes
@@ -334,7 +335,7 @@ describe('DoctorReviewDiagnosticsPage (UC35)', () => {
   });
 
   it('surfaces HTTP 403 instead of falling back to mock data', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     vi.spyOn(apiClient, 'get').mockRejectedValue(
       new AxiosError(
         'Forbidden',
@@ -359,15 +360,20 @@ describe('DoctorReviewDiagnosticsPage (UC35)', () => {
     expect(screen.queryByText('NGUYỄN VĂN AN')).not.toBeInTheDocument();
   });
 
-  it('falls back to the mock review when no access token is present', async () => {
+  it('calls the API even without an access token in localStorage and surfaces network errors without mock fallback', async () => {
+    const getSpy = vi
+      .spyOn(apiClient, 'get')
+      .mockRejectedValueOnce(new AxiosError('Network Error', 'ERR_NETWORK'));
+
     renderReviewPage();
 
-    expect(await screen.findByText('NGUYỄN VĂN AN')).toBeInTheDocument();
-    expect(screen.getByTestId('diagnostic-result-card-DIA-202604-9101')).toBeInTheDocument();
+    expect(await screen.findByTestId('review-diagnostic-error-banner')).toBeInTheDocument();
+    expect(getSpy).toHaveBeenCalledWith('/doctor/consultation/VIS-202611-0001/diagnostic-results');
+    expect(screen.queryByText('NGUYỄN VĂN AN')).not.toBeInTheDocument();
   });
 
   it('shows the no-visit card and does not call the API without a visit code', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: API_FIXTURE });
 
     renderReviewPage({}, '/doctor/diagnostic-results');

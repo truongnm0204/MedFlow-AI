@@ -1,6 +1,7 @@
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import {
@@ -8,11 +9,7 @@ import {
   createRoleApi,
   fetchRolesPermissionsCatalogApi,
 } from '../api/role-permissions.api';
-import {
-  getMockRolesCatalog,
-  resetMockRolesCatalog,
-  SYSTEM_PERMISSIONS,
-} from '../data/role-mock-data';
+import { getMockRolesCatalog, resetMockRolesCatalog } from '../data/role-mock-data';
 import { assignPermissionsSchema } from '../schemas/assign-permissions.schema';
 import { createRoleSchema } from '../schemas/role-create.schema';
 import type { RolesPermissionsCatalogDto } from '../types/role.types';
@@ -165,10 +162,10 @@ describe('createRoleSchema (SCR-ADM-ROLE-01 / Issue #235)', () => {
   });
 });
 
-describe('role-permissions.api (SCR-ADM-ROLE-02)', () => {
+describe('role-permissions.api (SCR-ADM-ROLE-02 — pure HTTP)', () => {
   beforeEach(() => {
     resetMockRolesCatalog();
-    window.localStorage.setItem('medflow.access_token', 'test-jwt-token');
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, 'test-jwt-token');
   });
 
   afterEach(() => {
@@ -186,52 +183,41 @@ describe('role-permissions.api (SCR-ADM-ROLE-02)', () => {
     expect(result).toEqual(serverCatalog);
   });
 
-  it('fetchRolesPermissionsCatalogApi falls back to mock catalog on HTTP 404 or network error', async () => {
-    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(makeAxiosError(404, 'Not found'));
+  it('fetchRolesPermissionsCatalogApi derives permissions solely from backend roles and never injects static permissions on empty response', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+      data: {
+        data: [],
+        metrics: {
+          totalRoles: 0,
+          activeRoles: 0,
+          inactiveRoles: 0,
+          totalAssignedAccounts: 0,
+          totalPermissions: 0,
+        },
+      },
+    });
 
-    const result404 = await fetchRolesPermissionsCatalogApi();
-    expect(result404).toEqual(getMockRolesCatalog());
-
-    const networkErr = new AxiosError('Network Error', 'ERR_NETWORK');
-    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(networkErr);
-
-    const resultNetwork = await fetchRolesPermissionsCatalogApi();
-    expect(resultNetwork).toEqual(getMockRolesCatalog());
+    const emptyResult = await fetchRolesPermissionsCatalogApi();
+    expect(emptyResult.roles).toEqual([]);
+    expect(emptyResult.permissions).toEqual([]);
   });
 
-  it('fetchRolesPermissionsCatalogApi rethrows AxiosError on HTTP 403 without falling back to mock', async () => {
+  it('fetchRolesPermissionsCatalogApi rethrows HTTP 404, 403 and network errors without falling back to mock catalog', async () => {
+    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(makeAxiosError(404, 'Not found'));
+    await expect(fetchRolesPermissionsCatalogApi()).rejects.toThrow(AxiosError);
+
     vi.spyOn(apiClient, 'get').mockRejectedValueOnce(
       makeAxiosError(403, 'Không đủ thẩm quyền truy cập danh mục vai trò.'),
     );
-
     await expect(fetchRolesPermissionsCatalogApi()).rejects.toThrow(AxiosError);
-  });
 
-  it('assignRolePermissionsApi sends PUT /admin/roles/:roleId/permissions and updates mock state on 404 fallback', async () => {
-    const putSpy = vi
-      .spyOn(apiClient, 'put')
-      .mockRejectedValueOnce(makeAxiosError(404, 'Endpoint not yet deployed'));
-
-    const nextCodes = ['PATIENT_PROFILE_READ', 'QUEUE_MANAGE', 'MEDICAL_RECORD_WRITE'];
-    const updatedRole = await assignRolePermissionsApi({
-      roleId: 'ROL-03',
-      roleCode: 'DOCTOR',
-      permissionCodes: nextCodes,
-      note: 'Cập nhật quyền bác sĩ',
-    });
-
-    expect(putSpy).toHaveBeenCalledWith('/admin/roles/ROL-03/permissions', {
-      roleCode: 'DOCTOR',
-      permissionCodes: nextCodes,
-      note: 'Cập nhật quyền bác sĩ',
-    });
-    expect(updatedRole.permissions.map((p) => p.code)).toEqual(nextCodes);
-    expect(updatedRole.updatedAt).toBe('Hôm nay');
-    expect(updatedRole.permissions[1]).toEqual(SYSTEM_PERMISSIONS.QUEUE_MANAGE);
+    const networkErr = new AxiosError('Network Error', 'ERR_NETWORK');
+    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(networkErr);
+    await expect(fetchRolesPermissionsCatalogApi()).rejects.toBe(networkErr);
   });
 
   it('assignRolePermissionsApi normalizes RoleListItemDto on HTTP 200', async () => {
-    vi.spyOn(apiClient, 'put').mockResolvedValueOnce({
+    const putSpy = vi.spyOn(apiClient, 'put').mockResolvedValueOnce({
       data: {
         roleId: 3,
         id: 'ROL-03',
@@ -270,6 +256,11 @@ describe('role-permissions.api (SCR-ADM-ROLE-02)', () => {
       note: 'Chuẩn hóa phản hồi từ backend',
     });
 
+    expect(putSpy).toHaveBeenCalledWith('/admin/roles/ROL-03/permissions', {
+      roleCode: 'DOCTOR',
+      permissionCodes: ['PATIENT_PROFILE_READ', 'MEDICAL_RECORD_WRITE'],
+      note: 'Chuẩn hóa phản hồi từ backend',
+    });
     expect(updatedRole.roleId).toBe(3);
     expect(updatedRole.id).toBe('ROL-03');
     expect(updatedRole.permissionCount).toBe(2);
@@ -280,11 +271,10 @@ describe('role-permissions.api (SCR-ADM-ROLE-02)', () => {
     expect(updatedRole.updatedAt).toBe('20/04/2026');
   });
 
-  it('assignRolePermissionsApi rethrows HTTP 400 and HTTP 403 ProblemDetails without falling back to mock', async () => {
+  it('assignRolePermissionsApi rethrows HTTP 400, 403, 404 and network errors without mock fallback', async () => {
     vi.spyOn(apiClient, 'put').mockRejectedValueOnce(
       makeAxiosError(400, 'Danh sách mã quyền hạn không hợp lệ.'),
     );
-
     await expect(
       assignRolePermissionsApi({
         roleId: 'ROL-03',
@@ -296,10 +286,18 @@ describe('role-permissions.api (SCR-ADM-ROLE-02)', () => {
     vi.spyOn(apiClient, 'put').mockRejectedValueOnce(
       makeAxiosError(403, 'Chỉ SYSTEM_ADMIN mới được phép thay đổi ma trận phân quyền.'),
     );
-
     await expect(
       assignRolePermissionsApi({
         roleId: 'ROL-03',
+        roleCode: 'DOCTOR',
+        permissionCodes: ['PATIENT_PROFILE_READ'],
+      }),
+    ).rejects.toThrow(AxiosError);
+
+    vi.spyOn(apiClient, 'put').mockRejectedValueOnce(makeAxiosError(404, 'Role not found'));
+    await expect(
+      assignRolePermissionsApi({
+        roleId: 'ROL-99',
         roleCode: 'DOCTOR',
         permissionCodes: ['PATIENT_PROFILE_READ'],
       }),
@@ -370,25 +368,21 @@ describe('role-permissions.api (SCR-ADM-ROLE-02)', () => {
     ]);
   });
 
-  it('createRoleApi falls back to mock role creation on HTTP 404 and rethrows on HTTP 409 Conflict', async () => {
+  it('createRoleApi rethrows HTTP 404, 409 Conflict and network errors without mock role creation', async () => {
     vi.spyOn(apiClient, 'post').mockRejectedValueOnce(makeAxiosError(404, 'Not deployed'));
-
-    const fallbackRole = await createRoleApi({
-      code: 'QUALITY_SUPERVISOR',
-      name: 'Giám sát chất lượng',
-      scope: 'SYSTEM',
-      status: 'ACTIVE',
-      permissionCodes: ['AUDIT_READ'],
-    });
-
-    expect(fallbackRole.code).toBe('QUALITY_SUPERVISOR');
-    expect(fallbackRole.id).toBe('ROL-11');
-    expect(fallbackRole.permissions.map((p) => p.code)).toEqual(['AUDIT_READ']);
+    await expect(
+      createRoleApi({
+        code: 'QUALITY_SUPERVISOR',
+        name: 'Giám sát chất lượng',
+        scope: 'SYSTEM',
+        status: 'ACTIVE',
+        permissionCodes: ['AUDIT_READ'],
+      }),
+    ).rejects.toThrow(AxiosError);
 
     vi.spyOn(apiClient, 'post').mockRejectedValueOnce(
       makeAxiosError(409, "Mã vai trò 'DOCTOR' đã tồn tại trong hệ thống."),
     );
-
     await expect(
       createRoleApi({
         code: 'DOCTOR',

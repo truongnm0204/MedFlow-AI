@@ -13,7 +13,7 @@ import { Spinner } from '@/shared/ui/spinner';
 import { PaymentSummaryCard } from '../components/payment-summary-card';
 import { QrPaymentPanel } from '../components/qr-payment-panel';
 import { useGenerateQrPaymentMutation, useVisitChargesQuery } from '../hooks/use-payment';
-import { chargeStatusLabel, formatDateTime, formatVnd } from '../lib/payment-format';
+import { chargeStatusLabel, formatDateTime, formatVnd } from '../utils/payment-format';
 
 export function PatientPaymentDetailPage() {
   const { visitCode = '' } = useParams<{ visitCode: string }>();

@@ -1,47 +1,5 @@
-import axios from 'axios';
-
 import { apiClient } from '@/shared/lib/axios';
 
-import { DIAGNOSTIC_DASHBOARD_MOCK } from '../data/diagnostic-mock-data';
-import {
-  confirmMockDiagnosticOrder,
-  confirmMockDiagnosticOrdersBatch,
-  resolveMockDiagnosticOrderReviewDetail,
-  resolveMockDiagnosticOrdersForReview,
-} from '../data/diagnostic-order-review-mock';
-import {
-  completeMockDiagnosticServiceExecution,
-  resolveMockDiagnosticExecutionDetail,
-  resolveMockDiagnosticExecutions,
-  startMockDiagnosticServiceExecution,
-  updateMockDiagnosticServiceStatus,
-  updateMockDiagnosticServiceStatusBatch,
-} from '../data/diagnostic-execution-mock';
-import {
-  amendMockDiagnosticResult,
-  enterMockDiagnosticResult,
-  resolveMockDiagnosticOrdersForResultEntry,
-  resolveMockDiagnosticResultEntryDetail,
-} from '../data/diagnostic-result-entry-mock';
-import {
-  receiveMockDiagnosticPatient,
-  receiveMockDiagnosticPatientsBatch,
-  resolveMockDiagnosticOrdersForReceive,
-  resolveMockDiagnosticPatientReceiveDetail,
-} from '../data/diagnostic-patient-receive-mock';
-import {
-  callNextMockDiagnosticPatient,
-  cancelMockDiagnosticQueueEntry,
-  markMockDiagnosticMissedTurn,
-  resolveMockDiagnosticQueueBoard,
-  resolveMockDiagnosticQueueEntryDetail,
-  restoreMockDiagnosticSkippedTurn,
-  updateMockDiagnosticQueueStatus,
-} from '../data/diagnostic-queue-mock';
-import {
-  resolveMockDiagnosticWorklist,
-  resolveMockDiagnosticWorklistOrderDetail,
-} from '../data/diagnostic-worklist-mock';
 import { diagnosticOrderIdentifierSchema } from '../schemas/diagnostic-worklist-filter.schema';
 import type {
   CallNextDiagnosticPatientRequest,
@@ -65,7 +23,6 @@ import type {
   DiagnosticServiceExecutionListResponseDto,
   EnterDiagnosticResultRequest,
   EnterDiagnosticResultResponseDto,
-  UpdateDiagnosticResultRequest,
   GetDiagnosticExecutionsParams,
   GetDiagnosticOrdersForReceiveParams,
   GetDiagnosticOrdersForResultEntryParams,
@@ -76,6 +33,7 @@ import type {
   ReceiveDiagnosticPatientResponseDto,
   ReceiveDiagnosticPatientsBatchRequest,
   UpdateDiagnosticQueueStatusRequest,
+  UpdateDiagnosticResultRequest,
   UpdateDiagnosticServiceStatusBatchRequest,
   UpdateDiagnosticServiceStatusRequest,
   UpdateDiagnosticServiceStatusResponseDto,
@@ -86,74 +44,31 @@ import type {
   DiagnosticWorklistResponseDto,
 } from '../types/diagnostic-worklist.types';
 
-/** Chỉ fallback về mock khi backend chưa mở endpoint (404) hoặc offline/network error. */
-function shouldFallbackToMock(error: unknown): boolean {
-  if (!axios.isAxiosError(error)) return false;
-  if (!error.response) return true;
-  return error.response.status === 404;
-}
-
-/** Worklist endpoint đã có trên BE: chỉ fallback khi offline/network error, không nuốt HTTP 4xx/5xx. */
-function shouldFallbackWorklistToMock(error: unknown): boolean {
-  if (!axios.isAxiosError(error)) return false;
-  return !error.response;
-}
-
-function hasAccessToken(): boolean {
-  return (
-    typeof window !== 'undefined' && Boolean(window.localStorage?.getItem('medflow.access_token'))
-  );
-}
-
 /**
  * Lấy dữ liệu tổng quan màn hình khởi đầu của Diagnostic Staff (`GET /diagnostic/dashboard/summary`).
- * Khi chưa có token hoặc backend offline/404, fallback về dữ liệu chuẩn M1;
- * các lỗi phân quyền/nghiệp vụ (400/401/403/500...) được rethrow để UI hiển thị trạng thái lỗi.
  */
 export async function fetchDiagnosticDashboardSummary(
   params?: DiagnosticDashboardQueryParams,
 ): Promise<DiagnosticDashboardSummary> {
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.get<DiagnosticDashboardSummary>(
-        '/diagnostic/dashboard/summary',
-        params ? { params } : undefined,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return DIAGNOSTIC_DASHBOARD_MOCK;
+  const { data } = await apiClient.get<DiagnosticDashboardSummary>(
+    '/diagnostic/dashboard/summary',
+    params ? { params } : undefined,
+  );
+  return data;
 }
 
 /**
  * Lấy danh sách công việc cận lâm sàng (`GET /diagnostic/worklist`) cho UC38.
- * Khi chưa có token hoặc offline/network error, fallback về dữ liệu mock;
- * mọi lỗi HTTP (400/401/403/404/500) được rethrow để UI hiển thị cảnh báo chính xác.
  */
 export async function fetchDiagnosticWorklist(
   params?: DiagnosticWorklistQueryParams,
 ): Promise<DiagnosticWorklistResponseDto> {
-  if (hasAccessToken()) {
-    try {
-      const hasParams = Boolean(params && Object.keys(params).length > 0);
-      const { data } = await apiClient.get<DiagnosticWorklistResponseDto>(
-        '/diagnostic/worklist',
-        hasParams ? { params } : undefined,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return resolveMockDiagnosticWorklist(params);
+  const hasParams = Boolean(params && Object.keys(params).length > 0);
+  const { data } = await apiClient.get<DiagnosticWorklistResponseDto>(
+    '/diagnostic/worklist',
+    hasParams ? { params } : undefined,
+  );
+  return data;
 }
 
 /**
@@ -171,26 +86,10 @@ export async function fetchDiagnosticWorklistOrderDetail(
   }
 
   const normalizedId = parsed.data;
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.get<DiagnosticWorklistItemDto>(
-        `/diagnostic/worklist/${encodeURIComponent(normalizedId)}`,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  const item = resolveMockDiagnosticWorklistOrderDetail(normalizedId);
-  if (!item) {
-    throw new Error('Không tìm thấy phiếu chỉ định cận lâm sàng phù hợp.');
-  }
-
-  return item;
+  const { data } = await apiClient.get<DiagnosticWorklistItemDto>(
+    `/diagnostic/worklist/${encodeURIComponent(normalizedId)}`,
+  );
+  return data;
 }
 
 /**
@@ -199,21 +98,11 @@ export async function fetchDiagnosticWorklistOrderDetail(
 export async function fetchDiagnosticOrdersForReview(
   params?: GetDiagnosticOrdersForReviewParams,
 ): Promise<DiagnosticOrderReviewListResponseDto> {
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.get<DiagnosticOrderReviewListResponseDto>(
-        '/diagnostic/orders/review',
-        params ? { params } : undefined,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return resolveMockDiagnosticOrdersForReview(params);
+  const { data } = await apiClient.get<DiagnosticOrderReviewListResponseDto>(
+    '/diagnostic/orders/review',
+    params ? { params } : undefined,
+  );
+  return data;
 }
 
 /**
@@ -223,21 +112,10 @@ export async function fetchDiagnosticOrderReviewDetail(
   idOrCode: string,
 ): Promise<DiagnosticOrderReviewDetailResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.get<DiagnosticOrderReviewDetailResponseDto>(
-        `/diagnostic/orders/${encoded}/review`,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return resolveMockDiagnosticOrderReviewDetail(idOrCode);
+  const { data } = await apiClient.get<DiagnosticOrderReviewDetailResponseDto>(
+    `/diagnostic/orders/${encoded}/review`,
+  );
+  return data;
 }
 
 /**
@@ -248,22 +126,11 @@ export async function confirmDiagnosticOrder(
   payload?: ConfirmDiagnosticOrderRequest,
 ): Promise<ConfirmDiagnosticOrderResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<ConfirmDiagnosticOrderResponseDto>(
-        `/diagnostic/orders/${encoded}/confirm`,
-        payload ?? { isEligibilityVerified: true },
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return confirmMockDiagnosticOrder(idOrCode, payload);
+  const { data } = await apiClient.post<ConfirmDiagnosticOrderResponseDto>(
+    `/diagnostic/orders/${encoded}/confirm`,
+    payload ?? { isEligibilityVerified: true },
+  );
+  return data;
 }
 
 /**
@@ -272,45 +139,25 @@ export async function confirmDiagnosticOrder(
 export async function confirmDiagnosticOrdersBatch(
   payload: ConfirmDiagnosticOrdersBatchRequest,
 ): Promise<ConfirmDiagnosticOrderResponseDto> {
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<ConfirmDiagnosticOrderResponseDto>(
-        '/diagnostic/orders/confirm',
-        payload,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return confirmMockDiagnosticOrdersBatch(payload);
+  const { data } = await apiClient.post<ConfirmDiagnosticOrderResponseDto>(
+    '/diagnostic/orders/confirm',
+    payload,
+  );
+  return data;
 }
 
 /**
- * Lấy bảng hàng đợi cận lâm sàng theo điểm phục vụ & phòng kỹ thuật (`GET /diagnostic/queue`) cho UC41 (#129 / #130).
+ * Lấy bảng hàng đợi cận lâm sàng theo điểm phục vụ & phòng kỹ thuật (`GET /diagnostic/queue`) cho UC41.
  */
 export async function fetchDiagnosticQueueBoard(
   params?: GetDiagnosticQueueParams,
 ): Promise<DiagnosticQueueBoardResponseDto> {
-  if (hasAccessToken()) {
-    try {
-      const hasParams = Boolean(params && Object.keys(params).length > 0);
-      const { data } = await apiClient.get<DiagnosticQueueBoardResponseDto>(
-        '/diagnostic/queue',
-        hasParams ? { params } : undefined,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return resolveMockDiagnosticQueueBoard(params);
+  const hasParams = Boolean(params && Object.keys(params).length > 0);
+  const { data } = await apiClient.get<DiagnosticQueueBoardResponseDto>(
+    '/diagnostic/queue',
+    hasParams ? { params } : undefined,
+  );
+  return data;
 }
 
 /**
@@ -320,21 +167,10 @@ export async function fetchDiagnosticQueueEntryDetail(
   idOrCode: string,
 ): Promise<DiagnosticQueueEntryDetailResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.get<DiagnosticQueueEntryDetailResponseDto>(
-        `/diagnostic/queue/${encoded}`,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return resolveMockDiagnosticQueueEntryDetail(idOrCode);
+  const { data } = await apiClient.get<DiagnosticQueueEntryDetailResponseDto>(
+    `/diagnostic/queue/${encoded}`,
+  );
+  return data;
 }
 
 /**
@@ -345,22 +181,11 @@ export async function callNextDiagnosticPatient(
   payload?: CallNextDiagnosticPatientRequest,
 ): Promise<CallNextDiagnosticPatientResponseDto> {
   const encoded = encodeURIComponent(servicePointId.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<CallNextDiagnosticPatientResponseDto>(
-        `/diagnostic/queue/service-points/${encoded}/call-next`,
-        payload ?? {},
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return callNextMockDiagnosticPatient(servicePointId, payload);
+  const { data } = await apiClient.post<CallNextDiagnosticPatientResponseDto>(
+    `/diagnostic/queue/service-points/${encoded}/call-next`,
+    payload ?? {},
+  );
+  return data;
 }
 
 /**
@@ -371,22 +196,11 @@ export async function updateDiagnosticQueueStatus(
   payload: UpdateDiagnosticQueueStatusRequest,
 ): Promise<ManageDiagnosticQueueActionResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
-        `/diagnostic/queue/${encoded}/status`,
-        payload,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return updateMockDiagnosticQueueStatus(idOrCode, payload);
+  const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+    `/diagnostic/queue/${encoded}/status`,
+    payload,
+  );
+  return data;
 }
 
 /**
@@ -397,28 +211,11 @@ export async function markDiagnosticQueueReady(
   payload?: DiagnosticQueueTurnActionRequest,
 ): Promise<ManageDiagnosticQueueActionResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
-        `/diagnostic/queue/${encoded}/ready`,
-        payload ?? {},
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return updateMockDiagnosticQueueStatus(idOrCode, {
-    targetStatus: 'READY',
-    presenceStatus: payload?.presenceStatus ?? 'PRESENT',
-    reason: payload?.reason,
-    notes: payload?.notes,
-    expectedStateVersion: payload?.expectedStateVersion,
-  });
+  const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+    `/diagnostic/queue/${encoded}/ready`,
+    payload ?? {},
+  );
+  return data;
 }
 
 /**
@@ -429,28 +226,11 @@ export async function callDiagnosticQueueEntry(
   payload?: DiagnosticQueueTurnActionRequest,
 ): Promise<ManageDiagnosticQueueActionResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
-        `/diagnostic/queue/${encoded}/call`,
-        payload ?? {},
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return updateMockDiagnosticQueueStatus(idOrCode, {
-    targetStatus: 'CALLED',
-    presenceStatus: payload?.presenceStatus ?? 'PRESENT',
-    reason: payload?.reason,
-    notes: payload?.notes,
-    expectedStateVersion: payload?.expectedStateVersion,
-  });
+  const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+    `/diagnostic/queue/${encoded}/call`,
+    payload ?? {},
+  );
+  return data;
 }
 
 /**
@@ -461,28 +241,11 @@ export async function startDiagnosticQueueExecution(
   payload?: DiagnosticQueueTurnActionRequest,
 ): Promise<ManageDiagnosticQueueActionResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
-        `/diagnostic/queue/${encoded}/start`,
-        payload ?? {},
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return updateMockDiagnosticQueueStatus(idOrCode, {
-    targetStatus: 'IN_PROGRESS',
-    presenceStatus: 'PRESENT',
-    reason: payload?.reason,
-    notes: payload?.notes,
-    expectedStateVersion: payload?.expectedStateVersion,
-  });
+  const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+    `/diagnostic/queue/${encoded}/start`,
+    payload ?? {},
+  );
+  return data;
 }
 
 /**
@@ -493,28 +256,11 @@ export async function completeDiagnosticQueueExecution(
   payload?: DiagnosticQueueTurnActionRequest,
 ): Promise<ManageDiagnosticQueueActionResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
-        `/diagnostic/queue/${encoded}/complete`,
-        payload ?? {},
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return updateMockDiagnosticQueueStatus(idOrCode, {
-    targetStatus: 'COMPLETED',
-    presenceStatus: payload?.presenceStatus ?? 'PRESENT',
-    reason: payload?.reason,
-    notes: payload?.notes,
-    expectedStateVersion: payload?.expectedStateVersion,
-  });
+  const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+    `/diagnostic/queue/${encoded}/complete`,
+    payload ?? {},
+  );
+  return data;
 }
 
 /**
@@ -525,22 +271,11 @@ export async function markDiagnosticQueueMissedTurn(
   payload: DiagnosticQueueTurnActionRequest,
 ): Promise<ManageDiagnosticQueueActionResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
-        `/diagnostic/queue/${encoded}/missed-turn`,
-        payload,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return markMockDiagnosticMissedTurn(idOrCode, payload);
+  const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+    `/diagnostic/queue/${encoded}/missed-turn`,
+    payload,
+  );
+  return data;
 }
 
 /**
@@ -551,22 +286,11 @@ export async function restoreDiagnosticQueueTurn(
   payload?: DiagnosticQueueTurnActionRequest,
 ): Promise<ManageDiagnosticQueueActionResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
-        `/diagnostic/queue/${encoded}/restore-turn`,
-        payload ?? {},
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return restoreMockDiagnosticSkippedTurn(idOrCode, payload);
+  const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+    `/diagnostic/queue/${encoded}/restore-turn`,
+    payload ?? {},
+  );
+  return data;
 }
 
 /**
@@ -577,371 +301,207 @@ export async function cancelDiagnosticQueueEntry(
   payload: CancelDiagnosticQueueEntryRequest,
 ): Promise<ManageDiagnosticQueueActionResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
-        `/diagnostic/queue/${encoded}/cancel`,
-        payload,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackWorklistToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return cancelMockDiagnosticQueueEntry(idOrCode, payload);
+  const { data } = await apiClient.post<ManageDiagnosticQueueActionResponseDto>(
+    `/diagnostic/queue/${encoded}/cancel`,
+    payload,
+  );
+  return data;
 }
 
 /**
- * Lấy danh sách phiếu chỉ định cận lâm sàng chờ tiếp nhận bệnh nhân tại điểm dịch vụ (`GET /diagnostic/orders/receive` — UC40 / #127).
+ * Lấy danh sách phiếu chỉ định cận lâm sàng chờ tiếp nhận bệnh nhân tại điểm dịch vụ (`GET /diagnostic/orders/receive` — UC40).
  */
 export async function fetchDiagnosticOrdersForReceive(
   params?: GetDiagnosticOrdersForReceiveParams,
 ): Promise<DiagnosticPatientReceiveListResponseDto> {
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.get<DiagnosticPatientReceiveListResponseDto>(
-        '/diagnostic/orders/receive',
-        params ? { params } : undefined,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return resolveMockDiagnosticOrdersForReceive(params);
+  const { data } = await apiClient.get<DiagnosticPatientReceiveListResponseDto>(
+    '/diagnostic/orders/receive',
+    params ? { params } : undefined,
+  );
+  return data;
 }
 
 /**
- * Lấy chi tiết phiếu chỉ định CLS kèm bối cảnh lâm sàng & checklist tiếp nhận bệnh nhân (`GET /diagnostic/orders/{idOrCode}/receive` — UC40 / #127).
+ * Lấy chi tiết phiếu chỉ định CLS kèm bối cảnh lâm sàng & checklist tiếp nhận bệnh nhân (`GET /diagnostic/orders/{idOrCode}/receive` — UC40).
  */
 export async function fetchDiagnosticPatientReceiveDetail(
   idOrCode: string,
 ): Promise<DiagnosticPatientReceiveDetailResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.get<DiagnosticPatientReceiveDetailResponseDto>(
-        `/diagnostic/orders/${encoded}/receive`,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return resolveMockDiagnosticPatientReceiveDetail(idOrCode);
+  const { data } = await apiClient.get<DiagnosticPatientReceiveDetailResponseDto>(
+    `/diagnostic/orders/${encoded}/receive`,
+  );
+  return data;
 }
 
 /**
- * Tiếp nhận bệnh nhân tại điểm dịch vụ cận lâm sàng, chuyển trạng thái hàng đợi sang READY (`POST /diagnostic/orders/{idOrCode}/receive` — UC40 / #127).
+ * Tiếp nhận bệnh nhân tại điểm dịch vụ cận lâm sàng, chuyển trạng thái hàng đợi sang READY (`POST /diagnostic/orders/{idOrCode}/receive` — UC40).
  */
 export async function receiveDiagnosticPatient(
   idOrCode: string,
   payload?: ReceiveDiagnosticPatientRequest,
 ): Promise<ReceiveDiagnosticPatientResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<ReceiveDiagnosticPatientResponseDto>(
-        `/diagnostic/orders/${encoded}/receive`,
-        payload ?? {
-          isPatientPresent: true,
-          isIdentityVerified: true,
-          isPreparationVerified: true,
-        },
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return receiveMockDiagnosticPatient(idOrCode, payload);
+  const { data } = await apiClient.post<ReceiveDiagnosticPatientResponseDto>(
+    `/diagnostic/orders/${encoded}/receive`,
+    payload ?? {
+      isPatientPresent: true,
+      isIdentityVerified: true,
+      isPreparationVerified: true,
+    },
+  );
+  return data;
 }
 
 /**
- * Tiếp nhận bệnh nhân hàng loạt cho các phiếu chỉ định cận lâm sàng đã xác nhận (`POST /diagnostic/orders/receive` — UC40 / #127).
+ * Tiếp nhận bệnh nhân hàng loạt cho các phiếu chỉ định cận lâm sàng đã xác nhận (`POST /diagnostic/orders/receive` — UC40).
  */
 export async function receiveDiagnosticPatientsBatch(
   payload: ReceiveDiagnosticPatientsBatchRequest,
 ): Promise<ReceiveDiagnosticPatientResponseDto> {
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<ReceiveDiagnosticPatientResponseDto>(
-        '/diagnostic/orders/receive',
-        payload,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return receiveMockDiagnosticPatientsBatch(payload);
+  const { data } = await apiClient.post<ReceiveDiagnosticPatientResponseDto>(
+    '/diagnostic/orders/receive',
+    payload,
+  );
+  return data;
 }
 
 /**
- * Lấy danh sách phiếu chỉ định cận lâm sàng theo trạng thái thực hiện kỹ thuật (`GET /diagnostic/orders/execution` — UC42 / #131).
+ * Lấy danh sách phiếu chỉ định cận lâm sàng theo trạng thái thực hiện kỹ thuật (`GET /diagnostic/orders/execution` — UC42).
  */
 export async function fetchDiagnosticExecutions(
   params?: GetDiagnosticExecutionsParams,
 ): Promise<DiagnosticServiceExecutionListResponseDto> {
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.get<DiagnosticServiceExecutionListResponseDto>(
-        '/diagnostic/orders/execution',
-        params ? { params } : undefined,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return resolveMockDiagnosticExecutions(params);
+  const { data } = await apiClient.get<DiagnosticServiceExecutionListResponseDto>(
+    '/diagnostic/orders/execution',
+    params ? { params } : undefined,
+  );
+  return data;
 }
 
 /**
- * Lấy chi tiết phiếu chỉ định CLS kèm bối cảnh lâm sàng & lịch sử chuyển trạng thái thực hiện (`GET /diagnostic/orders/{idOrCode}/execution` — UC42 / #131).
+ * Lấy chi tiết phiếu chỉ định CLS kèm bối cảnh lâm sàng & lịch sử chuyển trạng thái thực hiện (`GET /diagnostic/orders/{idOrCode}/execution` — UC42).
  */
 export async function fetchDiagnosticExecutionDetail(
   idOrCode: string,
 ): Promise<DiagnosticServiceExecutionDetailResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.get<DiagnosticServiceExecutionDetailResponseDto>(
-        `/diagnostic/orders/${encoded}/execution`,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return resolveMockDiagnosticExecutionDetail(idOrCode);
+  const { data } = await apiClient.get<DiagnosticServiceExecutionDetailResponseDto>(
+    `/diagnostic/orders/${encoded}/execution`,
+  );
+  return data;
 }
 
 /**
- * Cập nhật trạng thái thực hiện kỹ thuật đơn lẻ (`POST /diagnostic/orders/{idOrCode}/execution-status` — UC42 / #131).
+ * Cập nhật trạng thái thực hiện kỹ thuật đơn lẻ (`POST /diagnostic/orders/{idOrCode}/execution-status` — UC42).
  */
 export async function updateDiagnosticServiceStatus(
   idOrCode: string,
   payload: UpdateDiagnosticServiceStatusRequest,
 ): Promise<UpdateDiagnosticServiceStatusResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<UpdateDiagnosticServiceStatusResponseDto>(
-        `/diagnostic/orders/${encoded}/execution-status`,
-        payload,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return updateMockDiagnosticServiceStatus(idOrCode, payload);
+  const { data } = await apiClient.post<UpdateDiagnosticServiceStatusResponseDto>(
+    `/diagnostic/orders/${encoded}/execution-status`,
+    payload,
+  );
+  return data;
 }
 
 /**
- * Bắt đầu thực hiện kỹ thuật (`POST /diagnostic/orders/{idOrCode}/start` — UC42 / #131).
+ * Bắt đầu thực hiện kỹ thuật (`POST /diagnostic/orders/{idOrCode}/start` — UC42).
  */
 export async function startDiagnosticServiceExecution(
   idOrCode: string,
   payload?: UpdateDiagnosticServiceStatusRequest,
 ): Promise<UpdateDiagnosticServiceStatusResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<UpdateDiagnosticServiceStatusResponseDto>(
-        `/diagnostic/orders/${encoded}/start`,
-        payload ?? { targetStatus: 'IN_PROGRESS' },
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return startMockDiagnosticServiceExecution(idOrCode, payload);
+  const { data } = await apiClient.post<UpdateDiagnosticServiceStatusResponseDto>(
+    `/diagnostic/orders/${encoded}/start`,
+    payload ?? { targetStatus: 'IN_PROGRESS' },
+  );
+  return data;
 }
 
 /**
- * Hoàn tất thực hiện kỹ thuật (`POST /diagnostic/orders/{idOrCode}/complete` — UC42 / #131).
+ * Hoàn tất thực hiện kỹ thuật (`POST /diagnostic/orders/{idOrCode}/complete` — UC42).
  */
 export async function completeDiagnosticServiceExecution(
   idOrCode: string,
   payload?: UpdateDiagnosticServiceStatusRequest,
 ): Promise<UpdateDiagnosticServiceStatusResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<UpdateDiagnosticServiceStatusResponseDto>(
-        `/diagnostic/orders/${encoded}/complete`,
-        payload ?? { targetStatus: 'COMPLETED' },
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return completeMockDiagnosticServiceExecution(idOrCode, payload);
+  const { data } = await apiClient.post<UpdateDiagnosticServiceStatusResponseDto>(
+    `/diagnostic/orders/${encoded}/complete`,
+    payload ?? { targetStatus: 'COMPLETED' },
+  );
+  return data;
 }
 
 /**
- * Cập nhật trạng thái thực hiện kỹ thuật hàng loạt (`POST /diagnostic/orders/execution-status` — UC42 / #131).
+ * Cập nhật trạng thái thực hiện kỹ thuật hàng loạt (`POST /diagnostic/orders/execution-status` — UC42).
  */
 export async function updateDiagnosticServiceStatusBatch(
   payload: UpdateDiagnosticServiceStatusBatchRequest,
 ): Promise<UpdateDiagnosticServiceStatusResponseDto> {
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<UpdateDiagnosticServiceStatusResponseDto>(
-        '/diagnostic/orders/execution-status',
-        payload,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return updateMockDiagnosticServiceStatusBatch(payload);
+  const { data } = await apiClient.post<UpdateDiagnosticServiceStatusResponseDto>(
+    '/diagnostic/orders/execution-status',
+    payload,
+  );
+  return data;
 }
 
 /**
- * Lấy danh sách phiếu chỉ định cận lâm sàng cần nhập / trả kết quả (`GET /diagnostic/results` — UC43 / #133).
- * Fallback về mock khi backend chưa mở endpoint (404) hoặc offline/network error;
- * các lỗi phân quyền/nghiệp vụ được rethrow để UI hiển thị trạng thái lỗi chính xác.
+ * Lấy danh sách phiếu chỉ định cận lâm sàng cần nhập / trả kết quả (`GET /diagnostic/results` — UC43).
  */
 export async function fetchDiagnosticOrdersForResultEntry(
   params?: GetDiagnosticOrdersForResultEntryParams,
 ): Promise<DiagnosticResultEntryListResponseDto> {
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.get<DiagnosticResultEntryListResponseDto>(
-        '/diagnostic/results',
-        params ? { params } : undefined,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return resolveMockDiagnosticOrdersForResultEntry(params);
+  const { data } = await apiClient.get<DiagnosticResultEntryListResponseDto>(
+    '/diagnostic/results',
+    params ? { params } : undefined,
+  );
+  return data;
 }
 
 /**
- * Lấy chi tiết phiếu chỉ định CLS kèm bối cảnh lâm sàng, lịch sử phiên bản kết quả & checklist điều kiện nhập kết quả (`GET /diagnostic/results/{idOrCode}` — UC43 / #133).
+ * Lấy chi tiết phiếu chỉ định CLS kèm bối cảnh lâm sàng, lịch sử phiên bản kết quả & checklist điều kiện nhập kết quả (`GET /diagnostic/results/{idOrCode}` — UC43).
  */
 export async function fetchDiagnosticResultEntryDetail(
   idOrCode: string,
 ): Promise<DiagnosticResultEntryDetailResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.get<DiagnosticResultEntryDetailResponseDto>(
-        `/diagnostic/results/${encoded}`,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return resolveMockDiagnosticResultEntryDetail(idOrCode);
+  const { data } = await apiClient.get<DiagnosticResultEntryDetailResponseDto>(
+    `/diagnostic/results/${encoded}`,
+  );
+  return data;
 }
 
 /**
- * Nhân viên cận lâm sàng lưu / duyệt & trả kết quả cho phiếu chỉ định (`POST /diagnostic/orders/{idOrCode}/result` — UC43 / #133).
- * Mutation không nuốt lỗi nghiệp vụ (400/403/409): chỉ fallback về mock khi backend chưa mở endpoint hoặc offline.
+ * Nhân viên cận lâm sàng lưu / duyệt & trả kết quả cho phiếu chỉ định (`POST /diagnostic/orders/{idOrCode}/result` — UC43).
  */
 export async function enterDiagnosticResult(
   idOrCode: string,
   payload: EnterDiagnosticResultRequest,
 ): Promise<EnterDiagnosticResultResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<EnterDiagnosticResultResponseDto>(
-        `/diagnostic/orders/${encoded}/result`,
-        payload,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return enterMockDiagnosticResult(idOrCode, payload);
+  const { data } = await apiClient.post<EnterDiagnosticResultResponseDto>(
+    `/diagnostic/orders/${encoded}/result`,
+    payload,
+  );
+  return data;
 }
 
 /**
- * Sửa kết quả cận lâm sàng đã khóa (`POST /diagnostic/orders/{idOrCode}/result/amend` — UC43 / #135).
- * Không gọi Enter. 400/403/409 được rethrow; chỉ fallback mock khi endpoint chưa mở hoặc offline.
+ * Sửa kết quả cận lâm sàng đã khóa (`POST /diagnostic/orders/{idOrCode}/result/amend` — UC43).
  */
 export async function updateDiagnosticResult(
   idOrCode: string,
   payload: UpdateDiagnosticResultRequest,
 ): Promise<EnterDiagnosticResultResponseDto> {
   const encoded = encodeURIComponent(idOrCode.trim());
-
-  if (hasAccessToken()) {
-    try {
-      const { data } = await apiClient.post<EnterDiagnosticResultResponseDto>(
-        `/diagnostic/orders/${encoded}/result/amend`,
-        payload,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return amendMockDiagnosticResult(idOrCode, payload);
+  const { data } = await apiClient.post<EnterDiagnosticResultResponseDto>(
+    `/diagnostic/orders/${encoded}/result/amend`,
+    payload,
+  );
+  return data;
 }

@@ -6,14 +6,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppRouter } from '@/app/router/app-router';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
+import { getHospitalTodayIso } from '@/shared/lib/hospital-date';
 
 import { updateExaminationQueueStatus } from '../api/examination-queue.api';
 import {
+  applyQueueStatusUpdateToResponse,
+  buildMockEarlyArrivalBackfillResponse,
   buildMockExaminationQueueResponse,
   buildMockUpdateExaminationQueueStatusResponse,
+  getAllowedNextQueueStatuses,
 } from '../data/examination-queue-mock';
 import { ExaminationQueuePage } from '../pages/examination-queue-page';
+import type {
+  EarlyArrivalBackfillRequestPayload,
+  UpdateExaminationQueueStatusPayload,
+} from '../types/examination-queue.types';
+import { recalculateServicePointServingOrder } from '../utils/early-arrival-backfill.utils';
 
 function LocationProbe() {
   const location = useLocation();
@@ -37,6 +47,97 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
+
+    let mockQueueState = buildMockExaminationQueueResponse();
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (url === '/reception/examination-queue') {
+        return { data: mockQueueState };
+      }
+      const statusMatch = String(url).match(
+        /^\/reception\/examination-queue\/entries\/([^/]+)\/status$/,
+      );
+      if (statusMatch) {
+        const entryId = decodeURIComponent(statusMatch[1]!);
+        const entry = mockQueueState.servicePoints
+          .flatMap((sp) => sp.entries)
+          .find((item) => item.id === entryId);
+        return {
+          data: {
+            queueEntryId: Number(entryId.replace(/\D/g, '')) || 1,
+            currentStatus: entry?.status ?? 'WAITING',
+            stateVersion: 2,
+            allowedTargetStatuses: entry ? [...getAllowedNextQueueStatuses(entry.status)] : [],
+            statusHistory: [],
+          },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    vi.spyOn(apiClient, 'patch').mockImplementation(async (url, body) => {
+      const entryStatusMatch = String(url).match(
+        /^\/reception\/examination-queue\/entries\/([^/]+)\/status$/,
+      );
+      if (entryStatusMatch) {
+        const entryId = decodeURIComponent(entryStatusMatch[1]!);
+        const payload = body as UpdateExaminationQueueStatusPayload;
+        const res = buildMockUpdateExaminationQueueStatusResponse(entryId, payload, mockQueueState);
+        mockQueueState = applyQueueStatusUpdateToResponse(mockQueueState, res.entry);
+        return {
+          data: {
+            queueEntryId: Number(entryId.replace(/\D/g, '')) || 1,
+            visitCode: res.entry.visitCode,
+            ticketNo: res.entry.ticketNo,
+            patientName: res.entry.patientName,
+            previousStatus: res.previousStatus,
+            currentStatus: res.entry.status,
+            presenceStatus: res.entry.presenceStatus,
+            blockedReason: res.entry.blockedReason,
+            reason: payload.reason ?? null,
+          },
+        };
+      }
+      const directStatusMatch = String(url).match(
+        /^\/reception\/examination-queue\/([^/]+)\/status$/,
+      );
+      if (directStatusMatch) {
+        const entryId = decodeURIComponent(directStatusMatch[1]!);
+        const payload = body as UpdateExaminationQueueStatusPayload;
+        const res = buildMockUpdateExaminationQueueStatusResponse(entryId, payload, mockQueueState);
+        mockQueueState = applyQueueStatusUpdateToResponse(mockQueueState, res.entry);
+        return { data: res };
+      }
+      throw new Error(`Unexpected PATCH ${url}`);
+    });
+
+    vi.spyOn(apiClient, 'post').mockImplementation(async (url, body) => {
+      const backfillMatch = String(url).match(
+        /^\/reception\/examination-queue\/entries\/([^/]+)\/early-arrival-backfill$/,
+      );
+      if (backfillMatch) {
+        const entryId = decodeURIComponent(backfillMatch[1]!);
+        const res = buildMockEarlyArrivalBackfillResponse(
+          entryId,
+          body as EarlyArrivalBackfillRequestPayload,
+        );
+        mockQueueState = {
+          ...mockQueueState,
+          servicePoints: mockQueueState.servicePoints.map((sp) =>
+            sp.servicePointId === res.servicePointId
+              ? {
+                  ...sp,
+                  entries: recalculateServicePointServingOrder(
+                    sp.entries.map((e) => (e.id === entryId ? res.updatedEntry : e)),
+                  ),
+                }
+              : sp,
+          ),
+        };
+        return { data: res };
+      }
+      throw new Error(`Unexpected POST ${url}`);
+    });
+
     useAuthStore.setState({
       user: {
         id: 5,
@@ -243,7 +344,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
   });
 
   it('calls GET /reception/examination-queue when token is present and handles HTTP 500 error + retry', async () => {
-    window.localStorage.setItem('medflow.access_token', 'jwt-reception-token');
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-reception-token');
 
     const serverError = new AxiosError(
       'Request failed with status code 500',
@@ -282,7 +383,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
       expect(screen.getByText(/Bệnh viện MedFlow Cơ sở API Live/i)).toBeInTheDocument();
     });
     expect(getSpy).toHaveBeenCalledWith('/reception/examination-queue', {
-      params: { queueDate: '2026-11-04' },
+      params: { queueDate: getHospitalTodayIso() },
     });
   });
 
@@ -464,7 +565,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
   });
 
   it('calls PATCH status endpoint when token is present and surfaces HTTP 409 Conflict in modal alert', async () => {
-    window.localStorage.setItem('medflow.access_token', 'jwt-reception-token');
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-reception-token');
 
     const mockQueue = buildMockExaminationQueueResponse();
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: mockQueue });
@@ -635,7 +736,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
   });
 
   it('applies clinical priority via live API and refetches examination queue with backend servingOrder', async () => {
-    window.localStorage.setItem('medflow.access_token', 'jwt-reception-token');
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-reception-token');
 
     const initialList = buildMockExaminationQueueResponse();
     const refetchedList = buildMockExaminationQueueResponse();
@@ -734,7 +835,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
       expect(listCallCount).toBe(2);
     });
     expect(getSpy).toHaveBeenCalledWith('/reception/examination-queue', {
-      params: { queueDate: '2026-11-04' },
+      params: { queueDate: getHospitalTodayIso() },
     });
 
     expect(screen.getByRole('status')).toHaveTextContent(
@@ -747,7 +848,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
   });
 
   it('displays LATE appointment-protection loss badge and executes Missed Turn (CALLED -> SKIPPED) & Restore Turn (SKIPPED -> READY) via live API (Issue #97)', async () => {
-    window.localStorage.setItem('medflow.access_token', 'jwt-reception-token');
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-reception-token');
 
     const initialList = buildMockExaminationQueueResponse();
     const afterMissedList = buildMockExaminationQueueResponse();
@@ -987,7 +1088,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
   });
 
   it('cancels a queue entry via live API and shows the backend-refetched queue without it (Issue #103)', async () => {
-    window.localStorage.setItem('medflow.access_token', 'jwt-reception-token');
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-reception-token');
 
     const initialList = buildMockExaminationQueueResponse();
     const refetchedList = buildMockExaminationQueueResponse();
@@ -1217,7 +1318,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
   });
 
   it('creates a waiting RETURN_CONSULTATION entry and activates it to READY with Backend-computed servingOrder and CLS readiness badges (Issue #99 / UC28)', async () => {
-    window.localStorage.setItem('medflow.access_token', 'jwt-reception-token');
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-reception-token');
 
     const initialQueue = buildMockExaminationQueueResponse();
     const room103Initial = initialQueue.servicePoints.find(

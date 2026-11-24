@@ -6,7 +6,7 @@ import { apiClient } from '@/shared/lib/axios';
 import { fetchDoctorDetailApi } from '../api/doctor-detail.api';
 import type { DoctorDetailProfile } from '../types/doctor-detail.types';
 
-describe('doctor-detail.api (M1-40 HTTP + fallback)', () => {
+describe('doctor-detail.api (M1-40 pure HTTP)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -62,7 +62,13 @@ describe('doctor-detail.api (M1-40 HTTP + fallback)', () => {
     expect(result.price).toBe(200000);
   });
 
-  it('falls back to mock profile when backend returns 404 for a known mock doctor ID', async () => {
+  it('throws validation error immediately when doctorId is blank', async () => {
+    const getSpy = vi.spyOn(apiClient, 'get');
+    await expect(fetchDoctorDetailApi('   ')).rejects.toThrow('Mã bác sĩ không được để trống');
+    expect(getSpy).not.toHaveBeenCalled();
+  });
+
+  it('rethrows HTTP 404, 400 and network errors without falling back to mock doctor profile', async () => {
     const notFoundError = new AxiosError(
       'Request failed with status code 404',
       'ERR_BAD_REQUEST',
@@ -77,36 +83,9 @@ describe('doctor-detail.api (M1-40 HTTP + fallback)', () => {
       },
     );
 
-    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(notFoundError);
+    const getSpy = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(notFoundError);
+    await expect(fetchDoctorDetailApi('doc-01')).rejects.toBe(notFoundError);
 
-    const fallback = await fetchDoctorDetailApi('doc-01');
-    expect(fallback.id).toBe('doc-01');
-    expect(fallback.name).toBe('BS.CKII Trần Quốc Tuấn');
-  });
-
-  it('throws error when backend returns 404 and doctor ID does not exist in mock catalog', async () => {
-    const notFoundError = new AxiosError(
-      'Request failed with status code 404',
-      'ERR_BAD_REQUEST',
-      undefined,
-      undefined,
-      {
-        status: 404,
-        statusText: 'Not Found',
-        headers: {},
-        config: {} as never,
-        data: { status: 404, title: 'Không tìm thấy', detail: 'Không tìm thấy Doctor.' },
-      },
-    );
-
-    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(notFoundError);
-
-    await expect(fetchDoctorDetailApi('NON-EXISTENT-DOCTOR')).rejects.toThrow(
-      'Không tìm thấy thông tin hồ sơ bác sĩ',
-    );
-  });
-
-  it('rethrows 400 BadRequest in fetchDoctorDetailApi instead of falling back to mock', async () => {
     const badRequestError = new AxiosError(
       'Request failed with status code 400',
       'ERR_BAD_REQUEST',
@@ -124,11 +103,11 @@ describe('doctor-detail.api (M1-40 HTTP + fallback)', () => {
         },
       },
     );
+    getSpy.mockRejectedValueOnce(badRequestError);
+    await expect(fetchDoctorDetailApi('DOC-01@INVALID')).rejects.toBe(badRequestError);
 
-    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(badRequestError);
-
-    await expect(fetchDoctorDetailApi('DOC-01@INVALID')).rejects.toThrow(
-      'Request failed with status code 400',
-    );
+    const networkError = new AxiosError('Network Error', 'ERR_NETWORK');
+    getSpy.mockRejectedValueOnce(networkError);
+    await expect(fetchDoctorDetailApi('DOC-001')).rejects.toBe(networkError);
   });
 });

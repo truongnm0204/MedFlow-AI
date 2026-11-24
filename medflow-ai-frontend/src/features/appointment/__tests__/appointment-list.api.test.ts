@@ -1,30 +1,21 @@
 import { AxiosError } from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import { fetchPatientAppointmentsApi } from '../api/appointment-list.api';
 import { MOCK_APPOINTMENTS } from '../data/appointment-list-mock';
 import type { AppointmentListResponse } from '../types/appointment-list.types';
 
-describe('appointment-list.api (HTTP + mock fallback)', () => {
+describe('appointment-list.api (pure HTTP)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
   });
 
-  it('returns mock response without calling apiClient.get when access token is absent', async () => {
-    const getSpy = vi.spyOn(apiClient, 'get');
-
-    const result = await fetchPatientAppointmentsApi();
-
-    expect(getSpy).not.toHaveBeenCalled();
-    expect(result.items.length).toBeGreaterThan(0);
-    expect(result.totalAllMembersCount).toBe(MOCK_APPOINTMENTS.length);
-  });
-
-  it('calls GET /appointments/me with default filter params when access token is present', async () => {
-    localStorage.setItem('medflow.access_token', 'test-jwt-token');
+  it('calls GET /appointments/me with default filter params and returns backend payload', async () => {
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'test-jwt-token');
 
     const backendPayload: AppointmentListResponse = {
       items: [MOCK_APPOINTMENTS[0]],
@@ -64,9 +55,26 @@ describe('appointment-list.api (HTTP + mock fallback)', () => {
     expect(result).toEqual(backendPayload);
   });
 
-  it('falls back to mock data when backend returns 404 AxiosError', async () => {
-    localStorage.setItem('medflow.access_token', 'test-jwt-token');
+  it('preserves empty backend response without injecting mock appointments', async () => {
+    const emptyPayload: AppointmentListResponse = {
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 10,
+      totalPages: 0,
+      tabCounts: { all: 0, upcoming: 0, completed: 0, cancelled: 0 },
+      memberCounts: [],
+      totalAllMembersCount: 0,
+    };
 
+    vi.spyOn(apiClient, 'get').mockResolvedValueOnce({ data: emptyPayload });
+
+    const result = await fetchPatientAppointmentsApi({ tab: 'UPCOMING' });
+    expect(result.items).toEqual([]);
+    expect(result.totalAllMembersCount).toBe(0);
+  });
+
+  it('propagates HTTP 401, 404 and network errors without falling back to mock data', async () => {
     const notFoundError = new AxiosError(
       'Request failed with status code 404',
       'ERR_BAD_REQUEST',
@@ -82,23 +90,10 @@ describe('appointment-list.api (HTTP + mock fallback)', () => {
     );
 
     const getSpy = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(notFoundError);
-
-    const result = await fetchPatientAppointmentsApi({ tab: 'UPCOMING' });
-
-    expect(getSpy).toHaveBeenCalledTimes(1);
-    expect(result.items.length).toBeGreaterThan(0);
-    expect(result.page).toBe(1);
-  });
-
-  it('falls back to mock data when apiClient.get rejects with a network AxiosError without response', async () => {
-    localStorage.setItem('medflow.access_token', 'test-jwt-token');
+    await expect(fetchPatientAppointmentsApi({ tab: 'UPCOMING' })).rejects.toBe(notFoundError);
 
     const networkError = new AxiosError('Network Error', 'ERR_NETWORK');
-    const getSpy = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(networkError);
-
-    const result = await fetchPatientAppointmentsApi();
-
-    expect(getSpy).toHaveBeenCalledTimes(1);
-    expect(result.totalAllMembersCount).toBe(MOCK_APPOINTMENTS.length);
+    getSpy.mockRejectedValueOnce(networkError);
+    await expect(fetchPatientAppointmentsApi()).rejects.toBe(networkError);
   });
 });

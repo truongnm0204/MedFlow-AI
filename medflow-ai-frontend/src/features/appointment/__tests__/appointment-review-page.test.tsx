@@ -1,12 +1,23 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { AxiosError } from 'axios';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { resetMockAppointments } from '../data/appointment-list-mock';
+import { apiClient } from '@/shared/lib/axios';
+
+import { MOCK_APPOINTMENTS, resetMockAppointments } from '../data/appointment-list-mock';
+import {
+  buildMockConfirmBookingResponse,
+  getMockAppointmentReviewPayload,
+} from '../data/review-booking-mock';
 import { AppointmentConfirmationPage } from '../pages/appointment-confirmation-page';
 import { AppointmentReviewPage } from '../pages/appointment-review-page';
 import { useBookingStore } from '../store/booking.store';
+import type {
+  ConfirmBookingRequest,
+  ReviewBookingQueryParams,
+} from '../types/review-booking.types';
 
 function renderAppointmentReviewPage(
   initialEntry = '/appointment/review?mode=doctor&doctorId=doc-01&serviceId=srv-th-01&serviceCode=DV-TH-01&patientId=pat-self&date=2026-10-13&slotId=slot-0900',
@@ -47,8 +58,72 @@ function renderAppointmentReviewPage(
 
 describe('AppointmentReviewPage & AppointmentConfirmationPage (SCR-APT-06 / SCR-APT-07)', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     resetMockAppointments();
     useBookingStore.getState().reset();
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
+      if (url === '/appointments/review-preview') {
+        const params = (config as { params?: ReviewBookingQueryParams } | undefined)?.params ?? {
+          mode: 'doctor',
+        };
+        return { data: getMockAppointmentReviewPayload(params) };
+      }
+      if (typeof url === 'string' && url.startsWith('/appointments/')) {
+        const id = decodeURIComponent(url.replace('/appointments/', ''));
+        const found = MOCK_APPOINTMENTS.find(
+          (item) => item.id === id || item.appointmentCode === id,
+        );
+        if (!found) {
+          throw new AxiosError(
+            'Not Found',
+            'ERR_BAD_REQUEST',
+            undefined,
+            {},
+            {
+              status: 404,
+              statusText: 'Not Found',
+              headers: {},
+              config: {} as never,
+              data: { status: 404 },
+            },
+          );
+        }
+        return { data: found };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    vi.spyOn(apiClient, 'post').mockImplementation(async (url, body) => {
+      if (url === '/appointments') {
+        const req = body as ConfirmBookingRequest;
+        if (req.slotOrShiftId === 'slot-0730') {
+          throw new AxiosError(
+            'Conflict',
+            'ERR_BAD_REQUEST',
+            undefined,
+            {},
+            {
+              status: 409,
+              statusText: 'Conflict',
+              headers: {},
+              config: {} as never,
+              data: {
+                status: 409,
+                detail:
+                  'Khung giờ khám vừa hết chỗ do bệnh nhân khác vừa hoàn tất đặt lịch. Vui lòng quay lại chọn khung giờ khác.',
+              },
+            },
+          );
+        }
+        return { data: buildMockConfirmBookingResponse(req) };
+      }
+      throw new Error(`Unexpected POST ${url}`);
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('renders full SCR-APT-06 layout matching Figma 14:1717 in doctor mode', async () => {
@@ -185,5 +260,18 @@ describe('AppointmentReviewPage & AppointmentConfirmationPage (SCR-APT-06 / SCR-
     expect(alertBox).toHaveTextContent(
       /Khung giờ khám vừa hết chỗ do bệnh nhân khác vừa hoàn tất đặt lịch/i,
     );
+  });
+
+  it('shows error state and hides confirmation form when review-preview API fails', async () => {
+    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(
+      new AxiosError('Network Error', 'ERR_NETWORK'),
+    );
+
+    renderAppointmentReviewPage();
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Xác nhận Đặt khám & Cấp Số Thứ Tự/i }),
+    ).not.toBeInTheDocument();
   });
 });

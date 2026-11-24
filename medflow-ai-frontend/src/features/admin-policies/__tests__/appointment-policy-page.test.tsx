@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as policyApi from '../api/appointment-policy.api';
 import {
   DEFAULT_APPOINTMENT_POLICY_VALUES,
+  INITIAL_MOCK_APPOINTMENT_POLICY,
   resetMockAppointmentPolicy,
 } from '../data/appointment-policy-mock';
 import { AppointmentPolicyPage } from '../pages/appointment-policy-page';
@@ -81,6 +82,13 @@ describe('appointmentPolicySchema (UC54)', () => {
 describe('AppointmentPolicyPage (SCR-ADM-POL-01)', () => {
   beforeEach(() => {
     resetMockAppointmentPolicy();
+    vi.spyOn(policyApi, 'fetchAppointmentPolicyApi').mockResolvedValue(
+      INITIAL_MOCK_APPOINTMENT_POLICY,
+    );
+    vi.spyOn(policyApi, 'updateAppointmentPolicyApi').mockImplementation(async (payload) => ({
+      ...payload,
+      lastUpdatedAt: '2026-11-24T10:00:00Z',
+    }));
   });
 
   afterEach(() => {

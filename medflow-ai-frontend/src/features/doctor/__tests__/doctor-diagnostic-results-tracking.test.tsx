@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppRouter } from '@/app/router/app-router';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import { DoctorDiagnosticResultsTrackingPage } from '../pages/doctor-diagnostic-results-tracking-page';
@@ -130,7 +131,7 @@ describe('DoctorDiagnosticResultsTrackingPage', () => {
   });
 
   it('calls GET /doctor/diagnostic-results/tracking when token is present and renders stats, table, and summary modal', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: API_PAYLOAD_FIXTURE });
 
     renderPage();
@@ -155,7 +156,7 @@ describe('DoctorDiagnosticResultsTrackingPage', () => {
   });
 
   it('passes server-side status and keyword filters in query params', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: API_PAYLOAD_FIXTURE });
 
     renderPage();
@@ -183,7 +184,7 @@ describe('DoctorDiagnosticResultsTrackingPage', () => {
   });
 
   it('blocks API request and displays error message when client filter validation fails', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: API_PAYLOAD_FIXTURE });
 
     renderPage();
@@ -207,7 +208,7 @@ describe('DoctorDiagnosticResultsTrackingPage', () => {
   });
 
   it('surfaces HTTP 403 error banner instead of falling back to mock data', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-doctor');
     vi.spyOn(apiClient, 'get').mockRejectedValueOnce(
       new AxiosError(
         'Forbidden',
@@ -232,23 +233,17 @@ describe('DoctorDiagnosticResultsTrackingPage', () => {
     expect(screen.queryByText('VIS-2026-0101')).toBeNull();
   });
 
-  it('falls back to mock data when no token is present and supports status filter and modal', async () => {
+  it('always calls GET /doctor/diagnostic-results/tracking without token gate and surfaces network error instead of mock fallback', async () => {
+    const getSpy = vi
+      .spyOn(apiClient, 'get')
+      .mockRejectedValueOnce(new AxiosError('Network Error', 'ERR_NETWORK'));
+
     renderPage();
 
-    expect(await screen.findByText('VIS-2026-0102')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Xem tổng hợp KQ VIS-2026-0102' }));
-    const orderItem = await screen.findByTestId('summary-order-CLS-2026-0105');
-    expect(orderItem).toHaveTextContent('Siêu âm ổ bụng');
-    expect(orderItem).toHaveTextContent('Chờ ký duyệt');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Đóng tổng hợp kết quả' }));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Lọc Hoàn tất 100%' }));
-    await waitFor(() => {
-      expect(screen.queryByText('VIS-2026-0102')).toBeNull();
-    });
-    expect(screen.getByText('VIS-2026-0101')).toBeInTheDocument();
+    expect(await screen.findByTestId('tracking-error-banner')).toBeInTheDocument();
+    expect(getSpy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('VIS-2026-0102')).toBeNull();
+    expect(screen.queryByText('VIS-2026-0101')).toBeNull();
   });
 
   it('guards /doctor/diagnostic-results/tracking against DIAGNOSTIC_STAFF role', async () => {

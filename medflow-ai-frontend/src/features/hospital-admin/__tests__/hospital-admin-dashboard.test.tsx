@@ -33,6 +33,7 @@ describe('HospitalAdminDashboardPage (SCR-ADM-DASH-01)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: HOSPITAL_ADMIN_DASHBOARD_MOCK });
     useAuthStore.setState({
       user: null,
       accessToken: null,
