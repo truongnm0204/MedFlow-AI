@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AppRouter } from '@/app/router/app-router';
+import { RequireAdmin, RequireAuth, RequireSystemAdmin } from '@/app/router/guards';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 
 import * as integrationApi from '../api/integration-config.api';
@@ -246,7 +246,29 @@ describe('IntegrationConfigPage (UC59 — #241, #243)', () => {
     render(
       <QueryClientProvider client={qc}>
         <MemoryRouter initialEntries={['/admin/integrations']}>
-          <AppRouter />
+          <Routes>
+            <Route
+              path="/admin/integrations"
+              element={
+                <RequireAuth>
+                  <RequireAdmin>
+                    <IntegrationConfigPage />
+                  </RequireAdmin>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/system-admin/integrations"
+              element={
+                <RequireAuth>
+                  <RequireSystemAdmin>
+                    <IntegrationConfigPage />
+                  </RequireSystemAdmin>
+                </RequireAuth>
+              }
+            />
+            <Route path="/" element={<div>Patient Home</div>} />
+          </Routes>
           <LocationProbe />
         </MemoryRouter>
       </QueryClientProvider>,

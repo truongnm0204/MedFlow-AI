@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AppRouter } from '@/app/router/app-router';
+import { RequireAdmin, RequireAuth, RequireSystemAdmin } from '@/app/router/guards';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 
 import * as auditLogApi from '../api/audit-log.api';
@@ -299,7 +299,29 @@ describe('AuditLogListPage (UC60 — #245, #247)', () => {
     render(
       <QueryClientProvider client={qc}>
         <MemoryRouter initialEntries={['/system-admin/audit-logs']}>
-          <AppRouter />
+          <Routes>
+            <Route
+              path="/admin/audit-logs"
+              element={
+                <RequireAuth>
+                  <RequireAdmin>
+                    <AuditLogListPage />
+                  </RequireAdmin>
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/system-admin/audit-logs"
+              element={
+                <RequireAuth>
+                  <RequireSystemAdmin>
+                    <AuditLogListPage />
+                  </RequireSystemAdmin>
+                </RequireAuth>
+              }
+            />
+            <Route path="/hospital-admin" element={<div>Hospital Admin Landing</div>} />
+          </Routes>
           <LocationProbe />
         </MemoryRouter>
       </QueryClientProvider>,
