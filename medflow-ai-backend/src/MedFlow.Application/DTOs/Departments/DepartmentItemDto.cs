@@ -7,6 +7,11 @@ public sealed record DepartmentItemDto(
     long? HospitalId,
     string Facility,
     bool IsActive,
-    string Status
+    string Status,
+    int? ActiveRoomsCount = null,
+    int? ActiveDoctorsCount = null,
+    int? ActiveServicesCount = null,
+    int? PendingAppointmentsCount = null,
+    bool? HasActiveDependencies = null
 );
 
