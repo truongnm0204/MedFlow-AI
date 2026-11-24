@@ -33,6 +33,8 @@ public static class DependencyInjection
         services.AddScoped<IExaminationServiceCatalogService, ExaminationServiceCatalogService>();
         services.AddScoped<IExaminationServiceAdminService, ExaminationServiceAdminService>();
         services.AddScoped<IDiagnosticServiceAdminService, DiagnosticServiceAdminService>();
+        services.AddScoped<IServicePriceAdminService, ServicePriceAdminService>();
+        services.AddScoped<IFefoBatchSelectionService, FefoBatchSelectionService>();
         services.AddScoped<IDoctorAdminService, DoctorAdminService>();
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IDoctorCatalogService, DoctorCatalogService>();

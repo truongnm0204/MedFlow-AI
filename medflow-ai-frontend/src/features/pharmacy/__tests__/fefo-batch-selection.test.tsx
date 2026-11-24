@@ -9,27 +9,19 @@ import { apiClient } from '@/shared/lib/axios';
 
 import { FefoBatchSelectionPage } from '../pages/fefo-batch-selection-page';
 
-const SAMPLE_PREPARE_CONTEXT = {
+const SAMPLE_FEFO_CONTEXT = {
   prescriptionId: 88,
-  rxCode: 'RX-2026-0415-0088',
+  prescriptionCode: 'RX-2026-0415-0088',
   visitId: 501,
   visitCode: 'VIS-2026-0501',
   patientCode: 'PAT-2024-0108',
   patientName: 'NGUYỄN VĂN AN',
-  gender: 'Nam',
-  ageLabel: '38 tuổi',
-  doctorName: 'TS.BS Nguyễn Minh Đức',
-  roomLabel: 'P.201',
-  primaryDiagnosis: 'Viêm dạ dày',
-  secondaryDiagnosis: null,
-  criticalAllergy: null,
-  paymentBadge: 'PAID',
   status: 'ISSUED',
   dispenseId: null,
-  issuedAt: '2026-11-24T08:30:00Z',
+  todayHospitalDate: '2026-11-25',
   items: [
     {
-      id: 101,
+      prescriptionItemId: 101,
       orderIndex: 1,
       medicineId: 11,
       medicineCode: 'MED-011',
@@ -37,42 +29,54 @@ const SAMPLE_PREPARE_CONTEXT = {
       activeIngredient: null,
       strength: '300mg',
       dosageForm: 'Viên nén',
-      usageInstruction: '2 viên/lần',
-      prescribedQty: 28,
-      pickedQty: 28,
+      requiredQuantity: 28,
       unit: 'Viên',
       selectedBatchId: 1001,
       selectedBatchCode: 'LO-2405',
-      isPrepared: false,
-      availableBatches: [
+      overrideReason: null,
+      batches: [
         {
           batchId: 1001,
           batchCode: 'LO-2405',
-          expiryDate: '30/12/2028',
+          expiryDate: '30/12/2026',
+          expiryDateIso: '2026-12-30',
+          daysUntilExpiry: 35,
           availableStock: 100,
-          shelfLocation: 'Kệ A-01',
+          shelfLocation: 'Chưa cập nhật',
+          status: 'FEFO_RECOMMENDED',
           isFefoRecommended: true,
+          isSelectable: true,
+          blockReason: null,
         },
         {
           batchId: 1002,
           batchCode: 'LO-2412',
-          expiryDate: '30/06/2029',
+          expiryDate: '30/06/2027',
+          expiryDateIso: '2027-06-30',
+          daysUntilExpiry: 217,
           availableStock: 80,
-          shelfLocation: 'Kệ A-02',
+          shelfLocation: 'Chưa cập nhật',
+          status: 'AVAILABLE',
           isFefoRecommended: false,
+          isSelectable: true,
+          blockReason: null,
         },
         {
           batchId: 1003,
           batchCode: 'LO-2001',
           expiryDate: '01/01/2020',
+          expiryDateIso: '2020-01-01',
+          daysUntilExpiry: -2520,
           availableStock: 15,
-          shelfLocation: 'Kho cách ly',
+          shelfLocation: 'Chưa cập nhật',
+          status: 'EXPIRED',
           isFefoRecommended: false,
+          isSelectable: false,
+          blockReason: 'Lô đã quá hạn sử dụng theo kiểm định GPP — Hệ thống khóa tự động',
         },
       ],
     },
   ],
-  gppChecks: [],
 };
 
 function renderFefoPage(entry = '/pharmacy/prescriptions/RX-2026-0415-0088/fefo-batches') {
@@ -105,10 +109,10 @@ function renderFefoPage(entry = '/pharmacy/prescriptions/RX-2026-0415-0088/fefo-
   );
 }
 
-describe('FefoBatchSelectionPage (real API)', () => {
+describe('FefoBatchSelectionPage (UC45 / GH-818 real /fefo-batches contract)', () => {
   beforeEach(() => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({
-      data: SAMPLE_PREPARE_CONTEXT,
+      data: SAMPLE_FEFO_CONTEXT,
     } as AxiosResponse);
   });
 
@@ -116,38 +120,90 @@ describe('FefoBatchSelectionPage (real API)', () => {
     vi.restoreAllMocks();
   });
 
-  it('disables expired batches and submits chosen FEFO batch to POST /pharmacy/prescriptions/:code/prepare', async () => {
+  it('submits FEFO_RECOMMENDED batch directly to POST /pharmacy/prescriptions/:code/fefo-batches', async () => {
     const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
       data: {
         prescriptionId: 88,
         prescriptionCode: 'RX-2026-0415-0088',
         dispenseId: 301,
-        status: 'PREPARED',
-        preparedAt: '2026-11-24T09:05:00Z',
-        preparedByStaffName: 'DS. Trần Thu Hương',
-        preparedItemCount: 1,
-        message: 'OK',
+        status: 'PREPARING',
+        selectedAt: '2026-11-25T02:00:00Z',
+        selectedByStaffName: 'DS. Trần Thu Hương',
+        itemCount: 1,
+        message: 'Đã xác nhận phân bổ lô thuốc theo nguyên tắc FEFO cho 1 khoản thuốc.',
       },
     } as AxiosResponse);
 
     renderFefoPage();
 
     expect(await screen.findByText('Bismuth subsalicylate 300mg')).toBeInTheDocument();
-    const expiredBtn = screen.getByRole('button', { name: /LO-2001/i });
-    expect(expiredBtn).toBeDisabled();
+    expect(apiClient.get).toHaveBeenCalledWith(
+      '/pharmacy/prescriptions/RX-2026-0415-0088/fefo-batches',
+    );
+    expect(screen.getByRole('button', { name: /LO-2001/i })).toBeDisabled();
 
-    fireEvent.click(screen.getByRole('button', { name: /LO-2412/i }));
     fireEvent.click(screen.getByRole('button', { name: /Xác nhận chọn lô FEFO/i }));
 
     await waitFor(() => {
       expect(postSpy).toHaveBeenCalledWith(
-        '/pharmacy/prescriptions/RX-2026-0415-0088/prepare',
+        '/pharmacy/prescriptions/RX-2026-0415-0088/fefo-batches',
+        expect.objectContaining({
+          items: [
+            expect.objectContaining({
+              prescriptionItemId: 101,
+              medicineBatchId: 1001,
+              batchCode: 'LO-2405',
+              overrideReason: null,
+            }),
+          ],
+        }),
+      );
+    });
+  });
+
+  it('requires valid override reason when selecting later-expiry AVAILABLE batch over FEFO_RECOMMENDED', async () => {
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: {
+        prescriptionId: 88,
+        prescriptionCode: 'RX-2026-0415-0088',
+        dispenseId: 301,
+        status: 'PREPARING',
+        selectedAt: '2026-11-25T02:05:00Z',
+        selectedByStaffName: 'DS. Trần Thu Hương',
+        itemCount: 1,
+        message: 'Đã xác nhận phân bổ lô thuốc theo nguyên tắc FEFO cho 1 khoản thuốc.',
+      },
+    } as AxiosResponse);
+
+    renderFefoPage();
+
+    expect(await screen.findByText('Bismuth subsalicylate 300mg')).toBeInTheDocument();
+
+    // Select later-expiry batch LO-2412
+    fireEvent.click(screen.getByRole('button', { name: /LO-2412/i }));
+
+    // Try submitting without reason -> blocked on client
+    fireEvent.click(screen.getByRole('button', { name: /Xác nhận chọn lô FEFO/i }));
+    expect(await screen.findByText(/Vui lòng nhập lý do hợp lệ/i)).toBeInTheDocument();
+    expect(postSpy).not.toHaveBeenCalled();
+
+    // Enter valid reason and submit
+    const reasonInput = screen.getByLabelText(/Lý do chọn lô hạn dùng xa hơn lô ưu tiên FEFO/i);
+    fireEvent.change(reasonInput, {
+      target: { value: 'Lô hạn gần đang kiểm kê tại kho chính' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Xác nhận chọn lô FEFO/i }));
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        '/pharmacy/prescriptions/RX-2026-0415-0088/fefo-batches',
         expect.objectContaining({
           items: [
             expect.objectContaining({
               prescriptionItemId: 101,
               medicineBatchId: 1002,
               batchCode: 'LO-2412',
+              overrideReason: 'Lô hạn gần đang kiểm kê tại kho chính',
             }),
           ],
         }),

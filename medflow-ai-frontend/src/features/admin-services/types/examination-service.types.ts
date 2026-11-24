@@ -5,17 +5,23 @@ export type ServiceStatus = 'ACTIVE' | 'SUSPENDED';
 export type BookingChannel = 'ONLINE_ALLOWED' | 'COUNTER_ONLY';
 
 export interface PriceHistoryEntry {
+  id?: number;
   date: string;
+  validFrom?: string | null;
+  validTo?: string | null;
   price: number;
   decisionNumber: string;
   note: string;
   appliedBy: string;
+  isActive?: boolean;
+  status?: string;
 }
 
 export interface UpdateServicePricePayload {
   price: number;
   decisionNumber: string;
   effectiveDate: string;
+  validTo?: string;
   appliedBy: string;
   note?: string;
 }
@@ -37,11 +43,15 @@ export interface ExaminationService {
   category: ServiceCategory;
   department: string;
   price: number;
+  hasEffectivePrice?: boolean;
   onlineBooking: boolean;
   status: ServiceStatus;
   roomDefault?: string;
   effectiveDate?: string;
+  validTo?: string;
   decisionNumber?: string;
+  appliedBy?: string;
+  priceNote?: string;
   priceHistory?: PriceHistoryEntry[];
   hasActiveBookings?: boolean;
   activeBookingsCount?: number;
