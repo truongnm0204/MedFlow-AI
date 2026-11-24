@@ -51,7 +51,7 @@ public sealed class DepartmentEndpointTests : AuthTestBase
     [Fact]
     public async Task GetDepartmentList_InvalidPage_HospitalAdmin_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/departments?page=0&pageSize=10");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -64,7 +64,7 @@ public sealed class DepartmentEndpointTests : AuthTestBase
     [Fact]
     public async Task GetDepartmentList_HospitalAdminRole_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/departments?page=1&pageSize=10");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -113,7 +113,7 @@ public sealed class DepartmentEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateDepartment_EmptyCode_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/departments");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -127,7 +127,7 @@ public sealed class DepartmentEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateDepartment_HospitalAdminRole_ReturnsCreated_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/departments");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -182,7 +182,7 @@ public sealed class DepartmentEndpointTests : AuthTestBase
     [Fact]
     public async Task PutDepartment_InvalidBody_HospitalAdmin_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new UpdateDepartmentRequest(Code: "", Name: "");
 
         using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/departments/1");
@@ -197,7 +197,7 @@ public sealed class DepartmentEndpointTests : AuthTestBase
     [Fact]
     public async Task PutDepartment_InvalidId_HospitalAdmin_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new UpdateDepartmentRequest(Code: "DEP-001", Name: "Khoa Hợp Lệ");
 
         using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/departments/0");
@@ -212,7 +212,7 @@ public sealed class DepartmentEndpointTests : AuthTestBase
     [Fact]
     public async Task PutDepartment_HospitalAdminRole_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new UpdateDepartmentRequest(
             Code: "DEP-001-MOD",
             Name: "Khoa Nội Tiêu Hóa Cập Nhật",

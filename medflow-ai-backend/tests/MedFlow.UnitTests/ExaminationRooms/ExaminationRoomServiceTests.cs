@@ -22,9 +22,9 @@ public sealed class ExaminationRoomServiceTests : IDisposable
 
         public DbSet<User> Users => Set<User>();
         public DbSet<Role> Roles => Set<Role>();
-        public DbSet<Permission> Permissions => throw NotUsed();
+        public DbSet<Permission> Permissions => Set<Permission>();
         public DbSet<UserRole> UserRoles => Set<UserRole>();
-        public DbSet<RolePermission> RolePermissions => throw NotUsed();
+        public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
         public DbSet<Patient> Patients => throw NotUsed();
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => Set<Doctor>();
@@ -33,7 +33,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         public DbSet<AuthSession> AuthSessions => throw NotUsed();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
-        public DbSet<Hospital> Hospitals => throw NotUsed();
+        public DbSet<Hospital> Hospitals => Set<Hospital>();
         public DbSet<Department> Departments => Set<Department>();
         public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => throw NotUsed();
@@ -51,13 +51,10 @@ public sealed class ExaminationRoomServiceTests : IDisposable
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Ignore<Permission>();
-            modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Patient>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<Hospital>();
             modelBuilder.Ignore<Specialty>();
             modelBuilder.Ignore<Service>();
             modelBuilder.Ignore<ServicePrice>();
@@ -66,9 +63,12 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             modelBuilder.Ignore<QueueEntry>();
             modelBuilder.Ignore<Payment>();
 
+            modelBuilder.Entity<Hospital>(b => b.HasKey(h => h.Id));
             modelBuilder.Entity<User>(b => b.HasKey(u => u.Id));
             modelBuilder.Entity<Role>(b => b.HasKey(r => r.Id));
+            modelBuilder.Entity<Permission>(b => b.HasKey(p => p.Id));
             modelBuilder.Entity<UserRole>(b => b.HasKey(ur => new { ur.UserId, ur.RoleId }));
+            modelBuilder.Entity<RolePermission>(b => b.HasKey(rp => new { rp.RoleId, rp.PermissionId }));
             modelBuilder.Entity<Staff>(b => b.HasKey(s => s.Id));
             modelBuilder.Entity<Doctor>(b => b.HasKey(d => d.Id));
             modelBuilder.Entity<ExaminationSlot>(b => b.HasKey(s => s.Id));
@@ -116,6 +116,11 @@ public sealed class ExaminationRoomServiceTests : IDisposable
 
     private void SeedTestData()
     {
+        _dbContext.Hospitals.AddRange(
+            new Hospital { Id = 1, HospitalCode = "HOS-01", Name = "Bệnh viện Đa khoa MedFlow Hà Nội", IsActive = true },
+            new Hospital { Id = 2, HospitalCode = "HOS-02", Name = "Bệnh viện Đa khoa MedFlow Đà Nẵng", IsActive = true }
+        );
+
         var dept1 = new Department { Id = 1, HospitalId = 1, DepartmentCode = "DEP-001", Name = "Khoa Nội Tiêu hóa", IsActive = true };
         var dept2 = new Department { Id = 2, HospitalId = 1, DepartmentCode = "DEP-002", Name = "Khoa Tim mạch", IsActive = true };
 
@@ -202,18 +207,26 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             new Role { Id = 3, Code = "PATIENT", Name = "Bệnh nhân" }
         );
 
+        _dbContext.Permissions.Add(new Permission { Id = 1, Code = "HOSPITAL_CONFIG" });
+        _dbContext.RolePermissions.AddRange(
+            new RolePermission { RoleId = 1, PermissionId = 1 },
+            new RolePermission { RoleId = 2, PermissionId = 1 }
+        );
+
         _dbContext.Users.AddRange(
             new User { Id = 100, AccountStatus = AccountStatus.ACTIVE, Email = "admin@medflow.test" },
             new User { Id = 101, AccountStatus = AccountStatus.ACTIVE, Email = "sysadmin@medflow.test" },
             new User { Id = 102, AccountStatus = AccountStatus.ACTIVE, Email = "admin2@medflow.test" },
             new User { Id = 103, AccountStatus = AccountStatus.ACTIVE, Email = "locked@medflow.test", LockedUntil = DateTime.UtcNow.AddDays(1) },
             new User { Id = 104, AccountStatus = AccountStatus.INACTIVE, Email = "inactive@medflow.test" },
-            new User { Id = 105, AccountStatus = AccountStatus.ACTIVE, Email = "patient@medflow.test" }
+            new User { Id = 105, AccountStatus = AccountStatus.ACTIVE, Email = "patient@medflow.test" },
+            new User { Id = 106, AccountStatus = AccountStatus.ACTIVE, Email = "unassigned_admin@medflow.test" }
         );
 
         _dbContext.Staff.AddRange(
-            new Staff { Id = 1, UserId = 100, HospitalId = 1, DepartmentId = 1, FullName = "Admin Hospital 1" },
-            new Staff { Id = 2, UserId = 102, HospitalId = 2, DepartmentId = null, FullName = "Admin Hospital 2" }
+            new Staff { Id = 1, UserId = 100, HospitalId = 1, DepartmentId = 1, FullName = "Admin Hospital 1", Status = "ACTIVE" },
+            new Staff { Id = 2, UserId = 102, HospitalId = 2, DepartmentId = null, FullName = "Admin Hospital 2", Status = "ACTIVE" },
+            new Staff { Id = 3, UserId = 106, HospitalId = null, DepartmentId = null, FullName = "Unassigned Admin", Status = "ACTIVE" }
         );
 
         _dbContext.UserRoles.AddRange(
@@ -222,7 +235,8 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             new UserRole { UserId = 102, RoleId = 1 },
             new UserRole { UserId = 103, RoleId = 1 },
             new UserRole { UserId = 104, RoleId = 1 },
-            new UserRole { UserId = 105, RoleId = 3 }
+            new UserRole { UserId = 105, RoleId = 3 },
+            new UserRole { UserId = 106, RoleId = 1 }
         );
 
         _dbContext.Visits.Add(new Visit
@@ -233,14 +247,15 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             Status = "IN_PROGRESS"
         });
 
+        var nowLocal = MedFlow.Application.Common.Time.HospitalClock.GetNow(TimeProvider.System);
         _dbContext.ExaminationSlots.Add(new ExaminationSlot
         {
             Id = 1,
             RoomId = 3,
             DoctorId = 20,
             Status = "OPEN",
-            StartsAt = DateTime.UtcNow.AddHours(1),
-            EndsAt = DateTime.UtcNow.AddHours(2)
+            StartsAt = nowLocal.AddHours(1),
+            EndsAt = nowLocal.AddHours(2)
         });
 
         _dbContext.Appointments.Add(new Appointment
@@ -258,7 +273,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new GetExaminationRoomListRequest(Page: 1, PageSize: 10);
 
-        var result = await _service.GetExaminationRoomListAsync(request);
+        var result = await _service.GetExaminationRoomListAsync(101, request);
 
         Assert.NotNull(result);
         Assert.Equal(6, result.Total);
@@ -279,7 +294,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         Assert.Equal("Phòng Khám Tiêu hóa 1", first.Name);
         Assert.Equal("Khoa Nội Tiêu hóa", first.DepartmentName);
         Assert.Equal("DEP-001", first.DepartmentCode);
-        Assert.Equal("MedFlow Cơ sở 1", first.Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Hà Nội", first.Facility);
         Assert.True(first.IsAvailable);
         Assert.True(first.IsActive);
     }
@@ -287,14 +302,14 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     [Fact]
     public async Task GetExaminationRoomListAsync_FiltersByKeyword_MatchesCodeNameOrLocation()
     {
-        var byCode = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(Keyword: "RM-101"));
+        var byCode = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(Keyword: "RM-101"));
         Assert.Single(byCode.Data);
         Assert.Equal("RM-101", byCode.Data[0].RoomCode);
 
-        var byName = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(Keyword: "tim mạch"));
+        var byName = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(Keyword: "tim mạch"));
         Assert.Equal(2, byName.Data.Count);
 
-        var byLocation = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(Keyword: "khu c"));
+        var byLocation = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(Keyword: "khu c"));
         Assert.Single(byLocation.Data);
         Assert.Equal("RM-301", byLocation.Data[0].RoomCode);
     }
@@ -302,7 +317,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     [Fact]
     public async Task GetExaminationRoomListAsync_FiltersByDepartmentId()
     {
-        var result = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(DepartmentId: 2));
+        var result = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(DepartmentId: 2));
 
         Assert.Equal(2, result.Total);
         Assert.All(result.Data, item => Assert.Equal(2, item.DepartmentId));
@@ -311,32 +326,32 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     [Fact]
     public async Task GetExaminationRoomListAsync_FiltersByHospitalId()
     {
-        var result = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(HospitalId: 2));
+        var result = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(HospitalId: 2));
 
         Assert.Single(result.Data);
         Assert.Equal("RM-CS2-01", result.Data[0].RoomCode);
-        Assert.Equal("MedFlow Cơ sở 2", result.Data[0].Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Đà Nẵng", result.Data[0].Facility);
     }
 
     [Fact]
     public async Task GetExaminationRoomListAsync_FiltersByRoomType()
     {
-        var diagResult = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(RoomType: "DIAGNOSTIC"));
+        var diagResult = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(RoomType: "DIAGNOSTIC"));
         Assert.Single(diagResult.Data);
         Assert.Equal("RM-301", diagResult.Data[0].RoomCode);
 
-        var examResult = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(RoomType: "EXAMINATION"));
+        var examResult = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(RoomType: "EXAMINATION"));
         Assert.Equal(5, examResult.Data.Count);
     }
 
     [Fact]
     public async Task GetExaminationRoomListAsync_FiltersByStatus_ActiveAndInactive()
     {
-        var activeResult = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(Status: "ACTIVE"));
+        var activeResult = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(Status: "ACTIVE"));
         Assert.Equal(4, activeResult.Total);
         Assert.All(activeResult.Data, r => Assert.Equal("ACTIVE", r.Status));
 
-        var inactiveResult = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(Status: "INACTIVE"));
+        var inactiveResult = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(Status: "INACTIVE"));
         Assert.Single(inactiveResult.Data);
         Assert.Equal("RM-202", inactiveResult.Data[0].RoomCode);
     }
@@ -344,11 +359,11 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     [Fact]
     public async Task GetExaminationRoomListAsync_FiltersByIsAvailable_TrueAndFalse()
     {
-        var availableResult = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(IsAvailable: true));
+        var availableResult = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(IsAvailable: true));
         Assert.Equal(4, availableResult.Total);
         Assert.All(availableResult.Data, r => Assert.True(r.IsAvailable));
 
-        var unavailableResult = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(IsAvailable: false));
+        var unavailableResult = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(IsAvailable: false));
         Assert.Equal(2, unavailableResult.Total);
         Assert.All(unavailableResult.Data, r => Assert.False(r.IsAvailable));
     }
@@ -356,13 +371,13 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     [Fact]
     public async Task GetExaminationRoomListAsync_PaginatesCorrectly()
     {
-        var page1 = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(Page: 1, PageSize: 2));
+        var page1 = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(Page: 1, PageSize: 2));
         Assert.Equal(2, page1.Data.Count);
         Assert.Equal("RM-101", page1.Data[0].RoomCode);
         Assert.Equal("RM-102", page1.Data[1].RoomCode);
         Assert.Equal(3, page1.TotalPages);
 
-        var page2 = await _service.GetExaminationRoomListAsync(new GetExaminationRoomListRequest(Page: 2, PageSize: 2));
+        var page2 = await _service.GetExaminationRoomListAsync(101, new GetExaminationRoomListRequest(Page: 2, PageSize: 2));
         Assert.Equal(2, page2.Data.Count);
         Assert.Equal("RM-201", page2.Data[0].RoomCode);
         Assert.Equal("RM-202", page2.Data[1].RoomCode);
@@ -375,7 +390,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new GetExaminationRoomListRequest(Page: page, PageSize: pageSize);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.GetExaminationRoomListAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.GetExaminationRoomListAsync(101, request));
         Assert.Contains("Trang yêu cầu phải lớn hơn hoặc bằng 1", ex.Message);
     }
 
@@ -387,7 +402,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new GetExaminationRoomListRequest(Page: page, PageSize: pageSize);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.GetExaminationRoomListAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.GetExaminationRoomListAsync(101, request));
         Assert.Contains("Kích thước trang phải từ 1 đến 100", ex.Message);
     }
 
@@ -396,7 +411,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new GetExaminationRoomListRequest(Keyword: "KhongTonTai999");
 
-        var result = await _service.GetExaminationRoomListAsync(request);
+        var result = await _service.GetExaminationRoomListAsync(101, request);
 
         Assert.Empty(result.Data);
         Assert.Equal(0, result.Total);
@@ -409,7 +424,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     [Fact]
     public async Task GetExaminationRoomListAsync_NullRequest_ThrowsArgumentNullException()
     {
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.GetExaminationRoomListAsync(null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.GetExaminationRoomListAsync(101, null!));
     }
 
     // ==========================================
@@ -430,14 +445,14 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             Status: "ACTIVE"
         );
 
-        var result = await _service.CreateExaminationRoomAsync(request);
+        var result = await _service.CreateExaminationRoomAsync(101, request);
 
         Assert.NotNull(result);
         Assert.True(result.Id > 0);
         Assert.Equal("BK-NEW-01", result.RoomCode);
         Assert.Equal("Phòng Khám Đa Khoa Mới", result.Name);
         Assert.Equal(1, result.HospitalId);
-        Assert.Equal("MedFlow Cơ sở 1", result.Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Hà Nội", result.Facility);
         Assert.Equal(1, result.DepartmentId);
         Assert.Equal("DEP-001", result.DepartmentCode);
         Assert.Equal("Khoa Nội Tiêu hóa", result.DepartmentName);
@@ -468,7 +483,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             Status: "ACTIVE"
         );
 
-        var result = await _service.CreateExaminationRoomAsync(request);
+        var result = await _service.CreateExaminationRoomAsync(101, request);
 
         Assert.NotNull(result);
         Assert.Equal("PKT-MRI-01", result.RoomCode);
@@ -482,10 +497,11 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         var request = new CreateExaminationRoomRequest(
             RoomCode: "BK-INACT-01",
             Name: "Phòng Khám Tạm Dừng Hoạt Động",
+            HospitalId: 1,
             Status: "INACTIVE"
         );
 
-        var result = await _service.CreateExaminationRoomAsync(request);
+        var result = await _service.CreateExaminationRoomAsync(101, request);
 
         Assert.NotNull(result);
         Assert.Equal("BK-INACT-01", result.RoomCode);
@@ -499,10 +515,11 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new CreateExaminationRoomRequest(
             Code: "BK-ALT-01",
-            Name: "Phòng Khám Dùng Trường Code Thay Vì RoomCode"
+            Name: "Phòng Khám Dùng Trường Code Thay Vì RoomCode",
+            HospitalId: 1
         );
 
-        var result = await _service.CreateExaminationRoomAsync(request);
+        var result = await _service.CreateExaminationRoomAsync(101, request);
 
         Assert.NotNull(result);
         Assert.Equal("BK-ALT-01", result.RoomCode);
@@ -514,11 +531,12 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         var request = new CreateExaminationRoomRequest(
             RoomCode: "   bk-norm-01   ",
             Name: "   Phòng Khám Chuẩn Hóa Cắt Khoảng Trắng   ",
+            HospitalId: 1,
             RoomType: "   examination   ",
             Location: "   Tầng 2   "
         );
 
-        var result = await _service.CreateExaminationRoomAsync(request);
+        var result = await _service.CreateExaminationRoomAsync(101, request);
 
         Assert.Equal("BK-NORM-01", result.RoomCode);
         Assert.Equal("Phòng Khám Chuẩn Hóa Cắt Khoảng Trắng", result.Name);
@@ -527,18 +545,62 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateExaminationRoomAsync_WhenHospitalIdNull_DefaultsTo1()
+    public async Task CreateExaminationRoomAsync_SystemAdminWhenHospitalIdNull_ThrowsValidationException()
     {
         var request = new CreateExaminationRoomRequest(
-            RoomCode: "BK-DEFAULT-HOSP",
-            Name: "Phòng Khám Mặc Định Cơ Sở 1",
+            RoomCode: "BK-MISSING-HOSP",
+            Name: "Phòng Khám Thiếu Cơ Sở",
             HospitalId: null
         );
 
-        var result = await _service.CreateExaminationRoomAsync(request);
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateExaminationRoomAsync(101, request));
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_HospitalAdminWhenHospitalIdNull_UsesStaffHospitalAndRealFacilityName()
+    {
+        var request = new CreateExaminationRoomRequest(
+            RoomCode: "BK-STAFF-HOSP",
+            Name: "Phòng Khám Theo Cơ Sở Của Quản Trị Viên",
+            HospitalId: null
+        );
+
+        var result = await _service.CreateExaminationRoomAsync(100, request);
 
         Assert.Equal(1, result.HospitalId);
-        Assert.Equal("MedFlow Cơ sở 1", result.Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Hà Nội", result.Facility);
+    }
+
+    [Fact]
+    public async Task CreateExaminationRoomAsync_NonExistentHospitalAndCrossHospitalChecks_Enforced()
+    {
+        // Non-existent HospitalId -> 404 NotFoundException
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            _service.CreateExaminationRoomAsync(
+                101,
+                new CreateExaminationRoomRequest(
+                    RoomCode: "BK-HOSP-999",
+                    Name: "Phòng Khám Cơ Sở Không Tồn Tại",
+                    HospitalId: 999)));
+
+        // HOSPITAL_ADMIN (Hospital 1) passing HospitalId = 2 -> 403 ForbiddenException
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CreateExaminationRoomAsync(
+                100,
+                new CreateExaminationRoomRequest(
+                    RoomCode: "BK-CROSS-HOSP",
+                    Name: "Phòng Khám Khác Cơ Sở",
+                    HospitalId: 2)));
+
+        // Unassigned HOSPITAL_ADMIN (User 106, HospitalId = null) -> 403 ForbiddenException
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CreateExaminationRoomAsync(
+                106,
+                new CreateExaminationRoomRequest(
+                    RoomCode: "BK-UNASSIGNED-ADMIN",
+                    Name: "Phòng Khám Quản Trị Chưa Gán Cơ Sở",
+                    HospitalId: null)));
     }
 
     [Fact]
@@ -547,10 +609,11 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         var request = new CreateExaminationRoomRequest(
             RoomCode: "BK-NO-DEPT",
             Name: "Phòng Khám Đa Năng Chưa Gán Khoa",
+            HospitalId: 1,
             DepartmentId: null
         );
 
-        var result = await _service.CreateExaminationRoomAsync(request);
+        var result = await _service.CreateExaminationRoomAsync(101, request);
 
         Assert.Null(result.DepartmentId);
         Assert.Null(result.DepartmentCode);
@@ -565,7 +628,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new CreateExaminationRoomRequest(RoomCode: code!, Name: "Phòng Khám Hợp Lệ");
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(101, request));
         Assert.Contains("Mã buồng khám không được để trống", ex.Message);
     }
 
@@ -575,7 +638,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         var longCode = new string('R', 41);
         var request = new CreateExaminationRoomRequest(RoomCode: longCode, Name: "Phòng Khám Hợp Lệ");
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(101, request));
         Assert.Contains("Mã buồng khám không được vượt quá 40 ký tự", ex.Message);
     }
 
@@ -587,7 +650,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new CreateExaminationRoomRequest(RoomCode: "BK-001", Name: name!);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(101, request));
         Assert.Contains("Tên buồng khám không được để trống", ex.Message);
     }
 
@@ -597,7 +660,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         var longName = new string('N', 201);
         var request = new CreateExaminationRoomRequest(RoomCode: "BK-001", Name: longName);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(101, request));
         Assert.Contains("Tên buồng khám không được vượt quá 200 ký tự", ex.Message);
     }
 
@@ -609,7 +672,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new CreateExaminationRoomRequest(RoomCode: "BK-001", Name: "Phòng Khám Hợp Lệ", Capacity: capacity);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationRoomAsync(101, request));
         Assert.Contains("Sức chứa buồng khám phải lớn hơn 0", ex.Message);
     }
 
@@ -623,7 +686,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             HospitalId: 1
         );
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateExaminationRoomAsync(request));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateExaminationRoomAsync(101, request));
         Assert.Contains("đã tồn tại trong cơ sở y tế này", ex.Message);
     }
 
@@ -637,12 +700,12 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             HospitalId: 2
         );
 
-        var result = await _service.CreateExaminationRoomAsync(request);
+        var result = await _service.CreateExaminationRoomAsync(101, request);
 
         Assert.NotNull(result);
         Assert.Equal("RM-101", result.RoomCode);
         Assert.Equal(2, result.HospitalId);
-        Assert.Equal("MedFlow Cơ sở 2", result.Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Đà Nẵng", result.Facility);
     }
 
     [Fact]
@@ -651,17 +714,18 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         var request = new CreateExaminationRoomRequest(
             RoomCode: "BK-INVALID-DEPT",
             Name: "Phòng Khám Sai Khoa",
+            HospitalId: 1,
             DepartmentId: 9999
         );
 
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateExaminationRoomAsync(request));
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateExaminationRoomAsync(101, request));
         Assert.Contains("Không tìm thấy khoa phòng với ID 9999", ex.Message);
     }
 
     [Fact]
     public async Task CreateExaminationRoomAsync_NullRequest_ThrowsArgumentNullException()
     {
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.CreateExaminationRoomAsync(null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.CreateExaminationRoomAsync(101, null!));
     }
 
     // ==========================================
@@ -682,14 +746,14 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             Status: "  maintenance  "
         );
 
-        var result = await _service.UpdateExaminationRoomAsync(1, request);
+        var result = await _service.UpdateExaminationRoomAsync(101, 1, request);
 
         Assert.NotNull(result);
         Assert.Equal(1, result.Id);
         Assert.Equal("RM-101-MOD", result.RoomCode);
         Assert.Equal("Phòng Khám Tiêu Hóa 1 Cập Nhật", result.Name);
         Assert.Equal(1, result.HospitalId);
-        Assert.Equal("MedFlow Cơ sở 1", result.Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Hà Nội", result.Facility);
         Assert.Equal(2, result.DepartmentId);
         Assert.Equal("DEP-002", result.DepartmentCode);
         Assert.Equal("Khoa Tim mạch", result.DepartmentName);
@@ -721,7 +785,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             Capacity: 3
         );
 
-        var result = await _service.UpdateExaminationRoomAsync(1, request);
+        var result = await _service.UpdateExaminationRoomAsync(101, 1, request);
 
         Assert.Equal("RM-101", result.RoomCode);
         Assert.Equal("Phòng Khám Giữ Nguyên Mã", result.Name);
@@ -737,7 +801,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             Name: "Phòng Khám Cập Nhật Qua Code Alias"
         );
 
-        var result = await _service.UpdateExaminationRoomAsync(1, request);
+        var result = await _service.UpdateExaminationRoomAsync(101, 1, request);
 
         Assert.Equal("BK-ALIAS-101", result.RoomCode);
     }
@@ -752,7 +816,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             Name: "Phòng Khám Không Tự Xung Đột"
         );
 
-        var result = await _service.UpdateExaminationRoomAsync(1, request);
+        var result = await _service.UpdateExaminationRoomAsync(101, 1, request);
 
         Assert.Equal("RM-101", result.RoomCode);
         Assert.Equal("Phòng Khám Không Tự Xung Đột", result.Name);
@@ -762,7 +826,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     public async Task UpdateExaminationRoomAsync_StatusAndBooleanFallbacks_UpdateStatusAndAvailabilityFlags()
     {
         // Transition ACTIVE -> INACTIVE via Status
-        var inactiveRes = await _service.UpdateExaminationRoomAsync(1, new UpdateExaminationRoomRequest(
+        var inactiveRes = await _service.UpdateExaminationRoomAsync(101, 1, new UpdateExaminationRoomRequest(
             Name: "Phòng Tạm Ngưng",
             Status: "INACTIVE"
         ));
@@ -771,7 +835,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         Assert.False(inactiveRes.IsActive);
 
         // Transition INACTIVE -> ACTIVE via IsAvailable boolean fallback
-        var availableRes = await _service.UpdateExaminationRoomAsync(1, new UpdateExaminationRoomRequest(
+        var availableRes = await _service.UpdateExaminationRoomAsync(101, 1, new UpdateExaminationRoomRequest(
             Name: "Phòng Mở Lại Qua IsAvailable",
             IsAvailable: true
         ));
@@ -780,7 +844,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         Assert.True(availableRes.IsActive);
 
         // Transition ACTIVE -> INACTIVE via IsActive boolean fallback
-        var isActiveFalseRes = await _service.UpdateExaminationRoomAsync(1, new UpdateExaminationRoomRequest(
+        var isActiveFalseRes = await _service.UpdateExaminationRoomAsync(101, 1, new UpdateExaminationRoomRequest(
             Name: "Phòng Tắt Qua IsActive",
             IsActive: false
         ));
@@ -799,7 +863,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             Department: departmentKey
         );
 
-        var result = await _service.UpdateExaminationRoomAsync(1, request);
+        var result = await _service.UpdateExaminationRoomAsync(101, 1, request);
 
         Assert.Equal(2, result.DepartmentId);
         Assert.Equal("DEP-002", result.DepartmentCode);
@@ -814,7 +878,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             DepartmentId: 9999
         );
 
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationRoomAsync(1, request));
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationRoomAsync(101, 1, request));
         Assert.Contains("Không tìm thấy khoa phòng với ID 9999", ex.Message);
     }
 
@@ -826,7 +890,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             Department: "Khoa Không Tồn Tại"
         );
 
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationRoomAsync(1, request));
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationRoomAsync(101, 1, request));
         Assert.Contains("Không tìm thấy khoa phòng 'Khoa Không Tồn Tại'", ex.Message);
     }
 
@@ -839,7 +903,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             DepartmentId: 1
         );
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(6, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(101, 6, request));
         Assert.Contains("Khoa phòng không thuộc cơ sở y tế của buồng khám", ex.Message);
     }
 
@@ -851,14 +915,14 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new UpdateExaminationRoomRequest(Name: "Phòng Hợp Lệ");
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(id, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(101, id, request));
         Assert.Contains("ID buồng khám phải lớn hơn 0", ex.Message);
     }
 
     [Fact]
     public async Task UpdateExaminationRoomAsync_NullRequest_ThrowsArgumentNullException()
     {
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.UpdateExaminationRoomAsync(1, null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.UpdateExaminationRoomAsync(101, 1, null!));
     }
 
     [Fact]
@@ -866,7 +930,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new UpdateExaminationRoomRequest(Name: "Phòng Không Tồn Tại");
 
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationRoomAsync(9999, request));
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationRoomAsync(101, 9999, request));
         Assert.Contains("Không tìm thấy buồng khám với ID 9999", ex.Message);
     }
 
@@ -877,7 +941,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new UpdateExaminationRoomRequest(RoomCode: emptyCode, Name: "Phòng Hợp Lệ");
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(101, 1, request));
         Assert.Contains("Mã buồng khám không được để trống", ex.Message);
     }
 
@@ -887,7 +951,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         var longCode = new string('R', 41);
         var request = new UpdateExaminationRoomRequest(RoomCode: longCode, Name: "Phòng Hợp Lệ");
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(101, 1, request));
         Assert.Contains("Mã buồng khám không được vượt quá 40 ký tự", ex.Message);
     }
 
@@ -899,7 +963,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new UpdateExaminationRoomRequest(Name: name!);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(101, 1, request));
         Assert.Contains("Tên buồng khám không được để trống", ex.Message);
     }
 
@@ -909,7 +973,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         var longName = new string('N', 201);
         var request = new UpdateExaminationRoomRequest(Name: longName);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(101, 1, request));
         Assert.Contains("Tên buồng khám không được vượt quá 200 ký tự", ex.Message);
     }
 
@@ -921,7 +985,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new UpdateExaminationRoomRequest(Name: "Phòng Hợp Lệ", Capacity: capacity);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(101, 1, request));
         Assert.Contains("Sức chứa buồng khám phải lớn hơn 0", ex.Message);
     }
 
@@ -932,7 +996,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new UpdateExaminationRoomRequest(Name: "Phòng Hợp Lệ", DepartmentId: departmentId);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(101, 1, request));
         Assert.Contains("ID khoa phòng phải lớn hơn 0", ex.Message);
     }
 
@@ -942,7 +1006,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         var longType = new string('T', 21);
         var request = new UpdateExaminationRoomRequest(Name: "Phòng Hợp Lệ", RoomType: longType);
 
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(101, 1, request));
         Assert.Contains("Loại phòng không được vượt quá 20 ký tự", ex.Message);
     }
 
@@ -955,7 +1019,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
     {
         var request = new UpdateExaminationRoomRequest(Name: "Phòng Hợp Lệ", Status: status);
 
-        await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(1, request));
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationRoomAsync(101, 1, request));
     }
 
     [Fact]
@@ -967,7 +1031,7 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             Name: "Phòng Khám Trùng Mã Trong Cùng Cơ Sở"
         );
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.UpdateExaminationRoomAsync(1, request));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.UpdateExaminationRoomAsync(101, 1, request));
         Assert.Contains("đã tồn tại trong cơ sở y tế này", ex.Message);
     }
 
@@ -980,13 +1044,13 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             Name: "Phòng Cơ Sở 2 Đổi Sang Mã RM-101"
         );
 
-        var result = await _service.UpdateExaminationRoomAsync(6, request);
+        var result = await _service.UpdateExaminationRoomAsync(101, 6, request);
 
         Assert.NotNull(result);
         Assert.Equal(6, result.Id);
         Assert.Equal("RM-101", result.RoomCode);
         Assert.Equal(2, result.HospitalId);
-        Assert.Equal("MedFlow Cơ sở 2", result.Facility);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Đà Nẵng", result.Facility);
     }
 
     // ==========================================
@@ -1147,8 +1211,8 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             RoomId = 7,
             DoctorId = null,
             Status = "OPEN",
-            StartsAt = DateTime.UtcNow.AddDays(1),
-            EndsAt = DateTime.UtcNow.AddDays(1).AddHours(2)
+            StartsAt = MedFlow.Application.Common.Time.HospitalClock.GetNow(TimeProvider.System).AddDays(1),
+            EndsAt = MedFlow.Application.Common.Time.HospitalClock.GetNow(TimeProvider.System).AddDays(1).AddHours(2)
         });
         await _dbContext.SaveChangesAsync();
 
@@ -1179,8 +1243,8 @@ public sealed class ExaminationRoomServiceTests : IDisposable
             RoomId = 8,
             DoctorId = null,
             Status = "OPEN",
-            StartsAt = DateTime.UtcNow.AddDays(1),
-            EndsAt = DateTime.UtcNow.AddDays(1).AddHours(2)
+            StartsAt = MedFlow.Application.Common.Time.HospitalClock.GetNow(TimeProvider.System).AddDays(1),
+            EndsAt = MedFlow.Application.Common.Time.HospitalClock.GetNow(TimeProvider.System).AddDays(1).AddHours(2)
         };
         _dbContext.ExaminationSlots.Add(slot80);
         await _dbContext.SaveChangesAsync();
@@ -1301,8 +1365,21 @@ public sealed class ExaminationRoomServiceTests : IDisposable
         );
 
         var ex = await Assert.ThrowsAsync<ConflictException>(() =>
-            _service.UpdateExaminationRoomAsync(2, request));
+            _service.UpdateExaminationRoomAsync(101, 2, request));
 
         Assert.Contains("lượt khám", ex.Message);
+    }
+
+    [Fact]
+    public async Task CheckExaminationRoomDependenciesAsync_EmptyRolePermissions_FailsClosedWithForbiddenException()
+    {
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions);
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CheckExaminationRoomDependenciesAsync(100, "1"));
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CheckExaminationRoomDependenciesAsync(101, "1"));
     }
 }

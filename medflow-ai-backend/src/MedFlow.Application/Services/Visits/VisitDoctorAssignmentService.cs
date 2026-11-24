@@ -8,6 +8,7 @@ using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Reception;
 using MedFlow.Application.Services.Visits.Queueing;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -38,10 +39,19 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
 
     private static readonly string[] HospitalAdminAllowedPermissions =
     [
-        VisitAssignPermissionCode,
-        "PATIENT_CHECKIN",
-        "QUEUE_MANAGE",
-        "HOSPITAL_CONFIG",
+        PermissionCodes.VisitAssign,
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.QueueManage,
+        PermissionCodes.HospitalConfig,
+    ];
+
+    private static readonly string[] SystemAdminAllowedPermissions =
+    [
+        PermissionCodes.VisitAssign,
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.QueueManage,
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.UserManage,
     ];
 
     private readonly IApplicationDbContext _db;
@@ -145,7 +155,9 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
             throw new ForbiddenException("Bạn không có quyền thao tác trên lượt khám thuộc cơ sở y tế khác.");
         }
 
-        var effectiveHospitalId = visitHospitalId ?? actor.ActorHospitalId ?? 1L;
+        var effectiveHospitalId = visitHospitalId
+            ?? actor.ActorHospitalId
+            ?? throw new ValidationException("Không xác định được cơ sở y tế của lượt khám.");
 
         var existingQueueEntry = await FindExistingExaminationQueueEntryAsync(visit, asNoTracking: true, ct);
 
@@ -505,7 +517,9 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
             throw new ForbiddenException("Bạn không có quyền thao tác trên lượt khám thuộc cơ sở y tế khác.");
         }
 
-        var effectiveHospitalId = visitHospitalId ?? actor.ActorHospitalId ?? 1L;
+        var effectiveHospitalId = visitHospitalId
+            ?? actor.ActorHospitalId
+            ?? throw new ValidationException("Không xác định được cơ sở y tế của lượt khám.");
 
         var targetDoctor = await ResolveTargetDoctorAsync(
             targetDoctorId,
@@ -1069,47 +1083,53 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
             .ToListAsync(ct);
 
         var isSystemAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase));
         var isHospitalAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, "HOSPITAL_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase));
         var isReception = actorRoleCodes.Any(c =>
-            string.Equals(c, "RECEPTION", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.Reception, StringComparison.OrdinalIgnoreCase));
 
         if (!isSystemAdmin && !isHospitalAdmin && !isReception)
         {
             throw new ForbiddenException("Người dùng không có quyền phân công bác sĩ cho lượt khám.");
         }
 
-        if (!isSystemAdmin && actorRoleIds.Count > 0)
-        {
-            var rolePermissionIds = await _db.RolePermissions
+        var rolePermissionIds = actorRoleIds.Count > 0
+            ? await _db.RolePermissions
                 .AsNoTracking()
                 .Where(rp => actorRoleIds.Contains(rp.RoleId))
                 .Select(rp => rp.PermissionId)
                 .Distinct()
-                .ToListAsync(ct);
+                .ToListAsync(ct)
+            : [];
 
-            if (rolePermissionIds.Count > 0)
-            {
-                var permissionCodes = await _db.Permissions
-                    .AsNoTracking()
-                    .Where(p => rolePermissionIds.Contains(p.Id))
-                    .Select(p => p.Code)
-                    .ToListAsync(ct);
+        if (rolePermissionIds.Count == 0)
+        {
+            throw new ForbiddenException(
+                "Vai trò hiện tại chưa được cấp quyền phân công lượt khám (VISIT_ASSIGN).");
+        }
 
-                var hasPermission = isHospitalAdmin
-                    ? permissionCodes.Any(c =>
-                        HospitalAdminAllowedPermissions.Any(allowed =>
-                            string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)))
-                    : permissionCodes.Any(c =>
-                        string.Equals(c, VisitAssignPermissionCode, StringComparison.OrdinalIgnoreCase));
+        var permissionCodes = await _db.Permissions
+            .AsNoTracking()
+            .Where(p => rolePermissionIds.Contains(p.Id))
+            .Select(p => p.Code)
+            .ToListAsync(ct);
 
-                if (!hasPermission)
-                {
-                    throw new ForbiddenException(
-                        "Vai trò hiện tại chưa được cấp quyền phân công lượt khám (VISIT_ASSIGN).");
-                }
-            }
+        var hasPermission = isSystemAdmin
+            ? permissionCodes.Any(c =>
+                SystemAdminAllowedPermissions.Any(allowed =>
+                    string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)))
+            : isHospitalAdmin
+                ? permissionCodes.Any(c =>
+                    HospitalAdminAllowedPermissions.Any(allowed =>
+                        string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)))
+                : permissionCodes.Any(c =>
+                    string.Equals(c, PermissionCodes.VisitAssign, StringComparison.OrdinalIgnoreCase));
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenException(
+                "Vai trò hiện tại chưa được cấp quyền phân công lượt khám (VISIT_ASSIGN).");
         }
 
         var actorStaff = await _db.Staff
@@ -1431,7 +1451,7 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
 
         return allDoctors
             .Where(d =>
-                (d.HospitalId ?? d.Staff?.HospitalId ?? 1L) == hospitalId)
+                (d.HospitalId ?? d.Staff?.HospitalId) == hospitalId)
             .ToList();
     }
 
@@ -1861,7 +1881,7 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
                     .ThenInclude(s => s!.Department)
                 .Include(d => d.Specialty)
                 .Where(d => d.DoctorCode.ToUpper() == targetDoctorCode)
-                .OrderByDescending(d => (d.HospitalId ?? d.Staff!.HospitalId ?? 1L) == effectiveHospitalId)
+                .OrderByDescending(d => (d.HospitalId ?? (d.Staff != null ? d.Staff.HospitalId : null)) == effectiveHospitalId)
                 .ThenBy(d => d.Id)
                 .FirstOrDefaultAsync(ct);
 
@@ -1914,7 +1934,7 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
                 .AsNoTracking()
                 .Include(r => r.Department)
                 .Where(r => r.RoomCode.ToUpper() == targetRoomCode)
-                .OrderByDescending(r => (r.HospitalId ?? 1L) == effectiveHospitalId)
+                .OrderByDescending(r => r.HospitalId == effectiveHospitalId)
                 .ThenBy(r => r.Id)
                 .FirstOrDefaultAsync(ct);
 
@@ -2028,7 +2048,7 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return Queueing.QueuePolicyKeys.DefaultGraceMinutes;
+            return QueuePolicyKeys.DefaultGraceMinutes;
         }
     }
 

@@ -1,4 +1,5 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Doctors;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Domain.Entities;
@@ -10,8 +11,6 @@ namespace MedFlow.Application.Services.Doctors;
 public sealed class DoctorCatalogService : IDoctorCatalogService
 {
     public const string UnpricedDisplayLabel = "Chưa cập nhật";
-
-    private static readonly TimeSpan HospitalUtcOffset = TimeSpan.FromHours(7);
 
     private static readonly IReadOnlyDictionary<string, string> SpecialtyCodeToFrontendSlug =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -110,8 +109,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
             .OrderBy(d => d.Id)
             .ToListAsync(ct);
 
-        var utcNow = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = DateTime.SpecifyKind(utcNow + HospitalUtcOffset, DateTimeKind.Unspecified);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var today = nowLocal.Date;
         var weekEnd = today.AddDays(6 - (((int)today.DayOfWeek + 6) % 7));
 
@@ -204,8 +202,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
         if (doctor is null)
             throw new NotFoundException("Doctor", normalized);
 
-        var utcNow = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = DateTime.SpecifyKind(utcNow + HospitalUtcOffset, DateTimeKind.Unspecified);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         return MapToDetailDto(doctor, nowLocal);
     }
 
@@ -411,12 +408,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
             ? "Đang tiếp nhận lịch khám ngoại trú"
             : "Lịch khám theo phân công chuyên khoa";
 
-        var education = BuildEducationItems(
-            doctor.Id,
-            core.QualificationsSummary,
-            core.SpecialtyName,
-            core.YearsOfExperience,
-            doctor.LicenseNumber);
+        var education = BuildEducationItems(doctor, core.YearsOfExperience);
 
         var biography = BuildBiography(
             doctor.ProfessionalBio,
@@ -426,7 +418,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
             core.DepartmentName);
 
         var hashtags = BuildHashtags(core.SpecialtyCode, core.SpecialtyName);
-        var weeklySchedule = BuildWeeklySchedule(doctor, core.SpecialtyCode);
+        var weeklySchedule = BuildWeeklySchedule(doctor, now.Date);
 
         return new DoctorDetailDto(
             Id: doctor.Id.ToString(CultureInfo.InvariantCulture),
@@ -506,19 +498,20 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
         if (deptRoom is not null)
             return FormatHospitalRoom(deptRoom);
 
-        return "Phòng 101 - Tầng 1, Khu Demo";
+        return UnpricedDisplayLabel;
     }
 
     internal static string FormatHospitalRoom(HospitalRoom room)
     {
         var roomLabel = ExtractRoomLabel(room);
-        var location = !string.IsNullOrWhiteSpace(room.Location)
-            ? room.Location!.Trim()
-            : "Tầng 1, Khu Demo";
+        var baseName = !string.IsNullOrWhiteSpace(roomLabel)
+            ? $"Phòng {roomLabel}"
+            : (!string.IsNullOrWhiteSpace(room.Name) ? room.Name.Trim() : UnpricedDisplayLabel);
 
-        return !string.IsNullOrWhiteSpace(roomLabel)
-            ? $"Phòng {roomLabel} - {location}"
-            : $"{room.Name} - {location}";
+        if (string.IsNullOrWhiteSpace(room.Location))
+            return baseName;
+
+        return $"{baseName} - {room.Location.Trim()}";
     }
 
     internal static string ExtractRoomLabel(HospitalRoom room)
@@ -587,41 +580,42 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
     }
 
     private static IReadOnlyList<DoctorEducationItemDto> BuildEducationItems(
-        long doctorId,
-        string qualificationsSummary,
-        string specialtyName,
-        int yearsOfExperience,
-        string? licenseNumber)
+        Doctor doctor,
+        int yearsOfExperience)
     {
-        var experienceBadge = yearsOfExperience > 0
-            ? $"{yearsOfExperience} năm kinh nghiệm"
-            : null;
+        var items = new List<DoctorEducationItemDto>(2);
 
-        var licenseBadge = !string.IsNullOrWhiteSpace(licenseNumber)
-            ? $"CCHN: {licenseNumber.Trim()}"
-            : null;
+        var rawQualification = !string.IsNullOrWhiteSpace(doctor.QualificationsSummary)
+            ? doctor.QualificationsSummary.Trim()
+            : (!string.IsNullOrWhiteSpace(doctor.ProfessionalTitle)
+                ? doctor.ProfessionalTitle.Trim()
+                : null);
 
-        return
-        [
-            new DoctorEducationItemDto(
-                Id: $"edu-{doctorId}-1",
-                Title: "Bác sĩ Đa khoa",
-                Institution: "Đại học Y Hà Nội (Hanoi Medical University)",
-                Badge: "Tốt nghiệp Chính quy",
-                Type: "degree"),
-            new DoctorEducationItemDto(
-                Id: $"edu-{doctorId}-2",
-                Title: $"{qualificationsSummary} - Chuyên ngành {specialtyName}",
-                Institution: "Đào tạo Sau đại học Chuyên khoa Lâm sàng",
+        if (!string.IsNullOrWhiteSpace(rawQualification))
+        {
+            var experienceBadge = yearsOfExperience > 0
+                ? $"{yearsOfExperience} năm kinh nghiệm"
+                : null;
+
+            items.Add(new DoctorEducationItemDto(
+                Id: $"edu-{doctor.Id}-{items.Count + 1}",
+                Title: rawQualification,
+                Institution: string.Empty,
                 Badge: experienceBadge,
-                Type: "specialist"),
-            new DoctorEducationItemDto(
-                Id: $"edu-{doctorId}-3",
-                Title: $"Chứng chỉ hành nghề khám bệnh, chữa bệnh chuyên khoa {specialtyName}",
-                Institution: "Bộ Y tế cấp phép hành nghề",
-                Badge: licenseBadge,
-                Type: "certificate"),
-        ];
+                Type: "specialist"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(doctor.LicenseNumber))
+        {
+            items.Add(new DoctorEducationItemDto(
+                Id: $"edu-{doctor.Id}-{items.Count + 1}",
+                Title: "Chứng chỉ hành nghề khám bệnh, chữa bệnh",
+                Institution: string.Empty,
+                Badge: $"CCHN: {doctor.LicenseNumber.Trim()}",
+                Type: "certificate"));
+        }
+
+        return items;
     }
 
     private static string BuildBiography(
@@ -670,78 +664,69 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
 
     private static IReadOnlyList<DoctorWeeklyScheduleDayDto> BuildWeeklySchedule(
         Doctor doctor,
-        string specialtyCode)
+        DateTime todayStart)
     {
-        var openSlots = doctor.ExaminationSlots?
+        var upcomingOpenSlots = (doctor.ExaminationSlots ?? [])
             .Where(s =>
                 string.Equals(s.Status, "OPEN", StringComparison.OrdinalIgnoreCase) &&
                 s.StartsAt.HasValue &&
-                s.EndsAt.HasValue)
-            .OrderBy(s => s.StartsAt)
+                s.EndsAt.HasValue &&
+                s.StartsAt.Value >= todayStart)
+            .OrderBy(s => s.StartsAt!.Value)
+            .ThenBy(s => s.Id)
             .ToList();
 
-        var firstOpenSlot = openSlots?.FirstOrDefault();
-        var openSlotWindow = firstOpenSlot is not null
-            ? $"{firstOpenSlot.StartsAt!.Value:HH:mm} - {firstOpenSlot.EndsAt!.Value:HH:mm}"
-            : null;
-
-        if (string.Equals(specialtyCode, "CARD", StringComparison.OrdinalIgnoreCase))
+        if (upcomingOpenSlots.Count == 0)
         {
-            return
-            [
-                new DoctorWeeklyScheduleDayDto(
-                    DayOfWeek: "Thứ Ba",
-                    HasAvailableSlot: true,
-                    MorningTime: "08:00 - 11:30",
-                    AfternoonTime: "13:30 - 16:30",
-                    Note: null,
-                    StatusTag: "Đang nhận bệnh",
-                    IsActive: false),
-                new DoctorWeeklyScheduleDayDto(
-                    DayOfWeek: "Thứ Tư",
-                    HasAvailableSlot: true,
-                    MorningTime: openSlotWindow ?? "08:30 - 11:30",
-                    AfternoonTime: "14:00 - 16:30",
-                    Note: null,
-                    StatusTag: "Đang nhận bệnh",
-                    IsActive: true),
-                new DoctorWeeklyScheduleDayDto(
-                    DayOfWeek: "Thứ Sáu",
-                    HasAvailableSlot: true,
-                    MorningTime: "08:00 - 11:30",
-                    AfternoonTime: null,
-                    Note: "Buổi chiều: Hội chẩn tim mạch",
-                    StatusTag: "Đang nhận bệnh",
-                    IsActive: false),
-            ];
+            return [];
         }
 
-        return
-        [
-            new DoctorWeeklyScheduleDayDto(
-                DayOfWeek: "Thứ Hai",
-                HasAvailableSlot: true,
-                MorningTime: "08:00 - 11:30",
-                AfternoonTime: "14:00 - 16:30",
-                Note: null,
-                StatusTag: "Đang nhận bệnh",
-                IsActive: false),
-            new DoctorWeeklyScheduleDayDto(
-                DayOfWeek: "Thứ Ba",
-                HasAvailableSlot: true,
-                MorningTime: openSlotWindow ?? "08:00 - 11:30",
-                AfternoonTime: "14:00 - 16:30",
-                Note: null,
-                StatusTag: "Đang nhận bệnh",
-                IsActive: true),
-            new DoctorWeeklyScheduleDayDto(
-                DayOfWeek: "Thứ Năm",
-                HasAvailableSlot: true,
-                MorningTime: "08:00 - 11:30",
-                AfternoonTime: null,
-                Note: "Buổi chiều: Nội soi tiêu hóa",
-                StatusTag: "Đang nhận bệnh",
-                IsActive: false),
-        ];
+        var nextSevenDaysEnd = todayStart.AddDays(7);
+        var windowSlots = upcomingOpenSlots
+            .Where(s => s.StartsAt!.Value < nextSevenDaysEnd)
+            .ToList();
+
+        if (windowSlots.Count == 0)
+        {
+            var firstDate = upcomingOpenSlots[0].StartsAt!.Value.Date;
+            var fallbackWindowEnd = firstDate.AddDays(7);
+            windowSlots = upcomingOpenSlots
+                .Where(s => s.StartsAt!.Value >= firstDate && s.StartsAt.Value < fallbackWindowEnd)
+                .ToList();
+        }
+
+        var earliestActiveDate = windowSlots[0].StartsAt!.Value.Date;
+
+        return windowSlots
+            .GroupBy(s => s.StartsAt!.Value.Date)
+            .OrderBy(g => ((int)g.Key.DayOfWeek + 6) % 7)
+            .Select(group =>
+            {
+                var morningSlots = group
+                    .Where(s => TimeOnly.FromDateTime(s.StartsAt!.Value) < HospitalShiftRules.AfternoonGroupingCutoff)
+                    .ToList();
+
+                var afternoonSlots = group
+                    .Where(s => TimeOnly.FromDateTime(s.StartsAt!.Value) >= HospitalShiftRules.AfternoonGroupingCutoff)
+                    .ToList();
+
+                var morningTime = morningSlots.Count > 0
+                    ? $"{morningSlots.Min(s => s.StartsAt!.Value).ToString("HH:mm", CultureInfo.InvariantCulture)} - {morningSlots.Max(s => s.EndsAt!.Value).ToString("HH:mm", CultureInfo.InvariantCulture)}"
+                    : null;
+
+                var afternoonTime = afternoonSlots.Count > 0
+                    ? $"{afternoonSlots.Min(s => s.StartsAt!.Value).ToString("HH:mm", CultureInfo.InvariantCulture)} - {afternoonSlots.Max(s => s.EndsAt!.Value).ToString("HH:mm", CultureInfo.InvariantCulture)}"
+                    : null;
+
+                return new DoctorWeeklyScheduleDayDto(
+                    DayOfWeek: VietnameseDayNames[group.Key.DayOfWeek],
+                    HasAvailableSlot: true,
+                    MorningTime: morningTime,
+                    AfternoonTime: afternoonTime,
+                    Note: null,
+                    StatusTag: "Đang nhận bệnh",
+                    IsActive: group.Key == earliestActiveDate);
+            })
+            .ToList();
     }
 }

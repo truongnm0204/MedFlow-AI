@@ -1,16 +1,18 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.ExaminationSlots;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
+
 namespace MedFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/admin/examination-slots")]
 [Route("api/v1/admin/slots")]
 [Route("api/v1/examination-slots")]
-[Authorize(Roles = "HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+[Authorize(Roles = $"{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class AdminExaminationSlotsController : ControllerBase
 {
     private readonly IExaminationSlotAdminService _service;
@@ -32,7 +34,7 @@ public sealed class AdminExaminationSlotsController : ControllerBase
     {
         try
         {
-            var result = await _service.GetExaminationSlotListAsync(request, ct);
+            var result = await _service.GetExaminationSlotListAsync(GetUserId(), request, ct);
             return Ok(result);
         }
         catch (ArgumentException ex)
@@ -60,7 +62,7 @@ public sealed class AdminExaminationSlotsController : ControllerBase
     {
         try
         {
-            var result = await _service.CreateExaminationSlotAsync(request, ct);
+            var result = await _service.CreateExaminationSlotAsync(GetUserId(), request, ct);
             return StatusCode(StatusCodes.Status201Created, result);
         }
         catch (ArgumentException ex)
@@ -107,7 +109,7 @@ public sealed class AdminExaminationSlotsController : ControllerBase
     {
         try
         {
-            var result = await _service.UpdateExaminationSlotAsync(id, request, ct);
+            var result = await _service.UpdateExaminationSlotAsync(GetUserId(), id, request, ct);
             return Ok(result);
         }
         catch (ArgumentException ex)
@@ -213,7 +215,7 @@ public sealed class AdminExaminationSlotsController : ControllerBase
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
             ?? User.FindFirstValue("sub");
 
-        if (string.IsNullOrWhiteSpace(sub) || !long.TryParse(sub, out var userId))
+        if (string.IsNullOrWhiteSpace(sub) || !long.TryParse(sub, out var userId) || userId <= 0)
         {
             throw new UnauthorizedAccessException("Token không hợp lệ.");
         }
@@ -225,4 +227,3 @@ public sealed class AdminExaminationSlotsController : ControllerBase
         HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
         ?? HttpContext.Connection.RemoteIpAddress?.ToString();
 }
-

@@ -1,7 +1,9 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Pharmacy;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -11,16 +13,9 @@ namespace MedFlow.Application.Services.Pharmacy;
 
 public sealed class PharmacyDashboardService : IPharmacyDashboardService
 {
-    private const string PharmacyStaffRoleCode = "PHARMACY_STAFF";
+    private const string PharmacyStaffRoleCode = RoleNames.PharmacyStaff;
     private const string DefaultCounterLabel = "Quầy Dược 01 • Tầng 1";
     private const string DefaultCounterCode = "#PHA-01";
-    private const string DefaultShiftLabel = "Ca sáng 07:30–11:30";
-
-    private static readonly string[] FallbackPharmacyStaffPermissions =
-    [
-        "MEDICINE_DISPENSE",
-        "PAYMENT_VIEW",
-    ];
 
     private static readonly HashSet<string> ValidStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -102,8 +97,9 @@ public sealed class PharmacyDashboardService : IPharmacyDashboardService
             ? null
             : request.Keyword.Trim();
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var todayDateOnly = DateOnly.FromDateTime(nowUtc);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var hospitalLocalNow = HospitalClock.GetNow(_timeProvider);
+        var todayDateOnly = HospitalClock.GetToday(_timeProvider);
 
         var actorUser = await _db.Users
             .AsNoTracking()
@@ -187,9 +183,14 @@ public sealed class PharmacyDashboardService : IPharmacyDashboardService
             .OrderBy(code => code, StringComparer.Ordinal)
             .ToList();
 
-        if (actorPermissionCodes.Count == 0 && allRolePermissions.Count == 0)
+        var permissionSet = actorPermissionCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var hasDispense = permissionSet.Contains(PermissionCodes.MedicineDispense);
+        var hasPatientRead = permissionSet.Contains(PermissionCodes.PatientProfileRead);
+        var hasPaymentView = permissionSet.Contains(PermissionCodes.PaymentView);
+
+        if (!hasDispense && !hasPatientRead && !hasPaymentView)
         {
-            actorPermissionCodes = [.. FallbackPharmacyStaffPermissions];
+            throw new ForbiddenException("Vai trò nhà thuốc hiện tại chưa được cấp quyền truy cập bảng điều khiển.");
         }
 
         var departments = await _db.Departments
@@ -545,31 +546,38 @@ public sealed class PharmacyDashboardService : IPharmacyDashboardService
             dispensedTodayCount = allQueueEntriesWithMeta.Count(x => x.Entry.Status == "DISPENSED");
         }
 
-        var stats = new PharmacyStatsDto(
-            PendingPrescriptions: pendingCount,
-            PreparingCount: preparingCount,
-            ReadyToDispense: readyCount,
-            DispensedToday: dispensedTodayCount);
+        var stats = hasDispense || hasPatientRead
+            ? new PharmacyStatsDto(
+                PendingPrescriptions: pendingCount,
+                PreparingCount: preparingCount,
+                ReadyToDispense: readyCount,
+                DispensedToday: dispensedTodayCount)
+            : new PharmacyStatsDto(0, 0, 0, 0);
 
-        var filteredQueue = allQueueEntriesWithMeta
-            .OrderBy(x => GetStatusSortRank(x.Entry.Status))
-            .ThenByDescending(x => x.PrescriptionId)
-            .Select(x => x.Entry)
-            .Where(entry =>
-                (normalizedStatus is null || string.Equals(entry.Status, normalizedStatus, StringComparison.OrdinalIgnoreCase)) &&
-                MatchesKeyword(entry, normalizedKeyword))
-            .Take(request.QueueLimit)
-            .ToList();
+        IReadOnlyList<PrescriptionQueueEntryDto> filteredQueue = hasDispense || hasPatientRead
+            ? allQueueEntriesWithMeta
+                .OrderBy(x => GetStatusSortRank(x.Entry.Status))
+                .ThenByDescending(x => x.PrescriptionId)
+                .Select(x => x.Entry)
+                .Where(entry =>
+                    (normalizedStatus is null || string.Equals(entry.Status, normalizedStatus, StringComparison.OrdinalIgnoreCase)) &&
+                    MatchesKeyword(entry, normalizedKeyword))
+                .Take(request.QueueLimit)
+                .ToList()
+            : [];
 
-        var quickActions = BuildQuickActions(actorPermissionCodes);
-        var fefoBatchAlerts = BuildFefoBatchAlerts(medicinesById, medicineBatches, todayDateOnly);
+        var quickActions = BuildQuickActions(permissionSet);
+        IReadOnlyList<FefoBatchAlertItemDto> fefoBatchAlerts = hasDispense
+            ? BuildFefoBatchAlerts(medicinesById, medicineBatches, todayDateOnly)
+            : [];
+        var shiftLabel = HospitalShiftRules.ResolveDashboardShiftLabel(hospitalLocalNow);
 
         return new PharmacyDashboardResponseDto(
             FacilityName: hospital.Name,
             FacilityCode: hospital.HospitalCode,
             CounterLabel: DefaultCounterLabel,
             CounterCode: DefaultCounterCode,
-            ShiftLabel: DefaultShiftLabel,
+            ShiftLabel: shiftLabel,
             Stats: stats,
             PrescriptionQueue: filteredQueue,
             QuickActions: quickActions,
@@ -809,16 +817,14 @@ public sealed class PharmacyDashboardService : IPharmacyDashboardService
         return "Không ghi nhận tiền sử dị ứng thuốc";
     }
 
-    private static IReadOnlyList<PharmacyQuickActionDto> BuildQuickActions(IReadOnlyList<string> permissionCodes)
+    private static IReadOnlyList<PharmacyQuickActionDto> BuildQuickActions(IReadOnlySet<string> permissionSet)
     {
-        var permissionSet = permissionCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        if (permissionSet.Contains("MEDICINE_DISPENSE"))
+        if (permissionSet.Contains(PermissionCodes.MedicineDispense))
         {
             return AllPharmacyQuickActions;
         }
 
-        if (permissionSet.Contains("PATIENT_PROFILE_READ") || permissionSet.Contains("PAYMENT_VIEW"))
+        if (permissionSet.Contains(PermissionCodes.PatientProfileRead))
         {
             return [AllPharmacyQuickActions[0]];
         }
@@ -865,26 +871,6 @@ public sealed class PharmacyDashboardService : IPharmacyDashboardService
             if (alertStatus is not null)
             {
                 selectedAlerts.Add((batch.Id, MapBatchAlert(batch, medicinesById, alertStatus)));
-                includedBatchIds.Add(batch.Id);
-            }
-        }
-
-        if (selectedAlerts.Count < 3)
-        {
-            var fallbackBatches = batches
-                .Where(b => !includedBatchIds.Contains(b.Id))
-                .OrderBy(b => b.ExpiryDate ?? DateOnly.MaxValue)
-                .ThenBy(b => b.QuantityOnHand ?? 0m)
-                .ThenBy(b => b.Id)
-                .Take(3 - selectedAlerts.Count);
-
-            foreach (var batch in fallbackBatches)
-            {
-                var fallbackStatus = (batch.QuantityOnHand ?? 0m) <= 170m
-                    ? "LOW_STOCK"
-                    : "FEFO_PRIORITY";
-
-                selectedAlerts.Add((batch.Id, MapBatchAlert(batch, medicinesById, fallbackStatus)));
                 includedBatchIds.Add(batch.Id);
             }
         }

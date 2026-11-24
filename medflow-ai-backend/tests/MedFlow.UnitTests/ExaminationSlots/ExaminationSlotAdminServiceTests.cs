@@ -23,9 +23,9 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
 
         public DbSet<User> Users => Set<User>();
         public DbSet<Role> Roles => Set<Role>();
-        public DbSet<Permission> Permissions => throw NotUsed();
+        public DbSet<Permission> Permissions => Set<Permission>();
         public DbSet<UserRole> UserRoles => Set<UserRole>();
-        public DbSet<RolePermission> RolePermissions => throw NotUsed();
+        public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
         public DbSet<Patient> Patients => Set<Patient>();
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => Set<Doctor>();
@@ -52,8 +52,6 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Ignore<Permission>();
-            modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
@@ -66,7 +64,9 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
 
             modelBuilder.Entity<User>(b => b.HasKey(u => u.Id));
             modelBuilder.Entity<Role>(b => b.HasKey(r => r.Id));
+            modelBuilder.Entity<Permission>(b => b.HasKey(p => p.Id));
             modelBuilder.Entity<UserRole>(b => b.HasKey(ur => new { ur.UserId, ur.RoleId }));
+            modelBuilder.Entity<RolePermission>(b => b.HasKey(rp => new { rp.RoleId, rp.PermissionId }));
             modelBuilder.Entity<Patient>(b => b.HasKey(p => p.Id));
             modelBuilder.Entity<Hospital>(b => b.HasKey(h => h.Id));
             modelBuilder.Entity<AuditLog>(b =>
@@ -142,8 +142,8 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
 
     private void SeedTestData()
     {
-        var hosp1 = new Hospital { Id = 1, HospitalCode = "MEDFLOW-01", Name = "MedFlow Cơ sở 1", IsActive = true };
-        var hosp2 = new Hospital { Id = 2, HospitalCode = "MEDFLOW-02", Name = "MedFlow Cơ sở 2", IsActive = true };
+        var hosp1 = new Hospital { Id = 1, HospitalCode = "MEDFLOW-01", Name = "Bệnh viện Đa khoa MedFlow Hà Nội", IsActive = true };
+        var hosp2 = new Hospital { Id = 2, HospitalCode = "MEDFLOW-02", Name = "Bệnh viện Đa khoa MedFlow Đà Nẵng", IsActive = true };
         _db.Hospitals.AddRange(hosp1, hosp2);
 
         var rolePatient = new Role { Id = 1, Code = "PATIENT", Name = "Bệnh nhân" };
@@ -151,6 +151,11 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         var roleHospAdmin = new Role { Id = 6, Code = "HOSPITAL_ADMIN", Name = "Quản trị bệnh viện" };
         var roleSysAdmin = new Role { Id = 7, Code = "SYSTEM_ADMIN", Name = "Quản trị hệ thống" };
         _db.Roles.AddRange(rolePatient, roleDoctor, roleHospAdmin, roleSysAdmin);
+
+        _db.Permissions.Add(new Permission { Id = 1, Code = "HOSPITAL_CONFIG" });
+        _db.RolePermissions.AddRange(
+            new RolePermission { RoleId = 6, PermissionId = 1 },
+            new RolePermission { RoleId = 7, PermissionId = 1 });
 
         var userPatient = new User { Id = 1, Email = "patient01@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var userDoctor = new User { Id = 3, Email = "doctor01@medflow.test", AccountStatus = AccountStatus.ACTIVE };
@@ -198,6 +203,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         var srvEndocrine = new Service
         {
             Id = 1,
+            HospitalId = 1,
             ServiceCode = "EX-1-01",
             Name = "Khám Nội tiết",
             ServiceType = "EXAMINATION",
@@ -208,6 +214,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         var srvCardio = new Service
         {
             Id = 2,
+            HospitalId = 1,
             ServiceCode = "EX-2-03",
             Name = "Khám Tim mạch",
             ServiceType = "EXAMINATION",
@@ -310,7 +317,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     [Fact]
     public async Task GetExaminationSlotList_NullRequest_ThrowsArgumentNullException()
     {
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.GetExaminationSlotListAsync(null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.GetExaminationSlotListAsync(13, null!));
     }
 
     [Theory]
@@ -319,7 +326,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_InvalidPage_ThrowsArgumentException(int page)
     {
         var request = new GetExaminationSlotListRequest(Page: page);
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.GetExaminationSlotListAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.GetExaminationSlotListAsync(13, request));
         Assert.Contains("Trang yêu cầu", ex.Message);
     }
 
@@ -330,7 +337,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_InvalidPageSize_ThrowsArgumentException(int pageSize)
     {
         var request = new GetExaminationSlotListRequest(PageSize: pageSize);
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.GetExaminationSlotListAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.GetExaminationSlotListAsync(13, request));
         Assert.Contains("Số lượng bản ghi trên một trang", ex.Message);
     }
 
@@ -338,7 +345,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_DefaultQuery_ReturnsAllSlotsAndMetrics()
     {
         var request = new GetExaminationSlotListRequest();
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.NotNull(result);
         Assert.Equal(5, result.Total);
@@ -360,7 +367,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_CalculatesActiveAppointmentsAndCapacityCorrectly()
     {
         var request = new GetExaminationSlotListRequest();
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         var slot1Dto = result.Data.First(s => s.Id == 1);
         Assert.Equal("SLT-001", slot1Dto.Code);
@@ -389,16 +396,17 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         var slot3Dto = result.Data.First(s => s.Id == 3);
         Assert.Equal("CLOSED", slot3Dto.Status);
 
-        // Slot 5 needs review
+        // Slot 5 needs review and resolves facility from real Hospital.Name when Room is null
         var slot5Dto = result.Data.First(s => s.Id == 5);
         Assert.True(slot5Dto.NeedsReview);
+        Assert.Equal("Bệnh viện Đa khoa MedFlow Hà Nội", slot5Dto.Facility);
     }
 
     [Fact]
     public async Task GetExaminationSlotList_FilterByKeyword_DoctorName()
     {
         var request = new GetExaminationSlotListRequest(Keyword: "Nguyễn Thu Lan");
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Equal(2, result.Total);
         Assert.All(result.Data, s => Assert.Equal("BS. Nguyễn Thu Lan", s.DoctorName));
@@ -408,7 +416,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_FilterByKeyword_SlotCode()
     {
         var request = new GetExaminationSlotListRequest(Keyword: "SLT-002");
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Single(result.Data);
         Assert.Equal(2, result.Data[0].Id);
@@ -418,7 +426,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_FilterByKeyword_ServiceName()
     {
         var request = new GetExaminationSlotListRequest(Keyword: "Tim mạch");
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Equal(2, result.Total); // slots 2 and 4
         Assert.All(result.Data, s => Assert.Equal("Khám Tim mạch", s.ServiceName));
@@ -428,7 +436,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_FilterByKeyword_RoomCode()
     {
         var request = new GetExaminationSlotListRequest(Keyword: "PK-108");
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Equal(2, result.Total); // slots 2 and 4
         Assert.All(result.Data, s => Assert.Equal("PK-108", s.Room));
@@ -438,7 +446,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_FilterByDate_ExactMatch()
     {
         var request = new GetExaminationSlotListRequest(Date: "2026-10-27");
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Equal(3, result.Total); // slots 1, 2, 5
         Assert.All(result.Data, s => Assert.Equal("2026-10-27", s.Date));
@@ -448,7 +456,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_FilterByDateRange()
     {
         var request = new GetExaminationSlotListRequest(FromDate: "2026-10-28", ToDate: "2026-10-29");
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Single(result.Data);
         Assert.Equal(3, result.Data[0].Id);
@@ -458,7 +466,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_FilterByDoctorId()
     {
         var request = new GetExaminationSlotListRequest(DoctorId: 2);
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Equal(2, result.Total);
         Assert.All(result.Data, s => Assert.Equal(2, s.DoctorId));
@@ -468,7 +476,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_FilterByServiceId()
     {
         var request = new GetExaminationSlotListRequest(ServiceId: 1);
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Equal(3, result.Total); // slots 1, 3, 5
         Assert.All(result.Data, s => Assert.Equal(1, s.ServiceId));
@@ -478,7 +486,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_FilterByRoomId()
     {
         var request = new GetExaminationSlotListRequest(RoomId: 1);
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Equal(2, result.Total); // slots 1, 3
         Assert.All(result.Data, s => Assert.Equal(1, s.RoomId));
@@ -488,7 +496,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_FilterBySpecialty()
     {
         var request = new GetExaminationSlotListRequest(Specialty: "Tim mạch");
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Equal(2, result.Total);
         Assert.All(result.Data, s => Assert.Equal("Tim mạch", s.Specialty));
@@ -498,7 +506,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_FilterByStatus_Closed()
     {
         var request = new GetExaminationSlotListRequest(Status: "CLOSED");
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Single(result.Data);
         Assert.Equal(3, result.Data[0].Id);
@@ -509,7 +517,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_FilterByStatus_Open()
     {
         var request = new GetExaminationSlotListRequest(Status: "OPEN");
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Equal(4, result.Total);
         Assert.DoesNotContain(result.Data, s => s.Id == 3);
@@ -519,14 +527,14 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_Pagination_Page1AndPage2()
     {
         var page1Req = new GetExaminationSlotListRequest(Page: 1, PageSize: 2);
-        var page1 = await _service.GetExaminationSlotListAsync(page1Req);
+        var page1 = await _service.GetExaminationSlotListAsync(13, page1Req);
 
         Assert.Equal(5, page1.Total);
         Assert.Equal(2, page1.Data.Count);
         Assert.Equal(3, page1.TotalPages);
 
         var page2Req = new GetExaminationSlotListRequest(Page: 2, PageSize: 2);
-        var page2 = await _service.GetExaminationSlotListAsync(page2Req);
+        var page2 = await _service.GetExaminationSlotListAsync(13, page2Req);
 
         Assert.Equal(2, page2.Data.Count);
         Assert.NotEqual(page1.Data[0].Id, page2.Data[0].Id);
@@ -536,7 +544,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task GetExaminationSlotList_NoMatches_ReturnsEmptyListAndTotalZero()
     {
         var request = new GetExaminationSlotListRequest(Keyword: "KhongTonTai12345");
-        var result = await _service.GetExaminationSlotListAsync(request);
+        var result = await _service.GetExaminationSlotListAsync(13, request);
 
         Assert.Equal(0, result.Total);
         Assert.Empty(result.Data);
@@ -551,14 +559,14 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     [Fact]
     public async Task CreateExaminationSlot_NullRequest_ThrowsArgumentNullException()
     {
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.CreateExaminationSlotAsync(null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.CreateExaminationSlotAsync(13, null!));
     }
 
     [Fact]
     public async Task CreateExaminationSlot_MissingTimeWindow_ThrowsArgumentException()
     {
         var request = new CreateExaminationSlotRequest(ServiceId: 1, DoctorId: 1);
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("Thời gian bắt đầu và kết thúc", ex.Message);
     }
 
@@ -572,7 +580,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "09:00",
             EndTime: "09:30"
         );
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("Định dạng ngày không hợp lệ", ex.Message);
     }
 
@@ -586,7 +594,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "10:00",
             EndTime: "09:00"
         );
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("Giờ kết thúc phải sau giờ bắt đầu", ex.Message);
     }
 
@@ -604,7 +612,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             EndTime: "10:30",
             Capacity: capacity
         );
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("Sức chứa phải từ 1 đến 100", ex.Message);
     }
 
@@ -619,7 +627,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             EndTime: "10:30",
             Status: "INVALID_STATUS"
         );
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("Trạng thái khung giờ không hợp lệ", ex.Message);
     }
 
@@ -631,7 +639,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "10:00",
             EndTime: "10:30"
         );
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("Vui lòng chỉ định dịch vụ khám hoặc bác sĩ", ex.Message);
     }
 
@@ -645,7 +653,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "10:00",
             EndTime: "10:30"
         );
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("Không tìm thấy dịch vụ khám", ex.Message);
     }
 
@@ -659,7 +667,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "10:00",
             EndTime: "10:30"
         );
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("Không tìm thấy bác sĩ", ex.Message);
     }
 
@@ -674,7 +682,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "10:00",
             EndTime: "10:30"
         );
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("Không tìm thấy buồng khám", ex.Message);
     }
 
@@ -698,7 +706,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "10:00",
             EndTime: "10:30"
         );
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("tạm ngưng hoặc không hoạt động", ex.Message);
     }
 
@@ -721,7 +729,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "10:00",
             EndTime: "10:30"
         );
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("không ở trạng thái hoạt động", ex.Message);
     }
 
@@ -746,7 +754,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "10:00",
             EndTime: "10:30"
         );
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("Buồng khám đang ngừng hoạt động", ex.Message);
     }
 
@@ -761,7 +769,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "08:15",
             EndTime: "08:45"
         );
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("Xung đột lịch bác sĩ", ex.Message);
     }
 
@@ -777,7 +785,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "08:45",
             EndTime: "09:15"
         );
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateExaminationSlotAsync(request));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.CreateExaminationSlotAsync(13, request));
         Assert.Contains("Xung đột buồng khám", ex.Message);
     }
 
@@ -795,7 +803,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             Status: "OPEN"
         );
 
-        var result = await _service.CreateExaminationSlotAsync(request);
+        var result = await _service.CreateExaminationSlotAsync(13, request);
 
         Assert.NotNull(result);
         Assert.True(result.Id > 0);
@@ -832,7 +840,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             Capacity: 10
         );
 
-        var result = await _service.CreateExaminationSlotAsync(request);
+        var result = await _service.CreateExaminationSlotAsync(13, request);
 
         Assert.NotNull(result);
         Assert.True(result.Id > 0);
@@ -856,7 +864,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             EndTime: "09:30"
         );
 
-        var result = await _service.CreateExaminationSlotAsync(request);
+        var result = await _service.CreateExaminationSlotAsync(13, request);
 
         Assert.NotNull(result);
         Assert.Equal(1, result.DoctorId);
@@ -881,7 +889,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             Capacity: 5
         );
 
-        var result = await _service.CreateExaminationSlotAsync(request);
+        var result = await _service.CreateExaminationSlotAsync(13, request);
 
         Assert.NotNull(result);
         Assert.Equal("2026-11-01", result.Date);
@@ -900,21 +908,21 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task UpdateExaminationSlot_InvalidId_ThrowsArgumentException(long id)
     {
         var request = new UpdateExaminationSlotRequest(Capacity: 10);
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(id, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(13, id, request));
         Assert.Contains("Mã khung giờ khám không hợp lệ", ex.Message);
     }
 
     [Fact]
     public async Task UpdateExaminationSlot_NullRequest_ThrowsArgumentNullException()
     {
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.UpdateExaminationSlotAsync(1, null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _service.UpdateExaminationSlotAsync(13, 1, null!));
     }
 
     [Fact]
     public async Task UpdateExaminationSlot_NonExistentSlotId_ThrowsKeyNotFoundException()
     {
         var request = new UpdateExaminationSlotRequest(Capacity: 10);
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationSlotAsync(9999, request));
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationSlotAsync(13, 9999, request));
         Assert.Contains("Không tìm thấy khung giờ khám", ex.Message);
     }
 
@@ -925,7 +933,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "11:00",
             EndTime: "10:00"
         );
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(13, 1, request));
         Assert.Contains("Giờ kết thúc phải sau giờ bắt đầu", ex.Message);
     }
 
@@ -936,7 +944,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task UpdateExaminationSlot_CapacityOutOfRange_ThrowsArgumentException(int capacity)
     {
         var request = new UpdateExaminationSlotRequest(Capacity: capacity);
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(13, 1, request));
         Assert.Contains("Sức chứa phải từ 1 đến 100", ex.Message);
     }
 
@@ -945,7 +953,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     {
         // Slot 1 has 2 active appointments (appt 1 and appt 2)
         var request = new UpdateExaminationSlotRequest(Capacity: 1);
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(13, 1, request));
         Assert.Contains("Không thể giảm sức chứa xuống 1 vì đã có 2 lượt đặt chỗ", ex.Message);
     }
 
@@ -953,7 +961,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task UpdateExaminationSlot_InvalidStatus_ThrowsArgumentException()
     {
         var request = new UpdateExaminationSlotRequest(Status: "UNKNOWN");
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(13, 1, request));
         Assert.Contains("Trạng thái khung giờ không hợp lệ", ex.Message);
     }
 
@@ -961,7 +969,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task UpdateExaminationSlot_NonExistentServiceId_ThrowsKeyNotFoundException()
     {
         var request = new UpdateExaminationSlotRequest(ServiceId: 9999);
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationSlotAsync(13, 1, request));
         Assert.Contains("Không tìm thấy dịch vụ khám", ex.Message);
     }
 
@@ -969,7 +977,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task UpdateExaminationSlot_NonExistentDoctorId_ThrowsKeyNotFoundException()
     {
         var request = new UpdateExaminationSlotRequest(DoctorId: 9999);
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationSlotAsync(13, 1, request));
         Assert.Contains("Không tìm thấy bác sĩ", ex.Message);
     }
 
@@ -977,7 +985,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     public async Task UpdateExaminationSlot_NonExistentRoomId_ThrowsKeyNotFoundException()
     {
         var request = new UpdateExaminationSlotRequest(RoomId: 9999);
-        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        var ex = await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateExaminationSlotAsync(13, 1, request));
         Assert.Contains("Không tìm thấy buồng khám", ex.Message);
     }
 
@@ -995,7 +1003,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         await _db.SaveChangesAsync();
 
         var request = new UpdateExaminationSlotRequest(ServiceId: 60);
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(13, 1, request));
         Assert.Contains("tạm ngưng hoặc không hoạt động", ex.Message);
     }
 
@@ -1012,7 +1020,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         await _db.SaveChangesAsync();
 
         var request = new UpdateExaminationSlotRequest(DoctorId: 60);
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(13, 1, request));
         Assert.Contains("không ở trạng thái hoạt động", ex.Message);
     }
 
@@ -1030,7 +1038,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         await _db.SaveChangesAsync();
 
         var request = new UpdateExaminationSlotRequest(RoomId: 60);
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => _service.UpdateExaminationSlotAsync(13, 1, request));
         Assert.Contains("Buồng khám đang ngừng hoạt động", ex.Message);
     }
 
@@ -1045,7 +1053,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "08:45",
             EndTime: "09:15"
         );
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.UpdateExaminationSlotAsync(13, 1, request));
         Assert.Contains("Xung đột lịch bác sĩ", ex.Message);
     }
 
@@ -1060,7 +1068,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             StartTime: "08:45",
             EndTime: "09:15"
         );
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.UpdateExaminationSlotAsync(1, request));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _service.UpdateExaminationSlotAsync(13, 1, request));
         Assert.Contains("Xung đột buồng khám", ex.Message);
     }
 
@@ -1073,7 +1081,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             Status: "CLOSED"
         );
 
-        var result = await _service.UpdateExaminationSlotAsync(1, request);
+        var result = await _service.UpdateExaminationSlotAsync(13, 1, request);
 
         Assert.NotNull(result);
         Assert.Equal(1, result.Id);
@@ -1091,7 +1099,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             RoomId: 1
         );
 
-        var result = await _service.UpdateExaminationSlotAsync(4, request);
+        var result = await _service.UpdateExaminationSlotAsync(13, 4, request);
 
         Assert.NotNull(result);
         Assert.Equal(4, result.Id);
@@ -1113,7 +1121,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             Capacity: 10
         );
 
-        var result = await _service.UpdateExaminationSlotAsync(4, request);
+        var result = await _service.UpdateExaminationSlotAsync(13, 4, request);
 
         Assert.NotNull(result);
         Assert.Equal("2026-11-25", result.Date);
@@ -1130,7 +1138,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
             Capacity: 10
         );
 
-        var result = await _service.UpdateExaminationSlotAsync(1, request);
+        var result = await _service.UpdateExaminationSlotAsync(13, 1, request);
 
         Assert.NotNull(result);
         Assert.Equal(10, result.CapacityMax);
@@ -1247,7 +1255,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         Assert.Equal(1, auditLog.HospitalId);
 
         // Verify metadata reconstruction on GetExaminationSlotListAsync
-        var listResponse = await _service.GetExaminationSlotListAsync(new GetExaminationSlotListRequest(Status: "CLOSED"));
+        var listResponse = await _service.GetExaminationSlotListAsync(13, new GetExaminationSlotListRequest(Status: "CLOSED"));
         var closedItem = Assert.Single(listResponse.Data, s => s.Id == 4);
         Assert.Equal("CLOSED", closedItem.Status);
         Assert.Equal("EQUIPMENT_MAINTENANCE", closedItem.CloseReasonCode);
@@ -1446,7 +1454,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
     {
         // Slot 3 is CLOSED at 2026-10-28 09:00 - 09:30 for Doctor 1, Room 1.
         // Create a new OPEN slot at the same time for Doctor 1, Room 1 (allowed because Slot 3 is CLOSED).
-        var replacement = await _service.CreateExaminationSlotAsync(new CreateExaminationSlotRequest(
+        var replacement = await _service.CreateExaminationSlotAsync(13, new CreateExaminationSlotRequest(
             ServiceId: 1,
             DoctorId: 1,
             RoomId: 1,
@@ -1509,7 +1517,7 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         await _db.SaveChangesAsync();
 
         // Reopen when Room 1 is occupied by another doctor (Doctor 2) at 2026-10-28 09:00 - 09:30 -> 409 Room conflict
-        await _service.CreateExaminationSlotAsync(new CreateExaminationSlotRequest(
+        await _service.CreateExaminationSlotAsync(13, new CreateExaminationSlotRequest(
             ServiceId: 2,
             DoctorId: 2,
             RoomId: 1,
@@ -1521,5 +1529,16 @@ public sealed class ExaminationSlotAdminServiceTests : IDisposable
         var roomConflictEx = await Assert.ThrowsAsync<ConflictException>(() =>
             _service.ReopenExaminationSlotAsync(11, "3"));
         Assert.Contains("Xung đột buồng khám", roomConflictEx.Message);
+    }
+
+    [Fact]
+    public async Task CloseExaminationSlot_MissingRolePermissions_FailsClosedWithForbiddenException()
+    {
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        var req = new CloseExaminationSlotRequest(ReasonCode: "DOCTOR_UNAVAILABLE");
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CloseExaminationSlotAsync(11, "4", req));
     }
 }

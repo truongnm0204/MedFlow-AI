@@ -13,8 +13,13 @@ namespace MedFlow.Application.Services.Auth;
 public class AuditLogger : IAuditLogger
 {
     private readonly IApplicationDbContext _db;
+    private readonly TimeProvider _timeProvider;
 
-    public AuditLogger(IApplicationDbContext db) => _db = db;
+    public AuditLogger(IApplicationDbContext db, TimeProvider? timeProvider = null)
+    {
+        _db = db;
+        _timeProvider = timeProvider ?? TimeProvider.System;
+    }
 
     public void Add(long? actorUserId, string action, string entityType,
         string? entityId, object? changeData, string? ipAddress)
@@ -27,7 +32,7 @@ public class AuditLogger : IAuditLogger
             EntityId = entityId,
             ChangeData = changeData is null ? null : JsonSerializer.Serialize(changeData),
             IpAddress = IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
-            OccurredAt = DateTime.UtcNow,
+            OccurredAt = _timeProvider.GetUtcNow().UtcDateTime,
         });
     }
 }

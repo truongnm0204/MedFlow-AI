@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -10,7 +11,7 @@ namespace MedFlow.API.Controllers;
 [ApiController]
 [Route("api/v1/reception/visits")]
 [Route("api/v1/visits")]
-[Authorize(Roles = "RECEPTION")]
+[Authorize(Roles = RoleNames.Reception)]
 public sealed class ReceptionVisitsController : ControllerBase
 {
     private readonly IVisitTicketService _visitTicketService;

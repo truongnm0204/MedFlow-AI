@@ -11,18 +11,23 @@ public sealed class QueuePolicyService : IQueuePolicyService
 {
     private readonly IApplicationDbContext _db;
     private readonly IAuditLogger _audit;
+    private readonly TimeProvider _timeProvider;
 
-    public QueuePolicyService(IApplicationDbContext db, IAuditLogger audit)
+    public QueuePolicyService(
+        IApplicationDbContext db,
+        IAuditLogger audit,
+        TimeProvider? timeProvider = null)
     {
         _db = db;
         _audit = audit;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<QueuePolicyDto> GetEffectiveAsync(long hospitalId, CancellationToken ct = default)
     {
         var rows = await HospitalPolicyStore.LoadRowsAsync(
             _db, hospitalId, QueuePolicyKeys.PolicyType, tracking: false, ct);
-        var current = HospitalPolicyStore.SelectCurrent(rows, DateTime.UtcNow);
+        var current = HospitalPolicyStore.SelectCurrent(rows, _timeProvider.GetUtcNow().UtcDateTime);
         return BuildDto(current);
     }
 
@@ -75,7 +80,7 @@ public sealed class QueuePolicyService : IQueuePolicyService
         var publicNumberImmutable = request.PublicNumberImmutable.Value;
         var manualPriorityRequiresVerification = request.ManualPriorityRequiresVerification.Value;
 
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
         var rows = await HospitalPolicyStore.LoadRowsAsync(
             _db, hospitalId, QueuePolicyKeys.PolicyType, tracking: true, ct);
         var current = HospitalPolicyStore.SelectCurrent(rows, now);

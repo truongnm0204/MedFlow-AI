@@ -1,7 +1,9 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -11,14 +13,14 @@ namespace MedFlow.Application.Services.Diagnostic;
 
 public sealed class DiagnosticDashboardService : IDiagnosticDashboardService
 {
-    private const string DiagnosticStaffRoleCode = "DIAGNOSTIC_STAFF";
-    private const string DefaultShiftLabel = "Ca sáng • Đồng bộ trực tiếp với phòng khám";
+    private const string DiagnosticStaffRoleCode = RoleNames.DiagnosticStaff;
     private const string DefaultDepartmentName = "Khoa Cận lâm sàng";
 
-    private static readonly string[] FallbackDiagnosticPermissions =
+    private static readonly string[] AllowedDashboardPermissions =
     [
-        "DIAGNOSTIC_RESULT_WRITE",
-        "QUEUE_MANAGE",
+        PermissionCodes.QueueManage,
+        PermissionCodes.DiagnosticResultWrite,
+        PermissionCodes.DiagnosticOrder,
     ];
 
     private static readonly HashSet<string> ValidCategories = new(StringComparer.OrdinalIgnoreCase)
@@ -115,7 +117,9 @@ public sealed class DiagnosticDashboardService : IDiagnosticDashboardService
             ? null
             : request.Keyword.Trim();
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
+        var shiftLabel = HospitalShiftRules.ResolveQueueShiftLabel(nowLocal, includeDiagnosticEvening: true);
 
         var actorUser = await _db.Users
             .AsNoTracking()
@@ -221,9 +225,14 @@ public sealed class DiagnosticDashboardService : IDiagnosticDashboardService
             .OrderBy(code => code, StringComparer.Ordinal)
             .ToList();
 
-        if (actorPermissionCodes.Count == 0 && allRolePermissions.Count == 0)
+        var permissionSet = new HashSet<string>(actorPermissionCodes, StringComparer.OrdinalIgnoreCase);
+        var hasQueueManage = permissionSet.Contains(PermissionCodes.QueueManage);
+        var hasResultWrite = permissionSet.Contains(PermissionCodes.DiagnosticResultWrite);
+        var hasDiagnosticOrder = permissionSet.Contains(PermissionCodes.DiagnosticOrder);
+
+        if (!permissionSet.Overlaps(AllowedDashboardPermissions))
         {
-            actorPermissionCodes = [.. FallbackDiagnosticPermissions];
+            throw new ForbiddenException("Tài khoản nhân viên cận lâm sàng chưa được cấp quyền truy cập bảng điều khiển.");
         }
 
         var fullName = !string.IsNullOrWhiteSpace(actorStaff.FullName)
@@ -358,7 +367,7 @@ public sealed class DiagnosticDashboardService : IDiagnosticDashboardService
                 .GroupBy(q => q.AppointmentId!.Value)
                 .ToDictionary(g => g.Key, g => g.First());
 
-        var (fullQueue, fullPendingResults) = BuildQueueAndPendingResults(
+        var (rawQueue, rawPendingResults) = BuildQueueAndPendingResults(
             diagnosticServices,
             specialtiesById,
             diagnosticRooms,
@@ -370,7 +379,17 @@ public sealed class DiagnosticDashboardService : IDiagnosticDashboardService
             scopedVisits,
             patientsById,
             diagnosticQueueByAppointmentId,
-            nowUtc);
+            nowLocal);
+
+        var fullQueue = (!hasQueueManage && !hasDiagnosticOrder)
+            ? rawQueue
+                .Where(x => !string.Equals(x.Status, "ORDERED", StringComparison.OrdinalIgnoreCase))
+                .ToList()
+            : rawQueue;
+
+        var fullPendingResults = hasResultWrite
+            ? rawPendingResults
+            : [];
 
         var stats = new DiagnosticStatsDto(
             PendingOrders: fullQueue.Count(x => string.Equals(x.Status, "ORDERED", StringComparison.OrdinalIgnoreCase)),
@@ -424,7 +443,7 @@ public sealed class DiagnosticDashboardService : IDiagnosticDashboardService
             FacilityName: hospital.Name,
             FacilityCode: hospital.HospitalCode,
             DepartmentName: departmentName,
-            ShiftLabel: DefaultShiftLabel,
+            ShiftLabel: shiftLabel,
             Stats: stats,
             Queue: queue,
             PendingResults: pendingResults,
@@ -445,7 +464,7 @@ public sealed class DiagnosticDashboardService : IDiagnosticDashboardService
         IReadOnlyList<Visit> scopedVisits,
         IReadOnlyDictionary<long, Patient> patientsById,
         IReadOnlyDictionary<long, QueueEntry> diagnosticQueueByAppointmentId,
-        DateTime nowUtc)
+        DateTime nowLocal)
     {
         var queue = new List<DiagnosticQueueEntryDto>();
         var pendingResults = new List<PendingResultEntryDto>();
@@ -521,7 +540,7 @@ public sealed class DiagnosticDashboardService : IDiagnosticDashboardService
                 ? patient.PatientCode
                 : $"PAT-{patientId:D4}";
 
-            var timestamp = visit?.CheckedInAt ?? slot?.StartsAt ?? appointment?.BookedAt ?? nowUtc;
+            var timestamp = visit?.CheckedInAt ?? slot?.StartsAt ?? appointment?.BookedAt ?? nowLocal;
             var orderedAt = timestamp.ToString("HH:mm", CultureInfo.InvariantCulture);
             var orderCode = $"CLS-{timestamp:yyyy}-{encounterId:D4}";
 

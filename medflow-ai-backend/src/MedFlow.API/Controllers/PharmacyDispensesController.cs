@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Pharmacy;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -9,7 +10,7 @@ namespace MedFlow.API.Controllers;
 [ApiController]
 [Route("api/v1/pharmacy/dispenses")]
 [Route("api/v1/pharmacy/dispensing-results")]
-[Authorize(Roles = "PHARMACY_STAFF")]
+[Authorize(Roles = RoleNames.PharmacyStaff)]
 public sealed class PharmacyDispensesController(IDispensingResultService service) : ControllerBase
 {
     [HttpGet("{idOrCode}")]

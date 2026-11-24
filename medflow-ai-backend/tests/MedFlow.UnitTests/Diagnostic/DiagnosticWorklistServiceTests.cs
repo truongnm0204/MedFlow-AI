@@ -1170,6 +1170,13 @@ public sealed class DiagnosticWorklistServiceTests : IDisposable
             await Assert.ThrowsAsync<ForbiddenException>(() =>
                 _service.GetWorklistAsync(userId, new GetDiagnosticWorklistRequest()));
         }
+
+        // Genuine DIAGNOSTIC_STAFF user (7) when RolePermissions table is completely empty -> fail-closed 403
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions.ToList());
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetWorklistAsync(7, new GetDiagnosticWorklistRequest()));
     }
 
     [Fact]

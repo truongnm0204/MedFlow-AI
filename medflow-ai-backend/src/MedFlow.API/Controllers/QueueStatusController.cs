@@ -1,13 +1,14 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = "RECEPTION,DOCTOR,DIAGNOSTIC_STAFF,HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+[Authorize(Roles = $"{RoleNames.Reception},{RoleNames.Doctor},{RoleNames.DiagnosticStaff},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class QueueStatusController : ControllerBase
 {
     private readonly IQueueStatusService _queueStatusService;
@@ -77,7 +78,7 @@ public sealed class QueueStatusController : ControllerBase
     [HttpPatch("/api/v1/queue-entries/{idOrCode}/priority")]
     [HttpPatch("/api/v1/reception/queue-entries/{idOrCode}/priority")]
     [HttpPatch("/api/v1/reception/examination-queue/entries/{idOrCode}/priority")]
-    [Authorize(Roles = "RECEPTION,HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+    [Authorize(Roles = $"{RoleNames.Reception},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
     [ProducesResponseType<UpdateQueuePriorityResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -94,7 +95,7 @@ public sealed class QueueStatusController : ControllerBase
     [HttpPost("/api/v1/queue-entries/{idOrCode}/cancel")]
     [HttpPost("/api/v1/reception/queue-entries/{idOrCode}/cancel")]
     [HttpPost("/api/v1/reception/examination-queue/entries/{idOrCode}/cancel")]
-    [Authorize(Roles = "RECEPTION,HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+    [Authorize(Roles = $"{RoleNames.Reception},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
     [ProducesResponseType<UpdateQueueStatusResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

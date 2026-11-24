@@ -6,6 +6,7 @@ using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Reception;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -15,7 +16,6 @@ namespace MedFlow.Application.Services.Visits;
 
 public sealed class VisitTicketService : IVisitTicketService
 {
-    private const string ReceptionRoleCode = "RECEPTION";
     private const string PrintTicketAction = "PRINT_TICKET";
     private const string VisitEntityType = "VISIT";
     private const int MaxVisitIdentifierLength = 40;
@@ -25,9 +25,9 @@ public sealed class VisitTicketService : IVisitTicketService
 
     private static readonly string[] AllowedReceptionPermissions =
     [
-        "PATIENT_CHECKIN",
-        "VISIT_ASSIGN",
-        "QUEUE_MANAGE",
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.QueueManage,
     ];
 
     private readonly IApplicationDbContext _db;
@@ -608,32 +608,37 @@ public sealed class VisitTicketService : IVisitTicketService
             .Select(r => r.Code)
             .ToListAsync(ct);
 
-        if (!actorRoleCodes.Any(c => string.Equals(c, ReceptionRoleCode, StringComparison.OrdinalIgnoreCase)))
+        if (!actorRoleCodes.Any(c => string.Equals(c, RoleNames.Reception, StringComparison.OrdinalIgnoreCase)))
         {
             throw new ForbiddenException("Người dùng không có quyền in phiếu khám bệnh.");
         }
 
-        var rolePermissionIds = await _db.RolePermissions
+        var rolePermissionIds = actorRoleIds.Count > 0
+            ? await _db.RolePermissions
+                .AsNoTracking()
+                .Where(rp => actorRoleIds.Contains(rp.RoleId))
+                .Select(rp => rp.PermissionId)
+                .Distinct()
+                .ToListAsync(ct)
+            : [];
+
+        if (rolePermissionIds.Count == 0)
+        {
+            throw new ForbiddenException("Vai trò tiếp đón hiện không được cấp quyền thao tác phiếu khám.");
+        }
+
+        var actorPermissions = await _db.Permissions
             .AsNoTracking()
-            .Where(rp => actorRoleIds.Contains(rp.RoleId))
-            .Select(rp => rp.PermissionId)
+            .Where(p => rolePermissionIds.Contains(p.Id))
+            .Select(p => p.Code)
             .ToListAsync(ct);
 
-        if (rolePermissionIds.Count > 0)
+        var hasTicketPermission = actorPermissions.Any(code =>
+            AllowedReceptionPermissions.Contains(code, StringComparer.OrdinalIgnoreCase));
+
+        if (!hasTicketPermission)
         {
-            var actorPermissions = await _db.Permissions
-                .AsNoTracking()
-                .Where(p => rolePermissionIds.Contains(p.Id))
-                .Select(p => p.Code)
-                .ToListAsync(ct);
-
-            var hasTicketPermission = actorPermissions.Any(code =>
-                AllowedReceptionPermissions.Contains(code, StringComparer.OrdinalIgnoreCase));
-
-            if (!hasTicketPermission)
-            {
-                throw new ForbiddenException("Vai trò tiếp đón hiện không được cấp quyền thao tác phiếu khám.");
-            }
+            throw new ForbiddenException("Vai trò tiếp đón hiện không được cấp quyền thao tác phiếu khám.");
         }
 
         var actorStaff = await _db.Staff

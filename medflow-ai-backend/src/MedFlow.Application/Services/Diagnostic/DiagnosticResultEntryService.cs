@@ -1,12 +1,14 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Application.Services.Visits;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -22,22 +24,16 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
     public const string DiagnosticResultAmendedAction = "DIAGNOSTIC_RESULT_AMENDED";
     public const string DiagnosticResultEntityType = "DIAGNOSTIC_RESULT";
     public const string DiagnosticOrderEntityType = "DIAGNOSTIC_ORDER";
-    public const string DiagnosticResultWritePermissionCode = "DIAGNOSTIC_RESULT_WRITE";
+    public const string DiagnosticResultWritePermissionCode = PermissionCodes.DiagnosticResultWrite;
 
-    private const string DiagnosticStaffRoleCode = "DIAGNOSTIC_STAFF";
+    private const string DiagnosticStaffRoleCode = RoleNames.DiagnosticStaff;
     private const string DefaultDepartmentName = "Khoa Cận lâm sàng";
 
     private static readonly string[] AllowedReadPermissions =
     [
-        "DIAGNOSTIC_RESULT_WRITE",
-        "QUEUE_MANAGE",
-        "DIAGNOSTIC_ORDER",
-    ];
-
-    private static readonly string[] FallbackDiagnosticPermissions =
-    [
-        "DIAGNOSTIC_RESULT_WRITE",
-        "QUEUE_MANAGE",
+        PermissionCodes.DiagnosticResultWrite,
+        PermissionCodes.QueueManage,
+        PermissionCodes.DiagnosticOrder,
     ];
 
     private static readonly HashSet<string> ValidCategories = new(StringComparer.OrdinalIgnoreCase)
@@ -1896,7 +1892,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             var isFin = v.IsFinalized;
             var status = isFin ? itemDto.ResultStatus : (itemDto.RequiresResultVerification ? "PENDING_VERIFY" : "DRAFT");
             var occurredLocal = v.VerifiedAt ?? v.EnteredAt ?? itemDto.OrderedAt;
-            var occurredUtc = DateTime.SpecifyKind(occurredLocal.AddHours(-7), DateTimeKind.Utc);
+            var occurredUtc = HospitalClock.ConvertHospitalLocalToUtc(occurredLocal);
 
             historyItems.Add(new DiagnosticResultHistoryItemDto(
                 AuditLogId: v.VersionId,
@@ -2089,11 +2085,6 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(code => code, StringComparer.Ordinal)
             .ToList();
-
-        if (actorPermissionCodes.Count == 0 && allRolePermissions.Count == 0)
-        {
-            actorPermissionCodes = [.. FallbackDiagnosticPermissions];
-        }
 
         var hasAnyDiagnosticPermission = actorPermissionCodes.Any(code =>
             AllowedReadPermissions.Any(allowed => string.Equals(code, allowed, StringComparison.OrdinalIgnoreCase)));

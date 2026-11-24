@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,7 +11,7 @@ namespace MedFlow.API.Controllers;
 [Route("api/v1/diagnostic/dashboard")]
 [Route("api/v1/diagnostic-dashboard")]
 [Route("api/v1/diagnostic/workbench")]
-[Authorize(Roles = "DIAGNOSTIC_STAFF")]
+[Authorize(Roles = RoleNames.DiagnosticStaff)]
 public sealed class DiagnosticDashboardController : ControllerBase
 {
     private readonly IDiagnosticDashboardService _dashboardService;

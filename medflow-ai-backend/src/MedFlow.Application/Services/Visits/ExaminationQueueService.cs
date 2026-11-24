@@ -1,9 +1,11 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Visits.Queueing;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -15,17 +17,18 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
 {
     private static readonly HashSet<string> AllowedRoleCodes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "RECEPTION",
-        "HOSPITAL_ADMIN",
-        "SYSTEM_ADMIN",
+        RoleNames.Reception,
+        RoleNames.HospitalAdmin,
+        RoleNames.SystemAdmin,
     };
 
     private static readonly HashSet<string> AllowedPermissionCodes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "QUEUE_MANAGE",
-        "VISIT_ASSIGN",
-        "PATIENT_CHECKIN",
-        "HOSPITAL_CONFIG",
+        PermissionCodes.QueueManage,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.UserManage,
     };
 
     private static readonly HashSet<string> ValidStatuses = new(StringComparer.OrdinalIgnoreCase)
@@ -819,31 +822,34 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         }
 
         var isSystemAdmin = actorRoleCodes.Any(code =>
-            string.Equals(code, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(code, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase));
 
-        if (!isSystemAdmin && actorRoleIds.Count > 0)
-        {
-            var rolePermissionIds = await _db.RolePermissions
+        var rolePermissionIds = actorRoleIds.Count > 0
+            ? await _db.RolePermissions
                 .AsNoTracking()
                 .Where(rp => actorRoleIds.Contains(rp.RoleId))
                 .Select(rp => rp.PermissionId)
-                .ToListAsync(ct);
+                .Distinct()
+                .ToListAsync(ct)
+            : [];
 
-            if (rolePermissionIds.Count > 0)
-            {
-                var permissionCodes = await _db.Permissions
-                    .AsNoTracking()
-                    .Where(p => rolePermissionIds.Contains(p.Id))
-                    .Select(p => p.Code)
-                    .ToListAsync(ct);
+        if (rolePermissionIds.Count == 0)
+        {
+            throw new ForbiddenException(
+                "Vai trò hiện tại chưa được cấp quyền truy cập hàng đợi khám bệnh.");
+        }
 
-                var hasQueuePermission = permissionCodes.Any(code => AllowedPermissionCodes.Contains(code));
-                if (!hasQueuePermission)
-                {
-                    throw new ForbiddenException(
-                        "Vai trò hiện tại chưa được cấp quyền truy cập hàng đợi khám bệnh.");
-                }
-            }
+        var permissionCodes = await _db.Permissions
+            .AsNoTracking()
+            .Where(p => rolePermissionIds.Contains(p.Id))
+            .Select(p => p.Code)
+            .ToListAsync(ct);
+
+        var hasQueuePermission = permissionCodes.Any(code => AllowedPermissionCodes.Contains(code));
+        if (!hasQueuePermission)
+        {
+            throw new ForbiddenException(
+                "Vai trò hiện tại chưa được cấp quyền truy cập hàng đợi khám bệnh.");
         }
 
         var actorStaff = await _db.Staff
@@ -1700,9 +1706,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
     }
 
     private static string ResolveShiftLabel(DateTime nowLocal)
-        => nowLocal.TimeOfDay < AppointmentBookingRules.AfternoonShiftStart
-            ? "Ca sáng (07:00 - 11:30)"
-            : "Ca chiều (13:00 - 17:00)";
+        => HospitalShiftRules.ResolveQueueShiftLabel(nowLocal);
 
     private sealed record ServicePointBucket(
         string ServicePointId,

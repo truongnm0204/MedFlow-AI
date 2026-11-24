@@ -1,9 +1,11 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Patients;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -24,17 +26,27 @@ public sealed class ReceptionPatientDetailService : IReceptionPatientDetailServi
 
     private static readonly string[] ReceptionAllowedPermissions =
     [
-        PatientProfileReadPermissionCode,
-        PatientCheckInPermissionCode
+        PermissionCodes.PatientProfileRead,
+        PermissionCodes.PatientCheckin
     ];
 
     private static readonly string[] HospitalAdminAllowedPermissions =
     [
-        PatientProfileReadPermissionCode,
-        PatientCheckInPermissionCode,
-        "VISIT_ASSIGN",
-        "QUEUE_MANAGE",
-        "HOSPITAL_CONFIG"
+        PermissionCodes.PatientProfileRead,
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.QueueManage,
+        PermissionCodes.HospitalConfig
+    ];
+
+    private static readonly string[] SystemAdminAllowedPermissions =
+    [
+        PermissionCodes.PatientProfileRead,
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.QueueManage,
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.UserManage
     ];
 
     private static readonly HashSet<string> InProgressVisitStatuses = new(StringComparer.OrdinalIgnoreCase)
@@ -75,8 +87,8 @@ public sealed class ReceptionPatientDetailService : IReceptionPatientDetailServi
 
         var (trimmedIdentifier, parsedId, parsedCode) = ParsePatientIdentifier(idOrCode);
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
 
         var actor = await EnsureActorAccessAsync(actorUserId, nowUtc, ct);
@@ -654,11 +666,11 @@ public sealed class ReceptionPatientDetailService : IReceptionPatientDetailServi
             .ToListAsync(ct);
 
         var isSystemAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase));
         var isHospitalAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, "HOSPITAL_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase));
         var isReception = actorRoleCodes.Any(c =>
-            string.Equals(c, "RECEPTION", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.Reception, StringComparison.OrdinalIgnoreCase));
 
         if (!isSystemAdmin && !isHospitalAdmin && !isReception)
         {
@@ -666,44 +678,58 @@ public sealed class ReceptionPatientDetailService : IReceptionPatientDetailServi
                 "Người dùng không có quyền xem chi tiết hồ sơ bệnh nhân tại quầy tiếp đón.");
         }
 
-        if (!isSystemAdmin && actorRoleIds.Count > 0)
-        {
-            var rolePermissionIds = await _db.RolePermissions
+        var rolePermissionIds = actorRoleIds.Count > 0
+            ? await _db.RolePermissions
                 .AsNoTracking()
                 .Where(rp => actorRoleIds.Contains(rp.RoleId))
                 .Select(rp => rp.PermissionId)
-                .ToListAsync(ct);
+                .Distinct()
+                .ToListAsync(ct)
+            : [];
 
-            if (rolePermissionIds.Count > 0)
+        if (rolePermissionIds.Count == 0)
+        {
+            throw new ForbiddenException(
+                "Vai trò hiện tại chưa được cấp quyền xem hồ sơ bệnh nhân (PATIENT_PROFILE_READ).");
+        }
+
+        var permissionCodes = await _db.Permissions
+            .AsNoTracking()
+            .Where(p => rolePermissionIds.Contains(p.Id))
+            .Select(p => p.Code)
+            .ToListAsync(ct);
+
+        if (isSystemAdmin)
+        {
+            var hasSystemAdminPermission = permissionCodes.Any(c =>
+                SystemAdminAllowedPermissions.Any(allowed =>
+                    string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)));
+            if (!hasSystemAdminPermission)
             {
-                var permissionCodes = await _db.Permissions
-                    .AsNoTracking()
-                    .Where(p => rolePermissionIds.Contains(p.Id))
-                    .Select(p => p.Code)
-                    .ToListAsync(ct);
-
-                if (isReception && !isHospitalAdmin)
-                {
-                    var hasReceptionPermission = permissionCodes.Any(c =>
-                        ReceptionAllowedPermissions.Any(allowed =>
-                            string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)));
-                    if (!hasReceptionPermission)
-                    {
-                        throw new ForbiddenException(
-                            "Vai trò tiếp đón chưa được cấp quyền xem hồ sơ bệnh nhân (PATIENT_PROFILE_READ).");
-                    }
-                }
-                else if (isHospitalAdmin)
-                {
-                    var hasHospitalAdminPermission = permissionCodes.Any(c =>
-                        HospitalAdminAllowedPermissions.Any(allowed =>
-                            string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)));
-                    if (!hasHospitalAdminPermission)
-                    {
-                        throw new ForbiddenException(
-                            "Vai trò hiện tại chưa được cấp quyền xem hồ sơ bệnh nhân (PATIENT_PROFILE_READ).");
-                    }
-                }
+                throw new ForbiddenException(
+                    "Vai trò hiện tại chưa được cấp quyền xem hồ sơ bệnh nhân (PATIENT_PROFILE_READ).");
+            }
+        }
+        else if (isHospitalAdmin)
+        {
+            var hasHospitalAdminPermission = permissionCodes.Any(c =>
+                HospitalAdminAllowedPermissions.Any(allowed =>
+                    string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)));
+            if (!hasHospitalAdminPermission)
+            {
+                throw new ForbiddenException(
+                    "Vai trò hiện tại chưa được cấp quyền xem hồ sơ bệnh nhân (PATIENT_PROFILE_READ).");
+            }
+        }
+        else
+        {
+            var hasReceptionPermission = permissionCodes.Any(c =>
+                ReceptionAllowedPermissions.Any(allowed =>
+                    string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)));
+            if (!hasReceptionPermission)
+            {
+                throw new ForbiddenException(
+                    "Vai trò tiếp đón chưa được cấp quyền xem hồ sơ bệnh nhân (PATIENT_PROFILE_READ).");
             }
         }
 

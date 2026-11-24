@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.SystemAdmin;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -10,7 +11,7 @@ namespace MedFlow.API.Controllers;
 [Route("api/v1/admin/system-dashboard")]
 [Route("api/v1/system-admin/dashboard")]
 [Route("api/v1/admin/dashboard/system")]
-[Authorize(Roles = "SYSTEM_ADMIN")]
+[Authorize(Roles = RoleNames.SystemAdmin)]
 public sealed class AdminSystemDashboardController : ControllerBase
 {
     private readonly ISystemAdminDashboardService _dashboardService;

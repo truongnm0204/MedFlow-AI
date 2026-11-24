@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,7 +9,7 @@ namespace MedFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/diagnostic")]
-[Authorize(Roles = "DIAGNOSTIC_STAFF")]
+[Authorize(Roles = RoleNames.DiagnosticStaff)]
 public sealed class DiagnosticWorklistController : ControllerBase
 {
     private readonly IDiagnosticWorklistService _worklistService;

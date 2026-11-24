@@ -599,6 +599,8 @@ public sealed class DiagnosticDashboardServiceTests : IDisposable
             ["UC39", "UC40", "UC42"],
             queueOnlyResult.QuickActions.Select(a => a.UcCode).ToArray());
         Assert.DoesNotContain(queueOnlyResult.QuickActions, a => a.Id == "enter-result");
+        Assert.Equal(4, queueOnlyResult.Queue.Count);
+        Assert.Empty(queueOnlyResult.PendingResults);
 
         // Switch to DIAGNOSTIC_RESULT_WRITE only (PermissionId = 1)
         var queuePerm = _dbContext.RolePermissions
@@ -615,6 +617,28 @@ public sealed class DiagnosticDashboardServiceTests : IDisposable
             ["UC39", "UC42", "UC43"],
             writeOnlyResult.QuickActions.Select(a => a.UcCode).ToArray());
         Assert.DoesNotContain(writeOnlyResult.QuickActions, a => a.Id == "receive-patient");
+        Assert.Equal(3, writeOnlyResult.PendingResults.Count);
+        Assert.DoesNotContain(writeOnlyResult.Queue, q => q.Status == "ORDERED");
+        Assert.Equal(0, writeOnlyResult.Stats.PendingOrders);
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_EmptyRolePermissionsOrUnrelatedPermission_ThrowsForbiddenException()
+    {
+        // 1. Only HOSPITAL_CONFIG (PermissionId = 4) -> 403
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions.ToList());
+        _dbContext.RolePermissions.Add(new RolePermission { RoleId = 4, PermissionId = 4 });
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDashboardAsync(7, new GetDiagnosticDashboardRequest()));
+
+        // 2. Completely empty RolePermissions table -> fail-closed 403 (never FallbackDiagnosticPermissions)
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions.ToList());
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDashboardAsync(7, new GetDiagnosticDashboardRequest()));
     }
 
     [Fact]

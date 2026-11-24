@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Pharmacy;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -13,8 +15,8 @@ namespace MedFlow.Application.Services.Pharmacy;
 
 public sealed class PrepareMedicinesService : IPrepareMedicinesService
 {
-    private const string PharmacyStaffRoleCode = "PHARMACY_STAFF";
-    private const string MedicineDispensePermissionCode = "MEDICINE_DISPENSE";
+    private const string PharmacyStaffRoleCode = RoleNames.PharmacyStaff;
+    private const string MedicineDispensePermissionCode = PermissionCodes.MedicineDispense;
     private const string AuditEntityType = "PRESCRIPTION";
     private const string AuditPrepareViewAction = "PRESCRIPTION_PREPARE_VIEW";
     private const string AuditPrepareAction = "PRESCRIPTION_PREPARED";
@@ -65,7 +67,7 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
         ValidateIdOrCode(idOrCode);
 
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var todayDateOnly = DateOnly.FromDateTime(nowUtc);
+        var todayDateOnly = HospitalClock.GetToday(_timeProvider);
         var staffContext = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
 
         var prescription = await ResolveScopedPrescriptionAsync(idOrCode, staffContext.HospitalId, ct);
@@ -214,7 +216,7 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
                 BatchCode: b.BatchNumber ?? $"LO-{b.Id}",
                 ExpiryDate: b.ExpiryDate?.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) ?? "N/A",
                 AvailableStock: b.QuantityOnHand ?? 0,
-                ShelfLocation: $"Kệ M-{med.Id % 10 + 1}, Ngăn {b.Id % 4 + 1}",
+                ShelfLocation: "Chưa cập nhật",
                 IsFefoRecommended: fefoBatch != null && b.Id == fefoBatch.Id
             )).ToList();
 
@@ -340,7 +342,7 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
         }
 
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var todayDateOnly = DateOnly.FromDateTime(nowUtc);
+        var todayDateOnly = HospitalClock.GetToday(_timeProvider);
         var staffContext = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
 
         var prescription = await ResolveScopedPrescriptionAsync(idOrCode, staffContext.HospitalId, ct);
@@ -624,23 +626,16 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
             throw new ForbiddenException("Cơ sở y tế được gán cho dược sĩ hiện đang ngừng hoạt động.");
         }
 
-        var rolePermissionsConfigured = await _db.RolePermissions
-            .AsNoTracking()
-            .AnyAsync(ct);
+        var hasMedicineDispensePermission = await (
+            from rp in _db.RolePermissions.AsNoTracking()
+            join permission in _db.Permissions.AsNoTracking() on rp.PermissionId equals permission.Id
+            where actorRoleIds.Contains(rp.RoleId) &&
+                  permission.Code.ToUpper() == MedicineDispensePermissionCode
+            select rp).AnyAsync(ct);
 
-        if (rolePermissionsConfigured)
+        if (!hasMedicineDispensePermission)
         {
-            var hasMedicineDispensePermission = await (
-                from rp in _db.RolePermissions.AsNoTracking()
-                join permission in _db.Permissions.AsNoTracking() on rp.PermissionId equals permission.Id
-                where actorRoleIds.Contains(rp.RoleId) &&
-                      permission.Code.ToUpper() == MedicineDispensePermissionCode
-                select rp).AnyAsync(ct);
-
-            if (!hasMedicineDispensePermission)
-            {
-                throw new ForbiddenException("Người dùng không có quyền thực hiện soạn thuốc theo đơn.");
-            }
+            throw new ForbiddenException("Người dùng không có quyền thực hiện soạn thuốc theo đơn.");
         }
 
         return (actorStaff, hospitalId, actorUser);

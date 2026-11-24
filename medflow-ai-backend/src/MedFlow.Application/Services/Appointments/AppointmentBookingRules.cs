@@ -1,4 +1,5 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Policies;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Domain.Entities;
@@ -10,8 +11,6 @@ namespace MedFlow.Application.Services.Appointments;
 
 public static class AppointmentBookingRules
 {
-    private static readonly TimeSpan VietnamOffset = TimeSpan.FromHours(7);
-
     private const int MaxAppointmentIdentifierLength = 40;
 
     public const string CancelledStatus = "CANCELLED";
@@ -31,7 +30,7 @@ public static class AppointmentBookingRules
         "Khung giờ khám đã bắt đầu hoặc đã qua. Vui lòng chọn khung giờ khác.";
 
     public static readonly string[] InactiveStatuses = { "CANCELLED", "COMPLETED", "NO_SHOW" };
-    public static readonly TimeSpan AfternoonShiftStart = new(12, 0, 0);
+    public static readonly TimeSpan AfternoonShiftStart = HospitalShiftRules.AfternoonCutoffSpan;
 
     public static string NormalizeStatusKey(string? status)
     {
@@ -58,7 +57,7 @@ public static class AppointmentBookingRules
     public sealed record OwnedPatients(Patient Self, IReadOnlyList<PatientFamilyLink> FamilyLinks);
 
     public static DateTime GetVietnamNow(TimeProvider timeProvider)
-        => DateTime.SpecifyKind(timeProvider.GetUtcNow().UtcDateTime.Add(VietnamOffset), DateTimeKind.Unspecified);
+        => HospitalClock.GetNow(timeProvider);
 
     public static (string Trimmed, long? Id, string? Code) ParseAppointmentIdentifier(string? idOrCode)
     {

@@ -5,14 +5,17 @@ namespace MedFlow.Application.Interfaces.Services;
 public interface IExaminationSlotAdminService
 {
     Task<ExaminationSlotAdminListResponseDto> GetExaminationSlotListAsync(
+        long actorUserId,
         GetExaminationSlotListRequest request,
         CancellationToken ct = default);
 
     Task<ExaminationSlotAdminItemDto> CreateExaminationSlotAsync(
+        long actorUserId,
         CreateExaminationSlotRequest request,
         CancellationToken ct = default);
 
     Task<ExaminationSlotAdminItemDto> UpdateExaminationSlotAsync(
+        long actorUserId,
         long id,
         UpdateExaminationSlotRequest request,
         CancellationToken ct = default);

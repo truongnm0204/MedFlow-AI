@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Appointments;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,7 +9,7 @@ namespace MedFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/appointments")]
-[Authorize(Roles = "PATIENT")]
+[Authorize(Roles = RoleNames.Patient)]
 public sealed class AppointmentsController : ControllerBase
 {
     private readonly IAppointmentSlotService _slotService;

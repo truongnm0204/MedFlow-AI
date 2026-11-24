@@ -224,4 +224,29 @@ public sealed class UpdatePatientAtReceptionServiceTests : IDisposable
 
         Assert.Equal(10, result.Id);
     }
+
+    [Fact]
+    public async Task UpdatePatientAsync_HospitalClockMidnightBoundary_UsesVietnamLocalTodayAndClockTimestamp()
+    {
+        await SeedPatientAsync();
+
+        // 2026-11-08 18:00:00 UTC == 2026-11-09 01:00:00 Vietnam time (UTC+7)
+        var fixedUtc = new DateTimeOffset(2026, 11, 8, 18, 0, 0, TimeSpan.Zero);
+        var sutWithClock = new UpdatePatientAtReceptionService(_db, new FixedTimeProvider(fixedUtc));
+
+        var sameVietnamDay = await sutWithClock.UpdatePatientAsync(
+            "10",
+            ValidRequest(dob: new DateOnly(2026, 11, 9)));
+
+        Assert.Equal(new DateOnly(2026, 11, 9), sameVietnamDay.DateOfBirth);
+        Assert.Equal(fixedUtc.UtcDateTime, sameVietnamDay.UpdatedAt);
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            sutWithClock.UpdatePatientAsync("10", ValidRequest(dob: new DateOnly(2026, 11, 10))));
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+    }
 }

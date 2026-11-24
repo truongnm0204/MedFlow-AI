@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Services.Visits;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +14,6 @@ namespace MedFlow.Application.Services.Services;
 public sealed partial class DiagnosticServiceAdminService
 {
     private const string DiagnosticServiceEntityType = "SERVICE";
-    private const string HospitalConfigPermissionCode = "HOSPITAL_CONFIG";
     private const string DiagnosticServiceCreatedAction = "DIAGNOSTIC_SERVICE_CREATED";
     private const string DiagnosticServiceUpdatedAction = "DIAGNOSTIC_SERVICE_UPDATED";
     private const string DiagnosticServiceDeactivatedAction = "DIAGNOSTIC_SERVICE_DEACTIVATED";
@@ -101,7 +102,7 @@ public sealed partial class DiagnosticServiceAdminService
             {
                 Service = entity,
                 PriceAmount = price,
-                EffectiveFrom = DateTime.SpecifyKind(nowUtc, DateTimeKind.Unspecified),
+                EffectiveFrom = HospitalClock.GetNow(_timeProvider),
                 EffectiveTo = null,
             });
         }
@@ -324,7 +325,7 @@ public sealed partial class DiagnosticServiceAdminService
                 .Select(p => p.Code)
                 .ToListAsync(ct);
 
-        if (!codes.Any(c => string.Equals(c, HospitalConfigPermissionCode, StringComparison.OrdinalIgnoreCase)))
+        if (!codes.Any(c => string.Equals(c, PermissionCodes.HospitalConfig, StringComparison.OrdinalIgnoreCase)))
         {
             throw new ForbiddenException("Tài khoản không có quyền cấu hình danh mục bệnh viện (HOSPITAL_CONFIG).");
         }
@@ -370,7 +371,7 @@ public sealed partial class DiagnosticServiceAdminService
                 .Where(r => roomIds.Contains(r.Id))
                 .ToDictionaryAsync(r => r.Id, ct);
 
-        return MapItem(service, diagPoints, roomsById, DateTime.SpecifyKind(nowUtc, DateTimeKind.Unspecified));
+        return MapItem(service, diagPoints, roomsById, HospitalClock.GetNow(_timeProvider));
     }
 
     private async Task<Service> FindScopedServiceForUpdateAsync(

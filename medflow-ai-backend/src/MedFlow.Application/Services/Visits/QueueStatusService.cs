@@ -7,6 +7,7 @@ using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Visits.Queueing;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -23,28 +24,29 @@ public sealed class QueueStatusService : IQueueStatusService
 
     private static readonly string[] QueueManagerRoles =
     [
-        "RECEPTION",
-        "HOSPITAL_ADMIN",
-        "SYSTEM_ADMIN",
+        RoleNames.Reception,
+        RoleNames.HospitalAdmin,
+        RoleNames.SystemAdmin,
     ];
 
     private static readonly string[] AllowedOperatorRoles =
     [
-        "RECEPTION",
-        "DOCTOR",
-        "DIAGNOSTIC_STAFF",
-        "HOSPITAL_ADMIN",
-        "SYSTEM_ADMIN",
+        RoleNames.Reception,
+        RoleNames.Doctor,
+        RoleNames.DiagnosticStaff,
+        RoleNames.HospitalAdmin,
+        RoleNames.SystemAdmin,
     ];
 
     private static readonly string[] AllowedPermissionCodes =
     [
-        "QUEUE_MANAGE",
-        "VISIT_ASSIGN",
-        "PATIENT_CHECKIN",
-        "MEDICAL_RECORD_WRITE",
-        "DIAGNOSTIC_RESULT_WRITE",
-        "HOSPITAL_CONFIG",
+        PermissionCodes.QueueManage,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.MedicalRecordWrite,
+        PermissionCodes.DiagnosticResultWrite,
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.UserManage,
     ];
 
     private static readonly HashSet<string> ValidTargetStatuses = new(StringComparer.OrdinalIgnoreCase)
@@ -1086,47 +1088,45 @@ public sealed class QueueStatusService : IQueueStatusService
         }
 
         var isSystemAdmin = actorRoleCodes.Any(code =>
-            string.Equals(code, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(code, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase));
 
         var hasReceptionOrAdminRole = isSystemAdmin || actorRoleCodes.Any(code =>
-            string.Equals(code, "RECEPTION", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(code, "HOSPITAL_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(code, RoleNames.Reception, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(code, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase));
 
         var hasDoctorRole = actorRoleCodes.Any(code =>
-            string.Equals(code, "DOCTOR", StringComparison.OrdinalIgnoreCase));
+            string.Equals(code, RoleNames.Doctor, StringComparison.OrdinalIgnoreCase));
 
-        IReadOnlyList<string> resolvedPermissionCodes = [];
-        if (!isSystemAdmin && actorRoleIds.Count > 0)
-        {
-            var rolePermissionIds = await _db.RolePermissions
+        var rolePermissionIds = actorRoleIds.Count > 0
+            ? await _db.RolePermissions
                 .AsNoTracking()
                 .Where(rp => actorRoleIds.Contains(rp.RoleId))
                 .Select(rp => rp.PermissionId)
                 .Distinct()
-                .ToListAsync(ct);
+                .ToListAsync(ct)
+            : [];
 
-            if (rolePermissionIds.Count > 0)
-            {
-                var permissionCodes = await _db.Permissions
-                    .AsNoTracking()
-                    .Where(p => rolePermissionIds.Contains(p.Id))
-                    .Select(p => p.Code)
-                    .ToListAsync(ct);
-
-                resolvedPermissionCodes = permissionCodes;
-                if (permissionCodes.Count > 0)
-                {
-                    var hasPermission = permissionCodes.Any(code =>
-                        AllowedPermissionCodes.Any(allowed =>
-                            string.Equals(code, allowed, StringComparison.OrdinalIgnoreCase)));
-
-                    if (!hasPermission)
-                    {
-                        throw new ForbiddenException("Vai trò hiện tại chưa được cấp quyền quản lý hàng đợi (QUEUE_MANAGE).");
-                    }
-                }
-            }
+        if (rolePermissionIds.Count == 0)
+        {
+            throw new ForbiddenException("Vai trò hiện tại chưa được cấp quyền quản lý hàng đợi (QUEUE_MANAGE).");
         }
+
+        var permissionCodes = await _db.Permissions
+            .AsNoTracking()
+            .Where(p => rolePermissionIds.Contains(p.Id))
+            .Select(p => p.Code)
+            .ToListAsync(ct);
+
+        var hasPermission = permissionCodes.Any(code =>
+            AllowedPermissionCodes.Any(allowed =>
+                string.Equals(code, allowed, StringComparison.OrdinalIgnoreCase)));
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenException("Vai trò hiện tại chưa được cấp quyền quản lý hàng đợi (QUEUE_MANAGE).");
+        }
+
+        IReadOnlyList<string> resolvedPermissionCodes = permissionCodes;
 
         var actorStaff = await _db.Staff
             .AsNoTracking()
@@ -1184,9 +1184,15 @@ public sealed class QueueStatusService : IQueueStatusService
             throw new ForbiddenException(forbiddenRoleMessage);
         }
 
-        if (!operatorAccess.IsSystemAdmin &&
-            !operatorAccess.PermissionCodes.Any(code =>
-                string.Equals(code, "QUEUE_MANAGE", StringComparison.OrdinalIgnoreCase)))
+        var hasRequiredPermission = operatorAccess.IsSystemAdmin
+            ? operatorAccess.PermissionCodes.Any(code =>
+                string.Equals(code, PermissionCodes.QueueManage, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(code, PermissionCodes.HospitalConfig, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(code, PermissionCodes.UserManage, StringComparison.OrdinalIgnoreCase))
+            : operatorAccess.PermissionCodes.Any(code =>
+                string.Equals(code, PermissionCodes.QueueManage, StringComparison.OrdinalIgnoreCase));
+
+        if (!hasRequiredPermission)
         {
             throw new ForbiddenException("Vai trò hiện tại chưa được cấp quyền quản lý hàng đợi (QUEUE_MANAGE).");
         }
@@ -1298,12 +1304,14 @@ public sealed class QueueStatusService : IQueueStatusService
 
         var entryHospitalId = servicePoint?.HospitalId
             ?? room?.HospitalId
+            ?? room?.Department?.HospitalId
             ?? assignedDoctor?.HospitalId
             ?? assignedDoctor?.Staff?.HospitalId
             ?? appointment?.Slot?.Service?.HospitalId
             ?? appointment?.Slot?.Room?.HospitalId
             ?? checkedInStaff?.HospitalId
-            ?? 1L;
+            ?? operatorAccess.ActorHospitalId
+            ?? throw new ValidationException("Không xác định được cơ sở y tế của lượt xếp hàng.");
 
         if (!operatorAccess.IsSystemAdmin && entryHospitalId != operatorAccess.ActorHospitalId!.Value)
         {

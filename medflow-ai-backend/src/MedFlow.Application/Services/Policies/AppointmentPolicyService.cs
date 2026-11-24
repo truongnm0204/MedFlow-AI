@@ -11,18 +11,23 @@ public sealed class AppointmentPolicyService : IAppointmentPolicyService
 {
     private readonly IApplicationDbContext _db;
     private readonly IAuditLogger _audit;
+    private readonly TimeProvider _timeProvider;
 
-    public AppointmentPolicyService(IApplicationDbContext db, IAuditLogger audit)
+    public AppointmentPolicyService(
+        IApplicationDbContext db,
+        IAuditLogger audit,
+        TimeProvider? timeProvider = null)
     {
         _db = db;
         _audit = audit;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<AppointmentPolicyDto> GetEffectiveAsync(long hospitalId, CancellationToken ct = default)
     {
         var rows = await HospitalPolicyStore.LoadRowsAsync(
             _db, hospitalId, AppointmentPolicyKeys.PolicyType, tracking: false, ct);
-        var current = HospitalPolicyStore.SelectCurrent(rows, DateTime.UtcNow);
+        var current = HospitalPolicyStore.SelectCurrent(rows, _timeProvider.GetUtcNow().UtcDateTime);
         return BuildDto(current);
     }
 
@@ -66,7 +71,7 @@ public sealed class AppointmentPolicyService : IAppointmentPolicyService
             throw new ValidationException("Thời gian đặt trước tối thiểu phải nhỏ hơn cửa sổ đặt lịch.");
         }
 
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
         var rows = await HospitalPolicyStore.LoadRowsAsync(
             _db, hospitalId, AppointmentPolicyKeys.PolicyType, tracking: true, ct);
         var current = HospitalPolicyStore.SelectCurrent(rows, now);

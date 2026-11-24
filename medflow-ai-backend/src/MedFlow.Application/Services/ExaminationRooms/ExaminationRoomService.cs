@@ -1,17 +1,21 @@
 using System.Net;
 using System.Text.Json;
-using MedFlow.Domain.Entities;
-using MedFlow.Domain.Enums;
-using MedFlow.Domain.Exceptions;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.ExaminationRooms;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
+using MedFlow.Domain.Entities;
+using MedFlow.Domain.Enums;
+using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.Application.Services.ExaminationRooms;
 
 public sealed class ExaminationRoomService : IExaminationRoomService
 {
+    private const string UnknownFacilityFallback = "Chưa cập nhật";
+
     private readonly IApplicationDbContext _dbContext;
     private readonly TimeProvider _timeProvider;
 
@@ -22,6 +26,7 @@ public sealed class ExaminationRoomService : IExaminationRoomService
     }
 
     public async Task<ExaminationRoomListResponseDto> GetExaminationRoomListAsync(
+        long actorUserId,
         GetExaminationRoomListRequest request,
         CancellationToken ct = default)
     {
@@ -37,9 +42,41 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             throw new ArgumentException("Kích thước trang phải từ 1 đến 100.", nameof(request.PageSize));
         }
 
-        var baseQuery = _dbContext.HospitalRooms.AsNoTracking();
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
 
-        // Calculate overall metrics across the system
+        long? scopedHospitalId = request.HospitalId;
+        if (!isSystemAdmin)
+        {
+            if (request.HospitalId.HasValue && request.HospitalId.Value != actorHospitalId!.Value)
+            {
+                throw new ForbiddenException("Bạn không có quyền xem danh mục buồng khám thuộc cơ sở y tế khác.");
+            }
+
+            scopedHospitalId = actorHospitalId!.Value;
+        }
+        else if (request.HospitalId.HasValue)
+        {
+            if (request.HospitalId.Value <= 0)
+            {
+                throw new ValidationException("Mã cơ sở y tế không hợp lệ.");
+            }
+
+            var hospitalExists = await _dbContext.Hospitals
+                .AsNoTracking()
+                .AnyAsync(h => h.Id == request.HospitalId.Value, ct);
+            if (!hospitalExists)
+            {
+                throw new NotFoundException("Hospital", request.HospitalId.Value);
+            }
+        }
+
+        var baseQuery = _dbContext.HospitalRooms.AsNoTracking();
+        if (!isSystemAdmin && actorHospitalId.HasValue)
+        {
+            baseQuery = baseQuery.Where(r => r.HospitalId == actorHospitalId.Value);
+        }
+
         var allRooms = await baseQuery.ToListAsync(ct);
         var totalAll = allRooms.Count;
         var activeCount = allRooms.Count(r => string.Equals(r.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase));
@@ -48,7 +85,6 @@ public sealed class ExaminationRoomService : IExaminationRoomService
 
         var metrics = new ExaminationRoomMetricsDto(totalAll, activeCount, inactiveCount, departmentsCount);
 
-        // Apply filters
         var filteredQuery = baseQuery.Include(r => r.Department).AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(request.Keyword))
@@ -65,9 +101,9 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             filteredQuery = filteredQuery.Where(r => r.DepartmentId == request.DepartmentId.Value);
         }
 
-        if (request.HospitalId.HasValue)
+        if (scopedHospitalId.HasValue)
         {
-            filteredQuery = filteredQuery.Where(r => r.HospitalId == request.HospitalId.Value);
+            filteredQuery = filteredQuery.Where(r => r.HospitalId == scopedHospitalId.Value);
         }
 
         if (!string.IsNullOrWhiteSpace(request.RoomType))
@@ -103,6 +139,19 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             .Take(request.PageSize)
             .ToListAsync(ct);
 
+        var hospitalIds = entities
+            .Where(r => r.HospitalId.HasValue)
+            .Select(r => r.HospitalId!.Value)
+            .Distinct()
+            .ToList();
+
+        var hospitalsById = hospitalIds.Count == 0
+            ? new Dictionary<long, string>()
+            : await _dbContext.Hospitals
+                .AsNoTracking()
+                .Where(h => hospitalIds.Contains(h.Id))
+                .ToDictionaryAsync(h => h.Id, h => h.Name, ct);
+
         var roomIds = entities.Select(r => r.Id).ToList();
         var visitCounts = new Dictionary<long, int>();
         var visitDoctors = new Dictionary<long, HashSet<long>>();
@@ -136,7 +185,7 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             }
             catch
             {
-                // Fallback for tests
+                // Ignored when optional related DbSet is unconfigured in minimal test context
             }
 
             try
@@ -164,16 +213,16 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             }
             catch
             {
-                // Fallback for tests
+                // Ignored when optional related DbSet is unconfigured in minimal test context
             }
         }
 
         var data = entities.Select(r =>
         {
             var isActive = string.Equals(r.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase);
-            var facility = r.HospitalId.HasValue && r.HospitalId.Value > 1
-                ? $"MedFlow Cơ sở {r.HospitalId.Value}"
-                : "MedFlow Cơ sở 1";
+            var facility = r.HospitalId.HasValue && hospitalsById.TryGetValue(r.HospitalId.Value, out var hospitalName)
+                ? ResolveFacilityName(hospitalName)
+                : UnknownFacilityFallback;
 
             var vCount = visitCounts.GetValueOrDefault(r.Id, 0);
             var sCount = slotCounts.GetValueOrDefault(r.Id, 0);
@@ -216,6 +265,7 @@ public sealed class ExaminationRoomService : IExaminationRoomService
     }
 
     public async Task<ExaminationRoomItemDto> CreateExaminationRoomAsync(
+        long actorUserId,
         CreateExaminationRoomRequest request,
         CancellationToken ct = default)
     {
@@ -249,31 +299,6 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             throw new ArgumentException("Sức chứa buồng khám phải lớn hơn 0.", nameof(request.Capacity));
         }
 
-        var hospitalId = request.HospitalId.HasValue && request.HospitalId.Value > 0
-            ? request.HospitalId.Value
-            : 1;
-
-        // Verify composite uniqueness (hospital_id, room_code)
-        var exists = await _dbContext.HospitalRooms.AnyAsync(
-            r => r.HospitalId == hospitalId && r.RoomCode.ToLower() == normalizedRoomCode.ToLower(),
-            ct);
-
-        if (exists)
-        {
-            throw new InvalidOperationException($"Mã buồng khám '{normalizedRoomCode}' đã tồn tại trong cơ sở y tế này.");
-        }
-
-        // Verify DepartmentId exists if specified
-        Department? department = null;
-        if (request.DepartmentId.HasValue && request.DepartmentId.Value > 0)
-        {
-            department = await _dbContext.Departments.FirstOrDefaultAsync(d => d.Id == request.DepartmentId.Value, ct);
-            if (department == null)
-            {
-                throw new KeyNotFoundException($"Không tìm thấy khoa phòng với ID {request.DepartmentId.Value}.");
-            }
-        }
-
         var normalizedRoomType = string.IsNullOrWhiteSpace(request.RoomType)
             ? "EXAMINATION"
             : request.RoomType.Trim().ToUpperInvariant();
@@ -292,6 +317,58 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             throw new ArgumentException("Trạng thái phòng không được vượt quá 20 ký tự.", nameof(request.Status));
         }
 
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
+
+        long hospitalId;
+        if (!isSystemAdmin)
+        {
+            if (request.HospitalId.HasValue && request.HospitalId.Value != actorHospitalId!.Value)
+            {
+                throw new ForbiddenException("Bạn không có quyền tạo buồng khám cho cơ sở y tế khác.");
+            }
+
+            hospitalId = actorHospitalId!.Value;
+        }
+        else
+        {
+            if (!request.HospitalId.HasValue || request.HospitalId.Value <= 0)
+            {
+                throw new ValidationException("Vui lòng chọn cơ sở y tế hợp lệ cho buồng khám.");
+            }
+
+            hospitalId = request.HospitalId.Value;
+        }
+
+        var hospital = await _dbContext.Hospitals
+            .AsNoTracking()
+            .FirstOrDefaultAsync(h => h.Id == hospitalId, ct)
+            ?? throw new NotFoundException("Hospital", hospitalId);
+
+        var exists = await _dbContext.HospitalRooms.AnyAsync(
+            r => r.HospitalId == hospitalId && r.RoomCode.ToLower() == normalizedRoomCode.ToLower(),
+            ct);
+
+        if (exists)
+        {
+            throw new InvalidOperationException($"Mã buồng khám '{normalizedRoomCode}' đã tồn tại trong cơ sở y tế này.");
+        }
+
+        Department? department = null;
+        if (request.DepartmentId.HasValue && request.DepartmentId.Value > 0)
+        {
+            department = await _dbContext.Departments.FirstOrDefaultAsync(d => d.Id == request.DepartmentId.Value, ct);
+            if (department == null)
+            {
+                throw new KeyNotFoundException($"Không tìm thấy khoa phòng với ID {request.DepartmentId.Value}.");
+            }
+
+            if (department.HospitalId.HasValue && department.HospitalId.Value != hospitalId)
+            {
+                throw new ArgumentException("Khoa phòng không thuộc cơ sở y tế của buồng khám.", nameof(request.DepartmentId));
+            }
+        }
+
         var normalizedLocation = string.IsNullOrWhiteSpace(request.Location)
             ? null
             : request.Location.Trim();
@@ -299,7 +376,7 @@ public sealed class ExaminationRoomService : IExaminationRoomService
         var room = new HospitalRoom
         {
             HospitalId = hospitalId,
-            DepartmentId = department?.Id ?? (request.DepartmentId.HasValue && request.DepartmentId.Value > 0 ? request.DepartmentId : null),
+            DepartmentId = department?.Id,
             RoomCode = normalizedRoomCode,
             Name = normalizedName,
             RoomType = normalizedRoomType,
@@ -312,16 +389,13 @@ public sealed class ExaminationRoomService : IExaminationRoomService
         await _dbContext.SaveChangesAsync(ct);
 
         var isActive = string.Equals(room.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase);
-        var facility = hospitalId > 1
-            ? $"MedFlow Cơ sở {hospitalId}"
-            : "MedFlow Cơ sở 1";
 
         return new ExaminationRoomItemDto(
             Id: room.Id,
             RoomCode: room.RoomCode,
             Name: room.Name,
             HospitalId: room.HospitalId,
-            Facility: facility,
+            Facility: ResolveFacilityName(hospital.Name),
             DepartmentId: room.DepartmentId,
             DepartmentCode: department?.DepartmentCode,
             DepartmentName: department?.Name,
@@ -335,6 +409,7 @@ public sealed class ExaminationRoomService : IExaminationRoomService
     }
 
     public async Task<ExaminationRoomItemDto> UpdateExaminationRoomAsync(
+        long actorUserId,
         long id,
         UpdateExaminationRoomRequest request,
         CancellationToken ct = default)
@@ -419,6 +494,9 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             throw new ArgumentException("Tên buồng khám không được vượt quá 200 ký tự.", nameof(request.Name));
         }
 
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
+
         var room = await _dbContext.HospitalRooms
             .Include(r => r.Department)
             .FirstOrDefaultAsync(r => r.Id == id, ct);
@@ -428,9 +506,44 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             throw new KeyNotFoundException($"Không tìm thấy buồng khám với ID {id}.");
         }
 
-        var targetHospitalId = request.HospitalId.HasValue && request.HospitalId.Value > 0
-            ? request.HospitalId.Value
-            : (room.HospitalId ?? 1);
+        long targetHospitalId;
+        if (!isSystemAdmin)
+        {
+            if (!room.HospitalId.HasValue || room.HospitalId.Value != actorHospitalId!.Value)
+            {
+                throw new ForbiddenException("Bạn không có quyền thao tác trên buồng khám thuộc cơ sở y tế khác.");
+            }
+
+            if (request.HospitalId.HasValue && request.HospitalId.Value != actorHospitalId.Value)
+            {
+                throw new ForbiddenException("Bạn không có quyền chuyển buồng khám sang cơ sở y tế khác.");
+            }
+
+            targetHospitalId = actorHospitalId.Value;
+        }
+        else if (request.HospitalId.HasValue)
+        {
+            if (request.HospitalId.Value <= 0)
+            {
+                throw new ValidationException("Mã cơ sở y tế không hợp lệ.");
+            }
+
+            targetHospitalId = request.HospitalId.Value;
+        }
+        else
+        {
+            if (!room.HospitalId.HasValue || room.HospitalId.Value <= 0)
+            {
+                throw new ValidationException("Buồng khám chưa được gắn cơ sở y tế hợp lệ.");
+            }
+
+            targetHospitalId = room.HospitalId.Value;
+        }
+
+        var hospital = await _dbContext.Hospitals
+            .AsNoTracking()
+            .FirstOrDefaultAsync(h => h.Id == targetHospitalId, ct)
+            ?? throw new NotFoundException("Hospital", targetHospitalId);
 
         var targetRoomCode = normalizedRoomCode ?? room.RoomCode;
 
@@ -506,9 +619,9 @@ public sealed class ExaminationRoomService : IExaminationRoomService
         if (string.Equals(newStatus, "INACTIVE", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(room.Status, "INACTIVE", StringComparison.OrdinalIgnoreCase))
         {
-            var nowUtc = DateTime.SpecifyKind(_timeProvider.GetUtcNow().UtcDateTime, DateTimeKind.Unspecified);
-            var (assignedDoctors, activeVisits, activeSlots, pendingAppointments, blockingReason, _) =
-                await GetRoomDependenciesInternalAsync(room, nowUtc, ct);
+            var nowLocal = HospitalClock.GetNow(_timeProvider);
+            var (assignedDoctors, activeVisits, _, pendingAppointments, blockingReason, _) =
+                await GetRoomDependenciesInternalAsync(room, nowLocal, ct);
 
             if (activeVisits > 0 || assignedDoctors > 0 || pendingAppointments > 0)
             {
@@ -524,16 +637,13 @@ public sealed class ExaminationRoomService : IExaminationRoomService
         await _dbContext.SaveChangesAsync(ct);
 
         var isActive = string.Equals(room.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase);
-        var facility = targetHospitalId > 1
-            ? $"MedFlow Cơ sở {targetHospitalId}"
-            : "MedFlow Cơ sở 1";
 
         return new ExaminationRoomItemDto(
             Id: room.Id,
             RoomCode: room.RoomCode,
             Name: room.Name,
             HospitalId: room.HospitalId,
-            Facility: facility,
+            Facility: ResolveFacilityName(hospital.Name),
             DepartmentId: room.DepartmentId,
             DepartmentCode: department?.DepartmentCode,
             DepartmentName: department?.Name,
@@ -556,20 +666,20 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             throw new ArgumentException("Mã hoặc ID buồng khám không được để trống.", nameof(idOrCode));
         }
 
-        var nowUtc = DateTime.SpecifyKind(_timeProvider.GetUtcNow().UtcDateTime, DateTimeKind.Unspecified);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
 
         var room = await FindRoomByIdOrCodeAsync(idOrCode, ct)
             ?? throw new NotFoundException("HospitalRoom", idOrCode.Trim());
 
-        var roomHospitalId = room.HospitalId ?? 1L;
-        if (!isSystemAdmin && actorHospitalId.HasValue && roomHospitalId != actorHospitalId.Value)
+        if (!isSystemAdmin && (!room.HospitalId.HasValue || room.HospitalId.Value != actorHospitalId!.Value))
         {
             throw new ForbiddenException("Bạn không có quyền thao tác trên buồng khám thuộc cơ sở y tế khác.");
         }
 
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var (assignedDoctors, activeVisits, activeSlots, pendingAppointments, blockingReason, _) =
-            await GetRoomDependenciesInternalAsync(room, nowUtc, ct);
+            await GetRoomDependenciesInternalAsync(room, nowLocal, ct);
 
         var hasActiveDependencies = assignedDoctors > 0 || activeVisits > 0 || activeSlots > 0 || pendingAppointments > 0;
         var canDeactivate = activeVisits == 0 && assignedDoctors == 0 && pendingAppointments == 0;
@@ -600,14 +710,14 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             throw new ArgumentException("Mã hoặc ID buồng khám không được để trống.", nameof(idOrCode));
         }
 
-        var nowUtc = DateTime.SpecifyKind(_timeProvider.GetUtcNow().UtcDateTime, DateTimeKind.Unspecified);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowUtcUnspecified = HospitalClock.GetUtcNowUnspecified(_timeProvider);
         var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
 
         var room = await FindRoomByIdOrCodeAsync(idOrCode, ct)
             ?? throw new NotFoundException("HospitalRoom", idOrCode.Trim());
 
-        var roomHospitalId = room.HospitalId ?? 1L;
-        if (!isSystemAdmin && actorHospitalId.HasValue && roomHospitalId != actorHospitalId.Value)
+        if (!isSystemAdmin && (!room.HospitalId.HasValue || room.HospitalId.Value != actorHospitalId!.Value))
         {
             throw new ForbiddenException("Bạn không có quyền thao tác trên buồng khám thuộc cơ sở y tế khác.");
         }
@@ -617,8 +727,9 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             throw new ConflictException($"Buồng khám '{room.Name}' ({room.RoomCode}) hiện đã ở trạng thái ngừng hoạt động.");
         }
 
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var (assignedDoctors, activeVisits, activeSlots, pendingAppointments, blockingReason, futureSlots) =
-            await GetRoomDependenciesInternalAsync(room, nowUtc, ct);
+            await GetRoomDependenciesInternalAsync(room, nowLocal, ct);
 
         if (activeVisits > 0 || assignedDoctors > 0 || pendingAppointments > 0)
         {
@@ -640,12 +751,13 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             closedSlotsCount = futureSlots.Count;
         }
 
+        var previousStatus = room.Status;
         room.Status = "INACTIVE";
 
         _dbContext.AuditLogs.Add(new AuditLog
         {
             ActorUserId = actorUserId,
-            HospitalId = roomHospitalId,
+            HospitalId = room.HospitalId ?? actorHospitalId,
             Action = "ROOM_DEACTIVATED",
             EntityType = "HospitalRoom",
             EntityId = room.Id.ToString(),
@@ -655,20 +767,20 @@ public sealed class ExaminationRoomService : IExaminationRoomService
                 room.RoomCode,
                 room.Name,
                 room.HospitalId,
-                PreviousStatus = "ACTIVE",
+                PreviousStatus = previousStatus,
                 NewStatus = "INACTIVE",
                 ClosedSlotsCount = closedSlotsCount,
                 Reason = request?.Reason,
                 Note = request?.Note,
-                Timestamp = nowUtc
+                Timestamp = nowUtcUnspecified
             }),
             IpAddress = !string.IsNullOrWhiteSpace(ipAddress) && IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
-            OccurredAt = nowUtc
+            OccurredAt = nowUtcUnspecified
         });
 
         await _dbContext.SaveChangesAsync(ct);
 
-        var facility = roomHospitalId > 1 ? $"MedFlow Cơ sở {roomHospitalId}" : "MedFlow Cơ sở 1";
+        var facility = await LoadFacilityNameAsync(room.HospitalId, ct);
         var summary = new ExaminationRoomDependencySummaryDto(
             RoomId: room.Id,
             RoomCode: room.RoomCode,
@@ -708,14 +820,14 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             throw new ArgumentException("Mã hoặc ID buồng khám không được để trống.", nameof(idOrCode));
         }
 
-        var nowUtc = DateTime.SpecifyKind(_timeProvider.GetUtcNow().UtcDateTime, DateTimeKind.Unspecified);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowUtcUnspecified = HospitalClock.GetUtcNowUnspecified(_timeProvider);
         var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
 
         var room = await FindRoomByIdOrCodeAsync(idOrCode, ct)
             ?? throw new NotFoundException("HospitalRoom", idOrCode.Trim());
 
-        var roomHospitalId = room.HospitalId ?? 1L;
-        if (!isSystemAdmin && actorHospitalId.HasValue && roomHospitalId != actorHospitalId.Value)
+        if (!isSystemAdmin && (!room.HospitalId.HasValue || room.HospitalId.Value != actorHospitalId!.Value))
         {
             throw new ForbiddenException("Bạn không có quyền thao tác trên buồng khám thuộc cơ sở y tế khác.");
         }
@@ -725,12 +837,13 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             throw new ConflictException($"Buồng khám '{room.Name}' ({room.RoomCode}) đang ở trạng thái hoạt động.");
         }
 
+        var previousStatus = room.Status;
         room.Status = "ACTIVE";
 
         _dbContext.AuditLogs.Add(new AuditLog
         {
             ActorUserId = actorUserId,
-            HospitalId = roomHospitalId,
+            HospitalId = room.HospitalId ?? actorHospitalId,
             Action = "ROOM_REACTIVATED",
             EntityType = "HospitalRoom",
             EntityId = room.Id.ToString(),
@@ -740,18 +853,18 @@ public sealed class ExaminationRoomService : IExaminationRoomService
                 room.RoomCode,
                 room.Name,
                 room.HospitalId,
-                PreviousStatus = "INACTIVE",
+                PreviousStatus = previousStatus,
                 NewStatus = "ACTIVE",
                 Reason = request?.Reason,
-                Timestamp = nowUtc
+                Timestamp = nowUtcUnspecified
             }),
             IpAddress = !string.IsNullOrWhiteSpace(ipAddress) && IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
-            OccurredAt = nowUtc
+            OccurredAt = nowUtcUnspecified
         });
 
         await _dbContext.SaveChangesAsync(ct);
 
-        var facility = roomHospitalId > 1 ? $"MedFlow Cơ sở {roomHospitalId}" : "MedFlow Cơ sở 1";
+        var facility = await LoadFacilityNameAsync(room.HospitalId, ct);
         return new DeactivateExaminationRoomResponseDto(
             Id: room.Id,
             RoomCode: room.RoomCode,
@@ -764,6 +877,25 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             Message: $"Đã kích hoạt lại hoạt động cho buồng khám {room.Name}."
         );
     }
+
+    private async Task<string> LoadFacilityNameAsync(long? hospitalId, CancellationToken ct)
+    {
+        if (!hospitalId.HasValue)
+        {
+            return UnknownFacilityFallback;
+        }
+
+        var name = await _dbContext.Hospitals
+            .AsNoTracking()
+            .Where(h => h.Id == hospitalId.Value)
+            .Select(h => h.Name)
+            .FirstOrDefaultAsync(ct);
+
+        return ResolveFacilityName(name);
+    }
+
+    private static string ResolveFacilityName(string? name) =>
+        !string.IsNullOrWhiteSpace(name) ? name.Trim() : UnknownFacilityFallback;
 
     private async Task<HospitalRoom?> FindRoomByIdOrCodeAsync(string idOrCode, CancellationToken ct)
     {
@@ -785,7 +917,7 @@ public sealed class ExaminationRoomService : IExaminationRoomService
 
     private async Task<(int AssignedDoctors, int ActiveVisits, int ActiveSlots, int PendingAppointments, string? BlockingReason, List<ExaminationSlot> FutureSlots)> GetRoomDependenciesInternalAsync(
         HospitalRoom room,
-        DateTime nowUtc,
+        DateTime nowLocal,
         CancellationToken ct)
     {
         var activeVisitsCount = 0;
@@ -809,7 +941,7 @@ public sealed class ExaminationRoomService : IExaminationRoomService
         }
         catch
         {
-            // Fallback for tests
+            // Ignored when optional related DbSet is unconfigured in minimal test context
         }
 
         List<ExaminationSlot> futureSlots = new();
@@ -820,7 +952,7 @@ public sealed class ExaminationRoomService : IExaminationRoomService
                 .Where(s => s.RoomId == room.Id &&
                             s.Status != "CLOSED" &&
                             s.Status != "CANCELLED" &&
-                            (s.EndsAt == null || s.EndsAt >= nowUtc))
+                            (s.EndsAt == null || s.EndsAt >= nowLocal))
                 .ToListAsync(ct);
 
             foreach (var s in futureSlots)
@@ -833,7 +965,7 @@ public sealed class ExaminationRoomService : IExaminationRoomService
         }
         catch
         {
-            // Fallback for tests
+            // Ignored when optional related DbSet is unconfigured in minimal test context
         }
 
         var assignedDoctorsSet = new HashSet<long>(visitDoctorIds);
@@ -856,7 +988,7 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             }
             catch
             {
-                // Fallback for tests
+                // Ignored when optional related DbSet is unconfigured in minimal test context
             }
         }
 
@@ -882,25 +1014,15 @@ public sealed class ExaminationRoomService : IExaminationRoomService
         DateTime nowUtc,
         CancellationToken ct)
     {
-        if (!actorUserId.HasValue)
+        if (!actorUserId.HasValue || actorUserId.Value <= 0)
         {
-            return (true, null);
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
         }
 
-        User? user = null;
-        try
-        {
-            user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Id == actorUserId.Value, ct);
-        }
-        catch
-        {
-            // Fallback for tests
-        }
-
-        if (user == null)
-        {
-            return (true, null);
-        }
+        var user = await _dbContext.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == actorUserId.Value, ct)
+            ?? throw new NotFoundException("User", actorUserId.Value);
 
         if (user.AccountStatus != AccountStatus.ACTIVE)
         {
@@ -912,40 +1034,70 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             throw new ForbiddenException("Tài khoản quản trị viên hiện đang bị tạm khóa.");
         }
 
-        List<string> roleCodes = new();
-        try
-        {
-            roleCodes = await (from ur in _dbContext.UserRoles
-                               join r in _dbContext.Roles on ur.RoleId equals r.Id
-                               where ur.UserId == user.Id
-                               select r.Code)
-                               .ToListAsync(ct);
-        }
-        catch
-        {
-            // Fallback
-        }
+        var roleIds = await _dbContext.UserRoles
+            .AsNoTracking()
+            .Where(ur => ur.UserId == user.Id)
+            .Select(ur => ur.RoleId)
+            .ToListAsync(ct);
 
-        if (roleCodes.Count > 0 &&
-            !roleCodes.Contains("SYSTEM_ADMIN", StringComparer.OrdinalIgnoreCase) &&
-            !roleCodes.Contains("HOSPITAL_ADMIN", StringComparer.OrdinalIgnoreCase))
+        var roleCodes = roleIds.Count == 0
+            ? []
+            : await _dbContext.Roles
+                .AsNoTracking()
+                .Where(r => roleIds.Contains(r.Id))
+                .Select(r => r.Code)
+                .ToListAsync(ct);
+
+        var isSystemAdmin = roleCodes.Contains(RoleNames.SystemAdmin, StringComparer.OrdinalIgnoreCase);
+        var isHospitalAdmin = roleCodes.Contains(RoleNames.HospitalAdmin, StringComparer.OrdinalIgnoreCase);
+
+        if (!isSystemAdmin && !isHospitalAdmin)
         {
             throw new ForbiddenException("Bạn không có quyền thực hiện thao tác quản trị buồng khám.");
         }
 
-        var isSystemAdmin = roleCodes.Contains("SYSTEM_ADMIN", StringComparer.OrdinalIgnoreCase);
+        var hasHospitalConfigPerm = await (
+            from rp in _dbContext.RolePermissions.AsNoTracking()
+            join p in _dbContext.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
+            where roleIds.Contains(rp.RoleId) && p.Code.ToUpper() == PermissionCodes.HospitalConfig
+            select rp.PermissionId).AnyAsync(ct);
 
-        long? hospitalId = null;
-        try
+        if (!hasHospitalConfigPerm)
         {
-            var staff = await _dbContext.Staff.FirstOrDefaultAsync(s => s.UserId == user.Id, ct);
-            hospitalId = staff?.HospitalId;
-        }
-        catch
-        {
-            // Fallback
+            throw new ForbiddenException("Tài khoản quản trị chưa được cấp quyền cấu hình danh mục bệnh viện (HOSPITAL_CONFIG).");
         }
 
-        return (isSystemAdmin, hospitalId);
+        var staff = await _dbContext.Staff
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.UserId == user.Id, ct);
+
+        if (staff is not null &&
+            !string.IsNullOrWhiteSpace(staff.Status) &&
+            !string.Equals(staff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ForbiddenException("Hồ sơ nhân sự của quản trị viên không ở trạng thái hoạt động.");
+        }
+
+        if (!isSystemAdmin)
+        {
+            if (staff is null || !staff.HospitalId.HasValue)
+            {
+                throw new ForbiddenException("Tài khoản quản trị bệnh viện chưa được gán cơ sở y tế.");
+            }
+
+            var hospital = await _dbContext.Hospitals
+                .AsNoTracking()
+                .FirstOrDefaultAsync(h => h.Id == staff.HospitalId.Value, ct)
+                ?? throw new NotFoundException("Hospital", staff.HospitalId.Value);
+
+            if (hospital.IsActive == false)
+            {
+                throw new ForbiddenException("Cơ sở y tế của quản trị viên đang ngừng hoạt động.");
+            }
+
+            return (false, staff.HospitalId.Value);
+        }
+
+        return (true, staff?.HospitalId);
     }
 }

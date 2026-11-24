@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
@@ -9,6 +10,7 @@ using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Visits;
 using MedFlow.Application.Services.Visits.Queueing;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -51,16 +53,25 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
 
     private static readonly string[] ReceptionAllowedPermissions =
     [
-        PatientCheckInPermissionCode,
-        "VISIT_ASSIGN",
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.VisitAssign,
     ];
 
     private static readonly string[] HospitalAdminAllowedPermissions =
     [
-        PatientCheckInPermissionCode,
-        "VISIT_ASSIGN",
-        "QUEUE_MANAGE",
-        "HOSPITAL_CONFIG",
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.QueueManage,
+        PermissionCodes.HospitalConfig,
+    ];
+
+    private static readonly string[] SystemAdminAllowedPermissions =
+    [
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.QueueManage,
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.UserManage,
     ];
 
     private readonly IApplicationDbContext _db;
@@ -99,7 +110,7 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
 
         var parsedPatient = ParseIdentifier(rawPatientIdentifier, "Mã định danh bệnh nhân không hợp lệ.");
 
-        var isIdentityVerified = request.IsIdentityVerified ?? request.IdentityVerified ?? true;
+        var isIdentityVerified = request.IsIdentityVerified ?? request.IdentityVerified ?? false;
         if (!isIdentityVerified)
         {
             throw new ValidationException(
@@ -189,8 +200,8 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             ? ParseIdentifier(rawRoomIdentifier, "Mã định danh buồng khám không hợp lệ.")
             : ((string Trimmed, long? Id, string? Code)?)null;
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
 
         var actor = await EnsureWalkInActorAccessAsync(actorUserId, nowUtc, ct);
@@ -213,7 +224,7 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
         var effectiveHospitalId = service.HospitalId
             ?? department.HospitalId
             ?? actor.ActorHospitalId
-            ?? 1L;
+            ?? throw new ValidationException("Không xác định được cơ sở y tế tiếp nhận lượt khám vãng lai.");
 
         var doctor = parsedDoctor.HasValue
             ? await ResolveAndValidateDoctorAsync(actor, parsedDoctor.Value, department, effectiveHospitalId, ct)
@@ -606,7 +617,7 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
 
         var effectiveHospitalId = associatedHospitalIds.FirstOrDefault(hId => hId.HasValue)
             ?? actor.ActorHospitalId
-            ?? 1L;
+            ?? throw new ValidationException("Không xác định được cơ sở y tế của lượt khám vãng lai.");
 
         department ??= await _db.Departments
             .AsNoTracking()
@@ -615,7 +626,7 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             .FirstOrDefaultAsync(ct)
             ?? new Department
             {
-                Id = auditMetadata.DepartmentId ?? 1L,
+                Id = auditMetadata.DepartmentId ?? 0L,
                 HospitalId = effectiveHospitalId,
                 DepartmentCode = auditMetadata.DepartmentCode ?? "OPD",
                 Name = auditMetadata.DepartmentName ?? "Khoa Khám bệnh",
@@ -633,7 +644,7 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             .FirstOrDefaultAsync(ct)
             ?? new Service
             {
-                Id = auditMetadata.ServiceId ?? 1L,
+                Id = auditMetadata.ServiceId ?? 0L,
                 HospitalId = effectiveHospitalId,
                 DepartmentId = department.Id,
                 ServiceCode = auditMetadata.ServiceCode ?? "EX-WALKIN",
@@ -795,11 +806,12 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var actor = await EnsureWalkInActorAccessAsync(actorUserId, nowUtc, ct);
 
-        var targetHospitalId = actor.ActorHospitalId ?? 1L;
+        var targetHospitalId = actor.ActorHospitalId
+            ?? throw new ValidationException("Không xác định được cơ sở y tế để tra cứu danh mục tiếp nhận vãng lai.");
         var hospital = await _db.Hospitals
             .AsNoTracking()
             .FirstOrDefaultAsync(h => h.Id == targetHospitalId, ct);
@@ -921,45 +933,51 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             .ToListAsync(ct);
 
         var isSystemAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase));
         var isHospitalAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, "HOSPITAL_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase));
         var isReception = actorRoleCodes.Any(c =>
-            string.Equals(c, "RECEPTION", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.Reception, StringComparison.OrdinalIgnoreCase));
 
         if (!isSystemAdmin && !isHospitalAdmin && !isReception)
         {
             throw new ForbiddenException("Người dùng không có quyền tiếp nhận lượt khám vãng lai tại quầy.");
         }
 
-        if (!isSystemAdmin && actorRoleIds.Count > 0)
-        {
-            var rolePermissionIds = await _db.RolePermissions
+        var rolePermissionIds = actorRoleIds.Count > 0
+            ? await _db.RolePermissions
                 .AsNoTracking()
                 .Where(rp => actorRoleIds.Contains(rp.RoleId))
                 .Select(rp => rp.PermissionId)
-                .ToListAsync(ct);
+                .Distinct()
+                .ToListAsync(ct)
+            : [];
 
-            if (rolePermissionIds.Count > 0)
-            {
-                var permissionCodes = await _db.Permissions
-                    .AsNoTracking()
-                    .Where(p => rolePermissionIds.Contains(p.Id))
-                    .Select(p => p.Code)
-                    .ToListAsync(ct);
+        if (rolePermissionIds.Count == 0)
+        {
+            throw new ForbiddenException(
+                "Vai trò hiện tại chưa được cấp quyền tiếp nhận bệnh nhân (PATIENT_CHECKIN).");
+        }
 
-                var hasPermission = isReception
-                    ? permissionCodes.Any(c => ReceptionAllowedPermissions.Any(allowed =>
-                        string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)))
-                    : permissionCodes.Any(c => HospitalAdminAllowedPermissions.Any(allowed =>
-                        string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)));
+        var permissionCodes = await _db.Permissions
+            .AsNoTracking()
+            .Where(p => rolePermissionIds.Contains(p.Id))
+            .Select(p => p.Code)
+            .ToListAsync(ct);
 
-                if (!hasPermission)
-                {
-                    throw new ForbiddenException(
-                        "Vai trò hiện tại chưa được cấp quyền tiếp nhận bệnh nhân (PATIENT_CHECKIN).");
-                }
-            }
+        var allowedPermissions = isSystemAdmin
+            ? SystemAdminAllowedPermissions
+            : isHospitalAdmin
+                ? HospitalAdminAllowedPermissions
+                : ReceptionAllowedPermissions;
+
+        var hasPermission = permissionCodes.Any(c => allowedPermissions.Any(allowed =>
+            string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)));
+
+        if (!hasPermission)
+        {
+            throw new ForbiddenException(
+                "Vai trò hiện tại chưa được cấp quyền tiếp nhận bệnh nhân (PATIENT_CHECKIN).");
         }
 
         var actorStaff = await _db.Staff
@@ -1867,7 +1885,7 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
                 BloodPressure: null,
                 HeartRate: null,
                 Temperature: null,
-                IsIdentityVerified: true,
+                IsIdentityVerified: false,
                 IsInsuranceVerified: false,
                 Notes: null);
         }
@@ -1920,7 +1938,7 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
                 temperature = TryGetDouble(vitalsEl, "temperature");
             }
 
-            var isIdentityVerified = TryGetBoolean(root, "isIdentityVerified") ?? true;
+            var isIdentityVerified = TryGetBoolean(root, "isIdentityVerified") ?? false;
             var isInsuranceVerified = TryGetBoolean(root, "isInsuranceVerified") ?? false;
 
             return new WalkInAuditMetadata(
@@ -1969,7 +1987,7 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
                 BloodPressure: null,
                 HeartRate: null,
                 Temperature: null,
-                IsIdentityVerified: true,
+                IsIdentityVerified: false,
                 IsInsuranceVerified: false,
                 Notes: null);
         }

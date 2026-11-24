@@ -33,6 +33,16 @@ public sealed class VisitChargesServiceTests : IDisposable
             new Role { Id = 3, Code = "HOSPITAL_ADMIN", Name = "Admin benh vien" },
             new Role { Id = 4, Code = "SYSTEM_ADMIN", Name = "Admin he thong" },
             new Role { Id = 5, Code = "DOCTOR", Name = "Bac si" });
+        _db.Permissions.AddRange(
+            new Permission { Id = 11, Code = "HOSPITAL_CONFIG" },
+            new Permission { Id = 13, Code = "AUDIT_READ" },
+            new Permission { Id = 14, Code = "PAYMENT_VIEW" });
+        _db.RolePermissions.AddRange(
+            new RolePermission { RoleId = 1, PermissionId = 14 },
+            new RolePermission { RoleId = 2, PermissionId = 14 },
+            new RolePermission { RoleId = 3, PermissionId = 14 },
+            new RolePermission { RoleId = 4, PermissionId = 11 },
+            new RolePermission { RoleId = 4, PermissionId = 13 });
         _db.SaveChanges();
         _service = new VisitChargesService(_db, new FixedTime(FixedNow));
     }
@@ -122,6 +132,17 @@ public sealed class VisitChargesServiceTests : IDisposable
         var ex = await Assert.ThrowsAsync<ForbiddenException>(() => _service.GetAsync(actor.UserId, visit.Id.ToString()));
 
         Assert.Equal("Bạn không có quyền xem khoản phí của lượt khám này.", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetAsync_StaffWhenRolePermissionsEmpty_FailsClosedWithForbidden()
+    {
+        var actor = AddReception(20, HospitalA);
+        var visit = AddVisit(1000, 100, "CHECKED_IN", HospitalA);
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        _db.SaveChanges();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() => _service.GetAsync(actor.UserId, visit.Id.ToString()));
     }
 
     [Fact]
@@ -612,9 +633,9 @@ public sealed class VisitChargesServiceTests : IDisposable
 
         public DbSet<User> Users => Set<User>();
         public DbSet<Role> Roles => Set<Role>();
-        public DbSet<Permission> Permissions => throw NotUsed();
+        public DbSet<Permission> Permissions => Set<Permission>();
         public DbSet<UserRole> UserRoles => Set<UserRole>();
-        public DbSet<RolePermission> RolePermissions => throw NotUsed();
+        public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
         public DbSet<Patient> Patients => Set<Patient>();
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => Set<Doctor>();
@@ -646,8 +667,6 @@ public sealed class VisitChargesServiceTests : IDisposable
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<Permission>();
-            modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Department>();
             modelBuilder.Ignore<Specialty>();
             modelBuilder.Ignore<HospitalPolicy>();
@@ -658,6 +677,11 @@ public sealed class VisitChargesServiceTests : IDisposable
             modelBuilder.Entity<Role>().HasKey(r => r.Id);
             modelBuilder.Entity<Role>().Ignore(r => r.UserRoles);
             modelBuilder.Entity<Role>().Ignore(r => r.RolePermissions);
+            modelBuilder.Entity<Permission>().HasKey(p => p.Id);
+            modelBuilder.Entity<Permission>().Ignore(p => p.RolePermissions);
+            modelBuilder.Entity<RolePermission>().HasKey(rp => new { rp.RoleId, rp.PermissionId });
+            modelBuilder.Entity<RolePermission>().Ignore(rp => rp.Role);
+            modelBuilder.Entity<RolePermission>().Ignore(rp => rp.Permission);
             modelBuilder.Entity<UserRole>().HasKey(ur => new { ur.UserId, ur.RoleId });
             modelBuilder.Entity<UserRole>().Ignore(ur => ur.User);
             modelBuilder.Entity<UserRole>().Ignore(ur => ur.Role);

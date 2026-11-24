@@ -45,6 +45,23 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddApplication();
 builder.Services.Configure<MedFlow.Application.Options.IdentityHashOptions>(
     builder.Configuration.GetSection("Identity"));
+builder.Services.AddOptions<MedFlow.Application.Options.AuthSecurityOptions>()
+    .Bind(builder.Configuration.GetSection(MedFlow.Application.Options.AuthSecurityOptions.SectionName))
+    .Validate(
+        o => o.OtpTtlMinutes > 0 &&
+             o.OtpResendThrottleSeconds >= 0 &&
+             o.OtpMaxAttempts > 0 &&
+             o.MaxLoginAttempts > 0 &&
+             o.LockoutDurationMinutes > 0 &&
+             o.IdentityClaimTtlDays > 0,
+        "Auth security options must specify positive thresholds and non-negative throttle seconds.")
+    .ValidateOnStart();
+builder.Services.AddOptions<MedFlow.Application.Options.QrPaymentOptions>()
+    .Bind(builder.Configuration.GetSection(MedFlow.Application.Options.QrPaymentOptions.SectionName))
+    .Validate(
+        o => o.PendingExpiryMinutes > 0,
+        "QrPayment:PendingExpiryMinutes must be greater than zero.")
+    .ValidateOnStart();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 builder.Services.AddOptions<ForwardedHeadersOptions>()
@@ -188,13 +205,31 @@ builder.Services.AddRateLimiter(options =>
             _ => BuildFixedWindowOptions(httpContext, "OtpResendPermitLimit", 5)));
 });
 
+var configuredCorsOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>()?
+    .Where(origin => !string.IsNullOrWhiteSpace(origin))
+    .Select(origin => origin.Trim().TrimEnd('/'))
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToArray() ?? [];
+
+if (configuredCorsOrigins.Length == 0 && builder.Environment.IsDevelopment())
+{
+    configuredCorsOrigins = ["http://localhost:5173", "https://localhost:5173"];
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Frontend", policy =>
-        policy.WithOrigins("http://localhost:5173")
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials());
+    {
+        if (configuredCorsOrigins.Length > 0)
+        {
+            policy.WithOrigins(configuredCorsOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials();
+        }
+    });
 });
 
 var app = builder.Build();

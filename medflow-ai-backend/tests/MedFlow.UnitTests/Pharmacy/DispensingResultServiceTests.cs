@@ -239,6 +239,20 @@ public sealed class DispensingResultServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetDispensingResult_WhenRolePermissionsTableEmpty_ThrowsForbiddenException()
+    {
+        _db.Users.Add(new User { Id = 1, AccountStatus = AccountStatus.ACTIVE });
+        _db.Roles.Add(new Role { Id = 2, Code = "PHARMACY_STAFF", Name = "Dược sĩ" });
+        _db.UserRoles.Add(new UserRole { UserId = 1, RoleId = 2 });
+        _db.Hospitals.Add(new Hospital { Id = 10, Name = "Bệnh viện Test", IsActive = true });
+        _db.Staff.Add(new Staff { Id = 1, UserId = 1, HospitalId = 10, Status = "ACTIVE" });
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDispensingResultAsync(1, "1"));
+    }
+
+    [Fact]
     public async Task GetDispensingResult_DispenseNotFound_ThrowsNotFoundException()
     {
         await SeedValidPharmacyStaffAsync();

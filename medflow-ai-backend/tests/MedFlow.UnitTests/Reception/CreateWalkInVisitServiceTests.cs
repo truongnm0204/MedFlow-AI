@@ -176,12 +176,14 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
         _db.Permissions.AddRange(
             new Permission { Id = 3, Code = "PATIENT_CHECKIN" },
             new Permission { Id = 4, Code = "VISIT_ASSIGN" },
-            new Permission { Id = 5, Code = "QUEUE_MANAGE" });
+            new Permission { Id = 5, Code = "QUEUE_MANAGE" },
+            new Permission { Id = 11, Code = "HOSPITAL_CONFIG" });
 
         _db.RolePermissions.AddRange(
             new RolePermission { RoleId = 3, PermissionId = 3 },
             new RolePermission { RoleId = 3, PermissionId = 4 },
-            new RolePermission { RoleId = 6, PermissionId = 3 });
+            new RolePermission { RoleId = 6, PermissionId = 3 },
+            new RolePermission { RoleId = 7, PermissionId = 11 });
 
         _db.Hospitals.AddRange(
             new Hospital
@@ -577,7 +579,8 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
             DoctorCode: "DOC-001",
             RoomCode: "RM-001",
             ReasonForVisit: "Khám tiêu hóa định kỳ cho người cao tuổi.",
-            PaymentMethod: "CASHIER");
+            PaymentMethod: "CASHIER",
+            IsIdentityVerified: true);
 
         var result = await _service.CreateWalkInVisitAsync(actorUserId: 5, request: request);
 
@@ -606,7 +609,8 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
                 BloodPressure: "118/76",
                 HeartRate: 72,
                 Temperature: 36.5,
-                PaymentMethod: "VIETQR"));
+                PaymentMethod: "VIETQR",
+                IsIdentityVerified: true));
 
         var loaded = await _service.GetWalkInVisitByIdOrCodeAsync(
             actorUserId: 5,
@@ -648,6 +652,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
             PatientId: "1",
             DepartmentId: "2",
             ServiceId: "1",
+            IsIdentityVerified: true,
             ReasonForVisit: "Đau thượng vị kéo dài.");
 
         await Assert.ThrowsAsync(
@@ -662,6 +667,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
             PatientId: "1",
             DepartmentId: "20", // Hospital 2
             ServiceId: "20",
+            IsIdentityVerified: true,
             ReasonForVisit: "Khám nội tổng quát.");
 
         await Assert.ThrowsAsync<ForbiddenException>(
@@ -679,6 +685,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
             DepartmentId: "2",
             ServiceId: "1",
             Priority: priority,
+            IsIdentityVerified: true,
             ReasonForVisit: "Đau thượng vị cấp.");
 
         await Assert.ThrowsAsync<ValidationException>(
@@ -697,6 +704,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
                     DepartmentId: "2",
                     ServiceId: "1",
                     Priority: "ELDERLY",
+                    IsIdentityVerified: true,
                     ReasonForVisit: "Khám tiêu hóa.")));
 
         await Assert.ThrowsAsync<ValidationException>(() =>
@@ -707,6 +715,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
                     DepartmentId: "2",
                     ServiceId: "1",
                     Priority: "PREGNANT",
+                    IsIdentityVerified: true,
                     ReasonForVisit: "Khám tiêu hóa.")));
     }
 
@@ -721,6 +730,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
                     PatientId: "1",
                     DepartmentId: "2",
                     ServiceId: "5",
+                    IsIdentityVerified: true,
                     ReasonForVisit: "Nội soi dạ dày.")));
 
         // Service 2 belongs to Department 3 (CARD), not Department 2 (GI)
@@ -731,6 +741,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
                     PatientId: "1",
                     DepartmentId: "2",
                     ServiceId: "2",
+                    IsIdentityVerified: true,
                     ReasonForVisit: "Khám tim mạch.")));
     }
 
@@ -741,6 +752,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
             PatientId: "1",
             DepartmentId: "2",
             ServiceId: "1",
+            IsIdentityVerified: true,
             ReasonForVisit: "Đau thượng vị sau ăn.");
 
         await _service.CreateWalkInVisitAsync(actorUserId: 5, request: request);
@@ -779,6 +791,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
             PatientId: "1",
             DepartmentId: "2",
             ServiceId: "1",
+            IsIdentityVerified: true,
             ReasonForVisit: "Bệnh nhân đến quầy xin khám vãng lai.");
 
         await Assert.ThrowsAsync<ConflictException>(
@@ -851,6 +864,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
                         PatientId: "1",
                         DepartmentId: "2",
                         ServiceCode: code,
+                        IsIdentityVerified: true,
                         ReasonForVisit: "Khám tiêu hóa kiểm tra bảng giá.")));
 
             Assert.Equal(CreateWalkInVisitService.UnpricedWalkInServiceMessage, ex.Message);
@@ -898,6 +912,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
                 PatientId: "1",
                 DepartmentId: "2",
                 ServiceCode: "EX-GI-FREE",
+                IsIdentityVerified: true,
                 ReasonForVisit: "Khám tầm soát chương trình cộng đồng."));
 
         Assert.Equal(0m, result.ServicePrice);
@@ -953,5 +968,51 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
         Assert.Null(loaded.ServicePrice);
         Assert.Equal("Chưa cập nhật", loaded.PriceFormatted);
         Assert.Equal("UNPRICED", loaded.PaymentStatus);
+        Assert.False(loaded.IsIdentityVerified);
+    }
+
+    [Fact]
+    public async Task CreateWalkInVisitAsync_OmittedIdentityVerified_ThrowsValidationException()
+    {
+        var request = new CreateWalkInVisitRequest(
+            PatientId: "1",
+            DepartmentId: "2",
+            ServiceId: "1",
+            ReasonForVisit: "Đau thượng vị sau ăn.");
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CreateWalkInVisitAsync(actorUserId: 5, request: request));
+    }
+
+    [Fact]
+    public async Task WalkInService_ClearedRolePermissionsOrMissingStaffHospitalId_FailsClosed()
+    {
+        var receptionStaff = await _db.Staff.SingleAsync(s => s.UserId == 5);
+        receptionStaff.HospitalId = null;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetWalkInCatalogAsync(actorUserId: 5));
+
+        receptionStaff.HospitalId = 1;
+
+        var sysAdminStaff = await _db.Staff.FirstOrDefaultAsync(s => s.UserId == 13);
+        if (sysAdminStaff is not null)
+        {
+            sysAdminStaff.HospitalId = null;
+        }
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.GetWalkInCatalogAsync(actorUserId: 13));
+
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        foreach (var actorId in new[] { 5L, 11L, 13L })
+        {
+            await Assert.ThrowsAsync<ForbiddenException>(() =>
+                _service.GetWalkInCatalogAsync(actorUserId: actorId));
+        }
     }
 }

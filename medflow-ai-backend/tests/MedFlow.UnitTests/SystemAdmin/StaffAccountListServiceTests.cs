@@ -30,9 +30,9 @@ public sealed class StaffAccountListServiceTests : IDisposable
 
         public DbSet<User> Users => Set<User>();
         public DbSet<Role> Roles => Set<Role>();
-        public DbSet<Permission> Permissions => throw NotUsed();
+        public DbSet<Permission> Permissions => Set<Permission>();
         public DbSet<UserRole> UserRoles => Set<UserRole>();
-        public DbSet<RolePermission> RolePermissions => throw NotUsed();
+        public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
         public DbSet<Patient> Patients => throw NotUsed();
         public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<Doctor> Doctors => throw NotUsed();
@@ -59,8 +59,6 @@ public sealed class StaffAccountListServiceTests : IDisposable
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Ignore<Permission>();
-            modelBuilder.Ignore<RolePermission>();
             modelBuilder.Ignore<Patient>();
             modelBuilder.Ignore<Doctor>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
@@ -81,7 +79,9 @@ public sealed class StaffAccountListServiceTests : IDisposable
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Role>().HasKey(r => r.Id);
+            modelBuilder.Entity<Permission>().HasKey(p => p.Id);
             modelBuilder.Entity<UserRole>().HasKey(ur => new { ur.UserId, ur.RoleId });
+            modelBuilder.Entity<RolePermission>().HasKey(rp => new { rp.RoleId, rp.PermissionId });
             modelBuilder.Entity<Staff>().HasKey(s => s.Id);
             modelBuilder.Entity<Hospital>().HasKey(h => h.Id);
             modelBuilder.Entity<Department>().HasKey(d => d.Id);
@@ -174,6 +174,18 @@ public sealed class StaffAccountListServiceTests : IDisposable
             _service.GetStaffAccountsAsync(1, new GetStaffAccountListRequest()));
     }
 
+    [Fact]
+    public async Task GetStaffAccountsAsync_WhenRolePermissionsEmpty_ReturnsForbidden()
+    {
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetStaffAccountsAsync(100, new GetStaffAccountListRequest()));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetStaffAccountsAsync(200, new GetStaffAccountListRequest()));
+    }
+
     [Theory]
     [InlineData(0, 10, null)]
     [InlineData(1, 0, null)]
@@ -202,6 +214,12 @@ public sealed class StaffAccountListServiceTests : IDisposable
             new Role { Id = 1, Code = "SYSTEM_ADMIN", Name = "Quản trị hệ thống" },
             new Role { Id = 2, Code = "HOSPITAL_ADMIN", Name = "Quản trị bệnh viện" },
             new Role { Id = 3, Code = "DOCTOR", Name = "Bác sĩ" });
+        db.Permissions.AddRange(
+            new Permission { Id = 11, Code = "HOSPITAL_CONFIG" },
+            new Permission { Id = 12, Code = "USER_MANAGE" });
+        db.RolePermissions.AddRange(
+            new RolePermission { RoleId = 1, PermissionId = 12 },
+            new RolePermission { RoleId = 2, PermissionId = 11 });
         db.Users.AddRange(
             new User { Id = 100, Email = "system@medflow.test", AccountStatus = AccountStatus.ACTIVE },
             new User { Id = 200, Email = "hospital@medflow.test", AccountStatus = AccountStatus.ACTIVE },

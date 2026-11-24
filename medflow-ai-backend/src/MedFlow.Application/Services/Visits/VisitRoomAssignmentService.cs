@@ -8,6 +8,7 @@ using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Reception;
 using MedFlow.Application.Services.Visits.Queueing;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -19,6 +20,13 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
 {
     public const string VisitRoomAssignedAction = "VISIT_EXAMINATION_ROOM_ASSIGNED";
     public const string VisitAssignPermissionCode = "VISIT_ASSIGN";
+
+    private static readonly string[] SystemAdminAllowedPermissions =
+    [
+        PermissionCodes.VisitAssign,
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.UserManage,
+    ];
 
     private static readonly HashSet<string> ActiveConsultationStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -298,7 +306,7 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
 
         var graceMinutes = effectiveHospitalId.HasValue
             ? (await QueueOrderingPolicyLoader.LoadAsync(_db, effectiveHospitalId.Value, nowUtc, ct)).ForServicePoint(servicePoint?.Id).GraceMinutes
-            : Queueing.QueuePolicyKeys.DefaultGraceMinutes;
+            : QueuePolicyKeys.DefaultGraceMinutes;
 
         var queueEntry = await UpsertExaminationQueueEntryAsync(
             visit,
@@ -679,42 +687,48 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
             .ToListAsync(ct);
 
         var isSystemAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase));
         var isHospitalAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, "HOSPITAL_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase));
         var isReception = actorRoleCodes.Any(c =>
-            string.Equals(c, "RECEPTION", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.Reception, StringComparison.OrdinalIgnoreCase));
 
         if (!isSystemAdmin && !isHospitalAdmin && !isReception)
         {
             throw new ForbiddenException("Người dùng không có quyền phân phòng khám cho lượt khám.");
         }
 
-        if (!isSystemAdmin && actorRoleIds.Count > 0)
-        {
-            var rolePermissionIds = await _db.RolePermissions
+        var rolePermissionIds = actorRoleIds.Count > 0
+            ? await _db.RolePermissions
                 .AsNoTracking()
                 .Where(rp => actorRoleIds.Contains(rp.RoleId))
                 .Select(rp => rp.PermissionId)
-                .ToListAsync(ct);
+                .Distinct()
+                .ToListAsync(ct)
+            : [];
 
-            if (rolePermissionIds.Count > 0)
-            {
-                var permissionCodes = await _db.Permissions
-                    .AsNoTracking()
-                    .Where(p => rolePermissionIds.Contains(p.Id))
-                    .Select(p => p.Code)
-                    .ToListAsync(ct);
+        if (rolePermissionIds.Count == 0)
+        {
+            throw new ForbiddenException(
+                "Vai trò hiện tại chưa được cấp quyền phân công lượt khám (VISIT_ASSIGN).");
+        }
 
-                var hasVisitAssignPermission = permissionCodes.Any(c =>
-                    string.Equals(c, VisitAssignPermissionCode, StringComparison.OrdinalIgnoreCase));
+        var permissionCodes = await _db.Permissions
+            .AsNoTracking()
+            .Where(p => rolePermissionIds.Contains(p.Id))
+            .Select(p => p.Code)
+            .ToListAsync(ct);
 
-                if (!hasVisitAssignPermission)
-                {
-                    throw new ForbiddenException(
-                        "Vai trò hiện tại chưa được cấp quyền phân công lượt khám (VISIT_ASSIGN).");
-                }
-            }
+        var hasVisitAssignPermission = isSystemAdmin
+            ? permissionCodes.Any(c => SystemAdminAllowedPermissions.Any(allowed =>
+                string.Equals(c, allowed, StringComparison.OrdinalIgnoreCase)))
+            : permissionCodes.Any(c =>
+                string.Equals(c, PermissionCodes.VisitAssign, StringComparison.OrdinalIgnoreCase));
+
+        if (!hasVisitAssignPermission)
+        {
+            throw new ForbiddenException(
+                "Vai trò hiện tại chưa được cấp quyền phân công lượt khám (VISIT_ASSIGN).");
         }
 
         var actorStaff = await _db.Staff

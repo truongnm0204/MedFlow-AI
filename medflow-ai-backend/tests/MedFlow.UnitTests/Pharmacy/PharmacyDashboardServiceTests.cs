@@ -900,11 +900,8 @@ public sealed class PharmacyDashboardServiceTests : IDisposable
         _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions);
         await _dbContext.SaveChangesAsync();
 
-        var result = await _service.GetDashboardAsync(9, new GetPharmacyDashboardRequest());
-
-        Assert.Contains("MEDICINE_DISPENSE", result.PharmacistProfile.Permissions);
-        Assert.Contains("PAYMENT_VIEW", result.PharmacistProfile.Permissions);
-        Assert.Equal(4, result.QuickActions.Count);
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetDashboardAsync(9, new GetPharmacyDashboardRequest()));
     }
 
     [Fact]
@@ -918,5 +915,81 @@ public sealed class PharmacyDashboardServiceTests : IDisposable
 
         var singleAction = Assert.Single(result.QuickActions);
         Assert.Equal("search-prescription", singleAction.Id);
+        Assert.NotEmpty(result.PrescriptionQueue);
+        Assert.Empty(result.FefoBatchAlerts);
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_PaymentViewOnly_HidesPrescriptionQueueStatsAndFefoBatchAlerts()
+    {
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions.Where(rp => rp.RoleId == 5));
+        _dbContext.RolePermissions.Add(new RolePermission { RoleId = 5, PermissionId = 2 }); // PAYMENT_VIEW
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _service.GetDashboardAsync(9, new GetPharmacyDashboardRequest());
+
+        Assert.Empty(result.PrescriptionQueue);
+        Assert.Empty(result.FefoBatchAlerts);
+        Assert.Empty(result.QuickActions);
+        Assert.Equal(0, result.Stats.PendingPrescriptions);
+        Assert.Equal(0, result.Stats.PreparingCount);
+        Assert.Equal(0, result.Stats.ReadyToDispense);
+        Assert.Equal(0, result.Stats.DispensedToday);
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_UnrelatedPermissionOnly_ThrowsForbiddenException()
+    {
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions.Where(rp => rp.RoleId == 5));
+        _dbContext.RolePermissions.Add(new RolePermission { RoleId = 5, PermissionId = 4 }); // HOSPITAL_CONFIG
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetDashboardAsync(9, new GetPharmacyDashboardRequest()));
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_HealthyBatchesOnly_DoesNotSynthesizeFakeLowStockPadding()
+    {
+        _dbContext.MedicineBatches.RemoveRange(_dbContext.MedicineBatches.Where(b => b.Id != 20));
+        _dbContext.MedicineBatches.AddRange(
+            new MedicineBatch
+            {
+                Id = 901,
+                MedicineId = 1,
+                BatchNumber = "LOT-HEALTHY-170",
+                ExpiryDate = new DateOnly(2028, 12, 31),
+                QuantityOnHand = 170m,
+                IsBlocked = false,
+            },
+            new MedicineBatch
+            {
+                Id = 902,
+                MedicineId = 2,
+                BatchNumber = "LOT-HEALTHY-250",
+                ExpiryDate = new DateOnly(2028, 12, 31),
+                QuantityOnHand = 250m,
+                IsBlocked = false,
+            });
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _service.GetDashboardAsync(9, new GetPharmacyDashboardRequest());
+
+        Assert.Empty(result.FefoBatchAlerts);
+    }
+
+    [Fact]
+    public async Task GetDashboardAsync_ShiftLabel_ReflectsHospitalLocalShift()
+    {
+        // FixedNowUtc = 09:30 UTC -> 16:30 Vietnam time -> Afternoon shift
+        var afternoonResult = await _service.GetDashboardAsync(9, new GetPharmacyDashboardRequest());
+        Assert.Equal("Ca chiều 13:30–16:30", afternoonResult.ShiftLabel);
+
+        // 01:30 UTC -> 08:30 Vietnam time -> Morning shift
+        var morningService = new PharmacyDashboardService(
+            _dbContext,
+            new FixedTimeProvider(new DateTimeOffset(2026, 10, 23, 1, 30, 0, TimeSpan.Zero)));
+        var morningResult = await morningService.GetDashboardAsync(9, new GetPharmacyDashboardRequest());
+        Assert.Equal("Ca sáng 07:30–11:30", morningResult.ShiftLabel);
     }
 }

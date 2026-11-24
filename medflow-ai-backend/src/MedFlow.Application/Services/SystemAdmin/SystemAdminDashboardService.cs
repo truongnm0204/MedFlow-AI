@@ -1,6 +1,8 @@
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.SystemAdmin;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -10,14 +12,13 @@ namespace MedFlow.Application.Services.SystemAdmin;
 
 public sealed class SystemAdminDashboardService : ISystemAdminDashboardService
 {
-    private const string SystemAdminRoleCode = "SYSTEM_ADMIN";
     private const string DefaultSystemHospitalName = "Toàn hệ thống MedFlow";
 
-    private static readonly string[] FallbackSystemAdminPermissions =
+    private static readonly string[] AllowedDashboardPermissions =
     [
-        "AUDIT_READ",
-        "HOSPITAL_CONFIG",
-        "USER_MANAGE",
+        PermissionCodes.AuditRead,
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.UserManage,
     ];
 
     private readonly IApplicationDbContext _db;
@@ -48,7 +49,7 @@ public sealed class SystemAdminDashboardService : ISystemAdminDashboardService
             throw new ValidationException("Mã bệnh viện lọc không hợp lệ.");
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
 
         var actorUser = await _db.Users
             .AsNoTracking()
@@ -89,7 +90,7 @@ public sealed class SystemAdminDashboardService : ISystemAdminDashboardService
             .OrderBy(c => c, StringComparer.Ordinal)
             .ToList();
 
-        if (!actorRoleCodes.Any(c => string.Equals(c, SystemAdminRoleCode, StringComparison.OrdinalIgnoreCase)))
+        if (!actorRoleCodes.Any(c => string.Equals(c, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase)))
         {
             throw new ForbiddenException("Người dùng không có quyền truy cập bảng điều khiển Quản trị hệ thống.");
         }
@@ -131,10 +132,15 @@ public sealed class SystemAdminDashboardService : ISystemAdminDashboardService
             .OrderBy(code => code, StringComparer.Ordinal)
             .ToList();
 
-        if (actorPermissionCodes.Count == 0 && allRolePermissions.Count == 0)
+        var permissionSet = new HashSet<string>(actorPermissionCodes, StringComparer.OrdinalIgnoreCase);
+        if (!AllowedDashboardPermissions.Any(permissionSet.Contains))
         {
-            actorPermissionCodes = [.. FallbackSystemAdminPermissions];
+            throw new ForbiddenException("Tài khoản quản trị hệ thống chưa được cấp quyền truy cập bảng điều khiển.");
         }
+
+        var hasUserManage = permissionSet.Contains(PermissionCodes.UserManage);
+        var hasHospitalConfig = permissionSet.Contains(PermissionCodes.HospitalConfig);
+        var hasAuditRead = permissionSet.Contains(PermissionCodes.AuditRead);
 
         var effectiveHospitalId = request.HospitalId ?? actorStaff?.HospitalId;
         var hospitalName = effectiveHospitalId.HasValue
@@ -155,48 +161,98 @@ public sealed class SystemAdminDashboardService : ISystemAdminDashboardService
             Roles: actorRoleCodes,
             Permissions: actorPermissionCodes);
 
-        var allUsers = await _db.Users
-            .AsNoTracking()
-            .ToListAsync(ct);
+        var allUsers = (hasUserManage || hasAuditRead)
+            ? await _db.Users.AsNoTracking().ToListAsync(ct)
+            : [];
 
         var usersById = allUsers.ToDictionary(u => u.Id);
 
-        var totalUsers = allUsers.Count;
-        var activeUsers = allUsers.Count(u => IsUserActive(u, nowUtc));
-        var lockedOrInactiveUsers = totalUsers - activeUsers;
+        var totalUsers = 0;
+        var activeUsers = 0;
+        var lockedOrInactiveUsers = 0;
+        var totalStaffAccounts = 0;
+        var activeStaffAccounts = 0;
+        var inactiveOrLockedStaffAccounts = 0;
+        var totalRoles = 0;
+        var totalPermissions = 0;
 
-        var staffQuery = _db.Staff.AsNoTracking();
-        if (request.HospitalId.HasValue)
+        if (hasUserManage)
         {
-            staffQuery = staffQuery.Where(s => s.HospitalId == request.HospitalId.Value);
+            totalUsers = allUsers.Count;
+            activeUsers = allUsers.Count(u => IsUserActive(u, nowUtc));
+            lockedOrInactiveUsers = totalUsers - activeUsers;
+
+            var staffQuery = _db.Staff.AsNoTracking();
+            if (request.HospitalId.HasValue)
+            {
+                staffQuery = staffQuery.Where(s => s.HospitalId == request.HospitalId.Value);
+            }
+
+            var scopedStaff = await staffQuery.ToListAsync(ct);
+            totalStaffAccounts = scopedStaff.Count;
+            activeStaffAccounts = scopedStaff.Count(s =>
+                string.Equals(s.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase) &&
+                (!s.UserId.HasValue || (usersById.TryGetValue(s.UserId.Value, out var linkedUser) && IsUserActive(linkedUser, nowUtc))));
+            inactiveOrLockedStaffAccounts = totalStaffAccounts - activeStaffAccounts;
+
+            totalRoles = allRoles.Count;
+            totalPermissions = allPermissions.Count;
         }
 
-        var scopedStaff = await staffQuery.ToListAsync(ct);
-        var totalStaffAccounts = scopedStaff.Count;
-        var activeStaffAccounts = scopedStaff.Count(s =>
-            string.Equals(s.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase) &&
-            (!s.UserId.HasValue || (usersById.TryGetValue(s.UserId.Value, out var linkedUser) && IsUserActive(linkedUser, nowUtc))));
-        var inactiveOrLockedStaffAccounts = totalStaffAccounts - activeStaffAccounts;
+        var activeDepartments = 0;
+        var totalHospitals = 0;
 
-        var departmentsQuery = _db.Departments.AsNoTracking();
-        if (request.HospitalId.HasValue)
+        if (hasHospitalConfig)
         {
-            departmentsQuery = departmentsQuery.Where(d => d.HospitalId == request.HospitalId.Value);
+            var departmentsQuery = _db.Departments.AsNoTracking();
+            if (request.HospitalId.HasValue)
+            {
+                departmentsQuery = departmentsQuery.Where(d => d.HospitalId == request.HospitalId.Value);
+            }
+
+            var scopedDepartments = await departmentsQuery.ToListAsync(ct);
+            activeDepartments = scopedDepartments.Count(d => d.IsActive == true);
+            totalHospitals = allHospitals.Count(h => h.IsActive != false);
         }
 
-        var scopedDepartments = await departmentsQuery.ToListAsync(ct);
-        var activeDepartments = scopedDepartments.Count(d => d.IsActive == true);
-        var totalHospitals = allHospitals.Count(h => h.IsActive != false);
+        var totalAuditLogs = 0;
+        var recentAuditCount24h = 0;
+        IReadOnlyList<SystemAdminAuditLogItemDto> recentAuditLogs = [];
 
-        var auditQuery = _db.AuditLogs.AsNoTracking();
-        if (request.HospitalId.HasValue)
+        if (hasAuditRead)
         {
-            auditQuery = auditQuery.Where(a => a.HospitalId == request.HospitalId.Value);
-        }
+            var auditQuery = _db.AuditLogs.AsNoTracking();
+            if (request.HospitalId.HasValue)
+            {
+                auditQuery = auditQuery.Where(a => a.HospitalId == request.HospitalId.Value);
+            }
 
-        var since24hUtc = nowUtc.AddHours(-24);
-        var totalAuditLogs = await auditQuery.CountAsync(ct);
-        var recentAuditCount24h = await auditQuery.CountAsync(a => a.OccurredAt >= since24hUtc, ct);
+            var since24hUtc = nowUtc.AddHours(-24);
+            totalAuditLogs = await auditQuery.CountAsync(ct);
+            recentAuditCount24h = await auditQuery.CountAsync(a => a.OccurredAt >= since24hUtc, ct);
+
+            var recentAuditEntities = await auditQuery
+                .OrderByDescending(a => a.OccurredAt)
+                .ThenByDescending(a => a.Id)
+                .Take(request.RecentAuditLimit)
+                .ToListAsync(ct);
+
+            recentAuditLogs = recentAuditEntities
+                .Select(a => new SystemAdminAuditLogItemDto(
+                    Id: a.Id,
+                    ActorUserId: a.ActorUserId,
+                    ActorEmail: a.ActorUserId.HasValue && usersById.TryGetValue(a.ActorUserId.Value, out var actor)
+                        ? actor.Email
+                        : null,
+                    HospitalId: a.HospitalId,
+                    Action: a.Action,
+                    EntityType: a.EntityType,
+                    EntityId: a.EntityId,
+                    Reason: a.Reason,
+                    IpAddress: a.IpAddress?.ToString(),
+                    OccurredAt: a.OccurredAt))
+                .ToList();
+        }
 
         var metrics = new SystemAdminMetricsDto(
             TotalUsers: totalUsers,
@@ -205,43 +261,23 @@ public sealed class SystemAdminDashboardService : ISystemAdminDashboardService
             TotalStaffAccounts: totalStaffAccounts,
             ActiveStaffAccounts: activeStaffAccounts,
             InactiveOrLockedStaffAccounts: inactiveOrLockedStaffAccounts,
-            TotalRoles: allRoles.Count,
-            TotalPermissions: allPermissions.Count,
+            TotalRoles: totalRoles,
+            TotalPermissions: totalPermissions,
             TotalHospitals: totalHospitals,
             ActiveDepartments: activeDepartments,
             TotalAuditLogs: totalAuditLogs,
             RecentAuditCount24h: recentAuditCount24h);
 
         var allowedModules = BuildAllowedModules(actorPermissionCodes, metrics);
-        var roleSummaries = BuildRoleSummaries(
-            allRoles,
-            allUserRoles,
-            usersById,
-            allRolePermissions,
-            permissionsById,
-            nowUtc);
-
-        var recentAuditEntities = await auditQuery
-            .OrderByDescending(a => a.OccurredAt)
-            .ThenByDescending(a => a.Id)
-            .Take(request.RecentAuditLimit)
-            .ToListAsync(ct);
-
-        var recentAuditLogs = recentAuditEntities
-            .Select(a => new SystemAdminAuditLogItemDto(
-                Id: a.Id,
-                ActorUserId: a.ActorUserId,
-                ActorEmail: a.ActorUserId.HasValue && usersById.TryGetValue(a.ActorUserId.Value, out var actor)
-                    ? actor.Email
-                    : null,
-                HospitalId: a.HospitalId,
-                Action: a.Action,
-                EntityType: a.EntityType,
-                EntityId: a.EntityId,
-                Reason: a.Reason,
-                IpAddress: a.IpAddress?.ToString(),
-                OccurredAt: a.OccurredAt))
-            .ToList();
+        IReadOnlyList<SystemAdminRoleSummaryDto> roleSummaries = hasUserManage
+            ? BuildRoleSummaries(
+                allRoles,
+                allUserRoles,
+                usersById,
+                allRolePermissions,
+                permissionsById,
+                nowUtc)
+            : [];
 
         return new SystemAdminDashboardResponseDto(
             AdminProfile: adminProfile,
@@ -269,35 +305,35 @@ public sealed class SystemAdminDashboardService : ISystemAdminDashboardService
                 Title: "Quản lý tài khoản nhân sự",
                 Description: "Tạo mới, cập nhật, khóa/mở khóa tài khoản nhân viên y tế và vận hành.",
                 Route: "/admin/staff",
-                RequiredPermission: "USER_MANAGE",
+                RequiredPermission: PermissionCodes.UserManage,
                 BadgeCount: metrics.TotalStaffAccounts),
             new(
                 ModuleCode: "ROLES_PERMISSIONS",
                 Title: "Vai trò & Phân quyền (RBAC)",
                 Description: "Cấu hình danh mục vai trò và gán quyền truy cập chức năng hệ thống.",
                 Route: "/admin/roles",
-                RequiredPermission: "USER_MANAGE",
+                RequiredPermission: PermissionCodes.UserManage,
                 BadgeCount: metrics.TotalRoles),
             new(
                 ModuleCode: "HOSPITAL_DEPARTMENTS",
                 Title: "Cấu hình Khoa phòng & Cơ sở",
                 Description: "Quản lý danh mục khoa phòng, buồng khám và thông số vận hành cơ sở.",
                 Route: "/admin/departments",
-                RequiredPermission: "HOSPITAL_CONFIG",
+                RequiredPermission: PermissionCodes.HospitalConfig,
                 BadgeCount: metrics.ActiveDepartments),
             new(
                 ModuleCode: "APPOINTMENT_POLICIES",
                 Title: "Chính sách & Tích hợp hệ thống",
                 Description: "Thiết lập quy tắc đặt lịch, hàng đợi và cấu hình tích hợp dịch vụ.",
                 Route: "/admin/reports",
-                RequiredPermission: "HOSPITAL_CONFIG",
+                RequiredPermission: PermissionCodes.HospitalConfig,
                 BadgeCount: metrics.TotalHospitals),
             new(
                 ModuleCode: "AUDIT_LOGS",
                 Title: "Nhật ký kiểm toán (Audit Log)",
                 Description: "Tra cứu lịch sử truy cập, xác thực và thay đổi dữ liệu toàn hệ thống.",
                 Route: "/admin/audit-logs",
-                RequiredPermission: "AUDIT_READ",
+                RequiredPermission: PermissionCodes.AuditRead,
                 BadgeCount: metrics.TotalAuditLogs),
         };
 

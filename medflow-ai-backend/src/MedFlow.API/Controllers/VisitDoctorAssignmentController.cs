@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -9,7 +10,7 @@ namespace MedFlow.API.Controllers;
 [ApiController]
 [Route("api/v1/visits")]
 [Route("api/v1/reception/visits")]
-[Authorize(Roles = "RECEPTION,HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+[Authorize(Roles = $"{RoleNames.Reception},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class VisitDoctorAssignmentController : ControllerBase
 {
     private readonly IVisitDoctorAssignmentService _visitDoctorAssignmentService;

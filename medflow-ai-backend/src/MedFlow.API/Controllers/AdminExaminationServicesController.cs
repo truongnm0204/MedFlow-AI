@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Services.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -10,7 +11,7 @@ namespace MedFlow.API.Controllers;
 [ApiController]
 [Route("api/v1/admin/examination-services")]
 [Route("api/v1/admin/services")]
-[Authorize(Roles = "HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+[Authorize(Roles = $"{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class AdminExaminationServicesController : ControllerBase
 {
     private readonly IExaminationServiceAdminService _service;
@@ -32,7 +33,7 @@ public sealed class AdminExaminationServicesController : ControllerBase
     {
         try
         {
-            var result = await _service.GetExaminationServiceListAsync(request, ct);
+            var result = await _service.GetExaminationServiceListAsync(RequireUserId(), request, ct);
             return Ok(result);
         }
         catch (ArgumentException ex)
@@ -60,7 +61,7 @@ public sealed class AdminExaminationServicesController : ControllerBase
     {
         try
         {
-            var result = await _service.CreateExaminationServiceAsync(request, ct);
+            var result = await _service.CreateExaminationServiceAsync(RequireUserId(), request, ct);
             return StatusCode(StatusCodes.Status201Created, result);
         }
         catch (KeyNotFoundException ex)
@@ -107,7 +108,7 @@ public sealed class AdminExaminationServicesController : ControllerBase
     {
         try
         {
-            var result = await _service.UpdateExaminationServiceAsync(id, request, ct);
+            var result = await _service.UpdateExaminationServiceAsync(RequireUserId(), id, request, ct);
             return Ok(result);
         }
         catch (KeyNotFoundException ex)
@@ -156,7 +157,7 @@ public sealed class AdminExaminationServicesController : ControllerBase
         CancellationToken ct = default)
     {
         var result = await _service.DeactivateExaminationServiceAsync(
-            GetUserId(),
+            RequireUserId(),
             idOrCode,
             request ?? new DeactivateExaminationServiceRequest(),
             GetIp(),
@@ -180,12 +181,23 @@ public sealed class AdminExaminationServicesController : ControllerBase
         CancellationToken ct = default)
     {
         var result = await _service.ReactivateExaminationServiceAsync(
-            GetUserId(),
+            RequireUserId(),
             idOrCode,
             request,
             GetIp(),
             ct);
         return Ok(result);
+    }
+
+    private long RequireUserId()
+    {
+        var userId = GetUserId();
+        if (!userId.HasValue || userId.Value <= 0)
+        {
+            throw new UnauthorizedAccessException("Token không hợp lệ.");
+        }
+
+        return userId.Value;
     }
 
     private long? GetUserId()
@@ -205,4 +217,3 @@ public sealed class AdminExaminationServicesController : ControllerBase
         HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
         ?? HttpContext.Connection.RemoteIpAddress?.ToString();
 }
-

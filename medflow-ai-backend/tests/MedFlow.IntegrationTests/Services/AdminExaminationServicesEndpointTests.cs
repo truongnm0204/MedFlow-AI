@@ -65,7 +65,7 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationServiceList_InvalidPage_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/examination-services?page=0&pageSize=10");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -78,7 +78,7 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationServiceList_InvalidPageSize_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/examination-services?page=1&pageSize=105");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -91,7 +91,7 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationServiceList_HospitalAdminRole_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/examination-services?page=1&pageSize=10");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -115,7 +115,7 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationServiceList_AliasRoute_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/services?page=1&pageSize=10");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -177,7 +177,7 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateExaminationService_EmptyServiceCode_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new CreateExaminationServiceRequest(ServiceCode: "", Name: "Khám bệnh mới");
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-services");
@@ -192,7 +192,7 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateExaminationService_HospitalAdminRole_ReturnsCreated_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new CreateExaminationServiceRequest(
             ServiceCode: $"EX-INT-{Guid.NewGuid():N}"[..12].ToUpperInvariant(),
             Name: "Khám Tích Hợp Tự Động",
@@ -240,7 +240,7 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateExaminationService_AliasRoute_ReturnsCreated_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new CreateExaminationServiceRequest(
             ServiceCode: $"EX-ALS-{Guid.NewGuid():N}"[..12].ToUpperInvariant(),
             Name: "Khám Tích Hợp Alias Route",
@@ -328,7 +328,7 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     [InlineData(-5)]
     public async Task UpdateExaminationService_InvalidId_Returns400(long id)
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new UpdateExaminationServiceRequest(Name: "Khám bệnh cập nhật");
 
         using var request = new HttpRequestMessage(HttpMethod.Put, $"/api/v1/admin/examination-services/{id}");
@@ -343,7 +343,7 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationService_EmptyName_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var payload = new UpdateExaminationServiceRequest(Name: "");
 
         using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-services/1");
@@ -358,7 +358,7 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationService_HospitalAdminRole_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         // Create a unique test service first so seeded services are not affected
         var createPayload = new CreateExaminationServiceRequest(
@@ -423,7 +423,7 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationService_AliasRoute_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         var createPayload = new CreateExaminationServiceRequest(
             ServiceCode: $"EX-ALS-{Guid.NewGuid():N}"[..12].ToUpperInvariant(),
@@ -543,4 +543,3 @@ public sealed class AdminExaminationServicesEndpointTests : AuthTestBase
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 }
-

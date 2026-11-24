@@ -1599,5 +1599,12 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
             _service.UpdateDiagnosticResultAsync(7, "DIA-202610-0008", changed));
 
         Assert.Equal(versionCountBefore, await _dbContext.DiagnosticResultVersions.CountAsync(v => v.DiagnosticResultId == 1));
+
+        // Genuine DIAGNOSTIC_STAFF user (7) with 0 RolePermissions across table -> fail-closed 403
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions.ToList());
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetOrdersForResultEntryAsync(7));
     }
 }

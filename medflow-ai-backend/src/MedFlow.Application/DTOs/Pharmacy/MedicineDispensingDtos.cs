@@ -72,10 +72,9 @@ public sealed record ConfirmDispenseRequest(
     string? Relationship = null,
     string? ReceiverIdentityCard = null,
     string? ReceiverPhone = null,
-    bool IsIdentityVerified = true,
-    bool ChecksConfirmed = true,
+    bool IsIdentityVerified = false,
+    bool ChecksConfirmed = false,
     IReadOnlyList<ConfirmDispenseItemRequest>? Items = null,
     string? IdempotencyKey = null,
     string? Notes = null
 );
-

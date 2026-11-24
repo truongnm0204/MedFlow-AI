@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.SystemAdmin;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -9,7 +10,7 @@ namespace MedFlow.API.Controllers;
 [ApiController]
 [Route("api/v1/admin/staff-accounts")]
 [Route("api/v1/system-admin/staff-accounts")]
-[Authorize(Roles = "SYSTEM_ADMIN")]
+[Authorize(Roles = RoleNames.SystemAdmin)]
 public sealed class AdminStaffAccountsController : ControllerBase
 {
     private readonly IStaffAccountService _staffAccountService;

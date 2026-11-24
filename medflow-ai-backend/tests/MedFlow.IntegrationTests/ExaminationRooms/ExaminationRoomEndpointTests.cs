@@ -69,7 +69,7 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationRoomList_InvalidPage_HospitalAdmin_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/examination-rooms?page=0&pageSize=10");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -82,7 +82,7 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationRoomList_InvalidPageSize_HospitalAdmin_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/examination-rooms?page=1&pageSize=105");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -95,7 +95,7 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationRoomList_HospitalAdminRole_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/examination-rooms?page=1&pageSize=10");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -120,7 +120,7 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
     [Fact]
     public async Task GetExaminationRoomList_AliasRoute_ReturnsSuccess_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/rooms?page=1&pageSize=10");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -184,7 +184,7 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateExaminationRoom_EmptyRoomCode_HospitalAdmin_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-rooms");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -198,7 +198,7 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateExaminationRoom_EmptyName_HospitalAdmin_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/examination-rooms");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -221,7 +221,7 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
     [Fact]
     public async Task CreateExaminationRoom_HospitalAdmin_ReturnsCreated_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var uniqueCode = $"BK-{Guid.NewGuid():N}"[..10].ToUpperInvariant();
         var payload = new CreateExaminationRoomRequest(
             RoomCode: uniqueCode,
@@ -310,7 +310,7 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationRoom_InvalidId_HospitalAdmin_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-rooms/0");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -324,7 +324,7 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationRoom_EmptyName_HospitalAdmin_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-rooms/1");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -338,7 +338,7 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationRoom_EmptyRoomCode_HospitalAdmin_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-rooms/1");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -352,7 +352,7 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationRoom_InvalidCapacity_HospitalAdmin_Returns400()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
 
         using var request = new HttpRequestMessage(HttpMethod.Put, "/api/v1/admin/examination-rooms/1");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -366,7 +366,7 @@ public sealed class ExaminationRoomEndpointTests : AuthTestBase
     [Fact]
     public async Task UpdateExaminationRoom_HospitalAdmin_ReturnsOk_WhenDatabaseAvailable()
     {
-        var token = GenerateToken(1, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
+        var token = GenerateToken(11, "hospital_admin01@medflow.test", "HOSPITAL_ADMIN");
         var uniqueCode = $"BK-{Guid.NewGuid():N}"[..10].ToUpperInvariant();
         long? createdRoomId = null;
 

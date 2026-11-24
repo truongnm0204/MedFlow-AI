@@ -5,14 +5,17 @@ namespace MedFlow.Application.Interfaces.Services;
 public interface IExaminationRoomService
 {
     Task<ExaminationRoomListResponseDto> GetExaminationRoomListAsync(
+        long actorUserId,
         GetExaminationRoomListRequest request,
         CancellationToken ct = default);
 
     Task<ExaminationRoomItemDto> CreateExaminationRoomAsync(
+        long actorUserId,
         CreateExaminationRoomRequest request,
         CancellationToken ct = default);
 
     Task<ExaminationRoomItemDto> UpdateExaminationRoomAsync(
+        long actorUserId,
         long id,
         UpdateExaminationRoomRequest request,
         CancellationToken ct = default);

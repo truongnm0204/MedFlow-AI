@@ -254,13 +254,15 @@ public sealed class QueueStatusServiceTests : IDisposable
         _db.Permissions.AddRange(
             new Permission { Id = 5, Code = "QUEUE_MANAGE" },
             new Permission { Id = 6, Code = "MEDICAL_RECORD_WRITE" },
+            new Permission { Id = 11, Code = "HOSPITAL_CONFIG" },
             new Permission { Id = 99, Code = "OTHER_PERM" });
 
         _db.RolePermissions.AddRange(
             new RolePermission { RoleId = 2, PermissionId = 5 },
             new RolePermission { RoleId = 3, PermissionId = 6 },
             new RolePermission { RoleId = 4, PermissionId = 5 },
-            new RolePermission { RoleId = 6, PermissionId = 5 });
+            new RolePermission { RoleId = 6, PermissionId = 5 },
+            new RolePermission { RoleId = 7, PermissionId = 11 });
 
         _db.Users.AddRange(
             new User { Id = 1, Email = "patient@medflow.test", AccountStatus = AccountStatus.ACTIVE },
@@ -1217,5 +1219,30 @@ public sealed class QueueStatusServiceTests : IDisposable
         var sysRes = await _service.CancelQueueEntryAsync(11, "20", req);
         Assert.Equal("CANCELLED", sysRes.CurrentStatus);
         Assert.Equal(2, sysRes.StateVersion);
+    }
+
+    [Fact]
+    public async Task QueueStatusService_ClearedRolePermissionsOrMissingStaffHospitalId_FailsClosedWithForbidden()
+    {
+        var req = new CancelQueueEntryRequest(
+            Reason: "Kiểm tra phân quyền fail-closed",
+            ExpectedStateVersion: 1);
+
+        var staff = await _db.Staff.SingleAsync(s => s.UserId == 5);
+        staff.HospitalId = null;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.CancelQueueEntryAsync(5, "10", req));
+
+        staff.HospitalId = 1;
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        foreach (var actorId in new[] { 5L, 3L, 11L })
+        {
+            await Assert.ThrowsAsync<ForbiddenException>(() =>
+                _service.CancelQueueEntryAsync(actorId, "10", req));
+        }
     }
 }

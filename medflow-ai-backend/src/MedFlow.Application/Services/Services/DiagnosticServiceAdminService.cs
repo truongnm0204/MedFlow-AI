@@ -1,6 +1,8 @@
 using System.Globalization;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -10,7 +12,6 @@ namespace MedFlow.Application.Services.Services;
 
 public sealed partial class DiagnosticServiceAdminService : IDiagnosticServiceAdminService
 {
-    private const string HospitalAdminRoleCode = "HOSPITAL_ADMIN";
     private const string DiagnosticServiceType = "DIAGNOSTIC";
 
     private readonly IApplicationDbContext _db;
@@ -74,7 +75,7 @@ public sealed partial class DiagnosticServiceAdminService : IDiagnosticServiceAd
             }
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         var (hospital, hospitalId) = await EnsureHospitalAdminAccessAsync(actorUserId, nowUtc, ct);
 
         var scoped = _db.Services
@@ -193,9 +194,9 @@ public sealed partial class DiagnosticServiceAdminService : IDiagnosticServiceAd
                 .Where(r => roomIds.Contains(r.Id))
                 .ToDictionaryAsync(r => r.Id, ct);
 
-        var now = DateTime.SpecifyKind(nowUtc, DateTimeKind.Unspecified);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
 
-        var items = entities.Select(s => MapItem(s, diagPoints, roomsById, now)).ToList();
+        var items = entities.Select(s => MapItem(s, diagPoints, roomsById, nowLocal)).ToList();
 
         return new DiagnosticServiceAdminListResponseDto(
             HospitalId: hospitalId,
@@ -319,9 +320,20 @@ public sealed partial class DiagnosticServiceAdminService : IDiagnosticServiceAd
             .OrderBy(c => c, StringComparer.Ordinal)
             .ToList();
 
-        if (!actorRoleCodes.Any(c => string.Equals(c, HospitalAdminRoleCode, StringComparison.OrdinalIgnoreCase)))
+        if (!actorRoleCodes.Any(c => string.Equals(c, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase)))
         {
             throw new ForbiddenException("Người dùng không có quyền xem danh mục dịch vụ cận lâm sàng.");
+        }
+
+        var hasHospitalConfigPerm = actorRoleIds.Count > 0 && await (
+            from rp in _db.RolePermissions.AsNoTracking()
+            join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
+            where actorRoleIds.Contains(rp.RoleId) && p.Code.ToUpper() == PermissionCodes.HospitalConfig
+            select rp.PermissionId).AnyAsync(ct);
+
+        if (!hasHospitalConfigPerm)
+        {
+            throw new ForbiddenException("Tài khoản quản trị bệnh viện chưa được cấp quyền cấu hình danh mục bệnh viện (HOSPITAL_CONFIG).");
         }
 
         var actorStaff = await _db.Staff

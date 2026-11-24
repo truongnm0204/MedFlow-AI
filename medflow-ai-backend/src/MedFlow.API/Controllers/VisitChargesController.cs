@@ -1,13 +1,14 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Payments;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = "PATIENT,RECEPTION,HOSPITAL_ADMIN,SYSTEM_ADMIN")]
+[Authorize(Roles = $"{RoleNames.Patient},{RoleNames.Reception},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class VisitChargesController : ControllerBase
 {
     private readonly IVisitChargesService _service;

@@ -2,18 +2,21 @@ using System.Text.Json;
 using MedFlow.Application.DTOs.Patients;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Options;
 using MedFlow.Application.Services.Auth;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Application.Services.Payments;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MedFlow.Application.Services.IdentityClaims;
 
 public sealed class PatientIdentityClaimService : IPatientIdentityClaimService
 {
-    public const string PermissionCode = "PATIENT_IDENTITY_VERIFY";
+    public const string PermissionCode = PermissionCodes.PatientIdentityVerify;
     public const string Pending = "PENDING";
     public const string Approved = "APPROVED";
     public const string Rejected = "REJECTED";
@@ -32,24 +35,26 @@ public sealed class PatientIdentityClaimService : IPatientIdentityClaimService
     public const string OtpRequiredMessage = "Vui lòng xác thực OTP trước khi gửi yêu cầu.";
     public const string NoteRequiredMessage = "Vui lòng nhập lý do từ chối (tối thiểu 5 ký tự).";
 
-    private static readonly TimeSpan ClaimTtl = TimeSpan.FromDays(7);
     private static readonly string[] ReviewStatuses = [Pending, NeedsReconciliation];
 
     private readonly IApplicationDbContext _db;
     private readonly IPatientIdentityClaimStore _store;
     private readonly AuthOtpService _otp;
     private readonly TimeProvider _time;
+    private readonly AuthSecurityOptions _authOptions;
 
     public PatientIdentityClaimService(
         IApplicationDbContext db,
         IPatientIdentityClaimStore store,
         AuthOtpService otp,
-        TimeProvider time)
+        TimeProvider time,
+        IOptions<AuthSecurityOptions>? authOptions = null)
     {
         _db = db;
         _store = store;
         _otp = otp;
         _time = time;
+        _authOptions = authOptions?.Value ?? new AuthSecurityOptions();
     }
 
     public async Task<SendIdentityClaimOtpResponse> SendOtpAsync(
@@ -103,7 +108,7 @@ public sealed class PatientIdentityClaimService : IPatientIdentityClaimService
             HospitalId = request.HospitalId,
             Status = Pending,
             CreatedAt = nowUtc,
-            ExpiresAt = nowUtc.Add(ClaimTtl),
+            ExpiresAt = nowUtc.Add(TimeSpan.FromDays(_authOptions.IdentityClaimTtlDays)),
         };
 
         _store.Add(claim);
@@ -304,32 +309,34 @@ public sealed class PatientIdentityClaimService : IPatientIdentityClaimService
     {
         await PatientSelfResolver.LoadActiveAsync(_db, actorUserId, ct);
         var codes = await LoadRoleCodesAsync(actorUserId, ct);
-        if (!codes.Contains("PATIENT"))
+        if (!codes.Contains(RoleNames.Patient))
             throw new ForbiddenException(ForbiddenMessage);
     }
 
     private async Task<StaffAuthority> RequireStaffAuthorityAsync(long actorUserId, CancellationToken ct)
     {
         var codes = await LoadRoleCodesAsync(actorUserId, ct);
-        var isSystemAdmin = codes.Contains("SYSTEM_ADMIN");
+        var isSystemAdmin = codes.Contains(RoleNames.SystemAdmin);
         var staff = await _db.Staff.AsNoTracking().FirstOrDefaultAsync(s => s.UserId == actorUserId, ct);
+
+        var roleIds = await _db.UserRoles.AsNoTracking()
+            .Where(ur => ur.UserId == actorUserId)
+            .Select(ur => ur.RoleId)
+            .ToListAsync(ct);
+
+        var hasPermission = await (
+            from rp in _db.RolePermissions.AsNoTracking()
+            join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
+            where roleIds.Contains(rp.RoleId) &&
+                  (p.Code == PermissionCodes.PatientIdentityVerify ||
+                   (isSystemAdmin && (p.Code == PermissionCodes.UserManage || p.Code == PermissionCodes.HospitalConfig)))
+            select rp).AnyAsync(ct);
+
+        if (!hasPermission)
+            throw new ForbiddenException(ForbiddenMessage);
 
         if (!isSystemAdmin)
         {
-            var roleIds = await _db.UserRoles.AsNoTracking()
-                .Where(ur => ur.UserId == actorUserId)
-                .Select(ur => ur.RoleId)
-                .ToListAsync(ct);
-
-            var hasPermission = await (
-                from rp in _db.RolePermissions.AsNoTracking()
-                join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
-                where roleIds.Contains(rp.RoleId) && p.Code == PermissionCode
-                select rp).AnyAsync(ct);
-
-            if (!hasPermission)
-                throw new ForbiddenException(ForbiddenMessage);
-
             if (staff is null ||
                 staff.HospitalId is null ||
                 !string.Equals(staff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))

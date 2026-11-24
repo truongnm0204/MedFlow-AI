@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.SystemAdmin;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -25,7 +26,7 @@ public sealed class AdminStaffController : ControllerBase
 
     /// <summary>GET /api/v1/admin/staff — Lấy danh sách tài khoản nhân sự theo phạm vi quản trị.</summary>
     [HttpGet]
-    [Authorize(Roles = "SYSTEM_ADMIN,HOSPITAL_ADMIN")]
+    [Authorize(Roles = $"{RoleNames.SystemAdmin},{RoleNames.HospitalAdmin}")]
     [ProducesResponseType<StaffAccountListResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
@@ -41,7 +42,7 @@ public sealed class AdminStaffController : ControllerBase
 
     /// <summary>PATCH /api/v1/admin/staff/{id}/deactivate — Vô hiệu hóa tài khoản nhân viên.</summary>
     [HttpPatch("{id:long}/deactivate")]
-    [Authorize(Roles = "SYSTEM_ADMIN")]
+    [Authorize(Roles = RoleNames.SystemAdmin)]
     [ProducesResponseType<DeactivateStaffAccountResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]

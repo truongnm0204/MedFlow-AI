@@ -191,7 +191,8 @@ public sealed class ReceptionPatientDetailServiceTests : IDisposable
         _db.RolePermissions.AddRange(
             new RolePermission { RoleId = 3, PermissionId = 1 },
             new RolePermission { RoleId = 3, PermissionId = 2 },
-            new RolePermission { RoleId = 6, PermissionId = 3 });
+            new RolePermission { RoleId = 6, PermissionId = 3 },
+            new RolePermission { RoleId = 7, PermissionId = 3 });
 
         // Users
         _db.Users.AddRange(
@@ -603,5 +604,26 @@ public sealed class ReceptionPatientDetailServiceTests : IDisposable
     {
         await Assert.ThrowsAsync<ConflictException>(
             () => _service.GetPatientDetailAsync(5, "PAT-INACTIVE"));
+    }
+
+    [Fact]
+    public async Task GetPatientDetailAsync_ClearedRolePermissionsOrMissingStaffHospitalId_FailsClosedWithForbidden()
+    {
+        var staff = await _db.Staff.SingleAsync(s => s.UserId == 5);
+        staff.HospitalId = null;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.GetPatientDetailAsync(5, "PAT-0010"));
+
+        staff.HospitalId = 1;
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        foreach (var actorId in new[] { 5L, 11L, 13L })
+        {
+            await Assert.ThrowsAsync<ForbiddenException>(
+                () => _service.GetPatientDetailAsync(actorId, "PAT-0010"));
+        }
     }
 }

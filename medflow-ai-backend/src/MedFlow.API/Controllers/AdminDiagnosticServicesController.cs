@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Services.Services;
+using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -9,7 +10,7 @@ namespace MedFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/admin/diagnostic-services")]
-[Authorize(Roles = "HOSPITAL_ADMIN")]
+[Authorize(Roles = RoleNames.HospitalAdmin)]
 public sealed class AdminDiagnosticServicesController : ControllerBase
 {
     private readonly IDiagnosticServiceAdminService _service;

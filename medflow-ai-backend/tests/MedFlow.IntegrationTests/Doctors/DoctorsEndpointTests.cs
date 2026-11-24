@@ -35,9 +35,16 @@ public sealed class DoctorsEndpointTests : IClassFixture<TestWebAppFactory>
         Assert.Equal(200_000m, dto.Price);
         Assert.Equal(9, dto.YearsOfExperience);
         Assert.Equal("DEMO-CCHN-001", dto.LicenseNumber);
-        Assert.Equal(3, dto.Education.Count);
+        Assert.Equal(2, dto.Education.Count);
+        Assert.DoesNotContain(dto.Education, e => e.Institution.Contains("Đại học Y Hà Nội", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(dto.Education, e => e.Badge == "CCHN: DEMO-CCHN-001");
         Assert.NotEmpty(dto.Hashtags);
-        Assert.Equal(3, dto.WeeklySchedule.Count);
+        Assert.NotNull(dto.WeeklySchedule);
+        Assert.All(dto.WeeklySchedule, day =>
+        {
+            Assert.DoesNotContain("Hội chẩn tim mạch", day.Note ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Nội soi tiêu hóa", day.Note ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     [Theory]

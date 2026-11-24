@@ -146,12 +146,14 @@ public sealed class VisitDoctorAssignmentServiceTests : IDisposable
         _db.Permissions.AddRange(
             new Permission { Id = 3, Code = "PATIENT_CHECKIN" },
             new Permission { Id = 4, Code = "VISIT_ASSIGN" },
-            new Permission { Id = 5, Code = "QUEUE_MANAGE" });
+            new Permission { Id = 5, Code = "QUEUE_MANAGE" },
+            new Permission { Id = 11, Code = "HOSPITAL_CONFIG" });
 
         _db.RolePermissions.AddRange(
             new RolePermission { RoleId = 3, PermissionId = 3 },
             new RolePermission { RoleId = 3, PermissionId = 4 },
-            new RolePermission { RoleId = 6, PermissionId = 4 });
+            new RolePermission { RoleId = 6, PermissionId = 4 },
+            new RolePermission { RoleId = 7, PermissionId = 11 });
 
         _db.Hospitals.AddRange(
             new Hospital { Id = 1, HospitalCode = "HOS-01", Name = "Bệnh viện MedFlow 1", IsActive = true },
@@ -638,5 +640,26 @@ public sealed class VisitDoctorAssignmentServiceTests : IDisposable
                 5L,
                 "VIS-202610-0100",
                 new AssignDoctorToVisitRequest(DoctorCode: "DOC-999")));
+    }
+
+    [Fact]
+    public async Task VisitDoctorAssignment_ClearedRolePermissionsOrMissingStaffHospitalId_FailsClosedWithForbidden()
+    {
+        var staff = await _db.Staff.SingleAsync(s => s.UserId == 5);
+        staff.HospitalId = null;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetAssignableDoctorsAsync(5L, "VIS-202610-0100"));
+
+        staff.HospitalId = 1;
+        _db.RolePermissions.RemoveRange(_db.RolePermissions);
+        await _db.SaveChangesAsync();
+
+        foreach (var actorId in new[] { 5L, 11L, 13L })
+        {
+            await Assert.ThrowsAsync<ForbiddenException>(() =>
+                _service.GetAssignableDoctorsAsync(actorId, "VIS-202610-0100"));
+        }
     }
 }

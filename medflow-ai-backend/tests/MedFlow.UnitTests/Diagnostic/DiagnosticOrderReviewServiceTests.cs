@@ -1177,5 +1177,14 @@ public sealed class DiagnosticOrderReviewServiceTests : IDisposable
 
         await Assert.ThrowsAsync<ForbiddenException>(() =>
             _service.ConfirmDiagnosticOrderAsync(7, "DIA-202610-0020"));
+
+        // Genuine DIAGNOSTIC_STAFF user (7) with 0 RolePermissions across table -> fail-closed 403
+        _dbContext.RolePermissions.RemoveRange(_dbContext.RolePermissions.ToList());
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.GetDiagnosticOrdersAsync(7));
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            _service.ConfirmDiagnosticOrderAsync(7, "DIA-202610-0011"));
     }
 }

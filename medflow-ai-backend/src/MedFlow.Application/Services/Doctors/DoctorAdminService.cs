@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Doctors;
 using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -23,10 +25,14 @@ public sealed class DoctorAdminService : IDoctorAdminService
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
     public async Task<DoctorAdminListResponseDto> GetDoctorListAsync(
+        long actorUserId,
         GetDoctorListAdminRequest request,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
 
         int page = request.Page < 1 ? 1 : request.Page;
         int pageSize = request.PageSize < 1 ? 10 : (request.PageSize > 100 ? 100 : request.PageSize);
@@ -38,6 +44,14 @@ public sealed class DoctorAdminService : IDoctorAdminService
                 .ThenInclude(s => s!.User)
             .Include(d => d.Specialty)
             .AsNoTracking();
+
+        if (!isSystemAdmin && actorHospitalId.HasValue)
+        {
+            var scopedHospitalId = actorHospitalId.Value;
+            query = query.Where(d =>
+                d.HospitalId == scopedHospitalId ||
+                (d.HospitalId == null && d.Staff != null && d.Staff.HospitalId == scopedHospitalId));
+        }
 
         // 1. Lọc theo từ khóa tìm kiếm (Mã BS, Họ tên, CCHN, Chuyên khoa, Mã NV)
         if (!string.IsNullOrWhiteSpace(request.Keyword))
@@ -86,10 +100,10 @@ public sealed class DoctorAdminService : IDoctorAdminService
             try
             {
                 var docIds = doctors.Select(d => d.Id).ToList();
-                var nowUnspecified = DateTime.SpecifyKind(_timeProvider.GetUtcNow().UtcDateTime, DateTimeKind.Unspecified);
+                var nowLocal = HospitalClock.GetNow(_timeProvider);
                 pendingCounts = await _db.Appointments.AsNoTracking()
                     .Where(a => a.Slot != null && a.Slot.DoctorId.HasValue && docIds.Contains(a.Slot.DoctorId.Value) &&
-                                (a.Slot.EndsAt >= nowUnspecified || (a.Slot.StartsAt != null && a.Slot.StartsAt >= nowUnspecified)) &&
+                                (a.Slot.EndsAt >= nowLocal || (a.Slot.StartsAt != null && a.Slot.StartsAt >= nowLocal)) &&
                                 (a.Status == null || (a.Status != "CANCELLED" && a.Status != "NO_SHOW" && a.Status != "COMPLETED")))
                     .GroupBy(a => a.Slot!.DoctorId!.Value)
                     .Select(g => new { DoctorId = g.Key, Count = g.Count() })
@@ -296,7 +310,7 @@ public sealed class DoctorAdminService : IDoctorAdminService
             trimmedReason = string.IsNullOrWhiteSpace(candidateReason) ? null : candidateReason;
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
 
         var doctorQuery = _db.Doctors
@@ -315,11 +329,12 @@ public sealed class DoctorAdminService : IDoctorAdminService
             throw new NotFoundException("Doctor", idOrCode.Trim());
         }
 
-        var doctorHospitalId = doctor.HospitalId ?? doctor.Staff?.HospitalId ?? 1L;
-        if (!isSystemAdmin && doctorHospitalId != actorHospitalId!.Value)
-        {
-            throw new ForbiddenException("Bạn không có quyền cập nhật hồ sơ bác sĩ thuộc cơ sở y tế khác.");
-        }
+        var doctorHospitalId = await ResolveAndAuthorizeTargetDoctorHospitalIdAsync(
+            doctor,
+            isSystemAdmin,
+            actorHospitalId,
+            "Bạn không có quyền cập nhật hồ sơ bác sĩ thuộc cơ sở y tế khác.",
+            ct);
 
         Specialty? resolvedSpecialty = null;
         if (request.SpecialtyId.HasValue)
@@ -429,7 +444,7 @@ public sealed class DoctorAdminService : IDoctorAdminService
                     throw new ConflictException("Không thể tạm ngưng hoạt động bác sĩ đang có ca khám chưa hoàn thành.");
                 }
 
-                var nowLocal = DateTime.SpecifyKind(nowUtc.AddHours(7), DateTimeKind.Unspecified);
+                var nowLocal = HospitalClock.GetNow(_timeProvider);
                 var futureSlotIds = await _db.ExaminationSlots
                     .AsNoTracking()
                     .Where(s => s.DoctorId == doctor.Id && s.StartsAt != null && s.StartsAt > nowLocal)
@@ -600,17 +615,49 @@ public sealed class DoctorAdminService : IDoctorAdminService
         return (null, trimmed.ToUpperInvariant());
     }
 
+    private async Task<long> ResolveAndAuthorizeTargetDoctorHospitalIdAsync(
+        Doctor doctor,
+        bool isSystemAdmin,
+        long? actorHospitalId,
+        string forbiddenMessage,
+        CancellationToken ct)
+    {
+        var resolvedHospitalId = doctor.HospitalId ?? doctor.Staff?.HospitalId;
+        if (!isSystemAdmin)
+        {
+            if (!actorHospitalId.HasValue)
+            {
+                throw new ForbiddenException("Tài khoản quản trị bệnh viện chưa được gán cơ sở y tế.");
+            }
+
+            if (!resolvedHospitalId.HasValue || resolvedHospitalId.Value != actorHospitalId.Value)
+            {
+                throw new ForbiddenException(forbiddenMessage);
+            }
+        }
+        else if (!resolvedHospitalId.HasValue)
+        {
+            throw new ValidationException("Hồ sơ bác sĩ chưa được gán cơ sở y tế.");
+        }
+
+        var hospitalId = resolvedHospitalId.Value;
+        var hospitalExists = await _db.Hospitals
+            .AsNoTracking()
+            .AnyAsync(h => h.Id == hospitalId, ct);
+        if (!hospitalExists)
+        {
+            throw new NotFoundException("Hospital", hospitalId);
+        }
+
+        return hospitalId;
+    }
+
     private async Task<(bool IsSystemAdmin, long? ActorHospitalId)> EnsureAdminAccessAsync(
         long? actorUserId,
         DateTime nowUtc,
         CancellationToken ct)
     {
-        if (!actorUserId.HasValue)
-        {
-            return (true, null);
-        }
-
-        if (actorUserId.Value <= 0)
+        if (!actorUserId.HasValue || actorUserId.Value <= 0)
         {
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
         }
@@ -630,20 +677,39 @@ public sealed class DoctorAdminService : IDoctorAdminService
             throw new ForbiddenException("Tài khoản quản trị đang bị tạm khóa.");
         }
 
-        var actorRoleCodes = await _db.UserRoles
+        var actorRoleIds = await _db.UserRoles
             .AsNoTracking()
             .Where(ur => ur.UserId == actorUserId.Value)
-            .Join(_db.Roles.AsNoTracking(), ur => ur.RoleId, r => r.Id, (ur, r) => r.Code)
+            .Select(ur => ur.RoleId)
             .ToListAsync(ct);
 
+        var actorRoleCodes = actorRoleIds.Count == 0
+            ? []
+            : await _db.Roles
+                .AsNoTracking()
+                .Where(r => actorRoleIds.Contains(r.Id))
+                .Select(r => r.Code)
+                .ToListAsync(ct);
+
         var isSystemAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase));
         var isHospitalAdmin = actorRoleCodes.Any(c =>
-            string.Equals(c, "HOSPITAL_ADMIN", StringComparison.OrdinalIgnoreCase));
+            string.Equals(c, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase));
 
         if (!isSystemAdmin && !isHospitalAdmin)
         {
             throw new ForbiddenException("Người dùng không có quyền quản trị bác sĩ.");
+        }
+
+        var hasHospitalConfigPerm = actorRoleIds.Count > 0 && await (
+            from rp in _db.RolePermissions.AsNoTracking()
+            join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
+            where actorRoleIds.Contains(rp.RoleId) && p.Code.ToUpper() == PermissionCodes.HospitalConfig
+            select rp.PermissionId).AnyAsync(ct);
+
+        if (!hasHospitalConfigPerm)
+        {
+            throw new ForbiddenException("Tài khoản quản trị chưa được cấp quyền cấu hình danh mục bệnh viện (HOSPITAL_CONFIG).");
         }
 
         var actorStaff = await _db.Staff
@@ -665,9 +731,10 @@ public sealed class DoctorAdminService : IDoctorAdminService
 
             var hospital = await _db.Hospitals
                 .AsNoTracking()
-                .FirstOrDefaultAsync(h => h.Id == actorStaff.HospitalId.Value, ct);
+                .FirstOrDefaultAsync(h => h.Id == actorStaff.HospitalId.Value, ct)
+                ?? throw new NotFoundException("Hospital", actorStaff.HospitalId.Value);
 
-            if (hospital is not null && hospital.IsActive == false)
+            if (hospital.IsActive == false)
             {
                 throw new ForbiddenException("Cơ sở y tế của quản trị viên đang ngừng hoạt động.");
             }
@@ -715,7 +782,7 @@ public sealed class DoctorAdminService : IDoctorAdminService
         }
 
         var (parsedId, parsedCode) = ParseDoctorIdentifier(idOrCode);
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
 
         var doctorQuery = _db.Doctors
@@ -734,11 +801,12 @@ public sealed class DoctorAdminService : IDoctorAdminService
             throw new NotFoundException("Doctor", idOrCode.Trim());
         }
 
-        var doctorHospitalId = doctor.HospitalId ?? doctor.Staff?.HospitalId ?? 1L;
-        if (!isSystemAdmin && actorHospitalId.HasValue && doctorHospitalId != actorHospitalId.Value)
-        {
-            throw new ForbiddenException("Bạn không có quyền thao tác trên hồ sơ bác sĩ thuộc cơ sở y tế khác.");
-        }
+        var doctorHospitalId = await ResolveAndAuthorizeTargetDoctorHospitalIdAsync(
+            doctor,
+            isSystemAdmin,
+            actorHospitalId,
+            "Bạn không có quyền thao tác trên hồ sơ bác sĩ thuộc cơ sở y tế khác.",
+            ct);
 
         if (!doctor.IsActive)
         {
@@ -763,10 +831,10 @@ public sealed class DoctorAdminService : IDoctorAdminService
         }
 
         // 2. Kiểm tra các khung giờ khám tương lai & lượt đặt lịch hẹn phụ thuộc
-        var nowUnspecified = DateTime.SpecifyKind(nowUtc, DateTimeKind.Unspecified);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var futureSlots = await _db.ExaminationSlots
             .Where(s => s.DoctorId == doctor.Id &&
-                        (s.EndsAt >= nowUnspecified || (s.StartsAt != null && s.StartsAt >= nowUnspecified)) &&
+                        (s.EndsAt >= nowLocal || (s.StartsAt != null && s.StartsAt >= nowLocal)) &&
                         (s.Status == null || s.Status.ToUpper() != "CLOSED"))
             .ToListAsync(ct);
 
@@ -852,7 +920,7 @@ public sealed class DoctorAdminService : IDoctorAdminService
         }
 
         var (parsedId, parsedCode) = ParseDoctorIdentifier(idOrCode);
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
 
         var doctorQuery = _db.Doctors
@@ -871,11 +939,12 @@ public sealed class DoctorAdminService : IDoctorAdminService
             throw new NotFoundException("Doctor", idOrCode.Trim());
         }
 
-        var doctorHospitalId = doctor.HospitalId ?? doctor.Staff?.HospitalId ?? 1L;
-        if (!isSystemAdmin && actorHospitalId.HasValue && doctorHospitalId != actorHospitalId.Value)
-        {
-            throw new ForbiddenException("Bạn không có quyền thao tác trên hồ sơ bác sĩ thuộc cơ sở y tế khác.");
-        }
+        var doctorHospitalId = await ResolveAndAuthorizeTargetDoctorHospitalIdAsync(
+            doctor,
+            isSystemAdmin,
+            actorHospitalId,
+            "Bạn không có quyền thao tác trên hồ sơ bác sĩ thuộc cơ sở y tế khác.",
+            ct);
 
         if (doctor.IsActive)
         {
@@ -967,11 +1036,15 @@ public sealed class DoctorAdminService : IDoctorAdminService
     }
 
     public async Task<DoctorAdminListItemDto> CreateDoctorAsync(
+        long actorUserId,
         CreateDoctorRequest request,
         CancellationToken ct = default)
     {
         // 1. Null guard
         ArgumentNullException.ThrowIfNull(request);
+
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var (isSystemAdmin, actorHospitalId) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
 
         // 2. Validate and normalize DoctorCode
         var rawCode = !string.IsNullOrWhiteSpace(request.DoctorCode)
@@ -1112,12 +1185,45 @@ public sealed class DoctorAdminService : IDoctorAdminService
             throw new ArgumentException("Mã cơ sở y tế không hợp lệ.", nameof(request.HospitalId));
         }
 
+        if (!isSystemAdmin)
+        {
+            if (!actorHospitalId.HasValue)
+            {
+                throw new ForbiddenException("Tài khoản quản trị bệnh viện chưa được gán cơ sở y tế.");
+            }
+
+            if (request.HospitalId.HasValue && request.HospitalId.Value != actorHospitalId.Value)
+            {
+                throw new ForbiddenException("Bạn không có quyền tạo hồ sơ bác sĩ cho cơ sở y tế khác.");
+            }
+
+            if (staff.HospitalId.HasValue && staff.HospitalId.Value != actorHospitalId.Value)
+            {
+                throw new ForbiddenException("Nhân sự thuộc cơ sở y tế khác nên không thể tạo hồ sơ bác sĩ.");
+            }
+        }
+
         if (request.HospitalId.HasValue && staff.HospitalId.HasValue && request.HospitalId.Value != staff.HospitalId.Value)
         {
             throw new ArgumentException("Nhân sự không thuộc cơ sở y tế được chọn.", nameof(request.HospitalId));
         }
 
-        long hospitalId = request.HospitalId ?? staff.HospitalId ?? 1L;
+        var resolvedHospitalId = request.HospitalId ?? staff.HospitalId ?? (!isSystemAdmin ? actorHospitalId : null);
+        if (!resolvedHospitalId.HasValue)
+        {
+            throw new ValidationException("Vui lòng cung cấp cơ sở y tế (HospitalId) khi nhân sự chưa được gán cơ sở y tế.");
+        }
+
+        long hospitalId = resolvedHospitalId.Value;
+        var targetHospital = await _db.Hospitals
+            .AsNoTracking()
+            .FirstOrDefaultAsync(h => h.Id == hospitalId, ct)
+            ?? throw new NotFoundException("Hospital", hospitalId);
+
+        if (targetHospital.IsActive == false)
+        {
+            throw new ValidationException($"Cơ sở y tế '{targetHospital.Name}' đang tạm ngưng hoạt động.");
+        }
 
         // 6. Check DoctorCode uniqueness and 1:1 Staff<->Doctor uniqueness (409 Conflict)
         bool codeExists = await _db.Doctors.AnyAsync(d => d.DoctorCode.ToLower() == doctorCode.ToLower(), ct);
@@ -1251,4 +1357,3 @@ public sealed class DoctorAdminService : IDoctorAdminService
         );
     }
 }
-

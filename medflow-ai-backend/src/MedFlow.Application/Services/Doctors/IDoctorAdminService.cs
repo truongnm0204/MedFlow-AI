@@ -5,10 +5,12 @@ namespace MedFlow.Application.Services.Doctors;
 public interface IDoctorAdminService
 {
     Task<DoctorAdminListResponseDto> GetDoctorListAsync(
+        long actorUserId,
         GetDoctorListAdminRequest request,
         CancellationToken ct = default);
 
     Task<DoctorAdminListItemDto> CreateDoctorAsync(
+        long actorUserId,
         CreateDoctorRequest request,
         CancellationToken ct = default);
 
@@ -40,4 +42,3 @@ public interface IDoctorAdminService
         string? ipAddress = null,
         CancellationToken ct = default);
 }
-

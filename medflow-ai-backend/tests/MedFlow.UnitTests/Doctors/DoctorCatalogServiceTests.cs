@@ -416,11 +416,19 @@ public sealed class DoctorCatalogServiceTests : IDisposable
         Assert.Equal(200_000m, giDoctor.Price);
         Assert.Equal(9, giDoctor.YearsOfExperience);
         Assert.Equal("DEMO-CCHN-001", giDoctor.LicenseNumber);
-        Assert.Equal(3, giDoctor.Education.Count);
-        Assert.Contains(giDoctor.Education, e => e.Badge == "CCHN: DEMO-CCHN-001");
+        Assert.Equal(2, giDoctor.Education.Count);
+        Assert.DoesNotContain(giDoctor.Education, e => e.Institution.Contains("Đại học Y Hà Nội", StringComparison.OrdinalIgnoreCase));
+        Assert.All(giDoctor.Education, e => Assert.Equal(string.Empty, e.Institution));
+        Assert.Contains(giDoctor.Education, e => e.Title == "Bác sĩ chuyên khoa I" && e.Badge == "9 năm kinh nghiệm" && e.Type == "specialist");
+        Assert.Contains(giDoctor.Education, e => e.Title == "Chứng chỉ hành nghề khám bệnh, chữa bệnh" && e.Badge == "CCHN: DEMO-CCHN-001" && e.Type == "certificate");
         Assert.Contains("9 năm kinh nghiệm", giDoctor.Biography);
         Assert.Contains("#NoiSoiTieuHoa", giDoctor.Hashtags);
-        Assert.Equal(3, giDoctor.WeeklySchedule.Count);
+        var giScheduleDay = Assert.Single(giDoctor.WeeklySchedule);
+        Assert.Equal("Thứ Ba", giScheduleDay.DayOfWeek);
+        Assert.Equal("09:00 - 09:30", giScheduleDay.MorningTime);
+        Assert.Null(giScheduleDay.AfternoonTime);
+        Assert.Null(giScheduleDay.Note);
+        Assert.True(giScheduleDay.IsActive);
 
         var cardDoctor = await _sut.GetByIdOrCodeAsync("DOC-002");
 
@@ -431,7 +439,15 @@ public sealed class DoctorCatalogServiceTests : IDisposable
         Assert.Equal("Thạc sĩ y khoa - Khoa Tim mạch", cardDoctor.RoleTitle);
         Assert.Equal("Phòng 201 - Tầng 1, Khu Demo", cardDoctor.Room);
         Assert.Equal(220_000m, cardDoctor.Price);
+        Assert.Equal(2, cardDoctor.Education.Count);
+        Assert.DoesNotContain(cardDoctor.Education, e => e.Institution.Contains("Đại học Y Hà Nội", StringComparison.OrdinalIgnoreCase));
         Assert.Contains("#TimMach", cardDoctor.Hashtags);
+        var cardScheduleDay = Assert.Single(cardDoctor.WeeklySchedule);
+        Assert.Equal("Thứ Tư", cardScheduleDay.DayOfWeek);
+        Assert.Equal("09:00 - 09:30", cardScheduleDay.MorningTime);
+        Assert.Null(cardScheduleDay.AfternoonTime);
+        Assert.Null(cardScheduleDay.Note);
+        Assert.True(cardScheduleDay.IsActive);
     }
 
     [Fact]
@@ -692,5 +708,100 @@ public sealed class DoctorCatalogServiceTests : IDisposable
         var zeroDoc = await _sut.GetByIdOrCodeAsync("DOC-041");
         Assert.Equal(0m, zeroDoc.Price);
         Assert.Equal("0 VNĐ", zeroDoc.PriceFormatted);
+    }
+
+    [Fact]
+    public async Task GetByIdOrCodeAsync_MissingRoomLocationEducationAndOpenSlots_NeverFabricatesDemoFallbacks()
+    {
+        _db.Departments.Add(new Department
+        {
+            Id = 50,
+            HospitalId = 1,
+            DepartmentCode = "NEU",
+            Name = "Khoa Nội thần kinh",
+            IsActive = true,
+        });
+        _db.HospitalRooms.Add(new HospitalRoom
+        {
+            Id = 51,
+            HospitalId = 1,
+            DepartmentId = 2,
+            RoomCode = "RM-101-NOLOC",
+            Name = "Khám Nội 101",
+            RoomType = "EXAMINATION",
+            Location = null,
+            Capacity = 2,
+            Status = "ACTIVE",
+        });
+        _db.Staff.AddRange(
+            new Staff
+            {
+                Id = 50,
+                UserId = 150,
+                HospitalId = 1,
+                DepartmentId = 50,
+                StaffCode = "STF-050",
+                FullName = "Nguyễn Văn Tùng",
+                Status = "ACTIVE",
+            },
+            new Staff
+            {
+                Id = 51,
+                UserId = 151,
+                HospitalId = 1,
+                DepartmentId = 50,
+                StaffCode = "STF-051",
+                FullName = "Lê Thị Lan",
+                Status = "ACTIVE",
+            });
+        _db.Doctors.AddRange(
+            new Doctor
+            {
+                Id = 50,
+                StaffId = 50,
+                HospitalId = 1,
+                DoctorCode = "DOC-050",
+                SpecialtyId = 1,
+                ProfessionalTitle = null,
+                QualificationsSummary = null,
+                LicenseNumber = null,
+                IsActive = true,
+            },
+            new Doctor
+            {
+                Id = 51,
+                StaffId = 51,
+                HospitalId = 1,
+                DoctorCode = "DOC-051",
+                SpecialtyId = 1,
+                ProfessionalTitle = "BS",
+                IsActive = true,
+            });
+        _db.ExaminationSlots.Add(new ExaminationSlot
+        {
+            Id = 51,
+            ServiceId = 1,
+            DoctorId = 51,
+            RoomId = 51,
+            StartsAt = new DateTime(2026, 10, 27, 14, 0, 0),
+            EndsAt = new DateTime(2026, 10, 27, 16, 30, 0),
+            Capacity = 4,
+            Status = "OPEN",
+        });
+        await _db.SaveChangesAsync();
+
+        var noRoomNoEduNoSlotDoc = await _sut.GetByIdOrCodeAsync("DOC-050");
+        Assert.Equal("Chưa cập nhật", noRoomNoEduNoSlotDoc.Room);
+        Assert.Empty(noRoomNoEduNoSlotDoc.Education);
+        Assert.Empty(noRoomNoEduNoSlotDoc.WeeklySchedule);
+
+        var nullLocationAfternoonDoc = await _sut.GetByIdOrCodeAsync("DOC-051");
+        Assert.Equal("Phòng 101", nullLocationAfternoonDoc.Room);
+        Assert.DoesNotContain("Khu Demo", nullLocationAfternoonDoc.Room, StringComparison.OrdinalIgnoreCase);
+        var singleDay = Assert.Single(nullLocationAfternoonDoc.WeeklySchedule);
+        Assert.Equal("Thứ Ba", singleDay.DayOfWeek);
+        Assert.Null(singleDay.MorningTime);
+        Assert.Equal("14:00 - 16:30", singleDay.AfternoonTime);
+        Assert.True(singleDay.IsActive);
     }
 }

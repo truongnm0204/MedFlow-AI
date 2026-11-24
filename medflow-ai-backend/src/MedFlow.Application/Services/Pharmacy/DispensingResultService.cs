@@ -4,6 +4,7 @@ using MedFlow.Application.DTOs.Pharmacy;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Patients;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
@@ -12,8 +13,8 @@ namespace MedFlow.Application.Services.Pharmacy;
 
 public sealed class DispensingResultService : IDispensingResultService
 {
-    private const string PharmacyStaffRoleCode = "PHARMACY_STAFF";
-    private const string MedicineDispensePermissionCode = "MEDICINE_DISPENSE";
+    private const string PharmacyStaffRoleCode = RoleNames.PharmacyStaff;
+    private const string MedicineDispensePermissionCode = PermissionCodes.MedicineDispense;
     private const string AuditAction = "MEDICATION_DISPENSE_VIEW";
     private const string AuditEntityType = "MEDICATION_DISPENSE";
     private const string AuditReason = "Xem biên nhận kết quả cấp phát thuốc (UC46 / SCR-PHA-04)";
@@ -466,24 +467,17 @@ public sealed class DispensingResultService : IDispensingResultService
             throw new ForbiddenException("Cơ sở y tế được gán cho dược sĩ hiện đang ngừng hoạt động.");
         }
 
-        var rolePermissionsConfigured = await _db.RolePermissions
-            .AsNoTracking()
-            .AnyAsync(ct);
+        var hasMedicineDispensePermission = await (
+            from rp in _db.RolePermissions.AsNoTracking()
+            join permission in _db.Permissions.AsNoTracking()
+                on rp.PermissionId equals permission.Id
+            where actorRoleIds.Contains(rp.RoleId) &&
+                  permission.Code.ToUpper() == MedicineDispensePermissionCode
+            select rp).AnyAsync(ct);
 
-        if (rolePermissionsConfigured)
+        if (!hasMedicineDispensePermission)
         {
-            var hasMedicineDispensePermission = await (
-                from rp in _db.RolePermissions.AsNoTracking()
-                join permission in _db.Permissions.AsNoTracking()
-                    on rp.PermissionId equals permission.Id
-                where actorRoleIds.Contains(rp.RoleId) &&
-                      permission.Code.ToUpper() == MedicineDispensePermissionCode
-                select rp).AnyAsync(ct);
-
-            if (!hasMedicineDispensePermission)
-            {
-                throw new ForbiddenException("Người dùng không có quyền xem biên nhận kết quả cấp phát thuốc.");
-            }
+            throw new ForbiddenException("Người dùng không có quyền xem biên nhận kết quả cấp phát thuốc.");
         }
 
         return hospitalId;
