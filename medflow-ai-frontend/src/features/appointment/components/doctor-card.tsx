@@ -1,4 +1,5 @@
 import { Clock, DoorClosed } from 'lucide-react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { Button } from '@/shared/ui/button';
@@ -9,6 +10,21 @@ import type { DoctorSearchResult, ScheduleBadgeStatus } from '../types/doctor-se
 interface DoctorCardProps {
   doctor: DoctorSearchResult;
   onViewProfile?: (doctor: DoctorSearchResult) => void;
+}
+
+function getDoctorInitials(name: string): string {
+  const cleaned = name.replace(/^(PGS\.|GS\.|TS\.|ThS\.|BS\.|CKII|CKI|\s)+/gi, '').trim();
+  const parts = (cleaned || name.trim()).split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0] ?? ''}${parts[parts.length - 1][0] ?? ''}`.toUpperCase();
+  }
+  return (parts[0]?.slice(0, 2) ?? 'BS').toUpperCase();
+}
+
+function isUsableAvatarUrl(url?: string | null): url is string {
+  if (!url) return false;
+  const trimmed = url.trim();
+  return trimmed.length > 0 && !trimmed.includes('images.unsplash.com');
 }
 
 function getBadgeStyle(status: ScheduleBadgeStatus): string {
@@ -31,6 +47,9 @@ function getBadgeStyle(status: ScheduleBadgeStatus): string {
 export function DoctorCard({ doctor, onViewProfile }: DoctorCardProps) {
   const navigate = useNavigate();
   const selectDoctor = useBookingStore((s) => s.selectDoctor);
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
+
+  const showImage = isUsableAvatarUrl(doctor.avatarUrl) && failedAvatarUrl !== doctor.avatarUrl;
 
   const formattedPrice =
     doctor.price != null
@@ -43,51 +62,56 @@ export function DoctorCard({ doctor, onViewProfile }: DoctorCardProps) {
   };
 
   return (
-    <div className="flex flex-col justify-between rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm transition-all hover:border-sky-300 hover:shadow-md">
+    <div className="flex flex-col justify-between rounded-2xl border border-border bg-white p-5 shadow-sm transition-all hover:border-sky-300 hover:shadow-md">
       <div>
         {/* Top Profile Header */}
         <div className="flex items-start gap-3.5">
           <div className="relative shrink-0">
-            <img
-              src={doctor.avatarUrl}
-              alt={doctor.name}
-              className="h-14 w-14 rounded-xl border border-slate-200 object-cover"
-              onError={(e) => {
-                // Fallback avatar
-                (e.target as HTMLImageElement).src =
-                  'https://images.unsplash.com/photo-1622253692010-333f2da6031d?w=150&auto=format&fit=crop&q=80';
-              }}
-            />
+            {showImage ? (
+              <img
+                src={doctor.avatarUrl}
+                alt={doctor.name}
+                className="h-14 w-14 rounded-xl border border-border object-cover"
+                onError={() => setFailedAvatarUrl(doctor.avatarUrl)}
+              />
+            ) : (
+              <div
+                aria-hidden="true"
+                className="flex h-14 w-14 items-center justify-center rounded-xl border border-sky-200 bg-sky-50 text-sm font-bold text-primary select-none"
+              >
+                {getDoctorInitials(doctor.name)}
+              </div>
+            )}
             <span
-              className="absolute -bottom-1 -right-1 block h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500"
-              title="Đang sẵn sàng nhận lịch"
+              aria-hidden="true"
+              className="absolute -right-1 -bottom-1 block h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500"
             />
           </div>
 
           <div className="min-w-0 flex-1">
-            <span className="inline-block rounded-md bg-sky-50/80 px-2.5 py-0.5 text-[11px] font-medium text-sky-800">
+            <span className="inline-block rounded-md bg-sky-50 px-2.5 py-0.5 text-[11px] font-medium text-primary">
               {doctor.roleTag}
             </span>
-            <h3 className="mt-1 truncate text-base font-bold text-slate-900" title={doctor.name}>
+            <h3 className="mt-1 truncate text-base font-bold text-ink" title={doctor.name}>
               {doctor.name}
             </h3>
-            <p className="mt-0.5 text-xs text-slate-500">
+            <p className="mt-0.5 text-xs text-sub">
               {doctor.specialty} • {doctor.yearsOfExperience} năm kinh nghiệm
             </p>
           </div>
         </div>
 
         {/* Room Info Box */}
-        <div className="mt-3.5 flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-          <DoorClosed className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
-          <span className="truncate font-medium">{doctor.room}</span>
+        <div className="mt-3.5 flex items-center gap-2 rounded-lg bg-canvas px-3 py-2 text-xs text-sub">
+          <DoorClosed className="h-4 w-4 shrink-0 text-sub" aria-hidden="true" />
+          <span className="truncate font-medium text-ink">{doctor.room}</span>
         </div>
 
         {/* Schedule Box */}
-        <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/50 p-2.5">
+        <div className="mt-3 rounded-lg border border-border bg-canvas/60 p-2.5">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 text-xs text-slate-600">
-              <Clock className="h-3.5 w-3.5 text-sky-600" aria-hidden="true" />
+            <div className="flex items-center gap-1.5 text-xs text-sub">
+              <Clock className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
               <span>Lịch khám gần nhất:</span>
             </div>
             <span
@@ -98,22 +122,22 @@ export function DoctorCard({ doctor, onViewProfile }: DoctorCardProps) {
               {doctor.scheduleStatusText}
             </span>
           </div>
-          <div className="mt-1 text-sm font-semibold text-slate-900">{doctor.nearestSchedule}</div>
+          <div className="mt-1 text-sm font-semibold text-ink">{doctor.nearestSchedule}</div>
         </div>
       </div>
 
       {/* Pricing and Actions */}
-      <div className="mt-4 border-t border-slate-100 pt-3">
+      <div className="mt-4 border-t border-border pt-3">
         <div className="flex items-baseline justify-between">
-          <span className="text-xs text-slate-400">Giá theo bảng giá hiệu lực</span>
-          <span className="text-base font-bold text-sky-600">{formattedPrice}</span>
+          <span className="text-xs text-sub">Giá theo bảng giá hiệu lực</span>
+          <span className="text-base font-bold text-primary">{formattedPrice}</span>
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-2.5">
           <Button
             type="button"
             variant="secondary"
-            className="w-full text-xs font-medium text-slate-700 hover:bg-slate-50"
+            className="w-full text-xs font-medium text-ink hover:bg-canvas"
             onClick={() => {
               if (onViewProfile) {
                 onViewProfile(doctor);
@@ -127,7 +151,7 @@ export function DoctorCard({ doctor, onViewProfile }: DoctorCardProps) {
 
           <Button
             type="button"
-            className="w-full bg-sky-600 text-xs font-semibold text-white shadow-sm hover:bg-sky-700"
+            className="w-full bg-primary text-xs font-semibold text-white shadow-sm hover:bg-primary-dark"
             onClick={handleBookNow}
           >
             Đặt khám ngay

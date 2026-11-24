@@ -1,4 +1,4 @@
-import { RotateCcw } from 'lucide-react';
+import { ChevronDown, RotateCcw } from 'lucide-react';
 
 interface ServiceFilterBarProps {
   selectedDepartment: string;
@@ -44,9 +44,10 @@ export function ServiceFilterBar({
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative">
           <select
+            aria-label="Lọc theo khoa phòng"
             value={selectedDepartment}
             onChange={(e) => onSelectDepartment(e.target.value)}
-            className="appearance-none bg-white border border-slate-200 rounded-lg px-3.5 py-2 pr-8 text-xs font-medium text-slate-700 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all shadow-sm cursor-pointer"
+            className="cursor-pointer appearance-none rounded-lg border border-border bg-white py-2 pr-8 pl-3.5 text-xs font-medium text-ink shadow-sm transition-all hover:border-slate-300 focus:border-transparent focus:ring-2 focus:ring-primary focus:outline-none"
           >
             {DEPARTMENTS.map((dept) => (
               <option key={dept.id} value={dept.id}>
@@ -54,18 +55,17 @@ export function ServiceFilterBar({
               </option>
             ))}
           </select>
-          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
-            <svg className="w-4 h-4 fill-current" viewBox="0 0 20 20">
-              <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
-            </svg>
+          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-sub">
+            <ChevronDown className="h-4 w-4" aria-hidden="true" />
           </div>
         </div>
 
         <div className="relative">
           <select
+            aria-label="Lọc theo mức giá hoặc thời lượng khám"
             value={selectedPriceDuration}
             onChange={(e) => onSelectPriceDuration(e.target.value)}
-            className="appearance-none bg-white border border-slate-200 rounded-lg px-3.5 py-2 pr-8 text-xs font-medium text-slate-700 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent transition-all shadow-sm cursor-pointer"
+            className="cursor-pointer appearance-none rounded-lg border border-border bg-white py-2 pr-8 pl-3.5 text-xs font-medium text-ink shadow-sm transition-all hover:border-slate-300 focus:border-transparent focus:ring-2 focus:ring-primary focus:outline-none"
           >
             {PRICE_DURATION_OPTIONS.map((opt) => (
               <option key={opt.id} value={opt.id}>
@@ -73,10 +73,8 @@ export function ServiceFilterBar({
               </option>
             ))}
           </select>
-          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
-            <svg className="w-4 h-4 fill-current" viewBox="0 0 20 20">
-              <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
-            </svg>
+          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-sub">
+            <ChevronDown className="h-4 w-4" aria-hidden="true" />
           </div>
         </div>
       </div>
@@ -85,9 +83,9 @@ export function ServiceFilterBar({
         <button
           type="button"
           onClick={onResetFilters}
-          className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-rose-600 transition-colors ml-auto"
+          className="ml-auto flex items-center gap-1.5 text-xs font-medium text-sub transition-colors hover:text-rose-600 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
         >
-          <RotateCcw className="w-3.5 h-3.5" />
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
           <span>Xóa tất cả bộ lọc</span>
         </button>
       )}

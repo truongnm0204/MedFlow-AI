@@ -10,9 +10,8 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 
+import { useAuthStore } from '@/features/auth/store/auth.store';
 import { MedflowLogo } from '@/shared/components/layout/medflow-logo';
-
-import { PHARMACY_WORKBENCH_META } from '../data/pharmacy-mock-data';
 
 interface PharmacySidebarProps {
   activeItem?: string;
@@ -38,22 +37,16 @@ const NAV_ITEMS: PharmacyNavItem[] = [
   {
     id: 'search',
     label: 'Tra cứu đơn thuốc',
-    badge: '8 mới',
-    badgeTone: 'amber',
     icon: Search,
   },
   {
     id: 'prepare',
     label: 'Soạn thuốc & lô FEFO',
-    badge: '4 ca',
-    badgeTone: 'sky',
     icon: PackageCheck,
   },
   {
     id: 'dispense',
     label: 'Xác nhận cấp phát',
-    badge: '3 chờ',
-    badgeTone: 'emerald',
     icon: CheckCircle2,
   },
 ];
@@ -66,11 +59,17 @@ const BADGE_TONE_CLASS: Record<NonNullable<PharmacyNavItem['badgeTone']>, string
 
 export function PharmacySidebar({
   activeItem = 'dashboard',
-  pharmacistName = PHARMACY_WORKBENCH_META.defaultPharmacistName,
-  counterLabel = PHARMACY_WORKBENCH_META.counterLabel,
+  pharmacistName,
+  counterLabel,
   onItemSelect,
 }: PharmacySidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const user = useAuthStore((s) => s.user);
+  const resolvedPharmacistName =
+    pharmacistName?.trim() || user?.fullName?.trim() || 'Dược sĩ nhà thuốc';
+  const resolvedCounterLabel =
+    counterLabel?.trim() ||
+    (user?.staffCode?.trim() ? `Mã NV: ${user.staffCode.trim()}` : 'Quầy Dược ngoại trú');
 
   return (
     <aside
@@ -88,7 +87,7 @@ export function PharmacySidebar({
         <div className="flex items-center gap-2.5 overflow-hidden">
           <MedflowLogo variant="full" className="h-9 w-auto shrink-0" linkToHome={false} />
           {!isCollapsed && (
-            <div className="truncate font-mono text-[9px] uppercase text-sub">Khối Dược • CS1</div>
+            <div className="truncate font-mono text-[9px] text-sub uppercase">Khối Dược</div>
           )}
         </div>
         <button
@@ -98,7 +97,7 @@ export function PharmacySidebar({
           aria-expanded={!isCollapsed}
           className={
             isCollapsed
-              ? 'absolute -right-3 top-1/2 -translate-y-1/2 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-white text-sub shadow-xs transition-colors hover:bg-slate-100 hover:text-ink focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none'
+              ? 'absolute top-1/2 -right-3 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-white text-sub shadow-xs transition-colors hover:bg-slate-100 hover:text-ink focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none'
               : 'rounded-md p-1 text-sub transition-colors hover:bg-slate-100 hover:text-ink focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none'
           }
           title={isCollapsed ? 'Mở rộng' : 'Thu gọn'}
@@ -118,23 +117,19 @@ export function PharmacySidebar({
             DS
           </div>
           <div className="min-w-0 flex-1">
-            <div className="font-mono text-[9px] font-bold tracking-wider uppercase text-primary">
+            <div className="font-mono text-[9px] font-bold tracking-wider text-primary uppercase">
               Pharmacy Workbench
             </div>
-            <div className="truncate text-xs font-bold text-ink">{pharmacistName}</div>
-            <div className="truncate text-[10px] text-sub">{counterLabel}</div>
+            <div className="truncate text-xs font-bold text-ink">{resolvedPharmacistName}</div>
+            <div className="truncate text-[10px] text-sub">{resolvedCounterLabel}</div>
           </div>
-          <span
-            aria-hidden="true"
-            className="h-2 w-2 shrink-0 rounded-full bg-emerald-500 ring-2 ring-emerald-200"
-          />
         </div>
       )}
 
       {/* Navigation */}
       <nav aria-label="Menu nghiệp vụ nhà thuốc" className="flex-1 space-y-1 px-3 py-2">
         {!isCollapsed && (
-          <div className="mb-1 px-2 font-mono text-[10px] font-bold tracking-wider uppercase text-sub">
+          <div className="mb-1 px-2 font-mono text-[10px] font-bold tracking-wider text-sub uppercase">
             Nghiệp vụ nhà thuốc
           </div>
         )}
@@ -178,7 +173,7 @@ export function PharmacySidebar({
 
         {!isCollapsed && (
           <div className="mt-4 rounded-xl border border-dashed border-border bg-canvas p-3 text-[10px] text-sub">
-            <div className="flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase text-ink">
+            <div className="flex items-center gap-1.5 font-mono text-[9px] font-bold text-ink uppercase">
               <ShieldCheck aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
               <span>Phân quyền Dược sĩ (RBAC)</span>
             </div>
@@ -190,31 +185,20 @@ export function PharmacySidebar({
         )}
       </nav>
 
-      {/* Footer status */}
+      {/* Footer info */}
       <div className="border-t border-border bg-canvas p-3">
         {!isCollapsed ? (
           <div className="space-y-1 rounded-lg border border-border bg-white p-2 text-[10px] shadow-2xs">
             <div className="flex items-center justify-between font-semibold text-ink">
-              <span>FEFO STOCK SYNC: ONLINE</span>
-              <span
-                aria-hidden="true"
-                className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"
-              />
+              <span>Nhà thuốc ngoại trú</span>
             </div>
             <div className="flex items-center justify-between font-mono text-sub">
-              <span>{PHARMACY_WORKBENCH_META.shiftLabel}</span>
-              <span className="font-semibold text-primary">
-                {PHARMACY_WORKBENCH_META.counterCode}
-              </span>
+              <span>Quy tắc FEFO</span>
+              <span className="font-semibold text-primary">1900 6868</span>
             </div>
           </div>
         ) : (
-          <div className="flex justify-center" title="FEFO Stock Sync Online">
-            <span
-              aria-hidden="true"
-              className="h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-200 animate-pulse"
-            />
-          </div>
+          <div className="flex justify-center font-mono text-[9px] font-bold text-sub">DS</div>
         )}
       </div>
     </aside>
