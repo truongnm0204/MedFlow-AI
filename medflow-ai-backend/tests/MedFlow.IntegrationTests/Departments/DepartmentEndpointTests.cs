@@ -242,4 +242,67 @@ public sealed class DepartmentEndpointTests : AuthTestBase
                 $"Unexpected status code: {response.StatusCode}");
         }
     }
+
+    [Fact]
+    public async Task CheckDependencies_Unauthenticated_Returns401()
+    {
+        var response = await Client.GetAsync("/api/v1/admin/departments/1/dependencies");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CheckDependencies_PatientRole_Returns403()
+    {
+        var token = GenerateToken(999, "patient@medflow.test", "PATIENT");
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/admin/departments/1/dependencies");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeactivateDepartment_Unauthenticated_Returns401()
+    {
+        var response = await Client.PostAsJsonAsync("/api/v1/admin/departments/1/deactivate", new DeactivateDepartmentRequest());
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeactivateDepartment_PatientRole_Returns403()
+    {
+        var token = GenerateToken(999, "patient@medflow.test", "PATIENT");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/departments/1/deactivate");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new DeactivateDepartmentRequest());
+
+        var response = await Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeactivateDepartment_DeleteAlias_Unauthenticated_Returns401()
+    {
+        var response = await Client.DeleteAsync("/api/v1/admin/departments/1");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReactivateDepartment_Unauthenticated_Returns401()
+    {
+        var response = await Client.PostAsJsonAsync("/api/v1/admin/departments/1/reactivate", new ReactivateDepartmentRequest());
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReactivateDepartment_PatientRole_Returns403()
+    {
+        var token = GenerateToken(999, "patient@medflow.test", "PATIENT");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/admin/departments/1/reactivate");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new ReactivateDepartmentRequest());
+
+        var response = await Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
 }
