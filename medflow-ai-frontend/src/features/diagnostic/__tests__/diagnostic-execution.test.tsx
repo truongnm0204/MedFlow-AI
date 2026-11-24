@@ -4,9 +4,11 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import {
+  completeMockDiagnosticServiceExecution,
   resetDiagnosticExecutionMockState,
   resolveMockDiagnosticExecutionDetail,
   resolveMockDiagnosticExecutions,
@@ -14,10 +16,16 @@ import {
   updateMockDiagnosticServiceStatus,
   updateMockDiagnosticServiceStatusBatch,
 } from '../data/diagnostic-execution-mock';
+import {
+  resetDiagnosticQueueMockState,
+  resolveMockDiagnosticQueueBoard,
+  resolveMockDiagnosticQueueEntryDetail,
+} from '../data/diagnostic-queue-mock';
 import { DiagnosticExecutionPage } from '../pages/diagnostic-execution-page';
 import { DiagnosticQueueManagePage } from '../pages/diagnostic-queue-manage-page';
 import type {
   GetDiagnosticExecutionsParams,
+  GetDiagnosticQueueParams,
   UpdateDiagnosticServiceStatusBatchRequest,
   UpdateDiagnosticServiceStatusRequest,
 } from '../types/diagnostic.types';
@@ -57,6 +65,71 @@ describe('DiagnosticExecutionPage (UC42)', () => {
     vi.restoreAllMocks();
     localStorage.clear();
     resetDiagnosticExecutionMockState();
+    resetDiagnosticQueueMockState();
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
+      if (url === '/diagnostic/orders/execution') {
+        return {
+          data: resolveMockDiagnosticExecutions(
+            config?.params as GetDiagnosticExecutionsParams | undefined,
+          ),
+        };
+      }
+      if (typeof url === 'string' && url.endsWith('/execution')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return { data: resolveMockDiagnosticExecutionDetail(code) };
+      }
+      if (url === '/diagnostic/queue') {
+        return {
+          data: resolveMockDiagnosticQueueBoard(
+            config?.params as GetDiagnosticQueueParams | undefined,
+          ),
+        };
+      }
+      if (typeof url === 'string' && url.startsWith('/diagnostic/queue/')) {
+        const id = decodeURIComponent(url.split('/')[3]);
+        return { data: resolveMockDiagnosticQueueEntryDetail(id) };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    vi.spyOn(apiClient, 'post').mockImplementation(async (url, body) => {
+      if (url === '/diagnostic/orders/execution-status') {
+        return {
+          data: updateMockDiagnosticServiceStatusBatch(
+            body as UpdateDiagnosticServiceStatusBatchRequest,
+          ),
+        };
+      }
+      if (typeof url === 'string' && url.endsWith('/start')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return {
+          data: startMockDiagnosticServiceExecution(
+            code,
+            body as UpdateDiagnosticServiceStatusRequest,
+          ),
+        };
+      }
+      if (typeof url === 'string' && url.endsWith('/complete')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return {
+          data: completeMockDiagnosticServiceExecution(
+            code,
+            body as UpdateDiagnosticServiceStatusRequest,
+          ),
+        };
+      }
+      if (typeof url === 'string' && url.endsWith('/execution-status')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return {
+          data: updateMockDiagnosticServiceStatus(
+            code,
+            body as UpdateDiagnosticServiceStatusRequest,
+          ),
+        };
+      }
+      throw new Error(`Unexpected POST ${url}`);
+    });
 
     useAuthStore.setState({
       user: {
@@ -139,7 +212,7 @@ describe('DiagnosticExecutionPage (UC42)', () => {
   });
 
   it('bat dau thuc hien phieu CONFIRMED+READY chuyen sang IN_PROGRESS, queue sync va ghi history', async () => {
-    localStorage.setItem('medflow.access_token', 'valid-diagnostic-jwt-token');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'valid-diagnostic-jwt-token');
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
       if (url === '/diagnostic/orders/execution') {
@@ -301,7 +374,7 @@ describe('DiagnosticExecutionPage (UC42)', () => {
   });
 
   it('cap nhat hang loat 2 phieu CONFIRMED+hop le sang IN_PROGRESS hien thi updatedCount va summary', async () => {
-    localStorage.setItem('medflow.access_token', 'valid-diagnostic-jwt-token');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'valid-diagnostic-jwt-token');
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
       if (url === '/diagnostic/orders/execution') {

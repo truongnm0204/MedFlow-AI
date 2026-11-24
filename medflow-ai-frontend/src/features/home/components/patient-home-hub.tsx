@@ -1,8 +1,6 @@
-import { Link } from 'react-router-dom';
 import { Calendar, RefreshCw, ShieldCheck, Users } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
-import { AppointmentReminderBanner } from '@/features/appointment/components/appointment-reminder-banner';
-import { APPOINTMENT_REMINDERS_MOCK } from '@/features/appointment/data/appointment-reminder-mock';
 import type { UserDto } from '@/features/auth/types/auth.types';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert } from '@/shared/ui';
@@ -24,8 +22,8 @@ const ACCENT_CLASSES: Record<PatientQuickAction['accent'], string> = {
 };
 
 const METRIC_ITEMS = [
-  { key: 'upcomingAppointmentsCount' as const, label: 'Lịch hẹn sắp tới', color: 'text-sky-700' },
-  { key: 'familyMembersCount' as const, label: 'Hồ sơ người thân', color: 'text-slate-900' },
+  { key: 'upcomingAppointmentsCount' as const, label: 'Lịch hẹn sắp tới', color: 'text-primary' },
+  { key: 'familyMembersCount' as const, label: 'Hồ sơ người thân', color: 'text-ink' },
   { key: 'completedVisitsCount' as const, label: 'Lượt khám hoàn tất', color: 'text-emerald-700' },
   { key: 'activePrescriptionsCount' as const, label: 'Đơn thuốc còn hạn', color: 'text-amber-600' },
 ];
@@ -39,24 +37,24 @@ export function PatientHomeHub({ user }: PatientHomeHubProps) {
   return (
     <section
       aria-label="Bảng điều khiển Bệnh nhân"
-      className="border-b border-slate-200 bg-gradient-to-r from-sky-50/80 via-white to-emerald-50/50 py-8"
+      className="border-b border-border bg-gradient-to-r from-sky-50/80 via-white to-emerald-50/50 py-8"
     >
       <div className="mx-auto max-w-7xl space-y-6 px-4 sm:px-6 lg:px-8">
-        <div className="flex flex-col justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs md:flex-row md:items-center">
+        <div className="flex flex-col justify-between gap-4 rounded-2xl border border-border bg-white p-5 shadow-xs md:flex-row md:items-center">
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
-                <ShieldCheck className="h-3.5 w-3.5" />
+                <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
                 Cổng Bệnh nhân • Vai trò được cấp quyền
               </span>
               <span className="rounded-md bg-slate-100 px-2 py-0.5 font-mono text-xs font-semibold text-slate-700">
                 Mã BN: {patientCode}
               </span>
             </div>
-            <h2 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+            <h2 className="text-xl font-bold tracking-tight text-ink sm:text-2xl">
               Xin chào, {displayName}
             </h2>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-sub">
               Quản lý lịch hẹn khám ngoại trú, hồ sơ cá nhân và hồ sơ người thân tại một nơi duy
               nhất.
             </p>
@@ -65,33 +63,31 @@ export function PatientHomeHub({ user }: PatientHomeHubProps) {
           <div className="flex flex-wrap items-center gap-2.5">
             <Link
               to="/booking"
-              className="inline-flex items-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2.5 text-xs font-bold text-white shadow-xs transition-colors hover:bg-sky-700"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-white shadow-xs transition-colors hover:bg-primary-dark"
             >
               <Calendar className="h-4 w-4" aria-hidden="true" />
               Đặt lịch khám mới
             </Link>
             <Link
               to="/profile"
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-4 py-2.5 text-xs font-semibold text-ink transition-colors hover:bg-canvas"
             >
               Hồ sơ cá nhân
             </Link>
             <Link
               to="/family"
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-4 py-2.5 text-xs font-semibold text-ink transition-colors hover:bg-canvas"
             >
-              <Users className="h-4 w-4 text-sky-600" />
+              <Users className="h-4 w-4 text-primary" aria-hidden="true" />
               Hồ sơ người thân
             </Link>
           </div>
         </div>
 
-        <AppointmentReminderBanner reminder={APPOINTMENT_REMINDERS_MOCK[0]} />
-
         {isPending && (
           <div
             role="status"
-            className="rounded-2xl border border-slate-200 bg-white p-6 text-center text-xs font-medium text-slate-500"
+            className="rounded-2xl border border-border bg-white p-6 text-center text-xs font-medium text-sub"
           >
             Đang tải thông tin bảng điều khiển bệnh nhân...
           </div>
@@ -110,7 +106,7 @@ export function PatientHomeHub({ user }: PatientHomeHubProps) {
               onClick={() => void refetch()}
               className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-white px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
               Thử lại
             </button>
           </Alert>
@@ -121,11 +117,8 @@ export function PatientHomeHub({ user }: PatientHomeHubProps) {
             <div className="space-y-4 lg:col-span-7">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {METRIC_ITEMS.map((metric) => (
-                  <div
-                    key={metric.key}
-                    className="rounded-xl border border-slate-200 bg-white p-3.5"
-                  >
-                    <span className="text-[11px] font-medium text-slate-500">{metric.label}</span>
+                  <div key={metric.key} className="rounded-xl border border-border bg-white p-3.5">
+                    <span className="text-[11px] font-medium text-sub">{metric.label}</span>
                     <div className={`mt-1 text-xl font-bold ${metric.color}`}>
                       {data.metrics[metric.key]}
                     </div>
@@ -139,14 +132,14 @@ export function PatientHomeHub({ user }: PatientHomeHubProps) {
                   const content = (
                     <>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-bold text-slate-900">{item.label}</span>
+                        <span className="text-sm font-bold text-ink">{item.label}</span>
                         {item.badgeText && (
-                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-700 shadow-2xs">
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-ink shadow-2xs">
                             {item.badgeText}
                           </span>
                         )}
                       </div>
-                      <p className="mt-1 text-xs text-slate-600">{item.description}</p>
+                      <p className="mt-1 text-xs text-sub">{item.description}</p>
                     </>
                   );
                   return item.href.startsWith('#') ? (

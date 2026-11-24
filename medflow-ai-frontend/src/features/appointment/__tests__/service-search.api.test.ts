@@ -10,7 +10,7 @@ import {
 import { MOCK_EXAMINATION_SERVICES } from '../data/service-search-mock';
 import type { ServiceSearchResponse } from '../types/service-search.types';
 
-describe('service-search.api (M1-42 HTTP + fallback)', () => {
+describe('service-search.api (M1-42 pure HTTP)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -50,21 +50,13 @@ describe('service-search.api (M1-42 HTTP + fallback)', () => {
     expect(result).toEqual(fakeResponse);
   });
 
-  it('falls back to in-memory mock when backend is offline (network error)', async () => {
+  it('propagates network, 400 and 500 errors in searchExaminationServicesApi without mock fallback', async () => {
     const networkError = new AxiosError('Network Error', 'ERR_NETWORK');
-    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(networkError);
+    const getSpy = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(networkError);
+    await expect(
+      searchExaminationServicesApi({ department: 'dept-th', page: 1, pageSize: 6 }),
+    ).rejects.toBe(networkError);
 
-    const result = await searchExaminationServicesApi({
-      department: 'dept-th',
-      page: 1,
-      pageSize: 6,
-    });
-
-    expect(result.data.length).toBeGreaterThan(0);
-    expect(result.data.every((s) => s.departmentId === 'dept-th')).toBe(true);
-  });
-
-  it('rethrows validation/server errors (400/500) instead of falling back to mock', async () => {
     const badRequestError = new AxiosError(
       'Request failed with status code 400',
       'ERR_BAD_REQUEST',
@@ -79,28 +71,29 @@ describe('service-search.api (M1-42 HTTP + fallback)', () => {
       },
     );
 
-    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(badRequestError);
+    getSpy.mockRejectedValueOnce(badRequestError);
 
     await expect(searchExaminationServicesApi({ pageSize: 100 })).rejects.toThrow(
       'Request failed with status code 400',
     );
   });
 
-  it('calls GET /examination-services/{id} for service detail and falls back on network error', async () => {
+  it('calls GET /examination-services/{id}, returns null on blank id, and propagates network/400 errors', async () => {
     const getSpy = vi
       .spyOn(apiClient, 'get')
       .mockResolvedValueOnce({ data: MOCK_EXAMINATION_SERVICES[0] } as AxiosResponse);
+
+    expect(await getExaminationServiceDetailApi('   ')).toBeNull();
+    expect(getSpy).not.toHaveBeenCalled();
 
     const detail = await getExaminationServiceDetailApi('EX-GI-01');
     expect(getSpy).toHaveBeenCalledWith('/examination-services/EX-GI-01');
     expect(detail?.id).toBe(MOCK_EXAMINATION_SERVICES[0].id);
 
-    getSpy.mockRejectedValueOnce(new AxiosError('Network Error', 'ERR_NETWORK'));
-    const fallbackDetail = await getExaminationServiceDetailApi('DV-TH-01');
-    expect(fallbackDetail?.serviceCode).toBe('DV-TH-01');
-  });
+    const networkError = new AxiosError('Network Error', 'ERR_NETWORK');
+    getSpy.mockRejectedValueOnce(networkError);
+    await expect(getExaminationServiceDetailApi('DV-TH-01')).rejects.toBe(networkError);
 
-  it('rethrows 400 BadRequest in getExaminationServiceDetailApi instead of falling back to mock', async () => {
     const badRequestError = new AxiosError(
       'Request failed with status code 400',
       'ERR_BAD_REQUEST',
@@ -114,8 +107,7 @@ describe('service-search.api (M1-42 HTTP + fallback)', () => {
         data: { status: 400, title: 'Lỗi xác thực', detail: 'Mã dịch vụ khám không hợp lệ.' },
       },
     );
-
-    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(badRequestError);
+    getSpy.mockRejectedValueOnce(badRequestError);
 
     await expect(getExaminationServiceDetailApi('INVALID@CODE')).rejects.toThrow(
       'Request failed with status code 400',

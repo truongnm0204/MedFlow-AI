@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppRouter } from '@/app/router/app-router';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import {
@@ -48,6 +49,23 @@ describe('DiagnosticQueueManagePage (UC41 — Manage Diagnostic Queue)', () => {
     vi.restoreAllMocks();
     localStorage.clear();
     resetDiagnosticQueueMockState();
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
+      if (url === '/diagnostic/queue') {
+        return {
+          data: resolveMockDiagnosticQueueBoard(
+            config?.params as GetDiagnosticQueueParams | undefined,
+          ),
+        };
+      }
+      const match = String(url).match(/^\/diagnostic\/queue\/([^/]+)$/);
+      if (match) {
+        return {
+          data: resolveMockDiagnosticQueueEntryDetail(decodeURIComponent(match[1])),
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
 
     useAuthStore.setState({
       user: {
@@ -135,7 +153,7 @@ describe('DiagnosticQueueManagePage (UC41 — Manage Diagnostic Queue)', () => {
   });
 
   it('goi benh nhan tiep theo (Call Next) tai diem phuc vu SP-201 va xu ly xung dot khi phong dang ban (SP-204)', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-diag');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-diag');
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
       if (url === '/diagnostic/queue') {
@@ -188,7 +206,7 @@ describe('DiagnosticQueueManagePage (UC41 — Manage Diagnostic Queue)', () => {
   });
 
   it('thuc hien chuyen trang thai nhanh (READY -> CALLED -> IN_PROGRESS -> COMPLETED) kem expectedStateVersion', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-diag');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-diag');
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
       if (url === '/diagnostic/queue') {
@@ -282,7 +300,7 @@ describe('DiagnosticQueueManagePage (UC41 — Manage Diagnostic Queue)', () => {
   });
 
   it('kiem tra client validation va thuc thi Danh dau qua luot (SKIPPED), Khoi phuc luot (READY) va Huy luot (CANCELLED)', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-diag');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-diag');
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
       if (url === '/diagnostic/queue') {
@@ -389,7 +407,7 @@ describe('DiagnosticQueueManagePage (UC41 — Manage Diagnostic Queue)', () => {
   });
 
   it('an thao tac dieu phoi khi nhan vien khong co quyen QUEUE_MANAGE / DIAGNOSTIC_RESULT_WRITE va hien thi loi API 409/500', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-diag');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-diag');
 
     useAuthStore.setState({
       user: {
@@ -417,7 +435,7 @@ describe('DiagnosticQueueManagePage (UC41 — Manage Diagnostic Queue)', () => {
   });
 
   it('hien thi banner loi API khi GET /diagnostic/queue tra ve 500 va cho phep thu lai', async () => {
-    localStorage.setItem('medflow.access_token', 'tok-diag');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-diag');
 
     vi.spyOn(apiClient, 'get').mockRejectedValueOnce(
       new AxiosError(

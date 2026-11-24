@@ -1,19 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
+  AlertCircle,
   AlertTriangle,
   ArrowRight,
   Building2,
   CalendarClock,
+  CalendarX2,
   CheckCircle2,
+  Loader2,
+  RotateCcw,
   UserRound,
 } from 'lucide-react';
 
+import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Modal } from '@/shared/ui/modal';
 
-import {
-  fetchProposedRescheduleSlotsApi,
-  getProposedRescheduleSlots,
-} from '../api/appointment-detail.api';
+import { fetchProposedRescheduleSlotsApi } from '../api/appointment-detail.api';
 import { rescheduleAppointmentSchema } from '../schemas/appointment-detail.schema';
 import type { AppointmentListItem } from '../types/appointment-list.types';
 
@@ -30,39 +33,46 @@ export function AppointmentRescheduleModal({
   onClose,
   onConfirmReschedule,
 }: AppointmentRescheduleModalProps) {
-  const [proposedSlots, setProposedSlots] = useState(() =>
-    appointment ? getProposedRescheduleSlots(appointment) : [],
-  );
-  const [selectedSlotId, setSelectedSlotId] = useState<string>(
-    () => proposedSlots[0]?.slotId ?? 'slot-2026-1016-0830',
-  );
-
-  useEffect(() => {
-    if (!appointment) return;
-
-    let cancelled = false;
-    void fetchProposedRescheduleSlotsApi(appointment).then((slots) => {
-      if (!cancelled && slots.length > 0) {
-        setProposedSlots(slots);
-        setSelectedSlotId(slots[0].slotId);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [appointment]);
+  const [selectedSlotId, setSelectedSlotId] = useState<string>('');
   const [rescheduleNote, setRescheduleNote] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
+  const slotsQuery = useQuery({
+    queryKey: [
+      'appointment-reschedule-slots',
+      appointment?.id,
+      appointment?.doctorId,
+      appointment?.serviceId,
+    ],
+    queryFn: () => fetchProposedRescheduleSlotsApi(appointment!),
+    enabled: Boolean(appointment),
+    retry: false,
+  });
+
   if (!appointment) return null;
+
+  const proposedSlots = slotsQuery.data ?? [];
+  const isLoadingSlots = slotsQuery.isLoading;
+  const slotsError = slotsQuery.isError
+    ? getErrorMessage(slotsQuery.error, 'Không thể tải danh sách khung giờ trống để đổi lịch.')
+    : null;
 
   const activeSlot =
     proposedSlots.find((s) => s.slotId === selectedSlotId) ?? proposedSlots[0] ?? null;
 
+  const canConfirmReschedule =
+    !isSubmitting && !isLoadingSlots && !slotsError && Boolean(activeSlot);
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (!activeSlot) {
+      setValidationError('Hiện chưa có khung giờ trống hợp lệ để xác nhận đổi lịch.');
+      return;
+    }
+
     const parsed = rescheduleAppointmentSchema.safeParse({
-      targetSlotId: selectedSlotId,
+      targetSlotId: activeSlot.slotId,
       rescheduleNote,
     });
 
@@ -139,12 +149,22 @@ export function AppointmentRescheduleModal({
                 <span>Khung giờ mới đề xuất</span>
                 <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
               </span>
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                Trống chỗ
-              </span>
+              {activeSlot && (
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                  Trống chỗ
+                </span>
+              )}
             </div>
 
-            {activeSlot && (
+            {isLoadingSlots ? (
+              <div
+                role="status"
+                className="mt-4 flex items-center gap-2 py-4 text-xs font-medium text-sub"
+              >
+                <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+                <span>Đang tải khung giờ trống...</span>
+              </div>
+            ) : activeSlot ? (
               <>
                 <p className="mt-2.5 text-lg font-extrabold text-ink">
                   {activeSlot.scheduledTimeRange}
@@ -168,43 +188,85 @@ export function AppointmentRescheduleModal({
                   </p>
                 </div>
               </>
+            ) : (
+              <p className="mt-3 py-3 text-xs text-sub">
+                Chưa có khung giờ trống khả dụng để chọn dời lịch.
+              </p>
             )}
           </div>
         </div>
 
-        {/* Selectable Proposed Slots */}
-        <fieldset className="mt-4">
-          <legend className="text-xs font-bold text-ink">
-            Chọn khung giờ trống của {appointment.doctorName}:
-          </legend>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-            {proposedSlots.map((slot) => {
-              const isSelected = slot.slotId === selectedSlotId;
-              return (
-                <button
-                  key={slot.slotId}
-                  type="button"
-                  onClick={() => {
-                    setSelectedSlotId(slot.slotId);
-                    setValidationError(null);
-                  }}
-                  aria-pressed={isSelected}
-                  className={`rounded-xl border p-2.5 text-left text-xs transition-colors ${
-                    isSelected
-                      ? 'border-primary bg-sky-50 font-bold text-primary'
-                      : 'border-border bg-white text-ink hover:bg-canvas'
-                  }`}
-                >
-                  <div className="font-extrabold">{slot.scheduledTimeRange}</div>
-                  <div className="mt-0.5 text-[11px] text-sub">{slot.scheduledDateBadge}</div>
-                  <div className="mt-1 font-mono text-[10px] font-semibold text-primary">
-                    STT dự kiến: {slot.estimatedQueueNumber}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </fieldset>
+        {/* Selectable Proposed Slots / Loading / Error / Empty */}
+        <div className="mt-4">
+          {isLoadingSlots ? (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-busy="true">
+              <div className="h-16 animate-pulse rounded-xl border border-border bg-canvas" />
+              <div className="h-16 animate-pulse rounded-xl border border-border bg-canvas" />
+              <div className="h-16 animate-pulse rounded-xl border border-border bg-canvas" />
+            </div>
+          ) : slotsError ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-900"
+            >
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 text-danger" aria-hidden="true" />
+                <span>{slotsError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void slotsQuery.refetch()}
+                className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2.5 py-1 font-bold text-rose-800 hover:bg-rose-50"
+              >
+                <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                <span>Thử lại</span>
+              </button>
+            </div>
+          ) : proposedSlots.length === 0 ? (
+            <div
+              role="status"
+              className="flex items-center gap-2.5 rounded-xl border border-border bg-canvas px-4 py-3 text-xs text-sub"
+            >
+              <CalendarX2 className="h-4 w-4 shrink-0 text-sub" aria-hidden="true" />
+              <span>
+                Hiện chưa có khung giờ trống phù hợp của {appointment.doctorName} để đổi lịch.
+              </span>
+            </div>
+          ) : (
+            <fieldset>
+              <legend className="text-xs font-bold text-ink">
+                Chọn khung giờ trống của {appointment.doctorName}:
+              </legend>
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {proposedSlots.map((slot) => {
+                  const isSelected = slot.slotId === activeSlot?.slotId;
+                  return (
+                    <button
+                      key={slot.slotId}
+                      type="button"
+                      onClick={() => {
+                        setSelectedSlotId(slot.slotId);
+                        setValidationError(null);
+                      }}
+                      aria-pressed={isSelected}
+                      className={`rounded-xl border p-2.5 text-left text-xs transition-colors ${
+                        isSelected
+                          ? 'border-primary bg-sky-50 font-bold text-primary'
+                          : 'border-border bg-white text-ink hover:bg-canvas'
+                      }`}
+                    >
+                      <div className="font-extrabold">{slot.scheduledTimeRange}</div>
+                      <div className="mt-0.5 text-[11px] text-sub">{slot.scheduledDateBadge}</div>
+                      <div className="mt-1 font-mono text-[10px] font-semibold text-primary">
+                        STT dự kiến: {slot.estimatedQueueNumber}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+          )}
+        </div>
 
         {/* Optional Note Input */}
         <div className="mt-4">
@@ -219,7 +281,7 @@ export function AppointmentRescheduleModal({
               setRescheduleNote(event.target.value);
               if (validationError) setValidationError(null);
             }}
-            placeholder="Ví dụ: Bận họp buổi sáng ngày 13/10, xin dời sang ca sáng Thứ Sáu..."
+            placeholder="Ví dụ: Bận công tác đột xuất buổi sáng, xin dời sang ca khám khác..."
             className="mt-1.5 w-full rounded-xl border border-border bg-white px-3.5 py-2 text-xs text-ink placeholder:text-slate-400 focus:border-primary focus:outline-none"
           />
           {validationError && (
@@ -244,7 +306,7 @@ export function AppointmentRescheduleModal({
             <li>
               Số thứ tự giữ trước cũ (<strong>STT: {appointment.queueNumber ?? '012'}</strong>) sẽ
               bị thu hồi và hệ thống tự động cấp số thứ tự giữ trước mới theo lượt đăng ký ca mới (
-              <strong>STT dự kiến: {activeSlot?.estimatedQueueNumber ?? '005'}</strong>).
+              <strong>STT dự kiến: {activeSlot?.estimatedQueueNumber ?? '---'}</strong>).
             </li>
             <li>
               <strong>Chính sách miễn phí:</strong> MedFlow hỗ trợ đổi lịch khám ngoại trú tự nguyện
@@ -281,8 +343,8 @@ export function AppointmentRescheduleModal({
 
           <button
             type="submit"
-            disabled={isSubmitting}
-            className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-white shadow-xs transition-colors hover:bg-primary-dark disabled:opacity-60"
+            disabled={!canConfirmReschedule}
+            className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-white shadow-xs transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-60"
           >
             <span>{isSubmitting ? 'Đang cập nhật...' : 'Xác Nhận Đổi Sang Lịch Mới'}</span>
             <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />

@@ -4,6 +4,7 @@ import { Calendar, ChevronRight, Home } from 'lucide-react';
 
 import { AppHeader } from '@/shared/components/layout/app-header';
 import { PatientFooter } from '@/shared/components/layout/patient-footer';
+import { formatHospitalTodayVn } from '@/shared/lib/hospital-date';
 
 import { DoctorDetailModal } from '../components/doctor-detail-modal';
 import { DoctorFilterBar } from '../components/doctor-filter-bar';
@@ -135,7 +136,9 @@ export function DoctorSearchPage() {
               <Calendar className="h-4 w-4 text-sky-600" aria-hidden="true" />
               <span>
                 Cập nhật ca trực:{' '}
-                <strong className="font-semibold text-slate-800">Hôm nay, 24/10/2026</strong>
+                <strong className="font-semibold text-slate-800">
+                  Hôm nay, {formatHospitalTodayVn()}
+                </strong>
               </span>
             </div>
           </div>

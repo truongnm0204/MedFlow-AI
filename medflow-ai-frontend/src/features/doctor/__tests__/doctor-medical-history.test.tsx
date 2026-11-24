@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppRouter } from '@/app/router/app-router';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import { DOCTOR_ASSIGNED_QUEUE_MOCK } from '../data/doctor-assigned-queue-mock';
@@ -18,7 +19,7 @@ function LocationProbe() {
 }
 
 function setDoctorAuth(roles: string[] = ['DOCTOR']) {
-  localStorage.setItem('medflow.access_token', 'jwt-doctor');
+  localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-doctor');
   useAuthStore.setState({
     user: {
       id: 101,

@@ -7,7 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 
 import * as rolePermissionsApi from '../api/role-permissions.api';
-import { resetMockRolesCatalog } from '../data/role-mock-data';
+import {
+  getMockRolesCatalog,
+  resetMockRolesCatalog,
+  updateMockRolePermissions,
+} from '../data/role-mock-data';
 import { RoleListPage } from '../pages/role-list-page';
 
 function makeAxiosError(status: number, detail: string): AxiosError {
@@ -43,6 +47,12 @@ describe('Assign Permissions (SCR-ADM-ROLE-02)', () => {
   beforeEach(() => {
     resetMockRolesCatalog();
     useAuthStore.getState().clearAuth();
+    vi.spyOn(rolePermissionsApi, 'fetchRolesPermissionsCatalogApi').mockImplementation(async () =>
+      getMockRolesCatalog(),
+    );
+    vi.spyOn(rolePermissionsApi, 'assignRolePermissionsApi').mockImplementation(async (payload) =>
+      updateMockRolePermissions(payload.roleId, payload.permissionCodes),
+    );
   });
 
   afterEach(() => {

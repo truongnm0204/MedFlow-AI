@@ -140,29 +140,26 @@ export function ExaminationServiceCatalogPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#F8FAFC] font-sans antialiased text-slate-900">
+    <div className="flex min-h-screen flex-col bg-canvas font-sans text-ink antialiased">
       <AppHeader />
 
-      <main className="flex-1 pb-16 pt-5">
+      <main className="flex-1 pt-5 pb-16">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           {/* Breadcrumb */}
-          <nav
-            aria-label="Breadcrumb"
-            className="mb-4 flex items-center gap-2 text-xs text-slate-500"
-          >
-            <Link to="/" className="flex items-center gap-1.5 transition-colors hover:text-sky-600">
-              <Home className="h-3.5 w-3.5" />
+          <nav aria-label="Breadcrumb" className="mb-4 flex items-center gap-2 text-xs text-sub">
+            <Link to="/" className="flex items-center gap-1.5 transition-colors hover:text-primary">
+              <Home className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Trang chủ</span>
             </Link>
-            <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
-            <span className="text-slate-500">Đặt khám</span>
-            <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
-            <span className="font-semibold text-sky-600">Danh mục Dịch vụ Khám (SCR-APT-03)</span>
+            <ChevronRight className="h-3.5 w-3.5 text-sub" aria-hidden="true" />
+            <span className="text-sub">Đặt khám</span>
+            <ChevronRight className="h-3.5 w-3.5 text-sub" aria-hidden="true" />
+            <span className="font-semibold text-primary">Danh mục Dịch vụ Khám (SCR-APT-03)</span>
           </nav>
 
           {/* Heading */}
           <div className="mb-6">
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+            <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">
               Danh mục Dịch vụ
             </h1>
           </div>
@@ -170,7 +167,7 @@ export function ExaminationServiceCatalogPage() {
           {/* Search & Filter Card */}
           <section
             aria-label="Bộ lọc tìm kiếm dịch vụ khám"
-            className="mb-7 rounded-2xl border border-slate-200/90 bg-white p-5 shadow-sm space-y-3"
+            className="mb-7 space-y-3 rounded-2xl border border-border bg-white p-5 shadow-sm"
           >
             <ServiceSearchBar initialValue={filters.query} onSearch={handleSearch} />
 

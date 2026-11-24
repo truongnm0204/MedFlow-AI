@@ -1,6 +1,8 @@
 import { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '@/shared/lib/auth-storage';
+
 import type { UserDto } from '../types/auth.types';
 
 interface MockStoreState {
@@ -21,15 +23,15 @@ interface MockStoreState {
 
 const mockSetTokens = vi.fn(
   ({ accessToken, refreshToken }: { accessToken: string; refreshToken: string }) => {
-    localStorage.setItem('medflow.access_token', accessToken);
-    localStorage.setItem('medflow.refresh_token', refreshToken);
+    localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
     mockStoreState.refreshToken = refreshToken;
   },
 );
 
 const mockClearAuth = vi.fn(() => {
-  localStorage.removeItem('medflow.access_token');
-  localStorage.removeItem('medflow.refresh_token');
+  localStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
   mockStoreState.isAuthenticated = false;
   mockStoreState.user = null;
   mockStoreState.refreshToken = null;
@@ -59,7 +61,7 @@ vi.mock('axios', async () => {
     default: {
       ...actual.default,
       post: vi.fn(),
-      create: vi.fn(() => actual.default.create()),
+      create: vi.fn((config) => actual.default.create(config)),
     },
   };
 });
@@ -71,8 +73,14 @@ vi.mock('@/features/auth/store/auth.store', () => ({
   },
 }));
 
-const { apiClient, parseRetryAfterMs, RefreshCooldownError, resetRefreshCoordinatorForTests } =
-  await import('@/shared/lib/axios');
+const {
+  API_BASE_URL,
+  apiClient,
+  parseRetryAfterMs,
+  RefreshCooldownError,
+  resetRefreshCoordinatorForTests,
+  resolveApiBaseUrl,
+} = await import('@/shared/lib/axios');
 
 const cfg = (url = '/test', bearerToken?: string) =>
   ({
@@ -137,6 +145,17 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
     });
   });
 
+  it('resolveApiBaseUrl chuẩn hóa VITE_API_BASE_URL và dùng chung API_BASE_URL cho apiClient', () => {
+    expect(resolveApiBaseUrl(undefined)).toBe('/api/v1');
+    expect(resolveApiBaseUrl('')).toBe('/api/v1');
+    expect(resolveApiBaseUrl('   ')).toBe('/api/v1');
+    expect(resolveApiBaseUrl('/api/v1/')).toBe('/api/v1');
+    expect(resolveApiBaseUrl('https://api.medflow.vn/api/v1///')).toBe(
+      'https://api.medflow.vn/api/v1',
+    );
+    expect(apiClient.defaults.baseURL).toBe(API_BASE_URL);
+  });
+
   it('bỏ qua refresh cho auth endpoints (kể cả /auth/logout)', async () => {
     const axiosModule = await import('axios');
     const handler = getResponseInterceptor();
@@ -184,9 +203,9 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
     await expect(handler!(err)).rejects.toThrow();
   });
 
-  it('happy path: 401 → refresh → retry request gốc với token mới', async () => {
-    localStorage.setItem('medflow.access_token', 'at-old');
-    localStorage.setItem('medflow.refresh_token', 'rt-old');
+  it('happy path: 401 → refresh qua API_BASE_URL → retry request gốc với token mới', async () => {
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'at-old');
+    localStorage.setItem(REFRESH_TOKEN_KEY, 'rt-old');
     mockStoreState.refreshToken = 'rt-old';
 
     const axiosModule = await import('axios');
@@ -205,7 +224,7 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
     await handler!(err);
 
     expect(axiosModule.default.post).toHaveBeenCalledWith(
-      '/api/v1/auth/refresh',
+      `${API_BASE_URL}/auth/refresh`,
       { refreshToken: 'rt-old' },
       expect.objectContaining({ timeout: 15_000 }),
     );
@@ -216,8 +235,8 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
   });
 
   it('single-flight: nhiều 401 đồng thời trong cùng tab chỉ gọi refresh 1 lần', async () => {
-    localStorage.setItem('medflow.access_token', 'at-old');
-    localStorage.setItem('medflow.refresh_token', 'rt-old');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'at-old');
+    localStorage.setItem(REFRESH_TOKEN_KEY, 'rt-old');
     mockStoreState.refreshToken = 'rt-old';
 
     const axiosModule = await import('axios');
@@ -247,13 +266,13 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
   });
 
   it('clearAuth + redirect bảo toàn query string khi /auth/refresh trả 401 thật sự', async () => {
-    localStorage.setItem('medflow.access_token', 'at-old');
-    localStorage.setItem('medflow.refresh_token', 'rt-expired');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'at-old');
+    localStorage.setItem(REFRESH_TOKEN_KEY, 'rt-expired');
     mockStoreState.refreshToken = 'rt-expired';
 
     const axiosModule = await import('axios');
     vi.mocked(axiosModule.default.post).mockRejectedValueOnce(
-      new AxiosError('Unauthorized', undefined, cfg('/api/v1/auth/refresh'), {}, {
+      new AxiosError('Unauthorized', undefined, cfg(`${API_BASE_URL}/auth/refresh`), {}, {
         status: 401,
       } as never),
     );
@@ -271,13 +290,13 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
   });
 
   it('không logout khi /auth/refresh gặp 429 và tôn trọng Retry-After cooldown', async () => {
-    localStorage.setItem('medflow.access_token', 'at-old');
-    localStorage.setItem('medflow.refresh_token', 'rt-valid');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'at-old');
+    localStorage.setItem(REFRESH_TOKEN_KEY, 'rt-valid');
     mockStoreState.refreshToken = 'rt-valid';
 
     const axiosModule = await import('axios');
     vi.mocked(axiosModule.default.post).mockRejectedValueOnce(
-      new AxiosError('Too Many Requests', undefined, cfg('/api/v1/auth/refresh'), {}, {
+      new AxiosError('Too Many Requests', undefined, cfg(`${API_BASE_URL}/auth/refresh`), {}, {
         status: 429,
         headers: { 'retry-after': '45' },
       } as never),
@@ -291,7 +310,7 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
 
     expect(mockClearAuth).not.toHaveBeenCalled();
     expect(mockLocationAssign).not.toHaveBeenCalled();
-    expect(localStorage.getItem('medflow.refresh_token')).toBe('rt-valid');
+    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('rt-valid');
 
     // Trong thời gian Retry-After cooldown, request 401 kế tiếp bị chặn sớm (không gọi thêm /auth/refresh).
     const err2 = new AxiosError('401', undefined, cfg('/appointments', 'at-old'), {}, {
@@ -308,15 +327,15 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
     { label: 'Network Error', code: 'ERR_NETWORK', status: undefined },
     { label: 'Timeout ECONNABORTED', code: 'ECONNABORTED', status: undefined },
   ])('không logout khi /auth/refresh gặp lỗi tạm thời: $label', async ({ label, code, status }) => {
-    localStorage.setItem('medflow.access_token', 'at-old');
-    localStorage.setItem('medflow.refresh_token', 'rt-valid');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'at-old');
+    localStorage.setItem(REFRESH_TOKEN_KEY, 'rt-valid');
     mockStoreState.refreshToken = 'rt-valid';
 
     const axiosModule = await import('axios');
     const refreshErr = new AxiosError(
       label,
       code,
-      cfg('/api/v1/auth/refresh'),
+      cfg(`${API_BASE_URL}/auth/refresh`),
       {},
       status ? ({ status } as never) : undefined,
     );
@@ -330,20 +349,19 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
 
     expect(mockClearAuth).not.toHaveBeenCalled();
     expect(mockLocationAssign).not.toHaveBeenCalled();
-    expect(localStorage.getItem('medflow.refresh_token')).toBe('rt-valid');
+    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('rt-valid');
   });
 
   it('multi-tab Web Locks: sau khi lấy lock, nếu tab khác đã rotate token thì dùng luôn token mới mà không gọi /auth/refresh', async () => {
-    localStorage.setItem('medflow.access_token', 'at-old');
-    localStorage.setItem('medflow.refresh_token', 'rt-old');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'at-old');
+    localStorage.setItem(REFRESH_TOKEN_KEY, 'rt-old');
     mockStoreState.refreshToken = 'rt-old';
 
-    // Giả lập Web Locks API: trong lúc Tab B đang chờ lock, Tab A hoàn tất rotate trong localStorage.
     const originalLocks = navigator.locks;
     const mockRequest = vi.fn(
       async (_name: string, _opts: unknown, callback: () => Promise<unknown>) => {
-        localStorage.setItem('medflow.access_token', 'at-rotated-by-tab-a');
-        localStorage.setItem('medflow.refresh_token', 'rt-rotated-by-tab-a');
+        localStorage.setItem(ACCESS_TOKEN_KEY, 'at-rotated-by-tab-a');
+        localStorage.setItem(REFRESH_TOKEN_KEY, 'rt-rotated-by-tab-a');
         return callback();
       },
     );
@@ -372,8 +390,8 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
   });
 
   it('chống khôi phục phiên đã logout khi response refresh đến muộn', async () => {
-    localStorage.setItem('medflow.access_token', 'at-old');
-    localStorage.setItem('medflow.refresh_token', 'rt-old');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'at-old');
+    localStorage.setItem(REFRESH_TOKEN_KEY, 'rt-old');
     mockStoreState.refreshToken = 'rt-old';
 
     let resolveRefresh!: (val: unknown) => void;
@@ -391,7 +409,6 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
 
     const pending = handler!(err);
 
-    // Cho phép doRefresh tiến vào lời gọi axios.post, sau đó user bấm Logout trước khi mạng trả về.
     await vi.waitFor(() => expect(axiosModule.default.post).toHaveBeenCalledTimes(1));
     mockClearAuth();
 
@@ -406,14 +423,14 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
 
     await expect(pending).rejects.toThrow(/logged_out/);
     expect(mockSetTokens).not.toHaveBeenCalled();
-    expect(localStorage.getItem('medflow.access_token')).toBeNull();
-    expect(localStorage.getItem('medflow.refresh_token')).toBeNull();
+    expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBeNull();
+    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
     expect(apiClient.defaults.adapter).not.toHaveBeenCalled();
   });
 
   it('chống ghi đè hoặc xoá nhầm phiên khi tài khoản khác vừa đăng nhập trong lúc refresh đang bay', async () => {
-    localStorage.setItem('medflow.access_token', 'at-u1');
-    localStorage.setItem('medflow.refresh_token', 'rt-u1');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'at-u1');
+    localStorage.setItem(REFRESH_TOKEN_KEY, 'rt-u1');
     mockStoreState.refreshToken = 'rt-u1';
 
     let rejectRefresh!: (reason: unknown) => void;
@@ -431,7 +448,6 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
 
     await vi.waitFor(() => expect(axiosModule.default.post).toHaveBeenCalledTimes(1));
 
-    // Tab khác đăng xuất User 1 và đăng nhập User 2 trong lúc request refresh của User 1 đang bay.
     mockStoreState.user = {
       id: 2,
       email: 'doctor01@medflow.test',
@@ -443,20 +459,19 @@ describe('axios interceptor — 401 refresh, error classification & multi-tab lo
     mockStoreState.isAuthenticated = true;
     mockStoreState.sessionEpoch = 3;
     mockStoreState.refreshToken = 'rt-u2';
-    localStorage.setItem('medflow.access_token', 'at-u2');
-    localStorage.setItem('medflow.refresh_token', 'rt-u2');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'at-u2');
+    localStorage.setItem(REFRESH_TOKEN_KEY, 'rt-u2');
 
-    // Request refresh cũ của User 1 trả 401 muộn → tuyệt đối KHÔNG được clearAuth của User 2!
     rejectRefresh(
-      new AxiosError('Unauthorized', undefined, cfg('/api/v1/auth/refresh'), {}, {
+      new AxiosError('Unauthorized', undefined, cfg(`${API_BASE_URL}/auth/refresh`), {}, {
         status: 401,
       } as never),
     );
 
     await expect(pending).rejects.toThrow();
     expect(mockClearAuth).not.toHaveBeenCalled();
-    expect(localStorage.getItem('medflow.access_token')).toBe('at-u2');
-    expect(localStorage.getItem('medflow.refresh_token')).toBe('rt-u2');
+    expect(localStorage.getItem(ACCESS_TOKEN_KEY)).toBe('at-u2');
+    expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBe('rt-u2');
   });
 
   it('parseRetryAfterMs xử lý đúng delta-seconds, HTTP-date và giới hạn biên', () => {

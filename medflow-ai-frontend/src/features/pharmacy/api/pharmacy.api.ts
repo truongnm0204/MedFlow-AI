@@ -2,7 +2,6 @@ import axios from 'axios';
 
 import { apiClient } from '@/shared/lib/axios';
 
-import { PHARMACY_DASHBOARD_MOCK } from '../data/pharmacy-mock-data';
 import type {
   ConfirmDispensePayload,
   DispenseConfirmContext,
@@ -43,37 +42,17 @@ function extractPharmacyApiError(error: unknown, fallbackMessage: string): Error
   return new Error(fallbackMessage);
 }
 
-/** Chỉ dùng cho dashboard M1 khi backend chưa mở endpoint (404) hoặc offline. */
-function shouldFallbackDashboardToMock(error: unknown): boolean {
-  if (!axios.isAxiosError(error)) return false;
-  if (!error.response) return true;
-  return error.response.status === 404;
-}
-
 /**
  * Lấy dữ liệu tổng quan màn hình khởi đầu của Dược sĩ (`GET /pharmacy/dashboard/summary`).
  */
 export async function fetchPharmacyDashboardSummary(
   params?: PharmacyDashboardQueryParams,
 ): Promise<PharmacyDashboardSummary> {
-  const hasToken =
-    typeof window !== 'undefined' && Boolean(window.localStorage?.getItem('medflow.access_token'));
-
-  if (hasToken) {
-    try {
-      const { data } = await apiClient.get<PharmacyDashboardSummary>(
-        '/pharmacy/dashboard/summary',
-        params ? { params } : undefined,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackDashboardToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return PHARMACY_DASHBOARD_MOCK;
+  const { data } = await apiClient.get<PharmacyDashboardSummary>(
+    '/pharmacy/dashboard/summary',
+    params ? { params } : undefined,
+  );
+  return data;
 }
 
 export interface PrescriptionSearchApiItemDto {

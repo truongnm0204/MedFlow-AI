@@ -32,6 +32,9 @@ describe('SystemAdminDashboardPage (M1-021)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
+    vi.spyOn(systemAdminApi, 'fetchSystemAdminDashboard').mockResolvedValue(
+      SYSTEM_ADMIN_DASHBOARD_MOCK,
+    );
     useAuthStore.setState({
       user: null,
       accessToken: null,

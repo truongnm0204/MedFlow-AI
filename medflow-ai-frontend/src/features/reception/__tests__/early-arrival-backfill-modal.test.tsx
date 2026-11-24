@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import {
@@ -277,7 +278,7 @@ describe('EarlyArrivalBackfillModal & Safe Backfill Utilities (UC28 - Issue #95)
   });
 
   it('submits POST /reception/examination-queue/entries/:id/early-arrival-backfill and surfaces HTTP 409 Conflict error in alert', async () => {
-    window.localStorage.setItem('medflow.access_token', 'jwt-reception-token');
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-reception-token');
 
     const conflictError = new AxiosError(
       'Request failed with status code 409',

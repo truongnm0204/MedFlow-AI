@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { useState } from 'react';
 
 import { Modal } from '@/shared/ui/modal';
 
@@ -46,10 +46,10 @@ export function ServiceDeactivateModal({
         {/* Header với icon cảnh báo và tiêu đề */}
         <div className="flex items-center gap-3.5">
           <span
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-base font-bold text-slate-800"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-canvas text-amber-600"
             aria-hidden="true"
           >
-            <AlertTriangle className="h-5 w-5 text-amber-600" aria-hidden="true" />
+            <AlertTriangle className="h-5 w-5" aria-hidden="true" />
           </span>
           <h2 id="deactivate-service-title" className="text-xl font-bold text-ink">
             Ngừng hoạt động dịch vụ khám?
@@ -57,15 +57,15 @@ export function ServiceDeactivateModal({
         </div>
 
         {/* Thông tin định danh dịch vụ: Tên · Mã dịch vụ */}
-        <p className="mt-4 text-sm font-semibold text-slate-800">
-          {service.name} · <span className="font-mono text-slate-700">{service.code}</span>
+        <p className="mt-4 text-sm font-semibold text-ink">
+          {service.name} · <span className="font-mono text-sub">{service.code}</span>
         </p>
         <p className="mt-1 text-xs text-sub">
           {service.department} • {service.category}
         </p>
 
         {/* Mô tả giải thích tác động của hành động */}
-        <p id="deactivate-service-desc" className="mt-3 text-xs text-sub leading-relaxed">
+        <p id="deactivate-service-desc" className="mt-3 text-xs leading-relaxed text-sub">
           Dịch vụ sẽ không thể đặt lịch khám mới trên Cổng thông tin người bệnh hoặc tiếp nhận tại
           quầy. Lịch sử khám bệnh, hồ sơ bệnh án và lịch sử giá vẫn được lưu trữ toàn vẹn.
         </p>
@@ -75,7 +75,7 @@ export function ServiceDeactivateModal({
           className={`mt-4 rounded-xl border p-4 text-xs ${
             isBlocked
               ? 'border-rose-200 bg-rose-50/70 text-rose-900'
-              : 'border-amber-200/90 bg-[#FFFDF7] text-amber-900'
+              : 'border-amber-200 bg-amber-50/70 text-amber-900'
           }`}
         >
           <p className={`font-bold ${isBlocked ? 'text-rose-900' : 'text-amber-900'}`}>
@@ -93,7 +93,7 @@ export function ServiceDeactivateModal({
         </div>
 
         {/* Ghi chú pháp lý / bảo toàn dữ liệu lịch sử */}
-        <p className="mt-3 text-xs text-sub leading-normal">
+        <p className="mt-3 text-xs leading-normal text-sub">
           Xóa cứng không áp dụng: hồ sơ danh mục và mọi liên kết lịch sử được bảo toàn để kiểm toán
           và đối soát viện phí.
         </p>
@@ -104,7 +104,7 @@ export function ServiceDeactivateModal({
             type="button"
             onClick={onClose}
             disabled={loading}
-            className="rounded-xl border border-border bg-white px-5 py-2.5 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
+            className="rounded-xl border border-border bg-white px-5 py-2.5 text-xs font-semibold text-ink transition-colors hover:bg-canvas focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none disabled:opacity-60"
           >
             Giữ dịch vụ
           </button>
@@ -113,7 +113,7 @@ export function ServiceDeactivateModal({
             onClick={handleConfirm}
             disabled={isBlocked || loading}
             aria-disabled={isBlocked || loading}
-            className="rounded-xl bg-[#FEF08A] px-5 py-2.5 text-xs font-bold text-amber-950 shadow-2xs transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-xl bg-amber-200 px-5 py-2.5 text-xs font-bold text-amber-950 shadow-2xs transition-colors hover:bg-amber-300 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? 'Đang xử lý...' : 'Ngừng hoạt động'}
           </button>

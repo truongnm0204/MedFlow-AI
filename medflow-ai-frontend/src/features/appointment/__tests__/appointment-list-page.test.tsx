@@ -3,7 +3,16 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient } from '@/shared/lib/axios';
+
 import * as appointmentListApi from '../api/appointment-list.api';
+import {
+  CANCELLED_STATUSES,
+  COMPLETED_STATUSES,
+  MOCK_APPOINTMENT_MEMBERS,
+  MOCK_APPOINTMENTS,
+  UPCOMING_STATUSES,
+} from '../data/appointment-list-mock';
 import { AppointmentListPage } from '../pages/appointment-list-page';
 
 function renderAppointmentListPage(initialEntry = '/appointments') {
@@ -25,6 +34,55 @@ function renderAppointmentListPage(initialEntry = '/appointments') {
 describe('AppointmentListPage (SCR-APT-08)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(apiClient, 'get').mockImplementation(async (_url, config) => {
+      const params = (
+        config as {
+          params?: {
+            memberId?: string;
+            tab?: string;
+            keyword?: string;
+            dateFrom?: string;
+            dateTo?: string;
+            page?: number;
+            pageSize?: number;
+          };
+        }
+      )?.params;
+      const memberId = params?.memberId ?? 'ALL';
+      const tab = params?.tab ?? 'ALL';
+      const byMember =
+        memberId === 'ALL'
+          ? MOCK_APPOINTMENTS
+          : MOCK_APPOINTMENTS.filter((item) => item.patientId === memberId);
+
+      const filtered = byMember.filter((item) => {
+        if (tab === 'UPCOMING') return UPCOMING_STATUSES.includes(item.status);
+        if (tab === 'COMPLETED') return COMPLETED_STATUSES.includes(item.status);
+        if (tab === 'CANCELLED') return CANCELLED_STATUSES.includes(item.status);
+        return true;
+      });
+
+      return {
+        data: {
+          items: filtered,
+          total: filtered.length,
+          page: params?.page ?? 1,
+          pageSize: params?.pageSize ?? 10,
+          totalPages: Math.max(1, Math.ceil(filtered.length / (params?.pageSize ?? 10))),
+          tabCounts: {
+            all: byMember.length,
+            upcoming: byMember.filter((i) => UPCOMING_STATUSES.includes(i.status)).length,
+            completed: byMember.filter((i) => COMPLETED_STATUSES.includes(i.status)).length,
+            cancelled: byMember.filter((i) => CANCELLED_STATUSES.includes(i.status)).length,
+          },
+          memberCounts: MOCK_APPOINTMENT_MEMBERS.map((m) => ({
+            ...m,
+            appointmentCount: MOCK_APPOINTMENTS.filter((i) => i.patientId === m.id).length,
+          })),
+          totalAllMembersCount: MOCK_APPOINTMENTS.length,
+        },
+      };
+    });
   });
 
   it('renders page header, member filter pills, status tabs, and all 3 initial appointment cards matching Figma 17:676', async () => {

@@ -1,3 +1,5 @@
+import type { LucideIcon } from 'lucide-react';
+import { CalendarCheck, Check, FileText, QrCode, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 
 import { useQuickSlotSearch } from '../hooks/use-patient-home';
@@ -5,11 +7,38 @@ import { quickBookingSchema } from '../schemas/home.schemas';
 import type { QuickSlotItem } from '../types/home.types';
 import { QuickSlotResults } from './quick-slot-results';
 
-const TRUST_METRICS = [
-  { value: '0 Phút', label: 'Chờ tại quầy (Check-in QR)', color: 'text-sky-700' },
-  { value: '100%', label: 'Minh bạch giá (Non-BHYT)', color: 'text-emerald-700' },
-  { value: '50.000+', label: 'Lượt khám hài lòng (4.9★)', color: 'text-slate-900' },
-  { value: '15 Phút', label: 'Trả kết quả CLS cơ bản', color: 'text-sky-700' },
+interface ServicePillar {
+  title: string;
+  subtitle: string;
+  icon: LucideIcon;
+  tone: string;
+}
+
+const SERVICE_PILLARS: ServicePillar[] = [
+  {
+    title: 'Check-in QR',
+    subtitle: 'Tiếp nhận tự động tại quầy & Kiosk',
+    icon: QrCode,
+    tone: 'text-primary',
+  },
+  {
+    title: 'Non-BHYT',
+    subtitle: 'Công khai biểu phí trước khi khám',
+    icon: ShieldCheck,
+    tone: 'text-emerald-700',
+  },
+  {
+    title: 'Hồ sơ EMR',
+    subtitle: 'Lưu trữ xuyên suốt lịch sử khám',
+    icon: FileText,
+    tone: 'text-navy',
+  },
+  {
+    title: 'Đặt hẹn số',
+    subtitle: 'Chủ động chọn khung giờ phù hợp',
+    icon: CalendarCheck,
+    tone: 'text-primary',
+  },
 ];
 
 /** Hero + thẻ đặt lịch nhanh (Quick-Booking) có kiểm tra hợp lệ và tra cứu slot trực tiếp. */
@@ -42,18 +71,18 @@ export function HeroSection() {
   };
 
   return (
-    <section className="relative overflow-hidden border-b border-slate-200/60 bg-gradient-to-b from-white via-sky-50/30 to-transparent pt-10 pb-16 lg:pt-14 lg:pb-20">
+    <section className="relative overflow-hidden border-b border-border/60 bg-gradient-to-b from-white via-sky-50/30 to-transparent pt-10 pb-16 lg:pt-14 lg:pb-20">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-3xl space-y-3 text-center">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-primary">
             CỔNG ĐẶT LỊCH & ĐIỀU PHỐI KHÁM NGOẠI TRÚ THÔNG MINH
           </span>
           <h1 className="text-3xl leading-tight font-extrabold tracking-tight text-navy sm:text-4xl lg:text-5xl">
             Đặt Lịch Khám Chuyên Khoa Nhanh Chóng, Không Chờ Đợi
           </h1>
-          <p className="text-xs leading-relaxed text-slate-600 sm:text-sm">
-            Kết nối trực tiếp đội ngũ Tiến sĩ, Bác sĩ CKII đầu ngành. Minh bạch 100% chi phí, định
-            tuyến phòng khám tự động và theo dõi hồ sơ bệnh án điện tử xuyên suốt.
+          <p className="text-xs leading-relaxed text-sub sm:text-sm">
+            Kết nối trực tiếp đội ngũ Tiến sĩ, Bác sĩ CKII đầu ngành. Minh bạch chi phí theo biểu
+            phí cơ sở, định tuyến phòng khám tự động và theo dõi hồ sơ bệnh án điện tử xuyên suốt.
           </p>
         </div>
 
@@ -61,14 +90,14 @@ export function HeroSection() {
           id="booking"
           onSubmit={handleQuickSearch}
           noValidate
-          className="mx-auto mt-8 max-w-4xl scroll-mt-24 space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-lg sm:p-6"
+          className="mx-auto mt-8 max-w-4xl scroll-mt-24 space-y-4 rounded-2xl border border-border bg-white p-5 shadow-lg sm:p-6"
         >
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
-              <div className="flex h-6 w-6 items-center justify-center rounded-md bg-sky-100 text-xs font-bold text-sky-700">
-                ✓
+              <div className="flex h-6 w-6 items-center justify-center rounded-md bg-sky-100 text-primary">
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />
               </div>
-              <h2 className="text-sm font-bold text-slate-900">
+              <h2 className="text-sm font-bold text-ink">
                 Đặt Lịch Khám Ngoại Trú Nhanh (100% Khám Tự Nguyện)
               </h2>
             </div>
@@ -81,7 +110,7 @@ export function HeroSection() {
             <div>
               <label
                 htmlFor="specialty-select"
-                className="mb-1 block text-[11px] font-bold tracking-wider text-slate-500 uppercase"
+                className="mb-1 block text-[11px] font-bold tracking-wider text-sub uppercase"
               >
                 Chuyên Khoa
               </label>
@@ -89,22 +118,22 @@ export function HeroSection() {
                 id="specialty-select"
                 value={selectedSpecialty}
                 onChange={(e) => setSelectedSpecialty(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs font-medium text-slate-800 focus:bg-white focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                className="w-full rounded-lg border border-border bg-canvas p-2.5 text-xs font-medium text-ink focus:bg-white focus:ring-2 focus:ring-primary focus:outline-none"
               >
                 <option value="">-- Chọn chuyên khoa --</option>
-                <option value="gastro">Nội Tiêu Hóa (từ 350k)</option>
-                <option value="cardio">Tim Mạch Can Thiệp (từ 400k)</option>
-                <option value="ent">Tai Mũi Họng (từ 300k)</option>
-                <option value="pediatrics">Nhi Khoa (từ 350k)</option>
-                <option value="ortho">Cơ Xương Khớp (từ 350k)</option>
-                <option value="eye">Mắt & Khúc Xạ (từ 300k)</option>
+                <option value="gastro">Nội Tiêu Hóa</option>
+                <option value="cardio">Tim Mạch Can Thiệp</option>
+                <option value="ent">Tai Mũi Họng</option>
+                <option value="pediatrics">Nhi Khoa</option>
+                <option value="ortho">Cơ Xương Khớp</option>
+                <option value="eye">Mắt & Khúc Xạ</option>
               </select>
             </div>
 
             <div>
               <label
                 htmlFor="doctor-select"
-                className="mb-1 block text-[11px] font-bold tracking-wider text-slate-500 uppercase"
+                className="mb-1 block text-[11px] font-bold tracking-wider text-sub uppercase"
               >
                 Bác Sĩ Trực Khám
               </label>
@@ -112,20 +141,17 @@ export function HeroSection() {
                 id="doctor-select"
                 value={selectedDoctor}
                 onChange={(e) => setSelectedDoctor(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs font-medium text-slate-800 focus:bg-white focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                className="w-full rounded-lg border border-border bg-canvas p-2.5 text-xs font-medium text-ink focus:bg-white focus:ring-2 focus:ring-primary focus:outline-none"
               >
                 <option value="all">Bất kỳ bác sĩ có lịch trống sớm nhất</option>
-                <option value="doc1">TS. BS. Nguyễn Văn Hùng</option>
-                <option value="doc2">BS. CKII Trần Mai Anh</option>
-                <option value="doc3">ThS. BS. Lê Thu Hà</option>
-                <option value="doc4">BS. CKI Phạm Quang Minh</option>
+                <option value="specialist">Theo lịch phân công chuyên khoa</option>
               </select>
             </div>
 
             <div>
               <label
                 htmlFor="date-select"
-                className="mb-1 block text-[11px] font-bold tracking-wider text-slate-500 uppercase"
+                className="mb-1 block text-[11px] font-bold tracking-wider text-sub uppercase"
               >
                 Ngày Khám
               </label>
@@ -135,10 +161,10 @@ export function HeroSection() {
                 onChange={(e) =>
                   setSelectedDate(e.target.value as 'today' | 'tomorrow' | 'weekend')
                 }
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs font-medium text-slate-800 focus:bg-white focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                className="w-full rounded-lg border border-border bg-canvas p-2.5 text-xs font-medium text-ink focus:bg-white focus:ring-2 focus:ring-primary focus:outline-none"
               >
-                <option value="today">Hôm nay (Còn 18 slot)</option>
-                <option value="tomorrow">Ngày mai (Còn 35 slot)</option>
+                <option value="today">Hôm nay</option>
+                <option value="tomorrow">Ngày mai</option>
                 <option value="weekend">Thứ Bảy / Chủ Nhật này</option>
               </select>
             </div>
@@ -147,7 +173,7 @@ export function HeroSection() {
               <button
                 type="submit"
                 disabled={slotSearch.isPending}
-                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-sky-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm shadow-sky-600/30 transition-all hover:bg-sky-700 disabled:opacity-60"
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2.5 text-xs font-bold text-white shadow-sm shadow-sky-600/30 transition-all hover:bg-primary-dark focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none disabled:opacity-60"
               >
                 {slotSearch.isPending ? 'Đang tìm slot...' : 'Tìm Lịch Khám (AI)'}
               </button>
@@ -161,7 +187,7 @@ export function HeroSection() {
             value={symptomNote}
             onChange={(e) => setSymptomNote(e.target.value)}
             placeholder="Ghi chú triệu chứng hoặc nhu cầu khám (tùy chọn, tối đa 200 ký tự)..."
-            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            className="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-xs text-ink placeholder-slate-400 focus:bg-white focus:ring-2 focus:ring-primary focus:outline-none"
           />
 
           <QuickSlotResults
@@ -175,14 +201,20 @@ export function HeroSection() {
           />
 
           <div className="grid grid-cols-2 gap-4 border-t border-slate-100 pt-4 text-center md:grid-cols-4">
-            {TRUST_METRICS.map((item) => (
-              <div key={item.label} className="p-2">
-                <div className={`font-mono text-xl font-black sm:text-2xl ${item.color}`}>
-                  {item.value}
+            {SERVICE_PILLARS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <div key={item.title} className="p-2">
+                  <div
+                    className={`inline-flex items-center justify-center gap-1.5 text-sm font-extrabold sm:text-base ${item.tone}`}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>{item.title}</span>
+                  </div>
+                  <div className="mt-0.5 text-[11px] font-medium text-sub">{item.subtitle}</div>
                 </div>
-                <div className="text-[11px] font-medium text-slate-500">{item.label}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </form>
       </div>

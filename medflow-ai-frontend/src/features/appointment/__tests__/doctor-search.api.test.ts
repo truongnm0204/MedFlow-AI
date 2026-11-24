@@ -3,10 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { apiClient } from '@/shared/lib/axios';
 
-import { fetchDoctorsApi, searchMockDoctors } from '../api/doctor-search.api';
+import { fetchDoctorsApi } from '../api/doctor-search.api';
 import type { DoctorSearchResponse } from '../types/doctor-search.types';
 
-describe('doctor-search.api (M1-38 HTTP + fallback)', () => {
+describe('doctor-search.api (M1-38 pure HTTP)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -56,7 +56,21 @@ describe('doctor-search.api (M1-38 HTTP + fallback)', () => {
     expect(result).toEqual(payload);
   });
 
-  it('falls back to searchMockDoctors when backend returns 404', async () => {
+  it('returns empty response as-is when backend finds zero doctors', async () => {
+    const emptyPayload: DoctorSearchResponse = {
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 6,
+      totalPages: 0,
+    };
+    vi.spyOn(apiClient, 'get').mockResolvedValueOnce({ data: emptyPayload });
+
+    const result = await fetchDoctorsApi({ keyword: 'Không tồn tại' });
+    expect(result).toEqual(emptyPayload);
+  });
+
+  it('rethrows HTTP 404, 400 and network errors without falling back to mock doctors', async () => {
     const notFoundError = new AxiosError(
       'Request failed with status code 404',
       'ERR_BAD_REQUEST',
@@ -71,15 +85,9 @@ describe('doctor-search.api (M1-38 HTTP + fallback)', () => {
       },
     );
 
-    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(notFoundError);
+    const getSpy = vi.spyOn(apiClient, 'get').mockRejectedValueOnce(notFoundError);
+    await expect(fetchDoctorsApi({})).rejects.toBe(notFoundError);
 
-    const result = await fetchDoctorsApi({});
-
-    expect(result).toEqual(searchMockDoctors({}));
-    expect(result.items[0].id).toBe('doc-01');
-  });
-
-  it('rethrows error when backend returns 400 validation error', async () => {
     const badRequestError = new AxiosError(
       'Request failed with status code 400',
       'ERR_BAD_REQUEST',
@@ -97,9 +105,11 @@ describe('doctor-search.api (M1-38 HTTP + fallback)', () => {
         },
       },
     );
-
-    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(badRequestError);
-
+    getSpy.mockRejectedValueOnce(badRequestError);
     await expect(fetchDoctorsApi({ degree: 'XYZ' as never })).rejects.toBe(badRequestError);
+
+    const networkError = new AxiosError('Network Error', 'ERR_NETWORK');
+    getSpy.mockRejectedValueOnce(networkError);
+    await expect(fetchDoctorsApi({})).rejects.toBe(networkError);
   });
 });

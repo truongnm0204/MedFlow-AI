@@ -1,9 +1,9 @@
 import { RotateCcw, Search, X } from 'lucide-react';
 
+import { getHospitalTodayIso } from '@/shared/lib/hospital-date';
 import { Alert } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 
-import { DEFAULT_QUEUE_DATE } from '../data/examination-queue-mock';
 import type { ExaminationQueueFilterFormValues } from '../schemas/examination-queue-filter.schema';
 import type {
   ExaminationQueuePriorityFilter,
@@ -15,6 +15,7 @@ import type {
 
 export interface ExaminationQueueFilterBarProps {
   filters: ExaminationQueueFilterFormValues;
+  defaultQueueDate?: string;
   servicePointOptions: Array<{ id: string; label: string; roomCode: string; count: number }>;
   statusCounts: Record<ExaminationQueueStatusFilter, number>;
   validationError: string | null;
@@ -34,6 +35,7 @@ const STATUS_TABS: Array<{ id: ExaminationQueueStatusFilter; label: string }> = 
 
 export function ExaminationQueueFilterBar({
   filters,
+  defaultQueueDate = getHospitalTodayIso(),
   servicePointOptions,
   statusCounts,
   validationError,
@@ -48,7 +50,7 @@ export function ExaminationQueueFilterBar({
     filters.visitType !== 'ALL' ||
     filters.arrivalClass !== 'ALL' ||
     filters.keyword.trim() !== '' ||
-    filters.queueDate !== DEFAULT_QUEUE_DATE;
+    filters.queueDate !== defaultQueueDate;
 
   return (
     <div className="bg-white rounded-2xl border border-border p-4 shadow-sm space-y-4">

@@ -6,6 +6,7 @@ import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { hasPermission } from '@/features/auth/utils/rbac';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { getHospitalTodayIso } from '@/shared/lib/hospital-date';
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -29,7 +30,6 @@ import { PatientDetailModal } from '../components/patient-detail-modal';
 import { ReceptionSidebar } from '../components/reception-sidebar';
 import { UpdateQueueStatusModal } from '../components/update-queue-status-modal';
 import { ReturnToDoctorQueueModal } from '../components/return-to-doctor-queue-modal';
-import { DEFAULT_QUEUE_DATE } from '../data/examination-queue-mock';
 import { usePatientDetail } from '../hooks/use-reception-api';
 import { useCallNextEligiblePatient, useExaminationQueue } from '../hooks/use-examination-queue';
 import {
@@ -67,16 +67,20 @@ const STATUS_LABEL: Record<ExaminationQueueStatus, string> = {
   SKIPPED: 'Qua lượt',
 };
 
-const INITIAL_FILTERS: ExaminationQueueFilterFormValues = {
-  queueDate: DEFAULT_QUEUE_DATE,
-  servicePointId: 'ALL',
-  status: 'ALL',
-  priority: 'ALL',
-  queueType: 'ALL',
-  visitType: 'ALL',
-  arrivalClass: 'ALL',
-  keyword: '',
-};
+function buildInitialQueueFilters(
+  queueDate = getHospitalTodayIso(),
+): ExaminationQueueFilterFormValues {
+  return {
+    queueDate,
+    servicePointId: 'ALL',
+    status: 'ALL',
+    priority: 'ALL',
+    queueType: 'ALL',
+    visitType: 'ALL',
+    arrivalClass: 'ALL',
+    keyword: '',
+  };
+}
 
 export function ExaminationQueuePage() {
   const navigate = useNavigate();
@@ -84,10 +88,14 @@ export function ExaminationQueuePage() {
   const logout = useLogout();
 
   const canManageQueue = hasPermission(user?.roles, 'QUEUE_MANAGE');
+  const defaultQueueDate = useMemo(() => getHospitalTodayIso(), []);
 
-  const [filters, setFilters] = useState<ExaminationQueueFilterFormValues>(INITIAL_FILTERS);
-  const [appliedFilters, setAppliedFilters] =
-    useState<ExaminationQueueFilterFormValues>(INITIAL_FILTERS);
+  const [filters, setFilters] = useState<ExaminationQueueFilterFormValues>(() =>
+    buildInitialQueueFilters(defaultQueueDate),
+  );
+  const [appliedFilters, setAppliedFilters] = useState<ExaminationQueueFilterFormValues>(() =>
+    buildInitialQueueFilters(defaultQueueDate),
+  );
   const [validationError, setValidationError] = useState<string | null>(null);
   const [selectedPatientCode, setSelectedPatientCode] = useState<string | null>(null);
   const [backfillTarget, setBackfillTarget] = useState<EarlyArrivalBackfillTarget | null>(null);
@@ -136,8 +144,9 @@ export function ExaminationQueuePage() {
   };
 
   const handleResetFilters = () => {
-    setFilters(INITIAL_FILTERS);
-    setAppliedFilters(INITIAL_FILTERS);
+    const resetValues = buildInitialQueueFilters(getHospitalTodayIso());
+    setFilters(resetValues);
+    setAppliedFilters(resetValues);
     setValidationError(null);
   };
 
