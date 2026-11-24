@@ -688,6 +688,38 @@ public sealed class AuthServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RefreshAsync_TemporarilyLockedUntilFuture_RevokesSessionsAndThrowsUnauthorized()
+    {
+        var user = await SeedUserAsync(
+            email: "temp-locked-refresh@medflow.test",
+            status: AccountStatus.ACTIVE,
+            lockedUntil: DateTime.UtcNow.AddMinutes(10));
+        _sessions.NextRotateResult = new RotateResult
+        {
+            Success = true,
+            User = user,
+            Entity = new AuthSession
+            {
+                Id = 101,
+                UserId = user.Id,
+                ExpiresAt = DateTime.UtcNow.AddDays(7),
+            },
+            RawToken = "must-not-be-returned",
+        };
+
+        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _sut.RefreshAsync(new RefreshRequest
+            {
+                RefreshToken = "temp-locked-token",
+            }, "10.0.0.13"));
+
+        Assert.Equal("Refresh token không hợp lệ", ex.Message);
+        var revoked = Assert.Single(_sessions.RevokedUsers);
+        Assert.Equal(user.Id, revoked.UserId);
+        Assert.Empty(_jwt.Calls);
+    }
+
+    [Fact]
     public async Task RefreshAsync_SuccessfulRotation_LoadsUserRolesAndIssuesNewAccessToken()
     {
         var user = await SeedUserAsync(

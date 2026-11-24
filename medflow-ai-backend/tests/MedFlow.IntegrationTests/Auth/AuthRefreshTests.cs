@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using MedFlow.Application.DTOs.Auth;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MedFlow.IntegrationTests.Auth;
 
@@ -144,5 +145,113 @@ public sealed class AuthRefreshTests(TestWebAppFactory factory) : AuthTestBase(f
             new AuthenticationHeaderValue("Bearer", refreshed!.AccessToken);
         var me = await Client.GetAsync("/api/v1/auth/me");
         Assert.Equal(HttpStatusCode.OK, me.StatusCode);
+    }
+
+    [Fact]
+    public async Task Refresh_ConcurrentParallelRequests_AtMostOneRotates_NoOrphanSessions_AndReuseRevokesFamily()
+    {
+        var (email, tokens) = await RegisterVerifyLoginAsync();
+        var user = await Db.Users.AsNoTracking().FirstAsync(u => u.Email == email);
+
+        const int concurrency = 6;
+        using var barrier = new SemaphoreSlim(0, concurrency);
+        var clients = Enumerable.Range(0, concurrency).Select(_ => Factory.CreateClient()).ToArray();
+
+        try
+        {
+            var tasks = clients.Select(async client =>
+            {
+                await barrier.WaitAsync();
+                return await client.PostAsJsonAsync(
+                    "/api/v1/auth/refresh",
+                    new RefreshRequest { RefreshToken = tokens.RefreshToken });
+            }).ToArray();
+
+            barrier.Release(concurrency);
+            var responses = await Task.WhenAll(tasks);
+
+            var successCount = responses.Count(r => r.StatusCode == HttpStatusCode.OK);
+            var unauthorizedCount = responses.Count(r => r.StatusCode == HttpStatusCode.Unauthorized);
+
+            Assert.InRange(successCount, 0, 1);
+            Assert.Equal(concurrency, successCount + unauthorizedCount);
+
+            var sessions = await Db.AuthSessions
+                .AsNoTracking()
+                .Where(s => s.UserId == user.Id)
+                .ToListAsync();
+
+            // Tuyệt đối không sinh orphan session: tối đa 2 bản ghi (session gốc + tối đa 1 session thắng rotate).
+            Assert.InRange(sessions.Count, 1, 2);
+            // Vì có request thua cuộc đua gửi trùng token đã rotate, reuse detection phải thu hồi toàn bộ family.
+            Assert.All(sessions, s => Assert.NotNull(s.RevokedAt));
+
+            var reuseAuditExists = await Db.AuditLogs
+                .AsNoTracking()
+                .AnyAsync(a => a.Action == "REFRESH_REUSE_DETECTED" && a.ActorUserId == user.Id);
+            Assert.True(reuseAuditExists);
+        }
+        finally
+        {
+            foreach (var c in clients)
+                c.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RotateAsync_WhenSaveChangesFailsBeforeCommit_RollsBackOldTokenRevocation_AndCreatesZeroOrphans()
+    {
+        var (email, tokens) = await RegisterVerifyLoginAsync();
+        var user = await Db.Users.AsNoTracking().FirstAsync(u => u.Email == email);
+
+        var connString = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection")!;
+        var options = new DbContextOptionsBuilder<MedFlow.Infrastructure.Persistence.MedFlowDbContext>()
+            .UseNpgsql(connString)
+            .Options;
+
+        await using (var failingDb = new FailingOnInsertDbContext(options))
+        {
+            var config = Factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+            var sessionService = new MedFlow.Infrastructure.Identity.AuthSessionService(failingDb, config);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                sessionService.RotateAsync(tokens.RefreshToken, "127.0.0.1"));
+        }
+
+        // Kiểm tra trên DB thật: transaction phải rollback cả ExecuteUpdateAsync trên token cũ.
+        var sessionsAfterFailure = await Db.AuthSessions
+            .AsNoTracking()
+            .Where(s => s.UserId == user.Id)
+            .ToListAsync();
+
+        var original = Assert.Single(sessionsAfterFailure);
+        Assert.Equal(Hash(tokens.RefreshToken), original.RefreshTokenHash);
+        Assert.Null(original.RevokedAt);
+        Assert.Null(original.ReplacedByTokenHash);
+
+        // Token cũ vẫn rotate thành công bình thường sau khi lỗi tạm thời đã qua.
+        var retryResp = await Client.PostAsJsonAsync(
+            "/api/v1/auth/refresh",
+            new RefreshRequest { RefreshToken = tokens.RefreshToken });
+        Assert.Equal(HttpStatusCode.OK, retryResp.StatusCode);
+    }
+
+    private sealed class FailingOnInsertDbContext(
+        DbContextOptions<MedFlow.Infrastructure.Persistence.MedFlowDbContext> options)
+        : MedFlow.Infrastructure.Persistence.MedFlowDbContext(options)
+    {
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            var hasAddedSession = ChangeTracker
+                .Entries<MedFlow.Domain.Entities.AuthSession>()
+                .Any(e => e.State == EntityState.Added);
+
+            if (hasAddedSession)
+            {
+                throw new InvalidOperationException("Simulated DB failure before transaction commit.");
+            }
+
+            return base.SaveChangesAsync(cancellationToken);
+        }
     }
 }

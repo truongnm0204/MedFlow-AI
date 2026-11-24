@@ -1,9 +1,14 @@
+using System.Globalization;
+using System.Net;
 using System.Text;
+using System.Text.Json;
 using System.Threading.RateLimiting;
 using MedFlow.API.Middleware;
 using MedFlow.Application;
 using MedFlow.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
@@ -42,44 +47,145 @@ builder.Services.Configure<MedFlow.Application.Options.IdentityHashOptions>(
     builder.Configuration.GetSection("Identity"));
 builder.Services.AddInfrastructure(builder.Configuration);
 
-var jwtSecret = builder.Configuration["Jwt:Secret"]
-    ?? throw new InvalidOperationException("Jwt:Secret not configured.");
+builder.Services.AddOptions<ForwardedHeadersOptions>()
+    .Configure<IConfiguration>((options, configuration) =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.ForwardLimit = Math.Max(1, configuration.GetValue("ReverseProxy:ForwardLimit", 1));
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+
+        var configuredProxies = configuration
+            .GetSection("ReverseProxy:KnownProxies")
+            .Get<string[]>() ?? [];
+
+        foreach (var rawProxy in configuredProxies)
+        {
+            if (!string.IsNullOrWhiteSpace(rawProxy) && IPAddress.TryParse(rawProxy.Trim(), out var ip))
+            {
+                options.KnownProxies.Add(ip);
+            }
+        }
+
+        var configuredNetworks = configuration
+            .GetSection("ReverseProxy:KnownIPNetworks")
+            .Get<string[]>() ?? [];
+
+        foreach (var rawNetwork in configuredNetworks)
+        {
+            if (!string.IsNullOrWhiteSpace(rawNetwork) && System.Net.IPNetwork.TryParse(rawNetwork.Trim(), out var network))
+            {
+                options.KnownIPNetworks.Add(network);
+            }
+        }
+    });
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+    .AddJwtBearer();
+
+builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<IConfiguration>((options, configuration) =>
     {
+        var jwtSecret = configuration["Jwt:Secret"]
+            ?? throw new InvalidOperationException("Jwt:Secret not configured.");
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "MedFlow",
-            ValidAudience = builder.Configuration["Jwt:Audience"] ?? "MedFlow",
+            ValidIssuer = configuration["Jwt:Issuer"] ?? "MedFlow",
+            ValidAudience = configuration["Jwt:Audience"] ?? "MedFlow",
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
             ClockSkew = TimeSpan.Zero,
         };
-    });
+    })
+    .ValidateOnStart();
 
 builder.Services.AddAuthorization();
+
+static string ResolveClientIpPartitionKey(HttpContext httpContext, string policyName)
+{
+    var ip = httpContext.Connection.RemoteIpAddress?.ToString();
+    var normalizedIp = string.IsNullOrWhiteSpace(ip) ? "unknown" : ip;
+    return $"{policyName}:{normalizedIp}";
+}
+
+static FixedWindowRateLimiterOptions BuildFixedWindowOptions(
+    HttpContext httpContext,
+    string limitKey,
+    int defaultPermitLimit)
+{
+    var section = httpContext.RequestServices.GetRequiredService<IConfiguration>().GetSection("RateLimiting");
+    var windowSeconds = Math.Max(1, section.GetValue("WindowSeconds", 60));
+    var permitLimit = Math.Max(1, section.GetValue(limitKey, defaultPermitLimit));
+
+    return new FixedWindowRateLimiterOptions
+    {
+        Window = TimeSpan.FromSeconds(windowSeconds),
+        PermitLimit = permitLimit,
+        QueueLimit = 0,
+        AutoReplenishment = true,
+    };
+}
 
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-    options.AddFixedWindowLimiter("auth", opt =>
+    options.OnRejected = async (context, cancellationToken) =>
     {
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.PermitLimit = 5;
-        opt.QueueLimit = 0;
-    });
+        var response = context.HttpContext.Response;
+        response.StatusCode = StatusCodes.Status429TooManyRequests;
 
-    options.AddFixedWindowLimiter("otp", opt =>
-    {
-        opt.Window = TimeSpan.FromMinutes(1);
-        opt.PermitLimit = 10;
-        opt.QueueLimit = 0;
-    });
+        var defaultWindowSeconds = Math.Max(
+            1,
+            context.HttpContext.RequestServices
+                .GetRequiredService<IConfiguration>()
+                .GetValue("RateLimiting:WindowSeconds", 60));
+
+        var retryAfterSeconds = context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter)
+            ? Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds))
+            : defaultWindowSeconds;
+
+        response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+        response.ContentType = "application/problem+json";
+
+        var problem = new ProblemDetails
+        {
+            Status = StatusCodes.Status429TooManyRequests,
+            Title = "Quá giới hạn truy cập",
+            Detail = "Bạn thao tác quá nhanh. Vui lòng thử lại sau.",
+        };
+
+        await response.WriteAsync(JsonSerializer.Serialize(problem), cancellationToken);
+    };
+
+    options.AddPolicy("auth-login", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ResolveClientIpPartitionKey(httpContext, "auth-login"),
+            _ => BuildFixedWindowOptions(httpContext, "LoginPermitLimit", 10)));
+
+    options.AddPolicy("auth-register", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ResolveClientIpPartitionKey(httpContext, "auth-register"),
+            _ => BuildFixedWindowOptions(httpContext, "RegisterPermitLimit", 5)));
+
+    options.AddPolicy("auth-refresh", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ResolveClientIpPartitionKey(httpContext, "auth-refresh"),
+            _ => BuildFixedWindowOptions(httpContext, "RefreshPermitLimit", 30)));
+
+    options.AddPolicy("otp-verify", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ResolveClientIpPartitionKey(httpContext, "otp-verify"),
+            _ => BuildFixedWindowOptions(httpContext, "OtpVerifyPermitLimit", 10)));
+
+    options.AddPolicy("otp-resend", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ResolveClientIpPartitionKey(httpContext, "otp-resend"),
+            _ => BuildFixedWindowOptions(httpContext, "OtpResendPermitLimit", 5)));
 });
 
 builder.Services.AddCors(options =>
@@ -94,6 +200,7 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 app.UseMiddleware<ExceptionMiddleware>();
+app.UseForwardedHeaders();
 
 if (app.Environment.IsDevelopment())
 {
@@ -107,14 +214,22 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))
+{
+    app.UseHsts();
+    app.UseHttpsRedirection();
+}
+
 app.UseCors("Frontend");
 
-// Bỏ rate limit trong môi trường Test để integration tests không bị 429.
-if (!app.Environment.IsEnvironment("Test"))
+// Bỏ rate limit trong môi trường Test mặc định để integration tests không bị 429,
+// trừ khi test chủ động bật RateLimiting:EnabledInTest = true.
+if (!app.Environment.IsEnvironment("Test") ||
+    app.Configuration.GetValue<bool>("RateLimiting:EnabledInTest"))
 {
     app.UseRateLimiter();
 }
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
