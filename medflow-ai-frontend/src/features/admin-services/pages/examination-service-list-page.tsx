@@ -1,6 +1,9 @@
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Loader2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
+
+import { Alert } from '@/shared/ui/alert';
+import { Button } from '@/shared/ui/button';
 
 import { AdminServicesShell } from '../components/admin-services-shell';
 import { ServiceColumnModal } from '../components/service-column-modal';
@@ -11,8 +14,14 @@ import { ServicePagination } from '../components/service-pagination';
 import { ServicePriceHistoryModal } from '../components/service-price-history-modal';
 import { ServicePriceUpdateModal } from '../components/service-price-update-modal';
 import { ServiceTable } from '../components/service-table';
+import {
+  useAdminExaminationServices,
+  useDeactivateExaminationServiceMutation,
+  useReactivateExaminationServiceMutation,
+} from '../hooks/use-examination-services';
 import { useExaminationServiceStore } from '../store/examination-service.store';
 import type { ExaminationService } from '../types/examination-service.types';
+
 function exportServicesToCsv(services: ExaminationService[]) {
   const quote = (val: string) => `"${val.replaceAll('"', '""').replace(/^[=+\-@]/, "'$&")}"`;
   const headers = [
@@ -50,6 +59,10 @@ export function ExaminationServiceListPage() {
   const navigate = useNavigate();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  const { isLoading, isError, error, refetch } = useAdminExaminationServices();
+  const deactivateMutation = useDeactivateExaminationServiceMutation();
+  const reactivateMutation = useReactivateExaminationServiceMutation();
+
   const services = useExaminationServiceStore((state) => state.services);
   const searchQuery = useExaminationServiceStore((state) => state.searchQuery);
   const categoryFilter = useExaminationServiceStore((state) => state.categoryFilter);
@@ -67,28 +80,74 @@ export function ExaminationServiceListPage() {
 
   const [deactivatingService, setDeactivatingService] = useState<ExaminationService | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const handleConfirmDeactivate = (serviceId: string) => {
+  const handleConfirmDeactivate = async (serviceId: string) => {
     const service = services.find((item) => item.id === serviceId);
-    if (service) {
+    if (!service) {
+      setDeactivatingService(null);
+      return;
+    }
+    setActionError(null);
+    try {
+      await deactivateMutation.mutateAsync({ idOrCode: service.code || service.id });
       updateService(serviceId, { status: 'SUSPENDED' });
       setFeedbackMessage(`Đã chuyển trạng thái dịch vụ ${service.name} sang Tạm ngừng hoạt động.`);
       setTimeout(() => setFeedbackMessage(null), 4000);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Không thể tạm ngừng dịch vụ khám.');
+    } finally {
+      setDeactivatingService(null);
     }
-    setDeactivatingService(null);
   };
 
-  const handleToggleStatus = (id: string) => {
+  const handleToggleStatus = async (id: string) => {
     const service = services.find((item) => item.id === id);
     if (!service) return;
     if (service.status === 'ACTIVE') {
       setDeactivatingService(service);
-    } else {
+      return;
+    }
+
+    setActionError(null);
+    try {
+      await reactivateMutation.mutateAsync(service.code || service.id);
       updateService(id, { status: 'ACTIVE' });
       setFeedbackMessage(`Đã kích hoạt lại hoạt động cho dịch vụ ${service.name}.`);
       setTimeout(() => setFeedbackMessage(null), 4000);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Không thể kích hoạt lại dịch vụ khám.');
     }
   };
+
+  const handleBatchToggleStatus = async (ids: string[], newStatus: 'ACTIVE' | 'SUSPENDED') => {
+    setActionError(null);
+    try {
+      await Promise.all(
+        ids.map(async (id) => {
+          const item = services.find((s) => s.id === id);
+          if (!item) return;
+          if (newStatus === 'SUSPENDED') {
+            await deactivateMutation.mutateAsync({ idOrCode: item.code || item.id });
+          } else {
+            await reactivateMutation.mutateAsync(item.code || item.id);
+          }
+          updateService(id, { status: newStatus });
+        }),
+      );
+      setFeedbackMessage(
+        newStatus === 'SUSPENDED'
+          ? `Đã tạm ngừng ${ids.length} dịch vụ khám được chọn.`
+          : `Đã kích hoạt lại ${ids.length} dịch vụ khám được chọn.`,
+      );
+      setTimeout(() => setFeedbackMessage(null), 4000);
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : 'Không thể cập nhật trạng thái hàng loạt.',
+      );
+    }
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key.toLowerCase() === 'k') {
@@ -138,6 +197,22 @@ export function ExaminationServiceListPage() {
   return (
     <AdminServicesShell variant="examination">
       <main className="space-y-5 px-6 py-6">
+        {isError ? (
+          <Alert tone="error">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                <b>Không thể tải danh mục dịch vụ khám:</b>{' '}
+                {error instanceof Error ? error.message : 'Đã xảy ra lỗi kết nối máy chủ.'}
+              </span>
+              <Button type="button" size="sm" variant="secondary" onClick={() => void refetch()}>
+                Thử lại
+              </Button>
+            </div>
+          </Alert>
+        ) : null}
+
+        {actionError ? <Alert tone="error">{actionError}</Alert> : null}
+
         <ServiceMetrics services={services} />
 
         <ServiceFilters
@@ -150,20 +225,32 @@ export function ExaminationServiceListPage() {
           className="overflow-hidden rounded-xl border border-border bg-white shadow-sm"
           aria-label="Bảng danh mục dịch vụ khám ngoại trú"
         >
-          <ServiceTable
-            services={paginatedServices}
-            onViewHistory={(service) => setPriceHistoryService(service)}
-            onToggleStatus={handleToggleStatus}
-            onRequestDeactivate={(service) => setDeactivatingService(service)}
-          />
-          <ServicePagination
-            count={filteredServices.length}
-            currentPage={currentPage}
-            pageSize={pageSize}
-            totalPages={totalPages}
-            onPageChange={setPage}
-            onPageSizeChange={setPageSize}
-          />
+          {isLoading && services.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-sm text-sub">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+              <span>Đang tải danh mục dịch vụ khám...</span>
+            </div>
+          ) : (
+            <>
+              <ServiceTable
+                services={paginatedServices}
+                onViewHistory={(service) => setPriceHistoryService(service)}
+                onToggleStatus={(id) => void handleToggleStatus(id)}
+                onRequestDeactivate={(service) => setDeactivatingService(service)}
+                onBatchToggleStatus={(ids, nextStatus) =>
+                  void handleBatchToggleStatus(ids, nextStatus)
+                }
+              />
+              <ServicePagination
+                count={filteredServices.length}
+                currentPage={currentPage}
+                pageSize={pageSize}
+                totalPages={totalPages}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
+            </>
+          )}
         </section>
       </main>
 
@@ -174,7 +261,7 @@ export function ExaminationServiceListPage() {
         service={deactivatingService}
         open={Boolean(deactivatingService)}
         onClose={() => setDeactivatingService(null)}
-        onConfirm={handleConfirmDeactivate}
+        onConfirm={(serviceId) => void handleConfirmDeactivate(serviceId)}
       />
       {feedbackMessage && (
         <div

@@ -46,21 +46,29 @@ export const examinationSlotSchema = z
 
 export type ExaminationSlotFormValues = z.infer<typeof examinationSlotSchema>;
 
+function getTodayLocalIso(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 export const DEFAULT_SLOT_FORM_VALUES: ExaminationSlotFormValues = {
-  code: 'SLT-HN-20261027-01',
+  code: '',
   serviceType: 'OUTPATIENT',
-  serviceId: 'srv-001',
-  serviceName: 'Khám Nội tiết',
-  serviceCode: 'EX-1-01',
-  specialty: 'Nội tiết',
-  date: '2026-10-27',
+  serviceId: '',
+  serviceName: '',
+  serviceCode: '',
+  specialty: '',
+  date: getTodayLocalIso(),
   startTime: '08:00',
-  endTime: '08:20',
-  facility: 'Cơ sở Hà Nội',
+  endTime: '08:30',
+  facility: '',
   capacityMax: 8,
-  room: 'PK-201',
-  doctorId: 'doc-001',
-  doctorName: 'BS. Nguyễn Thu Lan',
+  room: '',
+  doctorId: '',
+  doctorName: '',
   status: 'OPEN',
 };
 

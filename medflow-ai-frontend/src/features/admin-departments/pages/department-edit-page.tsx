@@ -1,17 +1,19 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Building2 } from 'lucide-react';
+import { useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
 
-import { MOCK_DEPARTMENTS } from '../data/departments-data';
+import { useAdminDepartments, useUpdateDepartmentMutation } from '../hooks/use-departments';
 import {
   DEPARTMENT_FACILITIES,
   departmentUpdateSchema,
   type DepartmentUpdateFormValues,
 } from '../schemas/department-update.schema';
-import type { Department, DepartmentStatus } from '../types/department-update.types';
+import type { DepartmentStatus } from '../types/department-update.types';
+import type { DepartmentItem } from '../types/department.types';
 
 const LIST_PATH = '/admin/departments';
 
@@ -29,8 +31,21 @@ function statusLabel(status: DepartmentStatus) {
   return status === 'ACTIVE' ? 'Đang hoạt động' : 'Tạm ngừng';
 }
 
-function DepartmentEditForm({ department }: { department: Department }) {
+function DepartmentEditForm({
+  department,
+  facilities,
+}: {
+  department: DepartmentItem;
+  facilities: string[];
+}) {
   const navigate = useNavigate();
+  const updateMutation = useUpdateDepartmentMutation();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const facilityChoices = Array.from(
+    new Set([department.facility, ...facilities, ...DEPARTMENT_FACILITIES].filter(Boolean)),
+  );
+
   const {
     register,
     handleSubmit,
@@ -40,16 +55,30 @@ function DepartmentEditForm({ department }: { department: Department }) {
     resolver: zodResolver(departmentUpdateSchema),
     defaultValues: {
       name: department.name,
-      facility: department.facility as DepartmentUpdateFormValues['facility'],
+      facility: (department.facility ||
+        DEPARTMENT_FACILITIES[0]) as DepartmentUpdateFormValues['facility'],
       status: department.status,
     },
   });
   const watched = useWatch({ control });
 
-  const onSubmit = (values: DepartmentUpdateFormValues) => {
-    const target = MOCK_DEPARTMENTS.find((d) => d.code === department.code);
-    if (target) Object.assign(target, values);
-    navigate(LIST_PATH);
+  const onSubmit = async (values: DepartmentUpdateFormValues) => {
+    setSubmitError(null);
+    try {
+      await updateMutation.mutateAsync({
+        id: department.id,
+        payload: {
+          code: department.code,
+          name: values.name.trim(),
+          isActive: values.status === 'ACTIVE',
+        },
+      });
+      navigate(LIST_PATH);
+    } catch (error) {
+      setSubmitError(
+        error instanceof Error ? error.message : 'Không thể cập nhật thông tin khoa phòng.',
+      );
+    }
   };
 
   const inputClass =
@@ -58,6 +87,11 @@ function DepartmentEditForm({ department }: { department: Department }) {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} noValidate>
+      {submitError && (
+        <p role="alert" className="mb-4 rounded-lg bg-rose-50 px-4 py-2 text-xs text-rose-700">
+          {submitError}
+        </p>
+      )}
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="space-y-6 rounded-xl border border-border bg-white p-6">
           <section className="space-y-4">
@@ -89,7 +123,7 @@ function DepartmentEditForm({ department }: { department: Department }) {
                 Cơ sở *
               </label>
               <select id="dep-facility" className={inputClass} {...register('facility')}>
-                {DEPARTMENT_FACILITIES.map((f) => (
+                {facilityChoices.map((f) => (
                   <option key={f} value={f}>
                     {f}
                   </option>
@@ -168,8 +202,8 @@ function DepartmentEditForm({ department }: { department: Department }) {
         <button
           type="submit"
           aria-label="Lưu thay đổi"
-          disabled={isSubmitting}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-dark"
+          disabled={isSubmitting || updateMutation.isPending}
+          className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-dark disabled:opacity-50"
         >
           Lưu thay đổi
         </button>
@@ -180,7 +214,10 @@ function DepartmentEditForm({ department }: { department: Department }) {
 
 export function DepartmentEditPage() {
   const { id } = useParams<{ id: string }>();
-  const department = MOCK_DEPARTMENTS.find((d) => d.code === id);
+  const departmentsQuery = useAdminDepartments();
+  const departments = departmentsQuery.data ?? [];
+  const department = departments.find((d) => d.id === id || d.code === id);
+  const facilities = Array.from(new Set(departments.map((d) => d.facility)));
 
   return (
     <AdminPortalShell activeTab="Khoa phòng" breadcrumbs={BREADCRUMBS}>
@@ -189,8 +226,12 @@ export function DepartmentEditPage() {
         <p className="mb-6 text-sm text-sub">
           Cập nhật thông tin khoa, liên kết cơ sở và trạng thái hoạt động
         </p>
-        {department ? (
-          <DepartmentEditForm key={department.code} department={department} />
+        {departmentsQuery.isPending ? (
+          <p role="status" className="text-sm text-sub">
+            Đang tải thông tin khoa phòng...
+          </p>
+        ) : department ? (
+          <DepartmentEditForm key={department.id} department={department} facilities={facilities} />
         ) : (
           <div role="alert" className="rounded-xl border border-border bg-white p-6 text-sm">
             Không tìm thấy khoa phòng {id}.{' '}

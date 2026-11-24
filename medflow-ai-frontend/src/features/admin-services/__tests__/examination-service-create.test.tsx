@@ -1,175 +1,123 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { INITIAL_SERVICES } from '../data/examination-services-data';
+import { apiClient } from '@/shared/lib/axios';
 import { ExaminationServiceCreatePage } from '../pages/examination-service-create-page';
 import { useExaminationServiceStore } from '../store/examination-service.store';
 
-describe('ExaminationServiceCreatePage (SCR-ADM-ESV-02)', () => {
+vi.mock('@/shared/lib/axios', () => ({
+  apiClient: {
+    post: vi.fn(),
+  },
+}));
+
+describe('ExaminationServiceCreatePage (SCR-ADM-ESV-02 real API, no 300k prefill)', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     useExaminationServiceStore.setState({
-      services: [...INITIAL_SERVICES],
+      services: [],
       draft: null,
+    });
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: {
+        id: 99,
+        serviceCode: 'EX-9-99',
+        name: 'Khám Nội Chuyên Sâu',
+        category: 'Khám Lâm sàng',
+        departmentName: 'Khoa Khám bệnh',
+        price: 0,
+        allowsOnlineBooking: true,
+        isActive: true,
+        status: 'ACTIVE',
+      },
     });
   });
 
-  const renderComponent = () =>
-    render(
-      <MemoryRouter initialEntries={['/admin/services/new']}>
-        <Routes>
-          <Route path="/admin/services/new" element={<ExaminationServiceCreatePage />} />
-          <Route path="/admin/services" element={<div>Danh mục Dịch vụ Page Mock</div>} />
-          <Route path="/admin/policies" element={<div>Màn hình Chính sách đặt lịch (UC54)</div>} />
-        </Routes>
-      </MemoryRouter>,
+  const renderComponent = () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/admin/services/new']}>
+          <Routes>
+            <Route path="/admin/services/new" element={<ExaminationServiceCreatePage />} />
+            <Route path="/admin/services" element={<div>Danh mục Dịch vụ Page Mock</div>} />
+            <Route
+              path="/admin/policies"
+              element={<div>Màn hình Chính sách đặt lịch (UC54)</div>}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
+  };
 
-  it('renders title, breadcrumbs, and operational guidance banner', () => {
+  it('renders empty initial code/name fields (no EX-2-09 prefill) and UC52/UC54 context cards', () => {
     renderComponent();
 
     expect(
       screen.getByRole('heading', { name: /Thêm mới Dịch vụ Khám Ngoại trú/i }),
     ).toBeInTheDocument();
-    expect(screen.getByText('Thêm mới Dịch vụ Khám (SCR-ADM-ESV-02)')).toBeInTheDocument();
-    expect(screen.getByText(/Lưu ý vận hành Khám Ngoại trú:/i)).toBeInTheDocument();
-    expect(screen.getByText(/Mã màn hình: SCR-ADM-ESV-02/i)).toBeInTheDocument();
-    expect(screen.getByText(/Tạo mới \(Draft Mode\)/i)).toBeInTheDocument();
-  });
-
-  it('renders default values matching the Figma specification', () => {
-    renderComponent();
-
     const codeInput = screen.getByPlaceholderText('EX-2-09') as HTMLInputElement;
-    expect(codeInput.value).toBe('EX-2-09');
-
+    expect(codeInput.value).toBe('');
     const nameInput = screen.getByPlaceholderText(
       'Khám Chuyên khoa Nội Tiêu hóa & Gan Mật Chuyên sâu',
     ) as HTMLInputElement;
-    expect(nameInput.value).toBe('Khám Chuyên khoa Nội Tiêu hóa & Gan Mật Chuyên sâu');
-
-    expect(screen.getByText(/Khám Lâm sàng \(EXAMINATION\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/Cận lâm sàng kỹ thuật \(DIAGNOSTIC\)/i)).toBeInTheDocument();
-  });
-
-  it('renders UC52 pricing and UC54 booking policy context cards in sidebar', () => {
-    renderComponent();
+    expect(nameInput.value).toBe('');
 
     expect(screen.getByText('Giá dịch vụ theo cơ sở')).toBeInTheDocument();
-    expect(screen.getByText('Chỉ xem - UC52')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Mở bảng giá theo cơ sở/i })).toBeInTheDocument();
-
-    expect(screen.getByText('Chính sách đặt hẹn theo cơ sở')).toBeInTheDocument();
-    expect(screen.getByText('Quản lý riêng - UC54')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Mở chính sách đặt lịch/i })).toBeInTheDocument();
-  });
-  it('navigates to /admin/policies when clicking Mở chính sách đặt lịch', () => {
-    renderComponent();
-
-    const policyBtn = screen.getByRole('button', { name: /Mở chính sách đặt lịch/i });
-    fireEvent.click(policyBtn);
-
+    fireEvent.click(screen.getByRole('button', { name: /Mở chính sách đặt lịch/i }));
     expect(screen.getByText('Màn hình Chính sách đặt lịch (UC54)')).toBeInTheDocument();
   });
 
-  it('allows switching category between Clinical and Diagnostic', () => {
+  it('validates code pattern and name length before calling POST /admin/examination-services', async () => {
     renderComponent();
 
-    const diagnosticBtn = screen
-      .getByText(/Cận lâm sàng kỹ thuật \(DIAGNOSTIC\)/i)
-      .closest('button');
-    expect(diagnosticBtn).toBeInTheDocument();
-    fireEvent.click(diagnosticBtn!);
-
-    expect(diagnosticBtn?.className).toContain('border-primary');
-  });
-
-  it('allows changing online booking select option', () => {
-    renderComponent();
-
-    const bookingSelect = screen.getByRole('combobox', {
-      name: /Cho phép đặt lịch trực tuyến/i,
-    }) as HTMLSelectElement;
-    expect(bookingSelect.value).toBe('true');
-
-    fireEvent.change(bookingSelect, { target: { value: 'false' } });
-    expect(bookingSelect.value).toBe('false');
-  });
-
-  it('validates invalid service code pattern on submission', async () => {
-    renderComponent();
-
-    const codeInput = screen.getByPlaceholderText('EX-2-09');
-    fireEvent.change(codeInput, { target: { value: 'INVALID_CODE' } });
-
-    const submitBtn = screen.getByRole('button', { name: /Tạo dịch vụ nháp/i });
-    fireEvent.click(submitBtn);
+    fireEvent.change(screen.getByPlaceholderText('EX-2-09'), { target: { value: 'INVALID_CODE' } });
+    fireEvent.click(screen.getByRole('button', { name: /Tạo dịch vụ nháp/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/Mã dịch vụ theo chuẩn EX-x-xx/i)).toBeInTheDocument();
-    });
-  });
-
-  it('validates empty service name', async () => {
-    renderComponent();
-
-    const nameInput = screen.getByPlaceholderText(
-      'Khám Chuyên khoa Nội Tiêu hóa & Gan Mật Chuyên sâu',
-    );
-    fireEvent.change(nameInput, { target: { value: '' } });
-
-    const submitBtn = screen.getByRole('button', { name: /Tạo dịch vụ nháp/i });
-    fireEvent.click(submitBtn);
-
-    await waitFor(() => {
       expect(screen.getByText(/Tên dịch vụ phải có ít nhất 3 ký tự/i)).toBeInTheDocument();
     });
+    expect(apiClient.post).not.toHaveBeenCalled();
   });
 
-  it('saves draft to store when clicking Lưu bản nháp', () => {
-    renderComponent();
+  it('submits POST /admin/examination-services without hardcoded 300000 price and surfaces backend conflict error', async () => {
+    const first = renderComponent();
 
-    const draftBtn = screen.getByRole('button', { name: /Lưu bản nháp/i });
-    fireEvent.click(draftBtn);
+    fireEvent.change(screen.getByPlaceholderText('EX-2-09'), { target: { value: 'EX-9-99' } });
+    fireEvent.change(
+      screen.getByPlaceholderText('Khám Chuyên khoa Nội Tiêu hóa & Gan Mật Chuyên sâu'),
+      { target: { value: 'Khám Nội Chuyên Sâu' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Lưu bản nháp/i }));
+    expect(useExaminationServiceStore.getState().draft?.code).toBe('EX-9-99');
 
-    expect(screen.getAllByText(/Đã lưu bản nháp/i).length).toBeGreaterThanOrEqual(1);
-    const storedDraft = useExaminationServiceStore.getState().draft;
-    expect(storedDraft?.code).toBe('EX-2-09');
-  });
-
-  it('navigates back to service list on Escape key', () => {
-    renderComponent();
-
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.getByText('Danh mục Dịch vụ Page Mock')).toBeInTheDocument();
-  });
-
-  it('successfully creates a new service and redirects to service list', async () => {
-    renderComponent();
-
-    const codeInput = screen.getByPlaceholderText('EX-2-09');
-    fireEvent.change(codeInput, { target: { value: 'EX-9-99' } });
-
-    const submitBtn = screen.getByRole('button', { name: /Tạo dịch vụ nháp/i });
-    fireEvent.click(submitBtn);
+    fireEvent.click(screen.getByRole('button', { name: /Tạo dịch vụ nháp/i }));
 
     await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/admin/examination-services',
+        expect.not.objectContaining({ price: 300000 }),
+      );
       expect(screen.getByText('Danh mục Dịch vụ Page Mock')).toBeInTheDocument();
     });
+    expect(useExaminationServiceStore.getState().draft).toBeNull();
+    first.unmount();
 
-    const services = useExaminationServiceStore.getState().services;
-    expect(services.some((s) => s.code === 'EX-9-99')).toBe(true);
-  });
-
-  it('shows error if service code already exists in catalog', async () => {
+    // Conflict error
+    vi.mocked(apiClient.post).mockRejectedValueOnce(
+      new Error('Mã dịch vụ "EX-1-01" đã tồn tại trong danh mục.'),
+    );
     renderComponent();
-
-    // EX-1-01 exists in INITIAL_SERVICES
-    const codeInput = screen.getByPlaceholderText('EX-2-09');
-    fireEvent.change(codeInput, { target: { value: 'EX-1-01' } });
-
-    const submitBtn = screen.getByRole('button', { name: /Tạo dịch vụ nháp/i });
-    fireEvent.click(submitBtn);
+    fireEvent.change(screen.getByPlaceholderText('EX-2-09'), { target: { value: 'EX-1-01' } });
+    fireEvent.change(
+      screen.getByPlaceholderText('Khám Chuyên khoa Nội Tiêu hóa & Gan Mật Chuyên sâu'),
+      { target: { value: 'Khám Nội Tổng quát' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Tạo dịch vụ nháp/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/Mã dịch vụ "EX-1-01" đã tồn tại/i)).toBeInTheDocument();

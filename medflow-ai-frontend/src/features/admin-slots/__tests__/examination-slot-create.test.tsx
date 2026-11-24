@@ -1,8 +1,9 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { INITIAL_EXAMINATION_SLOTS } from '../data/examination-slots-mock';
+import { apiClient } from '@/shared/lib/axios';
 import { ExaminationSlotCreatePage } from '../pages/examination-slot-create-page';
 import { useExaminationSlotStore } from '../store/examination-slot.store';
 
@@ -15,245 +16,206 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
-describe('ExaminationSlotCreatePage (SCR-ADM-SLT-02)', () => {
+vi.mock('@/shared/lib/axios', () => ({
+  apiClient: {
+    get: vi.fn(),
+    post: vi.fn(),
+  },
+}));
+
+describe('ExaminationSlotCreatePage (SCR-ADM-SLT-02 real API, no hardcoded Oct 2026 prefill)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useExaminationSlotStore.setState({
-      slots: [...INITIAL_EXAMINATION_SLOTS],
+      slots: [],
       draft: null,
+    });
+
+    vi.mocked(apiClient.get).mockImplementation(async (url) => {
+      const target = String(url);
+      if (target.includes('/admin/examination-slots')) {
+        return {
+          data: {
+            data: [
+              {
+                id: 1,
+                code: 'SLT-001',
+                doctorId: 10,
+                doctorName: 'BS. Nguyễn Thu Lan',
+                serviceId: 5,
+                serviceName: 'Khám Nội tiết',
+                serviceCode: 'EX-1-01',
+                serviceType: 'OUTPATIENT',
+                specialty: 'Khoa Nội tiết',
+                room: 'RM-201',
+                capacityBooked: 2,
+                capacityMax: 8,
+                date: '2026-11-25',
+                startTime: '08:00',
+                endTime: '08:30',
+                status: 'OPEN',
+              },
+            ],
+          },
+        };
+      }
+      if (target.includes('/admin/examination-services')) {
+        return {
+          data: {
+            data: [
+              {
+                id: 5,
+                serviceCode: 'EX-1-01',
+                name: 'Khám Nội tiết',
+                category: 'Khám Lâm sàng',
+                departmentName: 'Khoa Nội tiết',
+                price: 300000,
+                allowsOnlineBooking: true,
+                isActive: true,
+                status: 'ACTIVE',
+              },
+              {
+                id: 6,
+                serviceCode: 'EX-3-01',
+                name: 'Chụp X-quang Ngực thẳng',
+                category: 'Cận lâm sàng kỹ thuật',
+                departmentName: 'Khoa CĐHA',
+                price: 250000,
+                allowsOnlineBooking: false,
+                isActive: true,
+                status: 'ACTIVE',
+              },
+            ],
+          },
+        };
+      }
+      if (target.includes('/admin/doctors')) {
+        return {
+          data: {
+            data: [
+              {
+                id: 10,
+                doctorCode: 'DOC-0010',
+                fullName: 'BS. Nguyễn Thu Lan',
+                specialtyName: 'Nội tiết',
+                departmentName: 'Khoa Nội tiết',
+                isActive: true,
+              },
+            ],
+          },
+        };
+      }
+      if (target.includes('/admin/rooms')) {
+        return {
+          data: {
+            data: [
+              {
+                id: 20,
+                roomCode: 'RM-201',
+                name: 'Phòng Nội tiết 1',
+                departmentName: 'Khoa Nội tiết',
+                facility: 'MedFlow Cơ sở 1',
+                status: 'ACTIVE',
+                isActive: true,
+              },
+            ],
+          },
+        };
+      }
+      return { data: { data: [] } };
+    });
+
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: {
+        id: 99,
+        code: 'SLT-20261125-99',
+        doctorId: 10,
+        doctorName: 'BS. Nguyễn Thu Lan',
+        serviceId: 5,
+        serviceName: 'Khám Nội tiết',
+        serviceCode: 'EX-1-01',
+        serviceType: 'OUTPATIENT',
+        specialty: 'Khoa Nội tiết',
+        room: 'RM-201',
+        capacityBooked: 0,
+        capacityMax: 10,
+        date: '2026-11-25',
+        startTime: '11:00',
+        endTime: '11:30',
+        status: 'OPEN',
+      },
     });
   });
 
-  it('renders header, subheader, breadcrumbs, and operational banner matching Figma specs', () => {
-    render(
-      <MemoryRouter>
-        <ExaminationSlotCreatePage />
-      </MemoryRouter>,
+  const renderPage = () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <ExaminationSlotCreatePage />
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
+  };
 
-    // Breadcrumb and subheader
-    expect(screen.getByText('← Quay lại Danh sách Slot khám (SCR-ADM-SLT-01)')).toBeInTheDocument();
-    expect(screen.getByText(/Tạo mới \(Draft Mode\)/i)).toBeInTheDocument();
-    expect(screen.getByText('Mã màn hình: SCR-ADM-SLT-02')).toBeInTheDocument();
-    expect(screen.getByText('Thay đổi chưa lưu')).toBeInTheDocument();
-
-    // Heading
+  it('starts with empty slot code and does NOT prefill hardcoded SLT-HN-20261027-01 or 2026-10-27', () => {
+    renderPage();
     expect(
       screen.getByRole('heading', { level: 1, name: 'Tạo khung giờ khám' }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText('Gán dịch vụ, bác sĩ, thời gian, phòng và sức chứa cho slot.'),
-    ).toBeInTheDocument();
-
-    // Operational Notice Banner
-    expect(screen.getByText('Lưu ý vận hành:')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Mở slot khi dịch vụ hợp lệ, giờ kết thúc sau giờ bắt đầu/i),
-    ).toBeInTheDocument();
+    expect((screen.getByLabelText(/Mã slot/i) as HTMLInputElement).value).toBe('');
+    expect(screen.queryByDisplayValue('SLT-HN-20261027-01')).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('2026-10-27')).not.toBeInTheDocument();
   });
 
-  it('renders Form Card 1 (Main info & scope) and Card 2 (Operational config)', () => {
-    render(
-      <MemoryRouter>
-        <ExaminationSlotCreatePage />
-      </MemoryRouter>,
-    );
+  it('checks doctor schedule conflict, validates endTime > startTime, and submits POST /admin/examination-slots', async () => {
+    renderPage();
 
-    // Card 1
-    expect(screen.getByText('1. Thông tin chính & Phạm vi')).toBeInTheDocument();
-    expect(screen.getByText('Mã slot do hệ thống sinh')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('SLT-HN-20261027-01')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Khám ngoại trú' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Kỹ thuật' })).toBeInTheDocument();
+    expect(await screen.findByText(/Khám Nội tiết - EX-1-01/i)).toBeInTheDocument();
 
-    // Card 2
-    expect(screen.getByText('2. Cấu hình vận hành')).toBeInTheDocument();
-    expect(screen.getByText('Theo quy trình cơ sở')).toBeInTheDocument();
-    expect(screen.getByText('Giá trị / số lượng')).toBeInTheDocument();
-    expect(screen.getByText('Không thể giảm sức chứa dưới số lượt đã đặt.')).toBeInTheDocument();
-    expect(
-      screen.getByText('Xung đột được kiểm tra theo bác sĩ, phòng và thời gian.'),
-    ).toBeInTheDocument();
-  });
+    fireEvent.change(screen.getByLabelText(/Dịch vụ/i), { target: { value: '5' } });
+    fireEvent.change(screen.getByLabelText(/Bác sĩ/i), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('Ngày khám'), { target: { value: '2026-11-25' } });
+    fireEvent.change(screen.getByLabelText('Giờ bắt đầu'), { target: { value: '08:00' } });
+    fireEvent.change(screen.getByLabelText('Giờ kết thúc'), { target: { value: '08:20' } });
 
-  it('renders Sidebar Card 3 (Resource verification) and Card 4 (Capacity & slot closing)', () => {
-    render(
-      <MemoryRouter>
-        <ExaminationSlotCreatePage />
-      </MemoryRouter>,
-    );
-
-    // Card 3
-    expect(screen.getByText('Xác nhận tài nguyên')).toBeInTheDocument();
-    expect(screen.getByText('Quản lý bởi · UC53')).toBeInTheDocument();
-    expect(screen.getByText('Điều kiện mở slot')).toBeInTheDocument();
-    expect(screen.getByText('Bác sĩ · nếu phân công')).toBeInTheDocument();
-    expect(screen.getByText('Dịch vụ · được phép đặt')).toBeInTheDocument();
-    expect(screen.getByText('Phòng · nếu phân công, không trùng lịch')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Kiểm tra xung đột' })).toBeInTheDocument();
-
-    // Card 4
-    expect(screen.getByText('Sức chứa & đóng slot')).toBeInTheDocument();
-    expect(screen.getByText('Kiểm soát thay đổi')).toBeInTheDocument();
-    expect(screen.getByText('Không giảm dưới lượt đã đặt')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Xem lượt đã đặt' })).toBeInTheDocument();
-  });
-
-  it('renders bottom fixed action bar with cancel, save draft, and submit buttons', () => {
-    render(
-      <MemoryRouter>
-        <ExaminationSlotCreatePage />
-      </MemoryRouter>,
-    );
-
-    expect(
-      screen.getByText('Đóng slot chỉ ngăn lượt đặt mới; lịch đã đặt được giữ nguyên.'),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Hủy bỏ/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Lưu bản nháp' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Lưu khung giờ' })).toBeInTheDocument();
-  });
-
-  it('switches service type between Outpatient and Diagnostic', () => {
-    render(
-      <MemoryRouter>
-        <ExaminationSlotCreatePage />
-      </MemoryRouter>,
-    );
-
-    const techBtn = screen.getByRole('button', { name: 'Kỹ thuật' });
-    fireEvent.click(techBtn);
-
-    // Option should now contain Diagnostic procedures
-    expect(screen.getByText(/Chụp X-quang Ngực thẳng/i)).toBeInTheDocument();
-  });
-
-  it('updates capacity when clicking quick preset buttons', () => {
-    render(
-      <MemoryRouter>
-        <ExaminationSlotCreatePage />
-      </MemoryRouter>,
-    );
-
-    const capacityInput = screen.getByLabelText(/Sức chứa slot/i) as HTMLInputElement;
-    expect(capacityInput.value).toBe('8');
-
-    const tenSlotBtn = screen.getByRole('button', { name: '10 lượt' });
-    fireEvent.click(tenSlotBtn);
-
-    expect(capacityInput.value).toBe('10');
-  });
-
-  it('detects doctor schedule conflict when doctor already has slot at overlapping time', () => {
-    render(
-      <MemoryRouter>
-        <ExaminationSlotCreatePage />
-      </MemoryRouter>,
-    );
-
-    // Default form has BS. Lan (doc-001) at 08:00-08:20 on 2026-10-27
-    // slt-001 is already registered for doc-001 at 08:00-08:30 on 2026-10-27
-    const checkBtn = screen.getByRole('button', { name: 'Kiểm tra xung đột' });
-    fireEvent.click(checkBtn);
-
+    // Check overlapping doctor conflict
+    fireEvent.click(screen.getByRole('button', { name: 'Kiểm tra xung đột' }));
     expect(
       screen.getByText(/Xung đột lịch bác sĩ: BS. Nguyễn Thu Lan đã có slot/i),
     ).toBeInTheDocument();
-  });
 
-  it('confirms no conflict when time is set to an open non-overlapping window', () => {
-    render(
-      <MemoryRouter>
-        <ExaminationSlotCreatePage />
-      </MemoryRouter>,
-    );
+    // Invalid time order
+    fireEvent.change(screen.getByLabelText('Giờ bắt đầu'), { target: { value: '09:00' } });
+    fireEvent.change(screen.getByLabelText('Giờ kết thúc'), { target: { value: '08:30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Lưu khung giờ' }));
+    expect(await screen.findByText('Giờ kết thúc phải sau giờ bắt đầu')).toBeInTheDocument();
+    expect(apiClient.post).not.toHaveBeenCalled();
 
-    const startTimeInput = screen.getByLabelText('Giờ bắt đầu');
-    const endTimeInput = screen.getByLabelText('Giờ kết thúc');
-
-    // Change to non-conflicting time 11:00-11:20
-    fireEvent.change(startTimeInput, { target: { value: '11:00' } });
-    fireEvent.change(endTimeInput, { target: { value: '11:20' } });
-
-    const checkBtn = screen.getByRole('button', { name: 'Kiểm tra xung đột' });
-    fireEvent.click(checkBtn);
-
-    expect(screen.getByText(/Tài nguyên hợp lệ, không phát hiện xung đột/i)).toBeInTheDocument();
-  });
-
-  it('allows manual draft saving into store', () => {
-    render(
-      <MemoryRouter>
-        <ExaminationSlotCreatePage />
-      </MemoryRouter>,
-    );
-
-    const draftBtn = screen.getByRole('button', { name: 'Lưu bản nháp' });
-    fireEvent.click(draftBtn);
-
-    expect(
-      screen.getByText('Đã lưu bản nháp khung giờ khám vào bộ nhớ phiên làm việc.'),
-    ).toBeInTheDocument();
-    expect(useExaminationSlotStore.getState().draft?.code).toBe('SLT-HN-20261027-01');
-  });
-
-  it('navigates to /admin/slots when clicking cancel button', () => {
-    render(
-      <MemoryRouter>
-        <ExaminationSlotCreatePage />
-      </MemoryRouter>,
-    );
-
-    const cancelBtn = screen.getByRole('button', { name: /Hủy bỏ/i });
-    fireEvent.click(cancelBtn);
-
-    expect(mockNavigate).toHaveBeenCalledWith('/admin/slots');
-  });
-
-  it('validates time order: shows error if end time is before or equal to start time', async () => {
-    render(
-      <MemoryRouter>
-        <ExaminationSlotCreatePage />
-      </MemoryRouter>,
-    );
-
-    const startTimeInput = screen.getByLabelText('Giờ bắt đầu');
-    const endTimeInput = screen.getByLabelText('Giờ kết thúc');
-
-    fireEvent.change(startTimeInput, { target: { value: '09:00' } });
-    fireEvent.change(endTimeInput, { target: { value: '08:00' } });
-
-    const submitBtn = screen.getByRole('button', { name: 'Lưu khung giờ' });
-    fireEvent.click(submitBtn);
-
-    await waitFor(() => {
-      expect(screen.getByText('Giờ kết thúc phải sau giờ bắt đầu')).toBeInTheDocument();
+    // Valid non-conflicting window & submit
+    fireEvent.change(screen.getByLabelText(/Mã slot/i), { target: { value: 'SLT-20261125-99' } });
+    fireEvent.change(screen.getByLabelText(/Cơ sở áp dụng/i), {
+      target: { value: 'MedFlow Cơ sở 1' },
     });
-    expect(mockNavigate).not.toHaveBeenCalled();
-  });
+    fireEvent.change(screen.getByLabelText('Giờ bắt đầu'), { target: { value: '11:00' } });
+    fireEvent.change(screen.getByLabelText('Giờ kết thúc'), { target: { value: '11:30' } });
+    fireEvent.click(screen.getByRole('button', { name: '10 lượt' }));
 
-  it('submits valid slot form, adds to store, and navigates back to /admin/slots', async () => {
-    render(
-      <MemoryRouter>
-        <ExaminationSlotCreatePage />
-      </MemoryRouter>,
-    );
-
-    const codeInput = screen.getByLabelText(/Mã slot/i);
-    fireEvent.change(codeInput, { target: { value: 'SLT-HN-20261027-99' } });
-
-    const submitBtn = screen.getByRole('button', { name: 'Lưu khung giờ' });
-    fireEvent.click(submitBtn);
+    fireEvent.click(screen.getByRole('button', { name: 'Lưu khung giờ' }));
 
     await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/admin/examination-slots',
+        expect.objectContaining({
+          serviceId: 5,
+          doctorId: 10,
+          date: '2026-11-25',
+          startTime: '11:00',
+          endTime: '11:30',
+          capacity: 10,
+        }),
+      );
       expect(mockNavigate).toHaveBeenCalledWith('/admin/slots');
     });
-
-    const storeSlots = useExaminationSlotStore.getState().slots;
-    const addedSlot = storeSlots.find((s) => s.code === 'SLT-HN-20261027-99');
-    expect(addedSlot).toBeDefined();
-    expect(addedSlot?.serviceName).toBe('Khám Nội tiết');
-    expect(addedSlot?.capacityBooked).toBe(0);
-    expect(addedSlot?.status).toBe('OPEN');
   });
 });

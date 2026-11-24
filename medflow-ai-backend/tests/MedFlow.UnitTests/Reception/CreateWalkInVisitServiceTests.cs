@@ -784,4 +784,174 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
         await Assert.ThrowsAsync<ConflictException>(
             () => _service.CreateWalkInVisitAsync(actorUserId: 5, request: request));
     }
+
+    [Fact]
+    public async Task CreateWalkInVisitAsync_MissingExpiredOrFutureServicePrice_Throws409ConflictWithoutPartialRows()
+    {
+        _db.Services.AddRange(
+            new Service
+            {
+                Id = 31,
+                HospitalId = 1,
+                DepartmentId = 2,
+                SpecialtyId = 1,
+                ServiceCode = "EX-GI-UNPRICED",
+                Name = "Khám Tiêu hóa chưa cấu hình giá",
+                ServiceType = "EXAMINATION",
+                IsActive = true,
+            },
+            new Service
+            {
+                Id = 32,
+                HospitalId = 1,
+                DepartmentId = 2,
+                SpecialtyId = 1,
+                ServiceCode = "EX-GI-EXPIRED",
+                Name = "Khám Tiêu hóa hết hạn giá",
+                ServiceType = "EXAMINATION",
+                IsActive = true,
+            },
+            new Service
+            {
+                Id = 33,
+                HospitalId = 1,
+                DepartmentId = 2,
+                SpecialtyId = 1,
+                ServiceCode = "EX-GI-FUTURE",
+                Name = "Khám Tiêu hóa chưa tới ngày hiệu lực",
+                ServiceType = "EXAMINATION",
+                IsActive = true,
+            });
+
+        _db.ServicePrices.AddRange(
+            new ServicePrice
+            {
+                Id = 32,
+                ServiceId = 32,
+                PriceAmount = 180_000m,
+                EffectiveFrom = new DateTime(2025, 1, 1),
+                EffectiveTo = new DateTime(2026, 10, 26, 23, 59, 59),
+            },
+            new ServicePrice
+            {
+                Id = 33,
+                ServiceId = 33,
+                PriceAmount = 190_000m,
+                EffectiveFrom = new DateTime(2026, 10, 28, 0, 0, 0),
+                EffectiveTo = null,
+            });
+        await _db.SaveChangesAsync();
+
+        foreach (var code in new[] { "EX-GI-UNPRICED", "EX-GI-EXPIRED", "EX-GI-FUTURE" })
+        {
+            var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+                _service.CreateWalkInVisitAsync(
+                    actorUserId: 5,
+                    request: new CreateWalkInVisitRequest(
+                        PatientId: "1",
+                        DepartmentId: "2",
+                        ServiceCode: code,
+                        ReasonForVisit: "Khám tiêu hóa kiểm tra bảng giá.")));
+
+            Assert.Equal(CreateWalkInVisitService.UnpricedWalkInServiceMessage, ex.Message);
+        }
+
+        Assert.Equal(0, await _db.Visits.CountAsync());
+        Assert.Equal(0, await _db.QueueEntries.CountAsync());
+        Assert.Equal(0, await _db.Payments.CountAsync());
+
+        var catalog = await _service.GetWalkInCatalogAsync(actorUserId: 5);
+        var giServices = catalog.Departments.Single(d => d.Code == "GI").Services;
+        var unpricedItem = giServices.Single(s => s.Code == "EX-GI-UNPRICED");
+        Assert.Null(unpricedItem.Price);
+        Assert.False(unpricedItem.HasEffectivePrice);
+        Assert.Equal("Chưa cập nhật", unpricedItem.PriceFormatted);
+    }
+
+    [Fact]
+    public async Task CreateWalkInVisitAsync_ZeroConfiguredServicePrice_AllowsRegistrationWithoutPendingPayment()
+    {
+        _db.Services.Add(new Service
+        {
+            Id = 34,
+            HospitalId = 1,
+            DepartmentId = 2,
+            SpecialtyId = 1,
+            ServiceCode = "EX-GI-FREE",
+            Name = "Khám tầm soát miễn phí",
+            ServiceType = "EXAMINATION",
+            IsActive = true,
+        });
+        _db.ServicePrices.Add(new ServicePrice
+        {
+            Id = 34,
+            ServiceId = 34,
+            PriceAmount = 0m,
+            EffectiveFrom = new DateTime(2026, 10, 1),
+            EffectiveTo = null,
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await _service.CreateWalkInVisitAsync(
+            actorUserId: 5,
+            request: new CreateWalkInVisitRequest(
+                PatientId: "1",
+                DepartmentId: "2",
+                ServiceCode: "EX-GI-FREE",
+                ReasonForVisit: "Khám tầm soát chương trình cộng đồng."));
+
+        Assert.Equal(0m, result.ServicePrice);
+        Assert.Equal("0 VNĐ", result.PriceFormatted);
+        Assert.Equal("WAIVED", result.PaymentStatus);
+        Assert.Equal(1, await _db.Visits.CountAsync());
+        Assert.Equal(0, await _db.Payments.CountAsync(p => p.VisitId == result.VisitId));
+    }
+
+    [Fact]
+    public async Task GetWalkInVisitByIdOrCodeAsync_HistoricalVisitWithoutPrice_ReturnsUnpricedWithoutThrowing()
+    {
+        _db.Services.Add(new Service
+        {
+            Id = 35,
+            HospitalId = 1,
+            DepartmentId = 2,
+            SpecialtyId = 1,
+            ServiceCode = "EX-HIST-UNPRICED",
+            Name = "Khám lịch sử chưa gán giá",
+            ServiceType = "EXAMINATION",
+            IsActive = true,
+        });
+        _db.Visits.Add(new Visit
+        {
+            Id = 900,
+            VisitCode = "VIS-202609-0900",
+            PatientId = 1,
+            CheckedInByStaffId = 3,
+            ReasonForVisit = "Lượt khám lịch sử",
+            Status = "CHECKED_IN",
+            CheckedInAt = new DateTime(2026, 9, 15, 8, 30, 0),
+        });
+        _db.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = 5,
+            HospitalId = 1,
+            Action = CreateWalkInVisitService.WalkInVisitCreatedAction,
+            EntityType = "VISIT",
+            EntityId = "900",
+            Reason = "Lượt khám lịch sử",
+            ChangeData = JsonSerializer.Serialize(new
+            {
+                departmentId = 2L,
+                serviceId = 35L,
+            }),
+            OccurredAt = new DateTime(2026, 9, 15, 1, 30, 0, DateTimeKind.Utc),
+        });
+        await _db.SaveChangesAsync();
+
+        var loaded = await _service.GetWalkInVisitByIdOrCodeAsync(actorUserId: 5, visitIdOrCode: "VIS-202609-0900");
+
+        Assert.Null(loaded.ServicePrice);
+        Assert.Equal("Chưa cập nhật", loaded.PriceFormatted);
+        Assert.Equal("UNPRICED", loaded.PaymentStatus);
+    }
 }

@@ -13,7 +13,7 @@ export function WalkInPaymentSection({
   onPaymentMethodChange,
   service,
 }: WalkInPaymentSectionProps) {
-  const priceDisplay = service ? service.priceFormatted : '250.000 VNĐ';
+  const priceDisplay = service ? service.priceFormatted : 'Chưa chọn dịch vụ';
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs space-y-5">

@@ -10,6 +10,7 @@ interface StaffAccountTableProps {
   totalPages: number;
   pageSize: number;
   onPageChange: (page: number) => void;
+  onView?: (item: StaffAccountItem) => void;
   onDeactivate?: (item: StaffAccountItem) => void;
 }
 
@@ -36,6 +37,7 @@ export function StaffAccountTable({
   totalPages,
   pageSize,
   onPageChange,
+  onView,
   onDeactivate,
 }: StaffAccountTableProps) {
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -84,6 +86,7 @@ export function StaffAccountTable({
                     <div className="flex items-center gap-3">
                       <button
                         type="button"
+                        onClick={() => onView?.(item)}
                         aria-label={`Xem chi tiết ${item.fullName}`}
                         className="text-sm font-semibold text-primary hover:text-primary-dark"
                       >

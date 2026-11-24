@@ -30,11 +30,17 @@ export function FamilyMemberDetailSidebar({
 
         <div className="p-6 text-center">
           <div className="relative mx-auto h-28 w-28">
-            <img
-              src={member.avatarUrl}
-              alt={member.fullName}
-              className="h-full w-full rounded-full border-4 border-slate-100 object-cover shadow-xs"
-            />
+            {member.avatarUrl ? (
+              <img
+                src={member.avatarUrl}
+                alt={member.fullName}
+                className="h-full w-full rounded-full border-4 border-slate-100 object-cover shadow-xs"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center rounded-full border-4 border-slate-100 bg-sky-50 text-2xl font-bold text-primary shadow-xs">
+                {member.fullName.slice(0, 2).toUpperCase()}
+              </div>
+            )}
             {member.isIdentityVerified !== false && (
               <span
                 className="absolute right-0 bottom-0 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-white shadow-xs"
@@ -63,21 +69,21 @@ export function FamilyMemberDetailSidebar({
             <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-2.5 text-center">
               <span className="block text-xs font-medium text-slate-500">Nhóm máu</span>
               <span className="mt-1 block text-base font-bold text-red-600">
-                {vitals.bloodType}
+                {vitals.bloodType || '--'}
               </span>
             </div>
 
             <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-2.5 text-center">
               <span className="block text-xs font-medium text-slate-500">Chiều cao</span>
               <span className="mt-1 block text-base font-bold text-slate-800">
-                {vitals.heightCm > 0 ? `${vitals.heightCm} cm` : '--'}
+                {vitals.heightCm != null && vitals.heightCm > 0 ? `${vitals.heightCm} cm` : '--'}
               </span>
             </div>
 
             <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-2.5 text-center">
               <span className="block text-xs font-medium text-slate-500">Cân nặng</span>
               <span className="mt-1 block text-base font-bold text-slate-800">
-                {vitals.weightKg > 0 ? `${vitals.weightKg} kg` : '--'}
+                {vitals.weightKg != null && vitals.weightKg > 0 ? `${vitals.weightKg} kg` : '--'}
               </span>
             </div>
           </div>

@@ -1,23 +1,37 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Loader2 } from 'lucide-react';
 
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { Alert } from '@/shared/ui/alert';
+import { Button } from '@/shared/ui/button';
 
 import { RoomDeactivateModal } from '../components/room-deactivate-modal';
 import { RoomFilters } from '../components/room-filters';
 import { RoomMetrics } from '../components/room-metrics';
 import { RoomTable } from '../components/room-table';
-import { ROOM_METRICS_MOCK, ROOMS_MOCK_DATA } from '../data/room-mock-data';
+import { useAdminRooms, useUpdateRoomMutation } from '../hooks/use-rooms';
 import type {
   RoomFilters as RoomFiltersType,
   RoomItem,
   RoomMetrics as RoomMetricsType,
 } from '../types/room.types';
 
+const EMPTY_METRICS: RoomMetricsType = {
+  totalRooms: 0,
+  activeRooms: 0,
+  maintenanceRooms: 0,
+  linkedDepartments: 0,
+};
+
 export function RoomListPage() {
   const navigate = useNavigate();
-  const [rooms, setRooms] = useState<RoomItem[]>(ROOMS_MOCK_DATA);
+  const { data, isLoading, isError, error, refetch } = useAdminRooms();
+  const updateRoomMutation = useUpdateRoomMutation();
+
+  const rooms = data?.rooms ?? [];
+  const metrics = data?.metrics ?? EMPTY_METRICS;
+
   const [filters, setFilters] = useState<RoomFiltersType>({
     search: '',
     department: '',
@@ -26,9 +40,10 @@ export function RoomListPage() {
 
   const [deactivatingRoom, setDeactivatingRoom] = useState<RoomItem | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const departments = useMemo(() => {
-    return Array.from(new Set(rooms.map((r) => r.department)));
+    return Array.from(new Set(rooms.map((r) => r.department).filter(Boolean)));
   }, [rooms]);
 
   const filteredRooms = useMemo(() => {
@@ -54,21 +69,6 @@ export function RoomListPage() {
     });
   }, [filters, rooms]);
 
-  const metrics: RoomMetricsType = useMemo(() => {
-    const activeCount = rooms.filter((r) => r.status === 'ACTIVE').length;
-    const maintenanceCount = rooms.filter((r) => r.status !== 'ACTIVE').length;
-    const initialActive = ROOMS_MOCK_DATA.filter((r) => r.status === 'ACTIVE').length;
-    const initialMaint = ROOMS_MOCK_DATA.filter((r) => r.status !== 'ACTIVE').length;
-    const activeDelta = activeCount - initialActive;
-    const maintDelta = maintenanceCount - initialMaint;
-    return {
-      totalRooms: ROOM_METRICS_MOCK.totalRooms,
-      activeRooms: ROOM_METRICS_MOCK.activeRooms + activeDelta,
-      maintenanceRooms: ROOM_METRICS_MOCK.maintenanceRooms + maintDelta,
-      linkedDepartments: ROOM_METRICS_MOCK.linkedDepartments,
-    };
-  }, [rooms]);
-
   const handleFilterChange = (partial: Partial<RoomFiltersType>) => {
     setFilters((prev) => ({ ...prev, ...partial }));
   };
@@ -81,29 +81,60 @@ export function RoomListPage() {
     navigate('/admin/rooms/new');
   };
 
-  const handleConfirmDeactivate = (roomId: string) => {
+  const handleConfirmDeactivate = async (roomId: string) => {
     const room = rooms.find((item) => item.id === roomId);
-    if (room) {
-      setRooms((prev) =>
-        prev.map((item) => (item.id === roomId ? { ...item, status: 'INACTIVE' } : item)),
-      );
+    if (!room) {
+      setDeactivatingRoom(null);
+      return;
+    }
+
+    setActionError(null);
+    try {
+      await updateRoomMutation.mutateAsync({
+        id: room.id,
+        payload: {
+          roomCode: room.roomCode,
+          name: room.roomName,
+          department: room.department,
+          location: room.location,
+          capacity: room.capacityPerSlot,
+          status: 'INACTIVE',
+        },
+      });
       setFeedbackMessage(`Đã chuyển trạng thái buồng khám ${room.roomName} sang Ngừng hoạt động.`);
       setTimeout(() => setFeedbackMessage(null), 4000);
+      setDeactivatingRoom(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Không thể ngừng hoạt động buồng khám.');
+      setDeactivatingRoom(null);
     }
-    setDeactivatingRoom(null);
   };
 
-  const handleToggleStatus = (id: string) => {
+  const handleToggleStatus = async (id: string) => {
     const room = rooms.find((item) => item.id === id);
     if (!room) return;
     if (room.status === 'ACTIVE' || room.status === 'MAINTENANCE') {
       setDeactivatingRoom(room);
-    } else {
-      setRooms((prev) =>
-        prev.map((item) => (item.id === id ? { ...item, status: 'ACTIVE' } : item)),
-      );
+      return;
+    }
+
+    setActionError(null);
+    try {
+      await updateRoomMutation.mutateAsync({
+        id: room.id,
+        payload: {
+          roomCode: room.roomCode,
+          name: room.roomName,
+          department: room.department,
+          location: room.location,
+          capacity: room.capacityPerSlot,
+          status: 'ACTIVE',
+        },
+      });
       setFeedbackMessage(`Đã kích hoạt lại hoạt động cho buồng khám ${room.roomName}.`);
       setTimeout(() => setFeedbackMessage(null), 4000);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Không thể kích hoạt lại buồng khám.');
     }
   };
 
@@ -116,7 +147,6 @@ export function RoomListPage() {
       ]}
     >
       <div className="p-6 space-y-6 max-w-[1720px] mx-auto">
-        {/* Page Title */}
         <div>
           <h1 className="text-xl font-bold text-ink tracking-tight">
             Danh mục Buồng khám & Kỹ thuật
@@ -127,10 +157,24 @@ export function RoomListPage() {
           </p>
         </div>
 
-        {/* 4 Stat Cards */}
+        {isError ? (
+          <Alert tone="error">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                <b>Không thể tải danh mục buồng khám:</b>{' '}
+                {error instanceof Error ? error.message : 'Đã xảy ra lỗi kết nối máy chủ.'}
+              </span>
+              <Button type="button" size="sm" variant="secondary" onClick={() => void refetch()}>
+                Thử lại
+              </Button>
+            </div>
+          </Alert>
+        ) : null}
+
+        {actionError ? <Alert tone="error">{actionError}</Alert> : null}
+
         <RoomMetrics metrics={metrics} />
 
-        {/* Filters and Search Bar */}
         <RoomFilters
           filters={filters}
           onChange={handleFilterChange}
@@ -139,24 +183,28 @@ export function RoomListPage() {
           onAddRoom={handleAddRoom}
         />
 
-        {/* Rooms Data Table */}
-        <RoomTable
-          rooms={filteredRooms}
-          onViewRoom={handleViewRoom}
-          onRequestDeactivate={(room) => setDeactivatingRoom(room)}
-          onToggleStatus={handleToggleStatus}
-        />
+        {isLoading ? (
+          <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-white py-12 text-sm text-sub">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+            <span>Đang tải danh sách buồng khám...</span>
+          </div>
+        ) : (
+          <RoomTable
+            rooms={filteredRooms}
+            onViewRoom={handleViewRoom}
+            onRequestDeactivate={(room) => setDeactivatingRoom(room)}
+            onToggleStatus={(id) => void handleToggleStatus(id)}
+          />
+        )}
       </div>
 
-      {/* Deactivate Room Modal */}
       <RoomDeactivateModal
         room={deactivatingRoom}
         open={Boolean(deactivatingRoom)}
         onClose={() => setDeactivatingRoom(null)}
-        onConfirm={handleConfirmDeactivate}
+        onConfirm={(roomId) => void handleConfirmDeactivate(roomId)}
       />
 
-      {/* Feedback Toast */}
       {feedbackMessage && (
         <div
           role="status"

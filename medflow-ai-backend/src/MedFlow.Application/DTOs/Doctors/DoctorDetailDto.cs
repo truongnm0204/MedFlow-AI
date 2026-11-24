@@ -12,11 +12,12 @@ public sealed record DoctorDetailDto(
     string DepartmentName,
     string Room,
     string StatusText,
-    decimal Price,
+    decimal? Price,
     string AvatarUrl,
     int YearsOfExperience,
     string? LicenseNumber,
     IReadOnlyList<DoctorEducationItemDto> Education,
     string Biography,
     IReadOnlyList<string> Hashtags,
-    IReadOnlyList<DoctorWeeklyScheduleDayDto> WeeklySchedule);
+    IReadOnlyList<DoctorWeeklyScheduleDayDto> WeeklySchedule,
+    string PriceFormatted = "Chưa cập nhật");

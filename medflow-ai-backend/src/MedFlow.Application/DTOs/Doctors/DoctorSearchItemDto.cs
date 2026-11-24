@@ -12,7 +12,8 @@ public sealed record DoctorSearchItemDto(
     string NearestSchedule,
     string ScheduleStatus,
     string ScheduleStatusText,
-    decimal Price,
+    decimal? Price,
     string AvatarUrl,
     bool HasScheduleToday,
-    bool HasScheduleThisWeek);
+    bool HasScheduleThisWeek,
+    string PriceFormatted = "Chưa cập nhật");

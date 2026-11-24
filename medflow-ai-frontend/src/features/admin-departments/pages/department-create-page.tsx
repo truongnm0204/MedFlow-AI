@@ -3,17 +3,15 @@ import { Building2 } from 'lucide-react';
 import { useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
+
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+
+import { useAdminHospitalOptions, useCreateDepartmentMutation } from '../hooks/use-departments';
 import {
   departmentCreateSchema,
   type DepartmentCreateFormValues,
 } from '../schemas/department-create.schema';
-import type { CreateDepartmentInput, FacilityOption } from '../types/department-create.types';
-
-const FACILITY_OPTIONS: FacilityOption[] = [
-  { id: 'FAC-001', name: 'MedFlow Cơ sở 1 - Hà Nội' },
-  { id: 'FAC-002', name: 'MedFlow Cơ sở 2 - TP.HCM' },
-];
+import type { CreateDepartmentInput } from '../types/department-create.types';
 
 const STATUS_LABELS: Record<CreateDepartmentInput['status'], string> = {
   ACTIVE: 'Đang hoạt động',
@@ -28,6 +26,11 @@ const inputClass =
 export function DepartmentCreatePage() {
   const navigate = useNavigate();
   const [message, setMessage] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const hospitalsQuery = useAdminHospitalOptions();
+  const createMutation = useCreateDepartmentMutation();
+  const facilities = hospitalsQuery.data ?? [];
 
   const {
     register,
@@ -45,12 +48,22 @@ export function DepartmentCreatePage() {
   const facilityId = useWatch({ control, name: 'facilityId' });
   const status = useWatch({ control, name: 'status' });
 
-  const facilityName = FACILITY_OPTIONS.find((f) => f.id === facilityId)?.name;
+  const facilityName = facilities.find((f) => String(f.id) === facilityId)?.name;
 
-  const handleCreate = (values: DepartmentCreateFormValues) => {
-    const input: CreateDepartmentInput = { ...values };
-    setMessage(`Đã khai báo khoa phòng ${input.code}.`);
-    navigate(LIST_PATH);
+  const handleCreate = async (values: DepartmentCreateFormValues) => {
+    setErrorMsg(null);
+    try {
+      const parsedHospitalId = /^\d+$/.test(values.facilityId) ? Number(values.facilityId) : null;
+      await createMutation.mutateAsync({
+        code: values.code.trim(),
+        name: values.name.trim(),
+        hospitalId: parsedHospitalId,
+        isActive: values.status === 'ACTIVE',
+      });
+      navigate(LIST_PATH);
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : 'Không thể khai báo khoa phòng mới.');
+    }
   };
 
   const handleSaveDraft = () => {
@@ -87,6 +100,12 @@ export function DepartmentCreatePage() {
             </p>
           ) : null}
 
+          {errorMsg ? (
+            <p role="alert" className="mt-4 rounded-lg bg-rose-50 px-4 py-2 text-sm text-rose-700">
+              {errorMsg}
+            </p>
+          ) : null}
+
           <div className="mt-6 grid gap-6 lg:grid-cols-[2fr_1fr]">
             <section className="space-y-8 rounded-xl border border-border bg-white p-6">
               <fieldset className="space-y-4">
@@ -120,7 +139,7 @@ export function DepartmentCreatePage() {
                   <input
                     id="dep-name"
                     type="text"
-                    placeholder="Khoa Hồi sức tích cực"
+                    placeholder="Khoa Nội Tổng hợp"
                     aria-invalid={errors.name ? true : undefined}
                     className={inputClass}
                     {...register('name')}
@@ -143,8 +162,8 @@ export function DepartmentCreatePage() {
                     {...register('facilityId')}
                   >
                     <option value="">Chọn cơ sở</option>
-                    {FACILITY_OPTIONS.map((facility) => (
-                      <option key={facility.id} value={facility.id}>
+                    {facilities.map((facility) => (
+                      <option key={facility.id} value={String(facility.id)}>
                         {facility.name}
                       </option>
                     ))}
@@ -231,7 +250,8 @@ export function DepartmentCreatePage() {
             <button
               type="submit"
               aria-label="Khai báo khoa phòng"
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-dark"
+              disabled={createMutation.isPending}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-dark disabled:opacity-50"
             >
               + Khai báo khoa phòng
             </button>

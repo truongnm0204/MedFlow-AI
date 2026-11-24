@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 
-import { INITIAL_SERVICES } from '../data/examination-services-data';
 import type {
   ColumnKey,
   ExaminationService,
@@ -60,7 +59,7 @@ interface ExaminationServiceState {
 }
 
 export const useExaminationServiceStore = create<ExaminationServiceState>((set) => ({
-  services: INITIAL_SERVICES,
+  services: [],
   searchQuery: '',
   categoryFilter: '',
   departmentFilter: '',
@@ -79,15 +78,7 @@ export const useExaminationServiceStore = create<ExaminationServiceState>((set) 
     set((state) => ({
       services: state.services.map((item) => {
         if (item.id !== id && item.code !== id) return item;
-        const currentHistory: PriceHistoryEntry[] = item.priceHistory ?? [
-          {
-            date: item.effectiveDate ?? '2026-01-01',
-            price: item.price,
-            decisionNumber: item.decisionNumber ?? 'QĐ-142/BV-KH',
-            note: 'Biểu phí hiện hành',
-            appliedBy: 'Hội đồng Giá Bệnh viện',
-          },
-        ];
+        const currentHistory: PriceHistoryEntry[] = item.priceHistory ?? [];
         const newHistoryEntry: PriceHistoryEntry = {
           date: payload.effectiveDate,
           price: payload.price,

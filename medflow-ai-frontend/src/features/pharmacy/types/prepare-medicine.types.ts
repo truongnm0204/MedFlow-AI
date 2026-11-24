@@ -1,4 +1,5 @@
 export interface MedicineBatchOption {
+  batchId?: number;
   batchCode: string;
   expiryDate: string;
   availableStock: number;
@@ -8,6 +9,7 @@ export interface MedicineBatchOption {
 
 export interface PrepareMedicineItem {
   id: string;
+  prescriptionItemId?: number;
   orderIndex: number;
   drugName: string;
   dosageForm: string;
@@ -16,6 +18,7 @@ export interface PrepareMedicineItem {
   pickedQty: number;
   unit: string;
   availableBatches: MedicineBatchOption[];
+  selectedBatchId?: number | null;
   selectedBatchCode: string;
   isPrepared: boolean;
 }
@@ -28,6 +31,7 @@ export interface GppCheckItem {
 }
 
 export interface PreparePrescriptionContext {
+  prescriptionId?: number;
   rxCode: string;
   visitCode: string;
   patientName: string;
@@ -40,6 +44,31 @@ export interface PreparePrescriptionContext {
   secondaryDiagnosis: string;
   criticalAllergy: string;
   paymentBadge: string;
+  status?: string;
   items: PrepareMedicineItem[];
   gppChecks: GppCheckItem[];
+}
+
+export interface PrepareMedicineItemPayload {
+  prescriptionItemId: number;
+  medicineBatchId?: number | null;
+  batchCode?: string | null;
+  pickedQuantity: number;
+  shortageReason?: string | null;
+}
+
+export interface PreparePrescriptionPayload {
+  items: PrepareMedicineItemPayload[];
+  notes?: string | null;
+}
+
+export interface PreparePrescriptionResponse {
+  prescriptionId: number;
+  prescriptionCode: string;
+  dispenseId: number;
+  status: string;
+  preparedAt: string;
+  preparedByStaffName: string;
+  preparedItemCount: number;
+  message: string;
 }

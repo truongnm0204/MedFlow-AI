@@ -19,11 +19,15 @@ import {
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
-import { useDoctorDemoStore } from '@/features/admin-doctors/store/doctor-demo.store';
-import { useExaminationServiceStore } from '@/features/admin-services/store/examination-service.store';
-import { useExaminationSlotStore } from '@/features/admin-slots/store/examination-slot.store';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { MedflowLogo } from './medflow-logo';
+
+function computeAdminInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'AD';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
 
 export type AdminPortalTab =
   | 'Tổng quan hệ thống'
@@ -78,11 +82,9 @@ export function AdminPortalShell({
 }: AdminPortalShellProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const user = useAuthStore((state) => state.user);
-  const doctorCount = useDoctorDemoStore((state) => state.doctors.length);
-  const serviceCount = useExaminationServiceStore((state) => state.services.length);
-  const slotCount = useExaminationSlotStore((state) => state.slots.length);
-  const displayName = user?.fullName ?? user?.email ?? 'DS. Nguyễn Văn Quản';
-  const roleLabel = user?.roles.includes('SYSTEM_ADMIN') ? 'SYSTEM_ADMIN' : 'ADM-001';
+  const displayName = user?.fullName ?? user?.email ?? 'Quản trị viên';
+  const avatarInitials = computeAdminInitials(displayName);
+  const roleLabel = user?.roles.includes('SYSTEM_ADMIN') ? 'SYSTEM_ADMIN' : 'HOSPITAL_ADMIN';
   const isSystemAdmin =
     Boolean(user?.roles.includes('SYSTEM_ADMIN')) || activeTab === 'Tổng quan hệ thống';
   const visibleTabs = isSystemAdmin
@@ -156,14 +158,6 @@ export function AdminPortalShell({
             {visibleTabs.map((tab) => {
               const isActive = tab.name === activeTab;
               const IconComponent = tab.icon;
-              const badgeValue =
-                tab.name === 'Bác sĩ & Nhân sự Y tế'
-                  ? doctorCount
-                  : tab.name === 'Danh mục Dịch vụ & Kỹ thuật'
-                    ? serviceCount
-                    : tab.name === 'Quản lý Slot khám'
-                      ? slotCount
-                      : undefined;
               const itemClassName = `flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-xs font-semibold transition-all ${
                 isActive
                   ? 'bg-primary text-white shadow-sm'
@@ -171,26 +165,13 @@ export function AdminPortalShell({
               }`;
 
               const itemInner = (
-                <>
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <IconComponent
-                      className={`h-4 w-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`}
-                      aria-hidden="true"
-                    />
-                    {!isCollapsed && <span className="truncate">{tab.name}</span>}
-                  </div>
-                  {!isCollapsed && badgeValue !== undefined && (
-                    <span
-                      className={`rounded-full px-1.5 py-0.5 font-mono text-[10px] font-bold ${
-                        isActive
-                          ? 'bg-white/20 text-white'
-                          : 'border border-sky-200 bg-sky-50 text-primary'
-                      }`}
-                    >
-                      {badgeValue}
-                    </span>
-                  )}
-                </>
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <IconComponent
+                    className={`h-4 w-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`}
+                    aria-hidden="true"
+                  />
+                  {!isCollapsed && <span className="truncate">{tab.name}</span>}
+                </div>
               );
 
               if (tab.href) {
@@ -283,7 +264,7 @@ export function AdminPortalShell({
                 className="grid h-9 w-9 place-items-center rounded-full bg-navy text-xs font-bold text-white shadow-sm ring-2 ring-slate-100"
                 title={displayName}
               >
-                NVQ
+                {avatarInitials}
               </div>
               <ChevronDown className="h-4 w-4 text-slate-400" aria-hidden="true" />
             </div>

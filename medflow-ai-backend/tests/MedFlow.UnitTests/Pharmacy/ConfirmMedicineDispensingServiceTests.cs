@@ -446,6 +446,7 @@ public sealed class ConfirmMedicineDispensingServiceTests : IDisposable
         // FEFO batch allocated for Paracetamol is LOT-PARA-2027 (earliest non-expired, non-blocked)
         var paraItem = result.Medications.First(m => m.DrugName.Contains("Paracetamol"));
         Assert.Equal("LOT-PARA-2027", paraItem.BatchCode);
+        Assert.Equal("Chưa cập nhật", paraItem.ShelfLocation);
 
         // Audit log created
         var audit = await _db.AuditLogs.FirstOrDefaultAsync(a => a.Action == "DISPENSE_CONTEXT_VIEWED");
@@ -511,6 +512,16 @@ public sealed class ConfirmMedicineDispensingServiceTests : IDisposable
         Assert.Equal("RX-2026-0001", result.RxCode);
         Assert.Equal("Nguyễn Văn An", result.ReceiverName);
         Assert.Equal(2, result.Items.Count);
+        Assert.Null(result.TotalAmount);
+        Assert.Equal("Chưa có dữ liệu", result.TotalAmountFormatted);
+        Assert.All(result.Items, item =>
+        {
+            Assert.Null(item.UnitPrice);
+            Assert.Null(item.LineTotal);
+            Assert.Equal("Chưa có dữ liệu", item.UnitPriceFormatted);
+            Assert.Equal("Chưa có dữ liệu", item.LineTotalFormatted);
+            Assert.Equal("Chưa cập nhật", item.ShelfLocation);
+        });
 
         // Stock deduction verified
         var updatedBatch101 = await _db.MedicineBatches.AsNoTracking().FirstAsync(b => b.Id == 101);

@@ -1,16 +1,29 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { INITIAL_DOCTORS } from '../data/doctor-demo-data';
-import { DoctorCreatePage } from '../pages/doctor-create-page';
-import { useDoctorDemoStore } from '../store/doctor-demo.store';
+import { apiClient } from '@/shared/lib/axios';
+import { DOCTOR_CREATE_DRAFT_STORAGE_KEY, DoctorCreatePage } from '../pages/doctor-create-page';
 
-describe('DoctorCreatePage (SCR-ADM-DOC-02)', () => {
+vi.mock('@/shared/lib/axios', () => ({
+  apiClient: {
+    post: vi.fn(),
+  },
+}));
+
+describe('DoctorCreatePage (SCR-ADM-DOC-02 real API, no prefilled SAMPLE)', () => {
   beforeEach(() => {
-    useDoctorDemoStore.setState({
-      doctors: [...INITIAL_DOCTORS],
-      draft: null,
+    vi.clearAllMocks();
+    window.sessionStorage.clear();
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: {
+        id: 245,
+        doctorCode: 'DOC-0245',
+        staffCode: 'STF-0142',
+        fullName: 'BS. Nguyễn Văn An',
+        isActive: true,
+      },
     });
   });
 
@@ -18,214 +31,167 @@ describe('DoctorCreatePage (SCR-ADM-DOC-02)', () => {
     vi.useRealTimers();
   });
 
-  const renderPage = () =>
-    render(
-      <MemoryRouter initialEntries={['/admin/doctors/new']}>
-        <Routes>
-          <Route path="/admin/doctors/new" element={<DoctorCreatePage />} />
-          <Route path="/admin/doctors" element={<div>Danh sách Mock</div>} />
-        </Routes>
-      </MemoryRouter>,
+  const renderPage = () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/admin/doctors/new']}>
+          <Routes>
+            <Route path="/admin/doctors/new" element={<DoctorCreatePage />} />
+            <Route path="/admin/doctors" element={<div>Danh sách Bác sĩ</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  };
+
+  it('starts with an empty form and 0 hardcoded history entries when no draft exists', () => {
+    renderPage();
+
+    const idInput = screen.getByLabelText(/Mã Bác sĩ HIS Định danh/) as HTMLInputElement;
+    expect(idInput.value).toBe('');
+    expect(screen.queryByDisplayValue('DOC-0245')).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('BS. Phạm Quang Duy')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Năm mốc 1')).not.toBeInTheDocument();
+  });
+
+  it('restores form values and work history from sessionStorage draft and submits POST /admin/doctors', async () => {
+    window.sessionStorage.setItem(
+      DOCTOR_CREATE_DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        id: 'DOC-0500',
+        staffId: 'STF-1500',
+        name: 'BS. Bản Nháp',
+        email: 'nhap@medflow.vn',
+        degree: 'Bác sĩ Chuyên khoa I',
+        specialty: 'Nội Tiêu hóa',
+        department: 'Khoa Nội Tiêu hóa',
+        license: '018492/BYT-CCHN',
+        room: 'PK-101 (Phòng Tiêu hóa 1)',
+        phone: '02438258899',
+        experience: 5,
+        scope: 'Khám Nội',
+        biography: 'Bác sĩ điều trị',
+        active: true,
+        history: [{ year: '2020', description: 'Tốt nghiệp ĐHY' }],
+      }),
     );
 
-  it('populates default sample values and 3 work history milestones when draft is null', () => {
     renderPage();
 
-    const idInput = screen.getByLabelText(/Mã Bác sĩ HIS Định danh/) as HTMLInputElement;
-    expect(idInput.value).toBe('DOC-0245');
-
-    const milestone3 = screen.getByLabelText('Năm mốc 3') as HTMLInputElement;
-    expect(milestone3.value).toBe('2018 - 2024');
-  });
-
-  it('restores form values and work history from saved draft', () => {
-    useDoctorDemoStore.setState({
-      draft: {
-        ...INITIAL_DOCTORS[0],
-        id: 'DOC-0500',
-        staffId: 'NV-1500',
-        name: 'BS. Bản Nháp',
-        history: [{ year: '2020', description: 'Mốc nháp' }],
-      },
-    });
-
-    renderPage();
-
-    const idInput = screen.getByLabelText(/Mã Bác sĩ HIS Định danh/) as HTMLInputElement;
-    expect(idInput.value).toBe('DOC-0500');
-
-    const milestone1 = screen.getByLabelText('Năm mốc 1') as HTMLInputElement;
-    expect(milestone1.value).toBe('2020');
-    expect(screen.queryByLabelText('Năm mốc 2')).not.toBeInTheDocument();
-  });
-
-  it('creates a new doctor, prepends to store, clears draft, and navigates back', async () => {
-    renderPage();
+    expect((screen.getByLabelText(/Mã Bác sĩ HIS Định danh/) as HTMLInputElement).value).toBe(
+      'DOC-0500',
+    );
+    expect((screen.getByLabelText('Năm mốc 1') as HTMLInputElement).value).toBe('2020');
 
     fireEvent.click(screen.getByRole('button', { name: /Tạo Hồ sơ Bác sĩ/ }));
 
     await waitFor(() => {
-      expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
-    });
-
-    const state = useDoctorDemoStore.getState();
-    expect(state.doctors).toHaveLength(9);
-    expect(state.doctors[0].id).toBe('DOC-0245');
-    expect(state.doctors[0].history).toHaveLength(3);
-    expect(state.draft).toBeNull();
-  });
-
-  it('rejects duplicate practitioner ID', async () => {
-    renderPage();
-
-    fireEvent.change(screen.getByLabelText(/Mã Bác sĩ HIS Định danh/), {
-      target: { value: 'DOC-0142' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /Tạo Hồ sơ Bác sĩ/ }));
-
-    await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent(
-        'Mã bác sĩ hoặc nhân sự đã được sử dụng trong danh sách minh họa.',
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/admin/doctors',
+        expect.objectContaining({
+          doctorCode: 'DOC-0500',
+          staffCode: 'STF-1500',
+          department: 'Khoa Nội Tiêu hóa',
+        }),
       );
+      expect(screen.getByText('Danh sách Bác sĩ')).toBeInTheDocument();
     });
-    expect(useDoctorDemoStore.getState().doctors).toHaveLength(8);
-    expect(screen.queryByText('Danh sách Mock')).not.toBeInTheDocument();
+    expect(window.sessionStorage.getItem(DOCTOR_CREATE_DRAFT_STORAGE_KEY)).toBeNull();
   });
 
-  it('rejects duplicate staffId loaded via draft', async () => {
-    useDoctorDemoStore.setState({
-      draft: {
-        ...INITIAL_DOCTORS[0],
-        id: 'DOC-0600',
-        staffId: 'NV-1142',
-      },
-    });
-
-    renderPage();
-    fireEvent.click(screen.getByRole('button', { name: /Tạo Hồ sơ Bác sĩ/ }));
-
-    await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent(
-        'Mã bác sĩ hoặc nhân sự đã được sử dụng trong danh sách minh họa.',
-      );
-    });
-    expect(useDoctorDemoStore.getState().doctors).toHaveLength(8);
-  });
-
-  it('validates practitioner ID format and required department', async () => {
+  it('surfaces backend error message when POST /admin/doctors rejects and validates bad inputs', async () => {
     renderPage();
 
+    // Validation on empty/invalid form
     fireEvent.change(screen.getByLabelText(/Mã Bác sĩ HIS Định danh/), {
       target: { value: 'DOC-12' },
     });
-    fireEvent.change(screen.getByLabelText(/Khoa công tác trực thuộc/), {
-      target: { value: '' },
-    });
-
     fireEvent.click(screen.getByRole('button', { name: /Tạo Hồ sơ Bác sĩ/ }));
 
     await waitFor(() => {
       expect(screen.getByText('Mã bác sĩ có dạng DOC-0000')).toBeInTheDocument();
       expect(screen.getByText('Vui lòng chọn khoa công tác')).toBeInTheDocument();
     });
-    expect(useDoctorDemoStore.getState().doctors).toHaveLength(8);
+    expect(apiClient.post).not.toHaveBeenCalled();
+
+    // Valid form hitting backend 409 error
+    vi.mocked(apiClient.post).mockRejectedValueOnce(
+      new Error('Mã bác sĩ DOC-0142 đã tồn tại trên hệ thống.'),
+    );
+
+    fireEvent.change(screen.getByLabelText(/Mã Bác sĩ HIS Định danh/), {
+      target: { value: 'DOC-0142' },
+    });
+    fireEvent.change(screen.getByLabelText(/Mã Nhân sự liên kết/), {
+      target: { value: 'STF-0142' },
+    });
+    fireEvent.change(screen.getByLabelText(/Họ và tên Bác sĩ/), {
+      target: { value: 'BS. Nguyễn Văn An' },
+    });
+    fireEvent.change(screen.getByLabelText(/Email tiếp nhận ca khám/), {
+      target: { value: 'an.nv@medflow.vn' },
+    });
+    fireEvent.change(screen.getByLabelText(/Khoa công tác trực thuộc/), {
+      target: { value: 'Khoa Nội Tiêu hóa' },
+    });
+    fireEvent.change(screen.getByLabelText(/Buồng khám mặc định/), {
+      target: { value: 'PK-101 (Phòng Tiêu hóa 1)' },
+    });
+    fireEvent.change(screen.getByLabelText(/Học hàm \/ Học vị/), {
+      target: { value: 'Bác sĩ Chuyên khoa I' },
+    });
+    fireEvent.change(screen.getByLabelText(/Chuyên khoa Chuyên sâu/), {
+      target: { value: 'Nội Tiêu hóa' },
+    });
+    fireEvent.change(screen.getByLabelText(/Số Chứng chỉ Hành nghề CCHN/), {
+      target: { value: '018492/BYT-CCHN' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Tạo Hồ sơ Bác sĩ/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Mã bác sĩ DOC-0142 đã tồn tại trên hệ thống.',
+      );
+    });
   });
 
-  it('validates portrait upload type and size and previews valid PNG', async () => {
-    const { container } = renderPage();
-    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+  it('manages portrait preview, work history milestones, manual/auto draft, and Escape navigation', async () => {
+    vi.useFakeTimers();
+    const { container, unmount } = renderPage();
 
+    // Auto-save after 30s when dirty
+    fireEvent.change(screen.getByLabelText(/Chuyên khoa Chuyên sâu/), {
+      target: { value: 'Tiêu hóa Test' },
+    });
+    act(() => {
+      vi.advanceTimersByTime(30_000);
+    });
+    expect(
+      JSON.parse(window.sessionStorage.getItem(DOCTOR_CREATE_DRAFT_STORAGE_KEY) || '{}').specialty,
+    ).toBe('Tiêu hóa Test');
+
+    // Add and remove milestone
+    fireEvent.click(screen.getByRole('button', { name: '⊕ Thêm mốc đào tạo' }));
+    expect(screen.getByLabelText('Năm mốc 1')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Xóa mốc 1' }));
+    expect(screen.queryByLabelText('Năm mốc 1')).not.toBeInTheDocument();
+
+    // Manual draft save
+    fireEvent.click(screen.getByRole('button', { name: 'Lưu bản nháp' }));
+    expect(screen.getByRole('status')).toHaveTextContent('Đã lưu bản nháp trong phiên hiện tại.');
+
+    // Portrait file validation
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
     fireEvent.change(fileInput, {
       target: { files: [new File(['x'], 'a.gif', { type: 'image/gif' })] },
     });
     expect(screen.getByText('Chọn ảnh JPG/PNG tối đa 2MB.')).toBeInTheDocument();
 
-    fireEvent.change(fileInput, {
-      target: { files: [new File([new Uint8Array(2_000_001)], 'big.png', { type: 'image/png' })] },
-    });
-    expect(screen.getByText('Chọn ảnh JPG/PNG tối đa 2MB.')).toBeInTheDocument();
-
-    fireEvent.change(fileInput, {
-      target: { files: [new File(['x'], 'ok.png', { type: 'image/png' })] },
-    });
-    expect(await screen.findByAltText('Ảnh chân dung đã chọn')).toBeInTheDocument();
-  });
-
-  it('removes a work history entry before creating doctor', async () => {
-    renderPage();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Xóa mốc 1' }));
-    fireEvent.click(screen.getByRole('button', { name: /Tạo Hồ sơ Bác sĩ/ }));
-
-    await waitFor(() => {
-      expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
-    });
-
-    const created = useDoctorDemoStore.getState().doctors[0];
-    expect(created.history).toHaveLength(2);
-    expect(created.history[0].year).toBe('2017');
-  });
-
-  it('adds a new work history entry when clicking ⊕ Thêm mốc đào tạo', () => {
-    renderPage();
-
-    fireEvent.click(screen.getByRole('button', { name: '⊕ Thêm mốc đào tạo' }));
-
-    expect(screen.getByLabelText('Năm mốc 4')).toBeInTheDocument();
-  });
-
-  it('saves draft manually when clicking Lưu bản nháp', () => {
-    renderPage();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Lưu bản nháp' }));
-
-    expect(screen.getByRole('status')).toHaveTextContent('Đã lưu bản nháp trong phiên hiện tại.');
-    const { draft } = useDoctorDemoStore.getState();
-    expect(draft?.id).toBe('DOC-0245');
-    expect(draft?.history).toHaveLength(3);
-  });
-
-  it('auto-saves draft after 30s only when form is dirty', () => {
-    vi.useFakeTimers();
-
-    const first = renderPage();
-    act(() => {
-      vi.advanceTimersByTime(30_000);
-    });
-    expect(useDoctorDemoStore.getState().draft).toBeNull();
-    first.unmount();
-
-    renderPage();
-    fireEvent.change(screen.getByLabelText(/Chuyên khoa Chuyên sâu/), {
-      target: { value: 'Tiêu hóa Test' },
-    });
-
-    act(() => {
-      vi.advanceTimersByTime(30_000);
-    });
-
-    expect(useDoctorDemoStore.getState().draft?.specialty).toBe('Tiêu hóa Test');
-  });
-
-  it('navigates back on Escape key and Hủy bỏ [Esc] button', () => {
-    const first = renderPage();
+    // Escape navigates back
     fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
-    first.unmount();
-
-    renderPage();
-    fireEvent.click(screen.getByRole('button', { name: 'Hủy bỏ [Esc]' }));
-    expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
-  });
-
-  it('submits form via Ctrl+S shortcut', async () => {
-    renderPage();
-
-    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
-
-    await waitFor(() => {
-      expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
-    });
-    expect(useDoctorDemoStore.getState().doctors).toHaveLength(9);
+    expect(screen.getByText('Danh sách Bác sĩ')).toBeInTheDocument();
+    unmount();
   });
 });

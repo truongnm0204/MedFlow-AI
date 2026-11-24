@@ -7,7 +7,10 @@ interface DoctorDetailSummaryProps {
 }
 
 export function DoctorDetailSummary({ doctor }: DoctorDetailSummaryProps) {
-  const formattedPrice = new Intl.NumberFormat('vi-VN').format(doctor.price);
+  const formattedPrice =
+    doctor.price != null
+      ? `${new Intl.NumberFormat('vi-VN').format(doctor.price)} VNĐ`
+      : (doctor.priceFormatted ?? 'Chưa cập nhật');
 
   return (
     <div className="rounded-2xl border border-slate-200/90 bg-white p-4.5 shadow-2xs sm:p-5">
@@ -56,9 +59,7 @@ export function DoctorDetailSummary({ doctor }: DoctorDetailSummaryProps) {
           {/* Pricing Row */}
           <div className="pt-2 flex items-baseline gap-2">
             <span className="text-xs text-slate-500">Giá theo cơ sở/ngày khám</span>
-            <span className="text-lg font-bold text-slate-900 sm:text-xl">
-              {formattedPrice} VNĐ
-            </span>
+            <span className="text-lg font-bold text-slate-900 sm:text-xl">{formattedPrice}</span>
           </div>
         </div>
       </div>

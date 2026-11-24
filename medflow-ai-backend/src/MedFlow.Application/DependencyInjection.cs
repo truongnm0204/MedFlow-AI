@@ -14,6 +14,7 @@ using MedFlow.Application.Services.Patients;
 using MedFlow.Application.Services.Pharmacy;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Reception;
+using MedFlow.Application.Services.Reports;
 using MedFlow.Application.Services.Services;
 using MedFlow.Application.Services.SystemAdmin;
 using MedFlow.Application.Services.Payments;
@@ -58,6 +59,7 @@ public static class DependencyInjection
         services.AddScoped<ISystemAdminDashboardService, SystemAdminDashboardService>();
         services.AddScoped<IStaffAccountListService, StaffAccountListService>();
         services.AddScoped<IHospitalAdminDashboardService, HospitalAdminDashboardService>();
+        services.AddScoped<IOperationalReportService, OperationalReportService>();
         services.AddScoped<IDoctorDashboardService, DoctorDashboardService>();
         services.AddScoped<IDiagnosticDashboardService, DiagnosticDashboardService>();
         services.AddScoped<IDiagnosticWorklistService, DiagnosticWorklistService>();

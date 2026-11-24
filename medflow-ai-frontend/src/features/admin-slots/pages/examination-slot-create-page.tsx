@@ -10,15 +10,21 @@ import { SlotCreateActionBar } from '../components/slot-create-action-bar';
 import { SlotCreateForm } from '../components/slot-create-form';
 import { SlotCreateSidebar } from '../components/slot-create-sidebar';
 import {
+  useAdminExaminationSlots,
+  useCreateExaminationSlotMutation,
+} from '../hooks/use-examination-slots';
+import {
   DEFAULT_SLOT_FORM_VALUES,
   examinationSlotSchema,
   type ExaminationSlotFormValues,
 } from '../schemas/examination-slot.schema';
 import { useExaminationSlotStore } from '../store/examination-slot.store';
-import type { ExaminationSlot, ServiceType } from '../types/examination-slot.types';
+import type { ServiceType } from '../types/examination-slot.types';
 
 export function ExaminationSlotCreatePage() {
   const navigate = useNavigate();
+  useAdminExaminationSlots();
+  const createSlotMutation = useCreateExaminationSlotMutation();
   const slots = useExaminationSlotStore((state) => state.slots);
   const draft = useExaminationSlotStore((state) => state.draft);
   const addSlot = useExaminationSlotStore((state) => state.addSlot);
@@ -157,39 +163,21 @@ export function ExaminationSlotCreatePage() {
     setTimeout(() => setMessage(null), 3000);
   };
 
-  const handleCreate = (values: ExaminationSlotFormValues) => {
+  const handleCreate = async (values: ExaminationSlotFormValues) => {
+    setMessage(null);
     if (slots.some((s) => s.code.toLowerCase() === values.code.trim().toLowerCase())) {
       setMessage(`Mã slot "${values.code}" đã tồn tại trên hệ thống.`);
       return;
     }
 
-    // Compute dateDisplay: DD/MM
-    const dateParts = values.date.split('-');
-    const dateDisplay = dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}` : values.date;
-
-    const newSlot: ExaminationSlot = {
-      id: values.code.toLowerCase().replace(/[^a-z0-9]/g, '-'),
-      code: values.code,
-      doctorId: values.doctorId || 'doc-unassigned',
-      doctorName: values.doctorName || 'Chưa phân công',
-      serviceId: values.serviceId,
-      serviceName: values.serviceName,
-      serviceCode: values.serviceCode,
-      serviceType: values.serviceType,
-      specialty: values.specialty,
-      room: values.room || 'Chưa xếp phòng',
-      capacityBooked: 0,
-      capacityMax: values.capacityMax,
-      date: values.date,
-      dateDisplay,
-      startTime: values.startTime,
-      endTime: values.endTime,
-      status: values.status || 'OPEN',
-    };
-
-    addSlot(newSlot);
-    clearDraft();
-    navigate('/admin/slots');
+    try {
+      const created = await createSlotMutation.mutateAsync(values);
+      addSlot(created);
+      clearDraft();
+      navigate('/admin/slots');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Không thể tạo mới khung giờ khám.');
+    }
   };
 
   return (

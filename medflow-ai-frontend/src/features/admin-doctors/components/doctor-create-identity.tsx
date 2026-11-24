@@ -28,21 +28,30 @@ export function DoctorCreateIdentity({
             <DoctorField
               label="Mã Bác sĩ HIS Định danh"
               required
-              hint="Nhập mã minh họa theo dạng DOC-0000."
+              hint="Nhập mã bác sĩ theo dạng DOC-0000."
               error={errors.id?.message}
             >
-              <input className={doctorControlClass} {...register('id')} />
+              <input placeholder="DOC-0245" className={doctorControlClass} {...register('id')} />
             </DoctorField>
-            <div className="rounded-md border border-border bg-canvas p-3 text-[10px] text-sub">
-              <div className="flex justify-between">
-                <span>Trạng thái nhân sự:</span>
-                <b className="text-emerald-700">Minh họa (Toàn thời gian)</b>
-              </div>
-              <div className="mt-1 flex justify-between">
-                <span>Tài khoản SSO Portal:</span>
-                <b>Chưa kết nối</b>
-              </div>
-            </div>
+            <DoctorField
+              label="Mã Nhân sự liên kết (Staff Code)"
+              required
+              hint="Mã tài khoản nhân sự y tế đã khởi tạo."
+              error={errors.staffId?.message}
+            >
+              <input
+                placeholder="STF-0142"
+                className={doctorControlClass}
+                {...register('staffId')}
+              />
+            </DoctorField>
+            <DoctorField label="Họ và tên Bác sĩ" required error={errors.name?.message}>
+              <input
+                placeholder="BS. Nguyễn Văn A"
+                className={doctorControlClass}
+                {...register('name')}
+              />
+            </DoctorField>
           </div>
           <label className="flex min-h-32 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-sky-300 bg-sky-50/40 p-3 text-center text-[10px] text-sub">
             {portrait ? (
@@ -93,7 +102,7 @@ export function DoctorCreateAssignment({ register, errors }: Pick<Props, 'regist
         <DoctorField
           label="Buồng khám mặc định"
           required
-          hint="Mặc định hiển thị khi y tá xếp số tự động."
+          hint="Mặc định hiển thị khi điều dưỡng xếp số tự động."
           error={errors.room?.message}
         >
           <select className={doctorControlClass} {...register('room')}>

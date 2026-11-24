@@ -48,7 +48,7 @@ export function ServicePriceUpdateModal() {
     resolver: zodResolver(updateServicePriceSchema),
     defaultValues: {
       price: service?.price ?? 0,
-      decisionNumber: service?.decisionNumber ?? 'QĐ-145/BV-KH',
+      decisionNumber: service?.decisionNumber ?? '',
       effectiveDate: getTodayDateString(),
       appliedBy: 'Hội đồng Giá Bệnh viện',
       note: 'Điều chỉnh định mức chi phí dịch vụ theo quyết định mới',
@@ -59,7 +59,7 @@ export function ServicePriceUpdateModal() {
     if (service) {
       reset({
         price: service.price,
-        decisionNumber: service.decisionNumber ?? 'QĐ-145/BV-KH',
+        decisionNumber: service.decisionNumber ?? '',
         effectiveDate: getTodayDateString(),
         appliedBy: 'Hội đồng Giá Bệnh viện',
         note: `Điều chỉnh giá dịch vụ ${service.name} theo quyết định mới`,

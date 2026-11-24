@@ -1,7 +1,8 @@
-import { CheckCircle2, Download, Search, SlidersHorizontal, UserPlus } from 'lucide-react';
+import { CheckCircle2, Download, Loader2, Search, SlidersHorizontal, UserPlus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 
+import { Alert } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 
 import { AdminDoctorShell } from '../components/admin-doctor-shell';
@@ -10,7 +11,11 @@ import { DoctorMetrics } from '../components/doctor-metrics';
 import { DoctorPagination } from '../components/doctor-pagination';
 import { DoctorTable } from '../components/doctor-table';
 import { DEGREES, DEPARTMENTS } from '../data/doctor-demo-data';
-import { useDoctorDemoStore } from '../store/doctor-demo.store';
+import {
+  useAdminDoctors,
+  useDeactivateAdminDoctorMutation,
+  useReactivateAdminDoctorMutation,
+} from '../hooks/use-admin-doctors';
 import type { Doctor } from '../types/doctor.types';
 
 const PAGE_SIZE = 8;
@@ -33,16 +38,18 @@ function downloadCsv(doctors: Doctor[]) {
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'danh-sach-bac-si-minh-hoa.csv';
+  link.download = 'danh-sach-bac-si.csv';
   link.click();
   URL.revokeObjectURL(url);
 }
 
-/** SCR-ADM-DOC-01 — synthetic, session-only administrative doctor list. */
+/** SCR-ADM-DOC-01 — administrative doctor list backed by GET /api/v1/admin/doctors. */
 export function DoctorListPage() {
   const navigate = useNavigate();
-  const doctors = useDoctorDemoStore((state) => state.doctors);
-  const updateDoctor = useDoctorDemoStore((state) => state.updateDoctor);
+  const { data: doctors = [], isLoading, isError, error, refetch } = useAdminDoctors();
+  const deactivateMutation = useDeactivateAdminDoctorMutation();
+  const reactivateMutation = useReactivateAdminDoctorMutation();
+
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState('');
   const [degree, setDegree] = useState('');
@@ -51,7 +58,9 @@ export function DoctorListPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [deactivatingDoctor, setDeactivatingDoctor] = useState<Doctor | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.ctrlKey && event.key.toLowerCase() === 'k') {
@@ -66,6 +75,14 @@ export function DoctorListPage() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [navigate]);
+
+  const departmentOptions = useMemo(() => {
+    const set = new Set<string>(DEPARTMENTS);
+    for (const doc of doctors) {
+      if (doc.department) set.add(doc.department);
+    }
+    return Array.from(set);
+  }, [doctors]);
 
   const filtered = useMemo(
     () =>
@@ -101,31 +118,61 @@ export function DoctorListPage() {
         : [...new Set([...ids, ...visible.map((doctor) => doctor.id)])],
     );
 
-  const handleConfirmDeactivate = (doctorId: string) => {
+  const handleConfirmDeactivate = async (doctorId: string) => {
     const doctor = doctors.find((item) => item.id === doctorId);
-    if (doctor) {
-      updateDoctor({ ...doctor, active: false });
+    if (!doctor) {
+      setDeactivatingDoctor(null);
+      return;
+    }
+    setActionError(null);
+    try {
+      await deactivateMutation.mutateAsync({ idOrCode: doctor.id });
       setFeedbackMessage(`Đã chuyển trạng thái bác sĩ ${doctor.name} sang Ngừng hoạt động.`);
       setTimeout(() => setFeedbackMessage(null), 4000);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Không thể ngừng hoạt động bác sĩ.');
+    } finally {
+      setDeactivatingDoctor(null);
     }
-    setDeactivatingDoctor(null);
   };
 
-  const handleToggleStatus = (id: string) => {
+  const handleToggleStatus = async (id: string) => {
     const doctor = doctors.find((item) => item.id === id);
     if (!doctor) return;
     if (doctor.active) {
       setDeactivatingDoctor(doctor);
-    } else {
-      updateDoctor({ ...doctor, active: true });
+      return;
+    }
+
+    setActionError(null);
+    try {
+      await reactivateMutation.mutateAsync(doctor.id);
       setFeedbackMessage(`Đã kích hoạt lại hoạt động cho bác sĩ ${doctor.name}.`);
       setTimeout(() => setFeedbackMessage(null), 4000);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Không thể kích hoạt lại bác sĩ.');
     }
   };
 
   return (
     <AdminDoctorShell showTabs>
       <main className="space-y-6 px-6 py-6">
+        {isError ? (
+          <Alert tone="error">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                <b>Không thể tải danh mục bác sĩ:</b>{' '}
+                {error instanceof Error ? error.message : 'Đã xảy ra lỗi kết nối máy chủ.'}
+              </span>
+              <Button type="button" size="sm" variant="secondary" onClick={() => void refetch()}>
+                Thử lại
+              </Button>
+            </div>
+          </Alert>
+        ) : null}
+
+        {actionError ? <Alert tone="error">{actionError}</Alert> : null}
+
         <DoctorMetrics doctors={doctors} />
         <section
           className="space-y-3 rounded-lg border border-border bg-white p-4 shadow-sm"
@@ -166,7 +213,7 @@ export function DoctorListPage() {
                 onChange={(event) => updateFilter(setDepartment, event.target.value)}
               >
                 <option value="">Tất cả khoa phòng</option>
-                {DEPARTMENTS.map((item) => (
+                {departmentOptions.map((item) => (
                   <option key={item}>{item}</option>
                 ))}
               </select>
@@ -222,28 +269,37 @@ export function DoctorListPage() {
           className="overflow-hidden rounded-lg border border-border bg-white shadow-sm"
           aria-label="Danh sách bác sĩ"
         >
-          <DoctorTable
-            doctors={visible}
-            selectedIds={selectedIds}
-            onToggleSelection={toggleSelection}
-            onToggleAll={toggleAll}
-            onToggleStatus={handleToggleStatus}
-            onRequestDeactivate={(doc) => setDeactivatingDoctor(doc)}
-          />
-          <DoctorPagination
-            count={filtered.length}
-            currentPage={currentPage}
-            pageSize={PAGE_SIZE}
-            totalPages={totalPages}
-            onPageChange={setPage}
-          />
+          {isLoading ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-sm text-sub">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+              <span>Đang tải danh sách bác sĩ...</span>
+            </div>
+          ) : (
+            <>
+              <DoctorTable
+                doctors={visible}
+                selectedIds={selectedIds}
+                onToggleSelection={toggleSelection}
+                onToggleAll={toggleAll}
+                onToggleStatus={(id) => void handleToggleStatus(id)}
+                onRequestDeactivate={(doc) => setDeactivatingDoctor(doc)}
+              />
+              <DoctorPagination
+                count={filtered.length}
+                currentPage={currentPage}
+                pageSize={PAGE_SIZE}
+                totalPages={totalPages}
+                onPageChange={setPage}
+              />
+            </>
+          )}
         </section>
       </main>
       <DoctorDeactivateModal
         doctor={deactivatingDoctor}
         open={Boolean(deactivatingDoctor)}
         onClose={() => setDeactivatingDoctor(null)}
-        onConfirm={handleConfirmDeactivate}
+        onConfirm={(doctorId) => void handleConfirmDeactivate(doctorId)}
       />
       {feedbackMessage && (
         <div

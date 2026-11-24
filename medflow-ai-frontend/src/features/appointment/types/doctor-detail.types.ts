@@ -28,7 +28,8 @@ export interface DoctorDetailProfile {
   departmentName?: string;
   room: string;
   statusText: string;
-  price: number;
+  price: number | null;
+  priceFormatted?: string;
   avatarUrl: string;
   yearsOfExperience?: number;
   licenseNumber?: string | null;

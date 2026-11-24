@@ -44,6 +44,7 @@ import { DiagnosticExecutionPage } from '@/features/diagnostic/pages/diagnostic-
 import { DiagnosticPatientReceivePage } from '@/features/diagnostic/pages/diagnostic-patient-receive-page';
 import { DiagnosticQueueManagePage } from '@/features/diagnostic/pages/diagnostic-queue-manage-page';
 import { DiagnosticResultEntryPage } from '@/features/diagnostic/pages/diagnostic-result-entry-page';
+import { DiagnosticResultViewPage } from '@/features/diagnostic/pages/diagnostic-result-view-page';
 import { DiagnosticWorklistPage } from '@/features/diagnostic/pages/diagnostic-worklist-page';
 import { DoctorDashboardPage } from '@/features/doctor/pages/doctor-dashboard-page';
 import { DoctorAssignedQueuePage } from '@/features/doctor/pages/doctor-assigned-queue-page';
@@ -811,6 +812,36 @@ export function AppRouter() {
         }
       />
       <Route
+        path="/diagnostic/results/view"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticResultViewPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/results/:orderIdOrCode/view"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticResultViewPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/diagnostic/orders/:orderIdOrCode/result/view"
+        element={
+          <RequireAuth>
+            <RequireDiagnostic>
+              <DiagnosticResultViewPage />
+            </RequireDiagnostic>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/diagnostic/results/:orderIdOrCode"
         element={
           <RequireAuth>
@@ -1272,6 +1303,16 @@ export function AppRouter() {
       />
       <Route
         path="/pharmacy/fefo-batches"
+        element={
+          <RequireAuth>
+            <RequirePharmacy>
+              <FefoBatchSelectionPage />
+            </RequirePharmacy>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pharmacy/prescriptions/:prescriptionCode/fefo-batches"
         element={
           <RequireAuth>
             <RequirePharmacy>

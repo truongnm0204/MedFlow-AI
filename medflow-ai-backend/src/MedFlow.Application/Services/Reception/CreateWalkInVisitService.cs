@@ -28,8 +28,10 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
     private const int MaxNotesLength = 500;
     private const int MaxSymptomCount = 20;
     private const int MaxSymptomLength = 100;
-    private const decimal DefaultServicePrice = 200_000m;
     private const int DefaultWaitMinutesPerPatient = 15;
+    public const string UnpricedWalkInServiceMessage =
+        "Dịch vụ khám chưa được cấu hình bảng giá hiệu lực. Vui lòng liên hệ quản trị viên bệnh viện.";
+    public const string UnpricedDisplayLabel = "Chưa cập nhật";
 
     public static readonly IReadOnlyList<string> DefaultSymptomOptions =
     [
@@ -297,9 +299,19 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             }
         }
 
-        var servicePrice = await ResolveServicePriceAsync(service.Id, nowLocal, ct);
+        var resolvedServicePrice = await TryResolveEffectiveServicePriceAsync(
+            service.Id,
+            effectiveHospitalId,
+            nowLocal,
+            ct);
+        if (!resolvedServicePrice.HasValue)
+        {
+            throw new ConflictException(UnpricedWalkInServiceMessage);
+        }
+
+        var servicePrice = resolvedServicePrice.Value;
         var priceFormatted = FormatVndPrice(servicePrice);
-        var paymentStatus = "PENDING";
+        var paymentStatus = servicePrice > 0m ? "PENDING" : "WAIVED";
 
         var policySet = await QueueOrderingPolicyLoader.LoadAsync(_db, effectiveHospitalId, nowUtc, ct);
         var orderingPolicy = policySet.ForServicePoint(servicePoint?.Id);
@@ -356,7 +368,10 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
 
         _db.QueueEntries.Add(queueEntry);
 
-        TryAddWalkInPayment(visit.Id, servicePrice, paymentStatus);
+        if (servicePrice > 0m)
+        {
+            TryAddWalkInPayment(visit.Id, servicePrice, paymentStatus);
+        }
 
         await _db.SaveChangesAsync(ct);
 
@@ -699,14 +714,24 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
         var estimatedWaitMinutes = waitingCountBefore * durationPerPatient;
 
         var payment = await TryLoadLatestPaymentAsync(visit.Id, ct);
-        var servicePrice = payment?.Amount
+        decimal? servicePrice = payment?.Amount
             ?? auditMetadata.ServicePrice
-            ?? await ResolveServicePriceAsync(service.Id, visit.CheckedInAt ?? nowLocal, ct);
-        var priceFormatted = auditMetadata.PriceFormatted ?? FormatVndPrice(servicePrice);
+            ?? await TryResolveEffectiveServicePriceAsync(
+                service.Id,
+                effectiveHospitalId,
+                visit.CheckedInAt ?? nowLocal,
+                ct);
+        var priceFormatted = !string.IsNullOrWhiteSpace(auditMetadata.PriceFormatted)
+            ? auditMetadata.PriceFormatted!
+            : (servicePrice.HasValue ? FormatVndPrice(servicePrice.Value) : UnpricedDisplayLabel);
         var paymentMethod = auditMetadata.PaymentMethod ?? "CASHIER";
         var paymentStatus = !string.IsNullOrWhiteSpace(payment?.Status)
             ? payment.Status.Trim().ToUpperInvariant()
-            : (auditMetadata.PaymentStatus ?? "PENDING");
+            : (!string.IsNullOrWhiteSpace(auditMetadata.PaymentStatus)
+                ? auditMetadata.PaymentStatus!
+                : (servicePrice.HasValue
+                    ? (servicePrice.Value > 0m ? "PENDING" : "WAIVED")
+                    : "UNPRICED"));
 
         var effectiveQueueEntry = queueEntry ?? new QueueEntry
         {
@@ -820,15 +845,14 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
                 .Where(s => s.DepartmentId == dept.Id)
                 .Select(s =>
                 {
-                    var price = priceMap.TryGetValue(s.Id, out var resolved)
-                        ? resolved
-                        : DefaultServicePrice;
+                    var hasPrice = priceMap.TryGetValue(s.Id, out var resolved);
                     return new WalkInServiceCatalogItemDto(
                         Id: s.Id,
                         Code: s.ServiceCode,
                         Name: s.Name,
-                        Price: price,
-                        PriceFormatted: FormatVndPrice(price));
+                        Price: hasPrice ? resolved : null,
+                        PriceFormatted: hasPrice ? FormatVndPrice(resolved) : UnpricedDisplayLabel,
+                        HasEffectivePrice: hasPrice);
                 })
                 .ToList();
 
@@ -1490,36 +1514,38 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
                 ct);
     }
 
-    private async Task<decimal> ResolveServicePriceAsync(
+    private async Task<decimal?> TryResolveEffectiveServicePriceAsync(
         long serviceId,
+        long expectedHospitalId,
         DateTime referenceLocalTime,
         CancellationToken ct)
     {
-        try
+        var belongsToHospital = await _db.Services
+            .AsNoTracking()
+            .AnyAsync(
+                s => s.Id == serviceId &&
+                     s.HospitalId == expectedHospitalId &&
+                     s.IsActive != false,
+                ct);
+        if (!belongsToHospital)
         {
-            var prices = await _db.ServicePrices
-                .AsNoTracking()
-                .Where(p =>
-                    p.ServiceId == serviceId &&
-                    p.PriceAmount != null &&
-                    (p.EffectiveFrom == null || p.EffectiveFrom <= referenceLocalTime) &&
-                    (p.EffectiveTo == null || p.EffectiveTo >= referenceLocalTime))
-                .OrderByDescending(p => p.EffectiveFrom ?? DateTime.MinValue)
-                .ThenByDescending(p => p.Id)
-                .Select(p => p.PriceAmount!.Value)
-                .ToListAsync(ct);
-
-            if (prices.Count > 0 && prices[0] > 0)
-            {
-                return prices[0];
-            }
-        }
-        catch (NotSupportedException)
-        {
-            // ServicePrices DbSet not configured in lightweight unit test double
+            return null;
         }
 
-        return DefaultServicePrice;
+        var prices = await _db.ServicePrices
+            .AsNoTracking()
+            .Where(p =>
+                p.ServiceId == serviceId &&
+                p.PriceAmount != null &&
+                p.PriceAmount >= 0m &&
+                (p.EffectiveFrom == null || p.EffectiveFrom <= referenceLocalTime) &&
+                (p.EffectiveTo == null || p.EffectiveTo >= referenceLocalTime))
+            .OrderByDescending(p => p.EffectiveFrom ?? DateTime.MinValue)
+            .ThenByDescending(p => p.Id)
+            .Select(p => p.PriceAmount!.Value)
+            .ToListAsync(ct);
+
+        return prices.Count > 0 ? prices[0] : null;
     }
 
     private async Task<Dictionary<long, decimal>> LoadEffectiveServicePriceMapAsync(
@@ -1533,32 +1559,26 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             return result;
         }
 
-        try
-        {
-            var rows = await _db.ServicePrices
-                .AsNoTracking()
-                .Where(p =>
-                    p.ServiceId.HasValue &&
-                    serviceIds.Contains(p.ServiceId.Value) &&
-                    p.PriceAmount != null &&
-                    (p.EffectiveFrom == null || p.EffectiveFrom <= referenceLocalTime) &&
-                    (p.EffectiveTo == null || p.EffectiveTo >= referenceLocalTime))
-                .OrderByDescending(p => p.EffectiveFrom ?? DateTime.MinValue)
-                .ThenByDescending(p => p.Id)
-                .ToListAsync(ct);
+        var rows = await _db.ServicePrices
+            .AsNoTracking()
+            .Where(p =>
+                p.ServiceId.HasValue &&
+                serviceIds.Contains(p.ServiceId.Value) &&
+                p.PriceAmount != null &&
+                p.PriceAmount >= 0m &&
+                (p.EffectiveFrom == null || p.EffectiveFrom <= referenceLocalTime) &&
+                (p.EffectiveTo == null || p.EffectiveTo >= referenceLocalTime))
+            .OrderByDescending(p => p.EffectiveFrom ?? DateTime.MinValue)
+            .ThenByDescending(p => p.Id)
+            .ToListAsync(ct);
 
-            foreach (var row in rows)
-            {
-                var sid = row.ServiceId!.Value;
-                if (!result.ContainsKey(sid) && row.PriceAmount is > 0)
-                {
-                    result[sid] = row.PriceAmount.Value;
-                }
-            }
-        }
-        catch (NotSupportedException)
+        foreach (var row in rows)
         {
-            // ServicePrices DbSet not configured in lightweight unit test double
+            var sid = row.ServiceId!.Value;
+            if (!result.ContainsKey(sid) && row.PriceAmount is >= 0m)
+            {
+                result[sid] = row.PriceAmount.Value;
+            }
         }
 
         return result;
@@ -1624,7 +1644,7 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
         HospitalRoom? room,
         QueueServicePoint? servicePoint,
         long effectiveHospitalId,
-        decimal servicePrice,
+        decimal? servicePrice,
         string priceFormatted,
         string paymentMethod,
         string paymentStatus,

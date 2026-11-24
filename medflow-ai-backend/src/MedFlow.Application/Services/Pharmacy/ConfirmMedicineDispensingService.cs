@@ -172,7 +172,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                 WarningNote: warning,
                 TagLabel: med?.DosageForm ?? "Thuốc kê đơn",
                 TagTone: i % 3 == 0 ? "sky" : (i % 3 == 1 ? "amber" : "rose"),
-                ShelfLocation: $"Kệ {(char)('A' + (i % 4))}-0{(i % 5) + 1}"
+                ShelfLocation: "Chưa cập nhật"
             ));
         }
 
@@ -619,15 +619,17 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                 .ToListAsync(ct)
             : [];
 
-        var paidPayment = visitPayments.FirstOrDefault(p => string.Equals(p.Status, "PAID", StringComparison.OrdinalIgnoreCase));
-        var totalAmount = paidPayment?.Amount ?? 0m;
-        var totalAmountFormatted = totalAmount > 0 ? FormatVndPrice(totalAmount) : "0 đ";
+        var paidPayment = visitPayments
+            .OrderByDescending(p => p.PaidAt ?? p.CreatedAt)
+            .ThenByDescending(p => p.Id)
+            .FirstOrDefault(p => string.Equals(p.Status, "PAID", StringComparison.OrdinalIgnoreCase));
+        decimal? totalAmount = null;
+        const string totalAmountFormatted = "Chưa có dữ liệu";
         var paymentSummary = paidPayment is not null
-            ? $"Đã thu đủ 100% qua VietQR • Mã giao dịch {paidPayment.PaymentCode ?? paidPayment.ExternalReference ?? paidPayment.Id.ToString()}"
-            : "Đã xác nhận thu ngân / Miễn phí theo chính sách viện";
+            ? $"Đã thanh toán viện phí {FormatVndPrice(paidPayment.Amount ?? 0m)} qua {(paidPayment.ExternalReference != null ? "VietQR" : "hệ thống viện phí")} • Hóa đơn {paidPayment.PaymentCode ?? paidPayment.ExternalReference ?? paidPayment.Id.ToString(CultureInfo.InvariantCulture)}"
+            : "Chưa ghi nhận thanh toán viện phí";
 
         var lines = new List<DispensedLineItemDto>(dispenseItems.Count);
-        decimal computedTotal = 0m;
         decimal totalUnits = 0m;
 
         for (var i = 0; i < dispenseItems.Count; i++)
@@ -648,10 +650,6 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                 ? batch.ExpiryDate.Value.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
                 : "N/A";
 
-            var unitPrice = 15000m;
-            var lineTotal = unitPrice * qty;
-            computedTotal += lineTotal;
-
             lines.Add(new DispensedLineItemDto(
                 Id: $"di-{di.Id}",
                 OrderIndex: i + 1,
@@ -661,22 +659,19 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                 Unit: unit,
                 BatchCode: batchCode,
                 ExpiryDate: expiry,
-                ShelfLocation: $"Kệ {(char)('A' + (i % 4))}-0{(i % 5) + 1}, Ngăn 2",
-                UnitPriceFormatted: FormatVndPrice(unitPrice),
-                LineTotalFormatted: FormatVndPrice(lineTotal)
+                ShelfLocation: "Chưa cập nhật",
+                UnitPriceFormatted: "Chưa có dữ liệu",
+                LineTotalFormatted: "Chưa có dữ liệu",
+                UnitPrice: null,
+                LineTotal: null
             ));
         }
 
-        if (totalAmount <= 0 && computedTotal > 0)
-        {
-            totalAmount = computedTotal;
-            totalAmountFormatted = FormatVndPrice(totalAmount);
-        }
-
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
         var rxCode = prescription.PrescriptionCode ?? $"RX-{prescription.Id:D6}";
         var visitCode = visit.VisitCode ?? $"VIS-{visit.Id:D6}";
         var ticketNo = visit.VisitCode?.Split('-').LastOrDefault() ?? $"{visit.Id:D3}";
-        var dispenseCode = $"DISP-{dispense.DispensedAt?.Year ?? 2026:D4}-{dispense.Id:D6}";
+        var dispenseCode = $"DISP-{(dispense.DispensedAt ?? nowUtc).Year:D4}-{dispense.Id:D6}";
 
         var maskedIdentity = (!string.IsNullOrWhiteSpace(patient.IdentificationHash) || !string.IsNullOrWhiteSpace(patient.IdentificationHashHmac))
             ? "****** (Đã đối chiếu CCCD)"
@@ -693,7 +688,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             ? $"DS. {dispensingStaff.FullName} (Quầy Dược)"
             : "DS. Dược sĩ cấp phát";
 
-        var dispensedAtStr = (dispense.DispensedAt ?? dispense.PreparedAt ?? DateTime.UtcNow)
+        var dispensedAtStr = (dispense.DispensedAt ?? dispense.PreparedAt ?? nowUtc)
             .ToString("dd/MM/yyyy • HH:mm:ss", CultureInfo.InvariantCulture);
 
         var auditNote = $"Hệ thống HIS đã tự động trừ tồn kho thực tế của {lines.Count} lô FEFO ({totalUnits:0.##} đơn vị) và khóa đơn thuốc không cho cấp phát trùng lặp.";

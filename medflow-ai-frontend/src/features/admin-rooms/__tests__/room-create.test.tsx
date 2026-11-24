@@ -1,9 +1,11 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { roomCreateSchema } from '../schemas/room-create.schema';
+import { apiClient } from '@/shared/lib/axios';
 import { RoomCreatePage } from '../pages/room-create-page';
+import { roomCreateSchema } from '../schemas/room-create.schema';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -11,31 +13,64 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useNavigate: () => mockNavigate };
 });
 
+vi.mock('@/shared/lib/axios', () => ({
+  apiClient: {
+    get: vi.fn(),
+    post: vi.fn(),
+  },
+}));
+
 function renderPage() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter>
-      <RoomCreatePage />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <RoomCreatePage />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
-describe('RoomCreatePage (SCR-ADM-ROOM-02)', () => {
+describe('RoomCreatePage (SCR-ADM-ROOM-02 real API)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.sessionStorage.clear();
+
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        data: [
+          {
+            id: 12,
+            code: 'DEPT-ENDO',
+            name: 'Khoa Nội tiết',
+            facility: 'MedFlow Cơ sở 1',
+            isActive: true,
+            status: 'ACTIVE',
+          },
+        ],
+      },
+    });
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: {
+        id: 22,
+        roomCode: 'RM-202',
+        name: 'Phòng khám Nội tiết 2',
+        departmentName: 'Khoa Nội tiết',
+        roomType: 'OUTPATIENT',
+        location: 'Nhà A - Tầng 2',
+        capacity: 1,
+        status: 'ACTIVE',
+        isActive: true,
+      },
+    });
   });
 
-  it('renders title and form sections', () => {
+  it('renders title and updates live preview while typing', () => {
     renderPage();
     expect(
       screen.getByRole('heading', { level: 1, name: 'Khai báo buồng khám' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('1. THÔNG TIN CHÍNH & PHẠM VI')).toBeInTheDocument();
-    expect(screen.getByText('2. CẤU HÌNH VẬN HÀNH')).toBeInTheDocument();
-  });
 
-  it('updates live preview while typing', () => {
-    renderPage();
     fireEvent.change(screen.getByLabelText('Mã phòng *'), { target: { value: 'RM-202' } });
     fireEvent.change(screen.getByLabelText('Khoa phụ trách *'), {
       target: { value: 'Khoa Nhi' },
@@ -46,16 +81,18 @@ describe('RoomCreatePage (SCR-ADM-ROOM-02)', () => {
     expect(screen.getByTestId('preview-Sức chứa')).toHaveTextContent('3 người / slot');
   });
 
-  it('shows validation errors and does not navigate on empty submit', async () => {
+  it('shows validation errors and does not submit on empty fields', async () => {
     renderPage();
     fireEvent.click(screen.getByRole('button', { name: 'Khai báo buồng khám' }));
     expect(await screen.findByText('Vui lòng nhập mã phòng')).toBeInTheDocument();
     expect(screen.getByText('Vui lòng chọn khoa phụ trách')).toBeInTheDocument();
-    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(apiClient.post).not.toHaveBeenCalled();
   });
 
-  it('submits valid data and navigates to list', async () => {
+  it('submits POST /admin/rooms with resolved departmentId and navigates to list', async () => {
     renderPage();
+    await waitFor(() => expect(apiClient.get).toHaveBeenCalled());
+
     fireEvent.change(screen.getByLabelText('Mã phòng *'), { target: { value: 'RM-202' } });
     fireEvent.change(screen.getByLabelText('Tên phòng *'), {
       target: { value: 'Phòng khám Nội tiết 2' },
@@ -67,7 +104,19 @@ describe('RoomCreatePage (SCR-ADM-ROOM-02)', () => {
       target: { value: 'Nhà A - Tầng 2' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Khai báo buồng khám' }));
-    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/admin/rooms'));
+
+    await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/admin/rooms',
+        expect.objectContaining({
+          roomCode: 'RM-202',
+          name: 'Phòng khám Nội tiết 2',
+          departmentId: 12,
+          location: 'Nhà A - Tầng 2',
+        }),
+      );
+      expect(mockNavigate).toHaveBeenCalledWith('/admin/rooms');
+    });
   });
 
   it('saves draft and cancels', () => {
@@ -89,10 +138,8 @@ describe('roomCreateSchema', () => {
     capacity: 2,
     status: 'ACTIVE',
   };
-  it('accepts valid input', () => {
+  it('accepts valid input and rejects bad code/capacity', () => {
     expect(roomCreateSchema.safeParse(valid).success).toBe(true);
-  });
-  it('rejects bad code and capacity', () => {
     expect(roomCreateSchema.safeParse({ ...valid, code: 'X1' }).success).toBe(false);
     expect(roomCreateSchema.safeParse({ ...valid, capacity: 5 }).success).toBe(false);
   });

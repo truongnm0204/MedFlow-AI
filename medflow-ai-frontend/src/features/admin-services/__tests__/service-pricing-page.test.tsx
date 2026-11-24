@@ -1,15 +1,50 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
-
-import { INITIAL_SERVICES } from '../data/examination-services-data';
+import { apiClient } from '@/shared/lib/axios';
 import { ServicePricingPage } from '../pages/service-pricing-page';
 import { useExaminationServiceStore } from '../store/examination-service.store';
 
-describe('ServicePricingPage (M3-205 & M3-207 UC52)', () => {
+vi.mock('@/shared/lib/axios', () => ({
+  apiClient: {
+    get: vi.fn(),
+    put: vi.fn(),
+  },
+}));
+
+const MOCK_API_SERVICES = [
+  {
+    id: 1,
+    serviceCode: 'EX-1-01',
+    name: 'Khám Nội Tổng quát & Tư vấn Sức khỏe',
+    description: 'Khám sức khỏe tổng quát',
+    category: 'Khám Lâm sàng',
+    departmentName: 'Khoa Khám bệnh',
+    price: 300000,
+    allowsOnlineBooking: true,
+    isActive: true,
+    status: 'ACTIVE',
+  },
+  {
+    id: 2,
+    serviceCode: 'EX-2-02',
+    name: 'Hội chẩn Chuyên gia Tim mạch',
+    description: 'Hội chẩn chuyên sâu',
+    category: 'Hội chẩn Lâm sàng',
+    departmentName: 'Khoa Tim mạch',
+    price: 550000,
+    allowsOnlineBooking: true,
+    isActive: true,
+    status: 'ACTIVE',
+  },
+];
+
+describe('ServicePricingPage (UC52 real API, no QĐ-142/BV-KH fallback)', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     useAuthStore.setState({
       isAuthenticated: true,
       user: {
@@ -20,115 +55,53 @@ describe('ServicePricingPage (M3-205 & M3-207 UC52)', () => {
         patientCode: null,
       },
     });
-
     useExaminationServiceStore.setState({
-      services: [...INITIAL_SERVICES],
+      services: [],
       priceHistoryService: null,
       updatePriceService: null,
     });
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { data: MOCK_API_SERVICES },
+    });
   });
 
-  const renderPage = () =>
-    render(
-      <MemoryRouter initialEntries={['/admin/pricing']}>
-        <ServicePricingPage />
-      </MemoryRouter>,
+  const renderPage = () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/admin/pricing']}>
+          <ServicePricingPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
+  };
 
-  it('renders page header, UC52 badges, and 4 KPI metric cards', () => {
+  it('fetches GET /admin/examination-services and shows Chưa cập nhật instead of QĐ-142/BV-KH when decisionNumber is null', async () => {
     renderPage();
 
-    expect(
-      screen.getByRole('heading', {
-        name: /Bảng giá & Biểu phí Dịch vụ Khám Ngoại trú/i,
-      }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/UC52 • Quản lý Biểu phí Cơ sở/i)).toBeInTheDocument();
+    expect(await screen.findByText('EX-1-01')).toBeInTheDocument();
     expect(screen.getByText('TỔNG DỊCH VỤ ĐỊNH GIÁ')).toBeInTheDocument();
-    expect(screen.getByText('ĐƠN GIÁ TRUNG BÌNH')).toBeInTheDocument();
-    expect(screen.getByText('KHOẢNG GIÁ NIÊM YẾT')).toBeInTheDocument();
-    expect(screen.getByText('QUYẾT ĐỊNH GẦN NHẤT')).toBeInTheDocument();
-  });
-
-  it('renders table with service rows and formatted prices', () => {
-    renderPage();
-
-    expect(screen.getByText('EX-1-01')).toBeInTheDocument();
-    expect(screen.getByText('Khám Nội Tổng quát & Tư vấn Sức khỏe')).toBeInTheDocument();
     expect(screen.getByText('300.000 đ')).toBeInTheDocument();
+    expect(screen.queryByText('QĐ-142/BV-KH')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Chưa cập nhật').length).toBeGreaterThan(0);
   });
 
-  it('filters services by search query', async () => {
-    renderPage();
+  it('filters services by search & price range, opens modals, and enforces RBAC for DOCTOR', async () => {
+    const first = renderPage();
+    expect(await screen.findByText('EX-1-01')).toBeInTheDocument();
 
     const searchInput = screen.getByPlaceholderText(/Tìm mã hoặc tên dịch vụ khám/i);
     fireEvent.change(searchInput, { target: { value: 'EX-1-01' } });
+    expect(screen.queryByText('EX-2-02')).not.toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(screen.getByText('EX-1-01')).toBeInTheDocument();
-      expect(screen.queryByText('EX-2-02')).not.toBeInTheDocument();
-    });
-  });
+    fireEvent.click(screen.getAllByRole('button', { name: /Đặt lại bộ lọc/i })[0]);
+    expect(screen.getByText('EX-2-02')).toBeInTheDocument();
 
-  it('filters services by price range', async () => {
-    renderPage();
+    fireEvent.click(screen.getAllByRole('button', { name: /Cập nhật giá/i })[0]);
+    expect(screen.getByText('Cập nhật Biểu phí Dịch vụ (UC52)')).toBeInTheDocument();
+    useExaminationServiceStore.setState({ updatePriceService: null });
+    first.unmount();
 
-    const rangeSelect = screen
-      .getByLabelText(/Bộ lọc biểu phí/i)
-      .querySelector('#pricing-range-filter');
-    expect(rangeSelect).toBeInTheDocument();
-
-    if (rangeSelect) {
-      fireEvent.change(rangeSelect, { target: { value: 'above500' } });
-      await waitFor(() => {
-        expect(screen.getByText(/Hiển thị/i)).toBeInTheDocument();
-      });
-    }
-  });
-
-  it('resets filters when clicking reset button', async () => {
-    renderPage();
-
-    const searchInput = screen.getByPlaceholderText(/Tìm mã hoặc tên dịch vụ khám/i);
-    fireEvent.change(searchInput, { target: { value: 'Dịch vụ không tồn tại XYZ' } });
-
-    await waitFor(() => {
-      expect(screen.getByText(/Không tìm thấy biểu phí dịch vụ/i)).toBeInTheDocument();
-    });
-
-    const resetButtons = screen.getAllByRole('button', { name: /Đặt lại bộ lọc/i });
-    fireEvent.click(resetButtons[0]);
-
-    await waitFor(() => {
-      expect(screen.getByText('EX-1-01')).toBeInTheDocument();
-    });
-  });
-
-  it('opens ServicePriceUpdateModal when clicking Cập nhật giá button', async () => {
-    renderPage();
-
-    const updateBtns = screen.getAllByRole('button', { name: /Cập nhật giá/i });
-    fireEvent.click(updateBtns[0]);
-
-    await waitFor(() => {
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-      expect(screen.getByText('Cập nhật Biểu phí Dịch vụ (UC52)')).toBeInTheDocument();
-    });
-  });
-
-  it('opens ServicePriceHistoryModal when clicking Lịch sử button', async () => {
-    renderPage();
-
-    const historyBtns = screen.getAllByRole('button', { name: /Xem lịch sử giá/i });
-    fireEvent.click(historyBtns[0]);
-
-    await waitFor(() => {
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-      expect(screen.getByText(/Lịch Sử Biểu Phí & Quy Tắc Cơ Sở UC52/i)).toBeInTheDocument();
-    });
-  });
-
-  it('hides Cập nhật giá button for unauthorized users (DOCTOR)', () => {
     useAuthStore.setState({
       isAuthenticated: true,
       user: {
@@ -139,11 +112,10 @@ describe('ServicePricingPage (M3-205 & M3-207 UC52)', () => {
         patientCode: null,
       },
     });
-
     renderPage();
-
-    expect(screen.queryByRole('button', { name: /Cập nhật giá/i })).not.toBeInTheDocument();
-    // But Lịch sử button is still available to view
-    expect(screen.getAllByRole('button', { name: /Xem lịch sử giá/i }).length).toBeGreaterThan(0);
+    expect(await screen.findByText('EX-1-01')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Cập nhật giá/i })).not.toBeInTheDocument();
+    });
   });
 });

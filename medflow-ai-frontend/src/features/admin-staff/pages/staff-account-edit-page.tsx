@@ -1,8 +1,7 @@
-import { Save } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { Loader2, Save } from 'lucide-react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
-import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
 import {
   FormField,
   FormSectionCard,
@@ -10,15 +9,16 @@ import {
   FormTextInput,
   formControlClass,
 } from '@/shared/components/form/form-primitives';
+import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
 import { Button } from '@/shared/ui/button';
 
 import {
-  STAFF_DEMO_RECORDS,
   STAFF_DEPARTMENTS,
   STAFF_FACILITIES,
   STAFF_ROLE_LABELS,
   STAFF_STATUS_LABELS,
 } from '../data/staff-demo-data';
+import { useAdminStaffAccounts, useUpdateStaffAccountMutation } from '../hooks/use-staff-accounts';
 import { staffUpdateSchema } from '../schemas/staff-update.schema';
 import type {
   StaffAccountRecord,
@@ -30,6 +30,7 @@ import type {
 
 type FieldErrors = Partial<Record<keyof UpdateStaffAccountInput, string>>;
 
+const LIST_PATH = '/admin/staff';
 const AUTH_METHODS: StaffAuthMethod[] = ['LOCAL', 'GOOGLE'];
 const ROLES = Object.keys(STAFF_ROLE_LABELS) as StaffRole[];
 const STATUSES = Object.keys(STAFF_STATUS_LABELS) as StaffAccountStatus[];
@@ -53,21 +54,34 @@ function PreviewRow({ label, value }: { label: string; value: string }) {
 
 export function StaffAccountEditPage() {
   const { id = '' } = useParams<{ id: string }>();
-  const record = STAFF_DEMO_RECORDS.find((item) => item.staffCode === id);
+  const { data, isLoading, isError, error } = useAdminStaffAccounts();
+
+  const record = useMemo(() => {
+    if (!id || !data?.records) return null;
+    const normalized = id.trim().toLowerCase();
+    return data.records.find((item) => item.staffCode.toLowerCase() === normalized) ?? null;
+  }, [data?.records, id]);
 
   return (
     <AdminPortalShell
       activeTab="Bác sĩ & Nhân sự Y tế"
       breadcrumbs={[
-        { label: 'Tài khoản nhân sự (SCR-ADM-STAFF-01)', href: '/admin/doctors' },
+        { label: 'Tài khoản nhân sự (SCR-ADM-STAFF-01)', href: LIST_PATH },
         { label: 'Cập nhật tài khoản' },
       ]}
     >
-      {record ? (
+      {isLoading ? (
+        <div className="flex items-center gap-2 p-6 text-sm text-sub">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+          <span>Đang tải thông tin tài khoản nhân sự...</span>
+        </div>
+      ) : record ? (
         <StaffAccountEditForm key={record.staffCode} record={record} />
       ) : (
         <p role="alert" className="p-6 text-sm text-ink">
-          Không tìm thấy tài khoản nhân sự {id}.
+          {isError && error instanceof Error
+            ? error.message
+            : `Không tìm thấy tài khoản nhân sự ${id}.`}
         </p>
       )}
     </AdminPortalShell>
@@ -76,17 +90,32 @@ export function StaffAccountEditPage() {
 
 function StaffAccountEditForm({ record }: { record: StaffAccountRecord }) {
   const navigate = useNavigate();
+  const updateMutation = useUpdateStaffAccountMutation();
   const { staffCode, ...initial } = record;
   const [values, setValues] = useState<UpdateStaffAccountInput>(initial);
   const [errors, setErrors] = useState<FieldErrors>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const facilityOptions = useMemo(() => {
+    const set = new Set<string>(STAFF_FACILITIES);
+    if (record.facility) set.add(record.facility);
+    return Array.from(set);
+  }, [record.facility]);
+
+  const departmentOptions = useMemo(() => {
+    const set = new Set<string>(STAFF_DEPARTMENTS);
+    if (record.department) set.add(record.department);
+    return Array.from(set);
+  }, [record.department]);
 
   const update = <K extends keyof UpdateStaffAccountInput>(
     key: K,
     value: UpdateStaffAccountInput[K],
   ) => setValues((prev) => ({ ...prev, [key]: value }));
 
-  const handleSubmit = (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    setSubmitError(null);
     const result = staffUpdateSchema.safeParse(values);
     if (!result.success) {
       const next: FieldErrors = {};
@@ -98,17 +127,33 @@ function StaffAccountEditForm({ record }: { record: StaffAccountRecord }) {
       return;
     }
     setErrors({});
-    const index = STAFF_DEMO_RECORDS.findIndex((item) => item.staffCode === staffCode);
-    if (index >= 0) STAFF_DEMO_RECORDS[index] = { staffCode, ...result.data };
-    navigate('/admin/doctors');
+    try {
+      await updateMutation.mutateAsync({ staffIdentifier: staffCode, values: result.data });
+      navigate(LIST_PATH);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Không thể cập nhật tài khoản nhân sự.');
+    }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="mx-auto w-full max-w-6xl px-6 pb-24 pt-4" noValidate>
+    <form
+      onSubmit={(e) => void handleSubmit(e)}
+      className="mx-auto w-full max-w-6xl px-6 pb-24 pt-4"
+      noValidate
+    >
       <h1 className="text-xl font-bold text-navy">Cập nhật tài khoản nhân sự</h1>
       <p className="mb-4 text-xs text-sub">
         Chỉnh sửa thông tin hồ sơ nhân sự, cơ sở, khoa công tác, vai trò và trạng thái tài khoản.
       </p>
+
+      {submitError ? (
+        <div
+          role="alert"
+          className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+        >
+          {submitError}
+        </div>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <div className="space-y-4">
@@ -156,7 +201,7 @@ function StaffAccountEditForm({ record }: { record: StaffAccountRecord }) {
                   value={values.facility}
                   onChange={(e) => update('facility', e.target.value)}
                 >
-                  {STAFF_FACILITIES.map((item) => (
+                  {facilityOptions.map((item) => (
                     <option key={item} value={item}>
                       {item}
                     </option>
@@ -197,7 +242,7 @@ function StaffAccountEditForm({ record }: { record: StaffAccountRecord }) {
                   value={values.department}
                   onChange={(e) => update('department', e.target.value)}
                 >
-                  {STAFF_DEPARTMENTS.map((item) => (
+                  {departmentOptions.map((item) => (
                     <option key={item} value={item}>
                       {item}
                     </option>
@@ -253,11 +298,11 @@ function StaffAccountEditForm({ record }: { record: StaffAccountRecord }) {
           type="button"
           variant="secondary"
           aria-label="Hủy bỏ"
-          onClick={() => navigate('/admin/doctors')}
+          onClick={() => navigate(LIST_PATH)}
         >
           Hủy bỏ
         </Button>
-        <Button type="submit" aria-label="Lưu thay đổi">
+        <Button type="submit" aria-label="Lưu thay đổi" disabled={updateMutation.isPending}>
           <Save className="h-4 w-4" aria-hidden="true" />
           Lưu thay đổi
         </Button>

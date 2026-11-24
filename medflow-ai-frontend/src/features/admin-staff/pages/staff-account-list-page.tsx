@@ -1,18 +1,20 @@
+import { Loader2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
-import { Alert } from '@/shared/ui';
+import { Alert, Button } from '@/shared/ui';
+
 import { DeactivateStaffModal } from '../components/deactivate-staff-modal';
 import { StaffAccountFilterBar } from '../components/staff-account-filters';
 import { StaffAccountMetricsCards } from '../components/staff-account-metrics';
 import { StaffAccountTable } from '../components/staff-account-table';
+import { STAFF_STATUS_LABELS } from '../data/staff-account-mock-data';
 import {
-  STAFF_ACCOUNT_METRICS,
-  STAFF_ACCOUNTS,
-  STAFF_STATUS_LABELS,
-} from '../data/staff-account-mock-data';
+  useAdminStaffAccounts,
+  useDeactivateStaffAccountMutation,
+} from '../hooks/use-staff-accounts';
 import type { DeactivateStaffPayload, StaffTargetSummary } from '../types/deactivate-staff.types';
 import type {
   StaffAccountFilters,
@@ -21,6 +23,13 @@ import type {
 } from '../types/staff-account.types';
 
 const PAGE_SIZE = 8;
+
+const EMPTY_METRICS: StaffAccountMetrics = {
+  total: 0,
+  active: 0,
+  locked: 0,
+  disabled: 0,
+};
 
 function downloadCsv(items: StaffAccountItem[]) {
   const quote = (value: string) => `"${value.replaceAll('"', '""').replace(/^[=+\-@]/, "'$&")}"`;
@@ -45,14 +54,19 @@ function downloadCsv(items: StaffAccountItem[]) {
   URL.revokeObjectURL(url);
 }
 
-/** SCR-ADM-STAFF-01 — staff account list (synthetic data). */
+/** SCR-ADM-STAFF-01 — staff account list backed by GET /api/v1/admin/staff. */
 export function StaffAccountListPage() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const canManageStaff = !user || user.roles.includes('SYSTEM_ADMIN');
   const isReadOnlyAdmin = Boolean(user) && !canManageStaff;
-  const [accounts, setAccounts] = useState<StaffAccountItem[]>(STAFF_ACCOUNTS);
-  const [metrics, setMetrics] = useState<StaffAccountMetrics>(STAFF_ACCOUNT_METRICS);
+
+  const { data, isLoading, isError, error, refetch } = useAdminStaffAccounts();
+  const deactivateMutation = useDeactivateStaffAccountMutation();
+
+  const accounts = data?.items ?? [];
+  const metrics = data?.metrics ?? EMPTY_METRICS;
+
   const [filters, setFilters] = useState<StaffAccountFilters>({
     query: '',
     department: '',
@@ -61,6 +75,7 @@ export function StaffAccountListPage() {
   });
   const [page, setPage] = useState(1);
   const [target, setTarget] = useState<StaffTargetSummary | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const q = filters.query.trim().toLowerCase();
@@ -86,28 +101,29 @@ export function StaffAccountListPage() {
   };
 
   const handleDeactivate = (item: StaffAccountItem) => {
+    const meta = item as StaffAccountItem & { staffId?: number; pendingAssignments?: number };
     setTarget({
-      id: item.id,
+      id: meta.staffId ? String(meta.staffId) : item.id,
       staffCode: item.code,
       fullName: item.fullName,
       role: item.role,
       department: item.department,
       email: item.email,
-      pendingAssignments:
-        (item as StaffAccountItem & { pendingAssignments?: number }).pendingAssignments ?? 0,
+      pendingAssignments: meta.pendingAssignments ?? 0,
     });
   };
 
-  const handleConfirmDeactivate = ({ staffId }: DeactivateStaffPayload) => {
-    setAccounts((prev) =>
-      prev.map((acc) => (acc.id === staffId ? { ...acc, status: 'DISABLED' } : acc)),
-    );
-    setMetrics((prev) => ({
-      ...prev,
-      active: Math.max(0, prev.active - 1),
-      disabled: prev.disabled + 1,
-    }));
-    setTarget(null);
+  const handleConfirmDeactivate = async (payload: DeactivateStaffPayload) => {
+    setActionError(null);
+    try {
+      await deactivateMutation.mutateAsync(payload);
+      setTarget(null);
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : 'Không thể vô hiệu hóa tài khoản nhân sự.',
+      );
+      setTarget(null);
+    }
   };
 
   return (
@@ -126,6 +142,20 @@ export function StaffAccountListPage() {
             hoặc vô hiệu hóa tài khoản nhân sự.
           </Alert>
         )}
+        {isError ? (
+          <Alert tone="error">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                <b>Không thể tải danh sách tài khoản nhân sự:</b>{' '}
+                {error instanceof Error ? error.message : 'Đã xảy ra lỗi kết nối máy chủ.'}
+              </span>
+              <Button type="button" size="sm" variant="secondary" onClick={() => void refetch()}>
+                Thử lại
+              </Button>
+            </div>
+          </Alert>
+        ) : null}
+        {actionError ? <Alert tone="error">{actionError}</Alert> : null}
         <StaffAccountMetricsCards metrics={metrics} />
         <StaffAccountFilterBar
           filters={filters}
@@ -133,21 +163,29 @@ export function StaffAccountListPage() {
           onExport={() => downloadCsv(filtered)}
           onAdd={canManageStaff ? () => navigate('/admin/staff/new') : undefined}
         />
-        <StaffAccountTable
-          items={visible}
-          total={filtered.length}
-          page={currentPage}
-          totalPages={totalPages}
-          pageSize={PAGE_SIZE}
-          onPageChange={setPage}
-          onDeactivate={canManageStaff ? handleDeactivate : undefined}
-        />
+        {isLoading ? (
+          <div className="flex items-center justify-center gap-2 rounded-xl border border-border bg-white py-12 text-sm text-sub">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+            <span>Đang tải danh sách tài khoản nhân sự...</span>
+          </div>
+        ) : (
+          <StaffAccountTable
+            items={visible}
+            total={filtered.length}
+            page={currentPage}
+            totalPages={totalPages}
+            pageSize={PAGE_SIZE}
+            onPageChange={setPage}
+            onView={(item) => navigate(`/admin/staff/${item.code}/edit`)}
+            onDeactivate={canManageStaff ? handleDeactivate : undefined}
+          />
+        )}
       </div>
       {target && (
         <DeactivateStaffModal
           staff={target}
           onCancel={() => setTarget(null)}
-          onConfirm={handleConfirmDeactivate}
+          onConfirm={(payload) => void handleConfirmDeactivate(payload)}
         />
       )}
     </AdminPortalShell>

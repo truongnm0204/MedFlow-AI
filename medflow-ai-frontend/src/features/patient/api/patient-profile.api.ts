@@ -1,12 +1,11 @@
-import axios from 'axios';
-
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import type { UserDto } from '@/features/auth/types/auth.types';
 import { getRoleDisplayLabel, isStaffRole } from '@/features/auth/utils/role-landing';
 import { apiClient } from '@/shared/lib/axios';
 
-import { mockPatientProfile } from '../data/patient-profile.mock';
 import type { GenderType, PatientProfile } from '../types/patient-profile.types';
+
+const UNSET_LABEL = 'Chưa cập nhật';
 
 export interface PatientProfileResponseDto {
   id: number;
@@ -27,89 +26,108 @@ export interface PatientProfileResponseDto {
   allowedActions: string[];
 }
 
-function shouldFallbackToMock(error: unknown): boolean {
-  if (!axios.isAxiosError(error)) return false;
-  if (!error.response) return true;
-  return error.response.status === 404 || error.response.status === 401;
-}
-
-function shouldUseHttpApi(): boolean {
-  if ('mock' in apiClient.get) return true;
-  if (import.meta.env.MODE === 'test') return false;
-  return (
-    typeof window !== 'undefined' && Boolean(window.localStorage?.getItem('medflow.access_token'))
-  );
-}
-
-function mapGender(gender: string | null, fallback: GenderType): GenderType {
-  if (!gender) return fallback;
+function mapGender(gender: string | null): GenderType {
+  if (!gender) return UNSET_LABEL;
   const normalized = gender.trim().toUpperCase();
   if (normalized === 'MALE' || normalized === 'NAM') return 'Nam';
   if (normalized === 'FEMALE' || normalized === 'NỮ' || normalized === 'NU') return 'Nữ';
   if (normalized === 'OTHER' || normalized === 'KHÁC' || normalized === 'KHAC') return 'Khác';
-  return fallback;
+  return UNSET_LABEL;
 }
 
-function formatIsoDateToDisplay(dateOfBirth: string | null, fallback: string): string {
-  if (!dateOfBirth) return fallback;
+function formatIsoDateToDisplay(dateOfBirth: string | null): string {
+  if (!dateOfBirth || !dateOfBirth.trim()) return UNSET_LABEL;
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateOfBirth.trim());
-  if (!match) return dateOfBirth;
+  if (!match) return dateOfBirth.trim();
   const [, year, month, day] = match;
   return `${day}/${month}/${year}`;
 }
 
-export function mapPatientProfileDtoToModel(
-  dto: PatientProfileResponseDto,
-  fallback: PatientProfile = mockPatientProfile,
-): PatientProfile {
+export function mapPatientProfileDtoToModel(dto: PatientProfileResponseDto): PatientProfile {
+  const pid = dto.patientCode?.trim() || String(dto.id);
+  const fullName = (dto.fullName?.trim() || UNSET_LABEL).toUpperCase();
+
   return {
-    ...fallback,
-    id: dto.patientCode || String(dto.id),
+    id: pid,
+    avatarUrl: null,
     identity: {
-      ...fallback.identity,
-      fullName: (dto.fullName || fallback.identity.fullName).toUpperCase(),
-      dateOfBirth: formatIsoDateToDisplay(dto.dateOfBirth, fallback.identity.dateOfBirth),
-      age: dto.age ?? fallback.identity.age,
-      gender: mapGender(dto.gender, fallback.identity.gender),
-      identityNumber: dto.maskedIdentification ?? 'Chưa cập nhật CCCD',
-      isIdentityVerified: dto.isIdentityVerified,
-      pidNumber: dto.patientCode || fallback.identity.pidNumber,
+      fullName,
+      dateOfBirth: formatIsoDateToDisplay(dto.dateOfBirth),
+      age: dto.age ?? null,
+      gender: mapGender(dto.gender),
+      nationality: UNSET_LABEL,
+      identityNumber: dto.maskedIdentification?.trim() || 'Chưa cập nhật CCCD',
+      identityIssueDate: UNSET_LABEL,
+      identityIssuePlace: UNSET_LABEL,
+      isIdentityVerified: Boolean(dto.isIdentityVerified),
+      pidNumber: pid,
     },
     vitals: {
-      ...fallback.vitals,
-      bloodType: dto.bloodType || fallback.vitals.bloodType,
+      bloodType: dto.bloodType?.trim() || UNSET_LABEL,
+      heightCm: null,
+      weightKg: null,
+    },
+    shortcuts: {
+      familyMembersCount: null,
+      outpatientVisitsCount: null,
+      activePrescriptionsCount: null,
     },
     contact: {
-      ...fallback.contact,
-      phone: dto.phone || fallback.contact.phone,
-      email: dto.email || fallback.contact.email,
-      isEmailVerified: dto.isEmailVerified,
-      permanentAddress: dto.address || fallback.contact.permanentAddress,
+      phone: dto.phone?.trim() || UNSET_LABEL,
+      isPhoneVerified: false,
+      email: dto.email?.trim() || UNSET_LABEL,
+      isEmailVerified: Boolean(dto.isEmailVerified),
+      permanentAddress: dto.address?.trim() || UNSET_LABEL,
+      emergencyContact: {
+        fullName: UNSET_LABEL,
+        relationship: UNSET_LABEL,
+        phone: UNSET_LABEL,
+      },
     },
   };
 }
 
-export function mapStaffUserToProfileModel(
-  user: UserDto,
-  fallback: PatientProfile = mockPatientProfile,
-): PatientProfile {
+export function mapStaffUserToProfileModel(user: UserDto): PatientProfile {
   const roleLabel = getRoleDisplayLabel(user.roles);
   const staffCode = user.staffCode || `USR-${user.id}`;
+  const fullName = (user.fullName?.trim() || user.email?.trim() || staffCode).toUpperCase();
 
   return {
-    ...fallback,
     id: staffCode,
+    avatarUrl: null,
     identity: {
-      ...fallback.identity,
-      fullName: (user.fullName || user.email || fallback.identity.fullName).toUpperCase(),
+      fullName,
+      dateOfBirth: UNSET_LABEL,
+      age: null,
+      gender: UNSET_LABEL,
+      nationality: UNSET_LABEL,
       identityNumber: `${staffCode} (${roleLabel})`,
+      identityIssueDate: UNSET_LABEL,
+      identityIssuePlace: UNSET_LABEL,
       isIdentityVerified: true,
       pidNumber: staffCode,
     },
+    vitals: {
+      bloodType: UNSET_LABEL,
+      heightCm: null,
+      weightKg: null,
+    },
+    shortcuts: {
+      familyMembersCount: null,
+      outpatientVisitsCount: null,
+      activePrescriptionsCount: null,
+    },
     contact: {
-      ...fallback.contact,
-      email: user.email || fallback.contact.email,
+      phone: UNSET_LABEL,
+      isPhoneVerified: false,
+      email: user.email?.trim() || UNSET_LABEL,
       isEmailVerified: true,
+      permanentAddress: UNSET_LABEL,
+      emergencyContact: {
+        fullName: UNSET_LABEL,
+        relationship: UNSET_LABEL,
+        phone: UNSET_LABEL,
+      },
     },
   };
 }
@@ -119,20 +137,10 @@ export async function getMyPatientProfileApi(): Promise<PatientProfile> {
   const isStaffOnlyAccount =
     Boolean(authUser) && isStaffRole(authUser?.roles) && !authUser?.roles?.includes('PATIENT');
 
-  if (isStaffOnlyAccount && authUser && !('mock' in apiClient.get)) {
-    return mapStaffUserToProfileModel(authUser, mockPatientProfile);
+  if (isStaffOnlyAccount && authUser) {
+    return mapStaffUserToProfileModel(authUser);
   }
 
-  if (shouldUseHttpApi()) {
-    try {
-      const { data } = await apiClient.get<PatientProfileResponseDto>('/patients/me/profile');
-      return mapPatientProfileDtoToModel(data, mockPatientProfile);
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return mockPatientProfile;
+  const { data } = await apiClient.get<PatientProfileResponseDto>('/patients/me/profile');
+  return mapPatientProfileDtoToModel(data);
 }

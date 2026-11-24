@@ -21,8 +21,6 @@ import type { ElementType } from 'react';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
-import { useDoctorDemoStore } from '@/features/admin-doctors/store/doctor-demo.store';
-import { useExaminationServiceStore } from '@/features/admin-services/store/examination-service.store';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { hasAnyRole } from '@/features/auth/utils/rbac';
 
@@ -57,8 +55,6 @@ export function ClinicalSidebar({
   const user = useAuthStore((state) => state.user);
   const userRoles = user?.roles ?? [];
   const canAccessAdminPortal = hasAnyRole(userRoles, ['HOSPITAL_ADMIN', 'SYSTEM_ADMIN']);
-  const doctorCount = useDoctorDemoStore((state) => state.doctors.length);
-  const serviceCount = useExaminationServiceStore((state) => state.services.length);
 
   const isAdmin = variant === 'admin';
 
@@ -69,8 +65,6 @@ export function ClinicalSidebar({
       label: 'Bác sĩ & Nhân sự Y tế',
       icon: Users,
       href: '/admin/doctors',
-      badge: `${doctorCount} BS`,
-      badgeColor: 'sky',
       hotkey: 'F1',
     },
     {
@@ -78,8 +72,6 @@ export function ClinicalSidebar({
       label: 'Danh mục Dịch vụ & Kỹ thuật',
       icon: Activity,
       href: '/admin/services',
-      badge: `${serviceCount} DV`,
-      badgeColor: 'sky',
       hotkey: 'F2',
     },
     {
@@ -141,8 +133,6 @@ export function ClinicalSidebar({
       id: 'queue',
       label: 'Hàng đợi khám',
       icon: Users,
-      badge: '14 ca',
-      badgeColor: 'sky',
       hotkey: 'F1',
     },
     {
@@ -160,8 +150,6 @@ export function ClinicalSidebar({
       id: 'diagnostics',
       label: 'Chỉ định CLS & PACS',
       icon: Microscope,
-      badge: '3 chờ trả',
-      badgeColor: 'amber',
     },
     {
       id: 'prescription',

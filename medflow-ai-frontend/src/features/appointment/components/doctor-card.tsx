@@ -32,7 +32,10 @@ export function DoctorCard({ doctor, onViewProfile }: DoctorCardProps) {
   const navigate = useNavigate();
   const selectDoctor = useBookingStore((s) => s.selectDoctor);
 
-  const formattedPrice = new Intl.NumberFormat('vi-VN').format(doctor.price);
+  const formattedPrice =
+    doctor.price != null
+      ? `${new Intl.NumberFormat('vi-VN').format(doctor.price)} VNĐ`
+      : (doctor.priceFormatted ?? 'Chưa cập nhật');
 
   const handleBookNow = () => {
     selectDoctor(doctor.id);
@@ -103,7 +106,7 @@ export function DoctorCard({ doctor, onViewProfile }: DoctorCardProps) {
       <div className="mt-4 border-t border-slate-100 pt-3">
         <div className="flex items-baseline justify-between">
           <span className="text-xs text-slate-400">Giá theo bảng giá hiệu lực</span>
-          <span className="text-base font-bold text-sky-600">{formattedPrice} VNĐ</span>
+          <span className="text-base font-bold text-sky-600">{formattedPrice}</span>
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-2.5">

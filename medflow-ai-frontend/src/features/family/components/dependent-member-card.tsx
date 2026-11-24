@@ -49,11 +49,17 @@ export function DependentMemberCard({
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-3.5">
             <div className="relative h-13 w-13 shrink-0">
-              <img
-                src={member.avatarUrl}
-                alt={member.fullName}
-                className="h-full w-full rounded-full border border-slate-200 object-cover"
-              />
+              {member.avatarUrl ? (
+                <img
+                  src={member.avatarUrl}
+                  alt={member.fullName}
+                  className="h-full w-full rounded-full border border-slate-200 object-cover"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-xs font-bold text-slate-700">
+                  {member.fullName.slice(0, 2).toUpperCase()}
+                </div>
+              )}
               <span className="absolute right-0 bottom-0 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-slate-100 text-slate-500 shadow-2xs">
                 {member.relationship === 'Con trai' ? (
                   <User className="h-2.5 w-2.5 text-sky-600" />
