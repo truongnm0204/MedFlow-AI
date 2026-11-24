@@ -66,11 +66,17 @@ export function RemoveFamilyMemberModal({
 
         {/* Member Preview Card */}
         <div className="mt-5 flex items-center gap-3.5 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-          <img
-            src={member.avatarUrl}
-            alt={member.fullName}
-            className="h-12 w-12 rounded-full border border-slate-200 object-cover"
-          />
+          {member.avatarUrl ? (
+            <img
+              src={member.avatarUrl}
+              alt={member.fullName}
+              className="h-12 w-12 rounded-full border border-slate-200 object-cover"
+            />
+          ) : (
+            <div className="flex h-12 w-12 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-xs font-bold text-slate-700">
+              {member.fullName.slice(0, 2).toUpperCase()}
+            </div>
+          )}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <span className="font-bold text-slate-900 truncate">{member.fullName}</span>

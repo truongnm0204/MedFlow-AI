@@ -9,24 +9,30 @@ import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell'
 import { ServiceCreateActionBar } from '../components/service-create-action-bar';
 import { ServiceCreateForm } from '../components/service-create-form';
 import { ServiceCreateSidebar } from '../components/service-create-sidebar';
-import { DEFAULT_SERVICE_FORM_VALUES } from '../data/examination-services-data';
+import { DEPARTMENTS } from '../data/examination-services-data';
+import { useCreateExaminationServiceMutation } from '../hooks/use-examination-services';
 import {
   examinationServiceSchema,
   type ExaminationServiceFormValues,
 } from '../schemas/examination-service.schema';
 import { useExaminationServiceStore } from '../store/examination-service.store';
-import type { ExaminationService } from '../types/examination-service.types';
 
-function getTodayIsoDate() {
-  return new Date().toISOString().split('T')[0];
-}
+const EMPTY_SERVICE_FORM_VALUES: ExaminationServiceFormValues = {
+  code: '',
+  name: '',
+  category: 'Khám Lâm sàng',
+  department: DEPARTMENTS[0],
+  description: '',
+  onlineBooking: true,
+  status: 'ACTIVE',
+};
 
 export function ExaminationServiceCreatePage() {
   const navigate = useNavigate();
-  const services = useExaminationServiceStore((state) => state.services);
   const draft = useExaminationServiceStore((state) => state.draft);
-  const addService = useExaminationServiceStore((state) => state.addService);
   const saveDraft = useExaminationServiceStore((state) => state.saveDraft);
+  const clearDraft = useExaminationServiceStore((state) => state.clearDraft);
+  const createServiceMutation = useCreateExaminationServiceMutation();
 
   const [message, setMessage] = useState<string | null>(null);
   const [isDraftSaved, setIsDraftSaved] = useState(false);
@@ -41,13 +47,13 @@ export function ExaminationServiceCreatePage() {
   } = useForm<ExaminationServiceFormValues>({
     resolver: zodResolver(examinationServiceSchema),
     defaultValues: {
-      code: draft?.code ?? DEFAULT_SERVICE_FORM_VALUES.code,
-      name: draft?.name ?? DEFAULT_SERVICE_FORM_VALUES.name,
-      category: draft?.category ?? DEFAULT_SERVICE_FORM_VALUES.category,
-      department: draft?.department ?? DEFAULT_SERVICE_FORM_VALUES.department,
-      description: draft?.description ?? DEFAULT_SERVICE_FORM_VALUES.description,
-      onlineBooking: draft?.onlineBooking ?? DEFAULT_SERVICE_FORM_VALUES.onlineBooking,
-      status: draft?.status ?? DEFAULT_SERVICE_FORM_VALUES.status,
+      code: draft?.code ?? EMPTY_SERVICE_FORM_VALUES.code,
+      name: draft?.name ?? EMPTY_SERVICE_FORM_VALUES.name,
+      category: draft?.category ?? EMPTY_SERVICE_FORM_VALUES.category,
+      department: draft?.department ?? EMPTY_SERVICE_FORM_VALUES.department,
+      description: draft?.description ?? EMPTY_SERVICE_FORM_VALUES.description,
+      onlineBooking: draft?.onlineBooking ?? EMPTY_SERVICE_FORM_VALUES.onlineBooking,
+      status: draft?.status ?? EMPTY_SERVICE_FORM_VALUES.status,
     },
   });
 
@@ -83,37 +89,15 @@ export function ExaminationServiceCreatePage() {
     setTimeout(() => setMessage(null), 3000);
   };
 
-  const handleCreate = (values: ExaminationServiceFormValues) => {
-    if (services.some((s) => s.code.toLowerCase() === values.code.trim().toLowerCase())) {
-      setMessage(`Mã dịch vụ "${values.code}" đã tồn tại trong danh mục.`);
-      return;
+  const handleCreate = async (values: ExaminationServiceFormValues) => {
+    setMessage(null);
+    try {
+      await createServiceMutation.mutateAsync(values);
+      clearDraft();
+      navigate('/admin/services');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Không thể tạo mới dịch vụ khám.');
     }
-
-    const today = getTodayIsoDate();
-    const newService: ExaminationService = {
-      id: values.code,
-      code: values.code,
-      name: values.name,
-      category: values.category as ExaminationService['category'],
-      department: values.department,
-      description: values.description ?? '',
-      price: 300000,
-      onlineBooking: values.onlineBooking,
-      status: values.status,
-      effectiveDate: today,
-      priceHistory: [
-        {
-          date: today,
-          price: 300000,
-          decisionNumber: 'QĐ-MỚI/BV-KH',
-          note: 'Khởi tạo dịch vụ nháp',
-          appliedBy: 'Quản trị viên',
-        },
-      ],
-    };
-
-    addService(newService);
-    navigate('/admin/services');
   };
 
   return (
@@ -125,9 +109,8 @@ export function ExaminationServiceCreatePage() {
         { label: 'Thêm mới Dịch vụ Khám (SCR-ADM-ESV-02)' },
       ]}
     >
-      <form onSubmit={handleSubmit(handleCreate)}>
+      <form onSubmit={handleSubmit(handleCreate)} noValidate>
         <main className="px-6 pb-28 pt-6">
-          {/* Subheader bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="flex flex-wrap items-center gap-3">
               <Link
@@ -144,12 +127,11 @@ export function ExaminationServiceCreatePage() {
             </div>
 
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              <Clock className="h-3.5 w-3.5 text-slate-400" />
+              <Clock className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
               <span>{isDraftSaved ? 'Đã lưu bản nháp' : 'Thay đổi chưa lưu'}</span>
             </div>
           </div>
 
-          {/* Heading */}
           <div className="mt-4">
             <h1 className="text-2xl font-bold tracking-tight text-ink">
               Thêm mới Dịch vụ Khám Ngoại trú
@@ -160,15 +142,15 @@ export function ExaminationServiceCreatePage() {
             </p>
           </div>
 
-          {/* Notice Banner */}
           <div className="my-5 flex items-start gap-3 rounded-lg border border-sky-200 bg-sky-50/70 p-4 text-xs leading-relaxed text-sky-900 shadow-xs">
             <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-white text-sky-600 shadow-2xs mt-0.5">
-              <Info className="h-4 w-4" />
+              <Info className="h-4 w-4" aria-hidden="true" />
             </span>
             <p>
               <span className="font-bold">Lưu ý vận hành Khám Ngoại trú:</span> Dịch vụ lưu thông
               tin danh mục và cờ đặt lịch trực tuyến. Thời lượng, bác sĩ và phòng được gán theo slot
-              tại UC53; giá xem theo cơ sở ở UC52.
+              tại UC53; biểu phí áp dụng theo bảng giá cơ sở ở UC52 (không tự động gán giá mặc
+              định).
             </p>
           </div>
 
@@ -181,7 +163,6 @@ export function ExaminationServiceCreatePage() {
             </div>
           )}
 
-          {/* Two-Column Form Layout */}
           <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.65fr)_minmax(340px,1fr)]">
             <ServiceCreateForm
               register={register}

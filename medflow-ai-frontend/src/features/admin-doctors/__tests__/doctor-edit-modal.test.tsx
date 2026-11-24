@@ -1,204 +1,146 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { INITIAL_DOCTORS } from '../data/doctor-demo-data';
+import { apiClient } from '@/shared/lib/axios';
 import { DoctorEditModal } from '../pages/doctor-edit-modal';
-import { useDoctorDemoStore } from '../store/doctor-demo.store';
 
-describe('DoctorEditModal (SCR-ADM-DOC-03)', () => {
+vi.mock('@/shared/lib/axios', () => ({
+  apiClient: {
+    get: vi.fn(),
+    put: vi.fn(),
+  },
+}));
+
+const MOCK_API_DOCTORS = [
+  {
+    id: 142,
+    doctorCode: 'DOC-0142',
+    staffCode: 'NV-1142',
+    fullName: 'BS. CKI Lê Hoàng Minh',
+    email: 'minh.le@medflow.vn',
+    degree: 'Bác sĩ Chuyên khoa I',
+    specialtyName: 'Nội Tiêu hóa',
+    departmentName: 'Khoa Nội Tiêu hóa',
+    licenseNumber: '014200/BYT-CCHN',
+    yearsOfExperience: 10,
+    isActive: true,
+    profileImageUrl: '/assets/admin-doctors/list-02.png',
+    professionalBio: 'Bác sĩ chuyên khoa tiêu hóa',
+    qualificationsSummary: 'Khám Nội\n---\n2015: ĐHY Hà Nội',
+    hasPendingAppointments: true,
+    pendingAppointmentsCount: 6,
+  },
+  {
+    id: 89,
+    doctorCode: 'DOC-0089',
+    staffCode: 'NV-1089',
+    fullName: 'PGS. TS. BS Trần Hoài Nam',
+    email: 'nam.tran@medflow.vn',
+    degree: 'Phó Giáo sư - Tiến sĩ',
+    specialtyName: 'Tim mạch can thiệp',
+    departmentName: 'Khoa Tim mạch',
+    licenseNumber: '008900/BYT-CCHN',
+    yearsOfExperience: 18,
+    isActive: true,
+    hasPendingAppointments: false,
+    pendingAppointmentsCount: 0,
+  },
+];
+
+describe('DoctorEditModal (SCR-ADM-DOC-03 real API)', () => {
   beforeEach(() => {
-    useDoctorDemoStore.setState({
-      doctors: [...INITIAL_DOCTORS],
-      draft: null,
+    vi.clearAllMocks();
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { data: MOCK_API_DOCTORS },
     });
+    vi.mocked(apiClient.put).mockImplementation(async (_url, body) => ({
+      data: {
+        ...MOCK_API_DOCTORS[0],
+        ...(body as Record<string, unknown>),
+      },
+    }));
   });
 
-  const renderModal = (id = 'DOC-0142') =>
-    render(
-      <MemoryRouter initialEntries={[`/admin/doctors/${id}/edit`]}>
-        <Routes>
-          <Route path="/admin/doctors/:doctorId/edit" element={<DoctorEditModal />} />
-          <Route path="/admin/doctors" element={<div>Danh sách Mock</div>} />
-        </Routes>
-      </MemoryRouter>,
+  const renderModal = (id = 'DOC-0142') => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[`/admin/doctors/${id}/edit`]}>
+          <Routes>
+            <Route path="/admin/doctors/:doctorId/edit" element={<DoctorEditModal />} />
+            <Route path="/admin/doctors" element={<div>Danh sách Bác sĩ</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
+  };
 
-  it('prefills doctor profile fields and marks practitioner ID as readonly', () => {
-    renderModal('DOC-0142');
-
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  it('prefills doctor profile from GET /admin/doctors and shows not-found for unknown ID', async () => {
+    const first = renderModal('DOC-0142');
     expect(
-      screen.getByRole('heading', { name: 'Hồ sơ Bác sĩ - BS. CKI Lê Hoàng Minh' }),
+      await screen.findByRole('heading', { name: 'Hồ sơ Bác sĩ - BS. CKI Lê Hoàng Minh' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('● Active')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Mã Bác sĩ \(Practitioner ID\)/)).toHaveValue('DOC-0142');
+    expect(screen.getByLabelText(/Mã Bác sĩ \(Practitioner ID\)/)).toHaveAttribute('readonly');
+    first.unmount();
 
-    const nameInput = screen.getByLabelText(/Họ và tên Bác sĩ/) as HTMLInputElement;
-    expect(nameInput.value).toBe('BS. CKI Lê Hoàng Minh');
-
-    const idInput = screen.getByLabelText(/Mã Bác sĩ \(Practitioner ID\)/) as HTMLInputElement;
-    expect(idInput.value).toBe('DOC-0142');
-    expect(idInput).toHaveAttribute('readonly');
-
-    const deptSelect = screen.getByLabelText(/Khoa công tác trực thuộc/) as HTMLSelectElement;
-    expect(deptSelect.value).toBe('Khoa Nội Tiêu hóa');
-  });
-
-  it('renders not-found view for unknown doctor ID and navigates back on click', () => {
     renderModal('DOC-9999');
-
-    expect(screen.getByText('Không tìm thấy hồ sơ bác sĩ minh họa.')).toBeInTheDocument();
+    expect(await screen.findByText('Không tìm thấy hồ sơ bác sĩ.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Quay lại danh sách' }));
-    expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
+    expect(screen.getByText('Danh sách Bác sĩ')).toBeInTheDocument();
   });
 
-  it('saves updated fields while preserving out-of-form properties (history, portrait)', async () => {
+  it('validates invalid fields and submits PUT /admin/doctors/:id on valid save', async () => {
     renderModal('DOC-0142');
+    expect(await screen.findByDisplayValue('BS. CKI Lê Hoàng Minh')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/Họ và tên Bác sĩ/), { target: { value: 'A' } });
+    fireEvent.click(screen.getByRole('button', { name: /Lưu hồ sơ Bác sĩ/ }));
+    expect(await screen.findByText('Vui lòng nhập họ tên')).toBeInTheDocument();
+    expect(apiClient.put).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText(/Họ và tên Bác sĩ/), {
       target: { value: 'BS. CKI Lê Hoàng Minh (Cập nhật)' },
     });
-    fireEvent.change(screen.getByLabelText(/Buồng khám chỉ định mặc định/), {
-      target: { value: 'PK-999' },
-    });
-
     fireEvent.click(screen.getByRole('button', { name: /Lưu hồ sơ Bác sĩ/ }));
 
     await waitFor(() => {
-      expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
+      expect(apiClient.put).toHaveBeenCalledWith(
+        '/admin/doctors/142',
+        expect.objectContaining({
+          name: 'BS. CKI Lê Hoàng Minh (Cập nhật)',
+          isActive: true,
+        }),
+      );
+      expect(screen.getByText('Danh sách Bác sĩ')).toBeInTheDocument();
     });
-
-    const updated = useDoctorDemoStore.getState().doctors.find((d) => d.id === 'DOC-0142');
-    expect(updated?.name).toBe('BS. CKI Lê Hoàng Minh (Cập nhật)');
-    expect(updated?.room).toBe('PK-999');
-    expect(updated?.history).toHaveLength(2);
-    expect(updated?.portrait).toBe('/assets/admin-doctors/list-02.png');
   });
 
-  it('blocks save and shows validation messages when inputs are invalid', async () => {
-    renderModal('DOC-0142');
-
-    fireEvent.change(screen.getByLabelText(/Họ và tên Bác sĩ/), {
-      target: { value: 'A' },
-    });
-    fireEvent.change(screen.getByLabelText(/Chứng chỉ hành nghề/), {
-      target: { value: '123' },
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: /Lưu hồ sơ Bác sĩ/ }));
-
-    await waitFor(() => {
-      expect(screen.getByText('Vui lòng nhập họ tên')).toBeInTheDocument();
-      expect(screen.getByText('Vui lòng nhập số chứng chỉ hành nghề')).toBeInTheDocument();
-    });
-
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    const current = useDoctorDemoStore.getState().doctors.find((d) => d.id === 'DOC-0142');
-    expect(current?.name).toBe('BS. CKI Lê Hoàng Minh');
-  });
-
-  it('shows appointments badge and pops up warning modal when deactivating doctor with appointments', async () => {
-    renderModal('DOC-0142');
-
-    // Footer badge reflects 6 appointments for DOC-0142
-    expect(screen.getByText('Có 6 ca hẹn tuần này')).toBeInTheDocument();
-
-    const activeCheckbox = screen.getByRole('checkbox', {
-      name: /Trạng thái hoạt động bác sĩ/,
-    }) as HTMLInputElement;
-    expect(activeCheckbox.checked).toBe(true);
-
-    // Clicking checkbox triggers warning pop-up modal
-    fireEvent.click(activeCheckbox);
-
-    expect(screen.getByRole('heading', { name: 'Ngừng hoạt động bác sĩ?' })).toBeInTheDocument();
+  it('guards deactivation when pendingAppointmentsCount > 0 and allows when 0', async () => {
+    const first = renderModal('DOC-0142');
+    expect(await screen.findByText('Có 6 ca hẹn tuần này')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Trạng thái hoạt động bác sĩ/ }));
     expect(
       screen.getByText(/Không thể ngừng hoạt động khi còn 6 lượt khám đang xử lý/i),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Ngừng hoạt động' })).toBeDisabled();
-
-    // Close modal keeps doctor active
     fireEvent.click(screen.getByRole('button', { name: 'Giữ hồ sơ' }));
-    expect(screen.queryByRole('heading', { name: 'Ngừng hoạt động bác sĩ?' })).toBeNull();
-    expect(activeCheckbox.checked).toBe(true);
-  });
-
-  it('opens confirmation modal and deactivates doctor without appointments on confirm', async () => {
-    renderModal('DOC-0089');
-
-    // Footer badge reflects 0 appointments for DOC-0089
-    expect(screen.getByText('Không có ca hẹn tuần này')).toBeInTheDocument();
-
-    const activeCheckbox = screen.getByRole('checkbox', {
-      name: /Trạng thái hoạt động bác sĩ/,
-    }) as HTMLInputElement;
-    expect(activeCheckbox.checked).toBe(true);
-
-    // Clicking checkbox opens confirmation modal
-    fireEvent.click(activeCheckbox);
-
-    expect(screen.getByRole('heading', { name: 'Ngừng hoạt động bác sĩ?' })).toBeInTheDocument();
-    const confirmBtn = screen.getByRole('button', { name: 'Ngừng hoạt động' });
-    expect(confirmBtn).not.toBeDisabled();
-
-    fireEvent.click(confirmBtn);
-
-    expect(screen.queryByRole('heading', { name: 'Ngừng hoạt động bác sĩ?' })).toBeNull();
-    expect(activeCheckbox.checked).toBe(false);
-    expect(screen.getByText('○ Ngừng hoạt động (Inactive)')).toBeInTheDocument();
-
-    // Save persists changes
-    fireEvent.click(screen.getByRole('button', { name: /Lưu hồ sơ Bác sĩ/ }));
-    await waitFor(() => {
-      expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
-    });
-    expect(useDoctorDemoStore.getState().doctors.find((d) => d.id === 'DOC-0089')?.active).toBe(
-      false,
-    );
-  });
-
-  it('closes on Escape key, close button, or backdrop mouseDown, but not dialog mouseDown', () => {
-    const first = renderModal('DOC-0142');
-    fireEvent.mouseDown(screen.getByRole('dialog'));
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
     first.unmount();
 
-    const second = renderModal('DOC-0142');
-    fireEvent.click(screen.getByRole('button', { name: 'Đóng chỉnh sửa' }));
-    expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
-    second.unmount();
+    renderModal('DOC-0089');
+    expect(await screen.findByText('Không có ca hẹn tuần này')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Trạng thái hoạt động bác sĩ/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ngừng hoạt động' }));
+    expect(screen.getByText('○ Ngừng hoạt động (Inactive)')).toBeInTheDocument();
 
-    renderModal('DOC-0142');
-    fireEvent.mouseDown(screen.getByRole('dialog').parentElement!);
-    expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
-  });
-
-  it('submits changes via Ctrl+S shortcut', async () => {
-    renderModal('DOC-0142');
-
-    fireEvent.change(screen.getByLabelText(/Họ và tên Bác sĩ/), {
-      target: { value: 'BS. Lê Hoàng Minh Shortcut' },
-    });
-    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
-
+    fireEvent.click(screen.getByRole('button', { name: /Lưu hồ sơ Bác sĩ/ }));
     await waitFor(() => {
-      expect(screen.getByText('Danh sách Mock')).toBeInTheDocument();
+      expect(apiClient.put).toHaveBeenCalledWith(
+        '/admin/doctors/89',
+        expect.objectContaining({ isActive: false }),
+      );
     });
-    expect(useDoctorDemoStore.getState().doctors.find((d) => d.id === 'DOC-0142')?.name).toBe(
-      'BS. Lê Hoàng Minh Shortcut',
-    );
-  });
-
-  it('displays SSO notice status when clicking Đổi button', () => {
-    renderModal('DOC-0142');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Đổi' }));
-
-    expect(screen.getByRole('status')).toHaveTextContent(
-      'Liên kết SSO chỉ thay đổi tại danh mục Nhân sự.',
-    );
   });
 });

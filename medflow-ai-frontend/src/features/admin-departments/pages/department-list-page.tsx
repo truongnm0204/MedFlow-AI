@@ -1,15 +1,20 @@
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, RefreshCw } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { Alert } from '@/shared/ui/alert';
+import { Button } from '@/shared/ui/button';
 import { toast } from '@/shared/ui/toast';
 
-import { deactivateDepartmentApi, reactivateDepartmentApi } from '../api/department.api';
 import { DepartmentDeactivateModal } from '../components/department-deactivate-modal';
 import { DepartmentFilters } from '../components/department-filters';
 import { DepartmentMetricsCards } from '../components/department-metrics';
 import { DepartmentTable } from '../components/department-table';
-import { useDepartmentStore } from '../store/department.store';
+import {
+  useAdminDepartments,
+  useDeactivateDepartmentMutation,
+  useReactivateDepartmentMutation,
+} from '../hooks/use-departments';
 import type { DeactivateDepartmentPayload } from '../types/department-deactivate.types';
 import type {
   DepartmentFilters as Filters,
@@ -39,7 +44,11 @@ function exportDepartmentsToCsv(departments: DepartmentItem[]) {
 }
 
 export function DepartmentListPage() {
-  const departments = useDepartmentStore((state) => state.departments);
+  const departmentsQuery = useAdminDepartments();
+  const deactivateMutation = useDeactivateDepartmentMutation();
+  const reactivateMutation = useReactivateDepartmentMutation();
+
+  const departments = useMemo(() => departmentsQuery.data ?? [], [departmentsQuery.data]);
   const [filters, setFilters] = useState<Filters>({ search: '', facility: '', status: '' });
   const [page, setPage] = useState(1);
   const [deactivatingDepartment, setDeactivatingDepartment] = useState<DepartmentItem | null>(null);
@@ -54,7 +63,6 @@ export function DepartmentListPage() {
     } else {
       toast.error(message);
     }
-    setTimeout(() => setFeedbackMessage(null), 4000);
   };
 
   const handleConfirmDeactivate = async (
@@ -62,15 +70,14 @@ export function DepartmentListPage() {
     payload: DeactivateDepartmentPayload,
   ) => {
     const target = departments.find((d) => d.id === departmentId || d.code === departmentId);
+    if (!target) return;
     try {
-      const res = await deactivateDepartmentApi(departmentId, payload);
+      const res = await deactivateMutation.mutateAsync({ department: target, payload });
       showFeedback(res.message);
       setDeactivatingDepartment(null);
     } catch (error: unknown) {
       const errMessage =
-        error instanceof Error
-          ? error.message
-          : `Không thể ngừng hoạt động khoa ${target?.name ?? departmentId}.`;
+        error instanceof Error ? error.message : `Không thể ngừng hoạt động khoa ${target.name}.`;
       showFeedback(errMessage, 'error');
     }
   };
@@ -83,7 +90,7 @@ export function DepartmentListPage() {
       setDeactivatingDepartment(target);
     } else {
       try {
-        const res = await reactivateDepartmentApi(departmentId);
+        const res = await reactivateMutation.mutateAsync(target);
         showFeedback(res.message);
       } catch (error: unknown) {
         const errMessage =
@@ -92,6 +99,7 @@ export function DepartmentListPage() {
       }
     }
   };
+
   const metrics = useMemo<DepartmentMetrics>(() => {
     const active = departments.filter((d) => d.status === 'ACTIVE').length;
     return {
@@ -135,15 +143,51 @@ export function DepartmentListPage() {
           }}
           onExport={() => exportDepartmentsToCsv(filtered)}
         />
-        <DepartmentTable
-          departments={pageItems}
-          totalCount={filtered.length}
-          page={currentPage}
-          pageSize={PAGE_SIZE}
-          onPageChange={setPage}
-          onRequestDeactivate={(dept) => setDeactivatingDepartment(dept)}
-          onToggleStatus={handleToggleStatus}
-        />
+
+        {departmentsQuery.isPending && (
+          <div
+            role="status"
+            className="rounded-xl border border-border bg-white p-8 text-center text-xs text-sub"
+          >
+            Đang tải danh mục khoa phòng...
+          </div>
+        )}
+
+        {!departmentsQuery.isPending && departmentsQuery.isError && (
+          <div role="alert">
+            <Alert tone="error">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span>
+                  {departmentsQuery.error instanceof Error
+                    ? departmentsQuery.error.message
+                    : 'Không thể tải danh mục khoa phòng.'}
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void departmentsQuery.refetch()}
+                  className="gap-1.5"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Thử lại</span>
+                </Button>
+              </div>
+            </Alert>
+          </div>
+        )}
+
+        {!departmentsQuery.isPending && !departmentsQuery.isError && (
+          <DepartmentTable
+            departments={pageItems}
+            totalCount={filtered.length}
+            page={currentPage}
+            pageSize={PAGE_SIZE}
+            onPageChange={setPage}
+            onRequestDeactivate={(dept) => setDeactivatingDepartment(dept)}
+            onToggleStatus={handleToggleStatus}
+          />
+        )}
       </main>
       <DepartmentDeactivateModal
         department={deactivatingDepartment}

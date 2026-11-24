@@ -1,11 +1,47 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
+import type { AxiosResponse } from 'axios';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { apiClient } from '@/shared/lib/axios';
 
 import { PrescriptionSearchPage } from '../pages/prescription-search-page';
+
+const SAMPLE_SEARCH_RESPONSE = {
+  items: [
+    {
+      id: 88,
+      prescriptionCode: 'RX-2026-0415-0088',
+      visitCode: 'VIS-2026-0088',
+      patientCode: 'PAT-2024-0108',
+      patientName: 'NGUYỄN VĂN AN',
+      gender: 'MALE',
+      dateOfBirth: '1988-08-15',
+      doctorName: 'TS.BS Nguyễn Minh Đức',
+      status: 'ISSUED',
+      issuedAt: '2026-11-24T08:30:00Z',
+      itemCount: 4,
+    },
+    {
+      id: 81,
+      prescriptionCode: 'RX-2026-0415-0081',
+      visitCode: 'VIS-2026-0081',
+      patientCode: 'PAT-2024-0210',
+      patientName: 'Vũ Văn Hùng',
+      gender: 'MALE',
+      dateOfBirth: '1975-03-10',
+      doctorName: 'BS.CKI Vũ Đình Cương',
+      status: 'PREPARING',
+      issuedAt: '2026-11-24T08:15:00Z',
+      itemCount: 2,
+    },
+  ],
+  totalCount: 2,
+  page: 1,
+  pageSize: 50,
+};
 
 function renderSearchPage() {
   useAuthStore.setState({
@@ -31,27 +67,30 @@ function renderSearchPage() {
   );
 }
 
-describe('PrescriptionSearchPage (Issue #141)', () => {
-  it('renders 4 real-time pharmacy metric cards and compliance banner', () => {
+describe('PrescriptionSearchPage (real API)', () => {
+  beforeEach(() => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: SAMPLE_SEARCH_RESPONSE,
+    } as AxiosResponse);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fetches GET /pharmacy/prescriptions and renders real metric counts & compliance banner', async () => {
     renderSearchPage();
 
+    expect(await screen.findByText('RX-2026-0415-0088')).toBeInTheDocument();
     expect(screen.getByText('CHỜ TIẾP NHẬN & SOẠN')).toBeInTheDocument();
-    expect(screen.getAllByText('06').length).toBeGreaterThan(0);
     expect(screen.getByText('ĐANG CHUẨN BỊ CHIA THUỐC')).toBeInTheDocument();
-    expect(screen.getAllByText('03').length).toBeGreaterThan(0);
-    expect(screen.getByText('ĐÃ SOẠN XONG - CHỜ GỌI')).toBeInTheDocument();
-    expect(screen.getAllByText('04').length).toBeGreaterThan(0);
-    expect(screen.getByText('ĐÃ HOÀN TẤT TRONG CA')).toBeInTheDocument();
-    expect(screen.getByText('68')).toBeInTheDocument();
     expect(screen.getByText(/Quy chuẩn Dược lâm sàng & An toàn Cấp phát GPP/i)).toBeInTheDocument();
   });
 
-  it('renders prescription list with allergy warning and searches by query', () => {
+  it('filters prescription list by query, status tab, and doctor dropdown', async () => {
     renderSearchPage();
 
-    expect(screen.getByText('RX-2026-0415-0088')).toBeInTheDocument();
-    expect(screen.getByText('NGUYỄN VĂN AN')).toBeInTheDocument();
-    expect(screen.getByText(/DỊ ỨNG: Penicillin \(Phù mạch\)/i)).toBeInTheDocument();
+    expect(await screen.findByText('NGUYỄN VĂN AN')).toBeInTheDocument();
     expect(screen.getByText('Vũ Văn Hùng')).toBeInTheDocument();
 
     const input = screen.getByPlaceholderText(/Tìm theo mã đơn thuốc/i);
@@ -59,11 +98,8 @@ describe('PrescriptionSearchPage (Issue #141)', () => {
 
     expect(screen.getByText('Vũ Văn Hùng')).toBeInTheDocument();
     expect(screen.queryByText('RX-2026-0415-0088')).not.toBeInTheDocument();
-  });
 
-  it('filters prescriptions by status tab and doctor dropdown', () => {
-    renderSearchPage();
-
+    fireEvent.change(input, { target: { value: '' } });
     fireEvent.click(screen.getByRole('tab', { name: /Đang chuẩn bị/i }));
     expect(screen.getByText('RX-2026-0415-0081')).toBeInTheDocument();
     expect(screen.queryByText('RX-2026-0415-0088')).not.toBeInTheDocument();
@@ -71,19 +107,14 @@ describe('PrescriptionSearchPage (Issue #141)', () => {
     fireEvent.click(screen.getByRole('tab', { name: /Tất cả/i }));
     const doctorSelect = screen.getByLabelText(/Lọc theo bác sĩ kê đơn/i);
     fireEvent.change(doctorSelect, { target: { value: 'BS.CKI Vũ Đình Cương' } });
-    expect(screen.getByText('RX-2026-0415-0079')).toBeInTheDocument();
+    expect(screen.getByText('RX-2026-0415-0081')).toBeInTheDocument();
     expect(screen.queryByText('RX-2026-0415-0088')).not.toBeInTheDocument();
   });
 
-  it('shows notice when clicking Tiếp nhận & Soạn thuốc or Quét mã vạch', () => {
+  it('renders error alert when API fails instead of falling back to mock prescriptions', async () => {
+    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('Máy chủ nhà thuốc bận'));
     renderSearchPage();
 
-    fireEvent.click(screen.getAllByRole('button', { name: /Tiếp nhận & Soạn thuốc/i })[0]);
-    expect(
-      screen.getByText(/Đã tiếp nhận đơn thuốc RX-2026-0415-0088 của bệnh nhân NGUYỄN VĂN AN\./i),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /Quét mã vạch/i }));
-    expect(screen.getByText(/Đang kích hoạt đầu đọc mã vạch \[F2\]/i)).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Máy chủ nhà thuốc bận');
   });
 });

@@ -15,11 +15,17 @@ export function PrimaryMemberCard({ member, onBookAppointment }: PrimaryMemberCa
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-3.5">
             <div className="relative h-13 w-13 shrink-0">
-              <img
-                src={member.avatarUrl}
-                alt={member.fullName}
-                className="h-full w-full rounded-full border-2 border-sky-200 object-cover"
-              />
+              {member.avatarUrl ? (
+                <img
+                  src={member.avatarUrl}
+                  alt={member.fullName}
+                  className="h-full w-full rounded-full border-2 border-sky-200 object-cover"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center rounded-full border-2 border-sky-200 bg-sky-50 text-xs font-bold text-primary">
+                  {member.fullName.slice(0, 2).toUpperCase()}
+                </div>
+              )}
               <span className="absolute bottom-0 right-0 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-sky-600 text-white shadow-2xs">
                 <Shield className="h-2.5 w-2.5" />
               </span>
@@ -83,19 +89,23 @@ export function PrimaryMemberCard({ member, onBookAppointment }: PrimaryMemberCa
             <div>
               <span className="block text-[10px] font-medium text-slate-400">NHÓM MÁU</span>
               <span className="mt-0.5 block text-sm font-bold text-red-600">
-                {member.vitals.bloodType}
+                {member.vitals.bloodType || '--'}
               </span>
             </div>
             <div>
               <span className="block text-[10px] font-medium text-slate-400">CHIỀU CAO</span>
               <span className="mt-0.5 block text-sm font-bold text-slate-800">
-                {member.vitals.heightCm} cm
+                {member.vitals.heightCm != null && member.vitals.heightCm > 0
+                  ? `${member.vitals.heightCm} cm`
+                  : '--'}
               </span>
             </div>
             <div>
               <span className="block text-[10px] font-medium text-slate-400">CÂN NẶNG</span>
               <span className="mt-0.5 block text-sm font-bold text-slate-800">
-                {member.vitals.weightKg} kg
+                {member.vitals.weightKg != null && member.vitals.weightKg > 0
+                  ? `${member.vitals.weightKg} kg`
+                  : '--'}
               </span>
             </div>
           </div>

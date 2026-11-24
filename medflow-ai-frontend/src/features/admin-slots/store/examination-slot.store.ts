@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 
-import { INITIAL_EXAMINATION_SLOTS } from '../data/examination-slots-mock';
+import {
+  batchCloseAdminExaminationSlotsApi,
+  closeAdminExaminationSlotApi,
+  reopenAdminExaminationSlotApi,
+} from '../api/examination-slot.api';
 import type {
   CloseSlotPayload,
   ExaminationSlot,
@@ -19,7 +23,6 @@ interface ExaminationSlotStore {
   selectedIds: string[];
   draft: Partial<ExaminationSlotFormValues> | null;
 
-  // Actions
   setSearchQuery: (query: string) => void;
   setDateFilter: (date: string) => void;
   setSpecialtyFilter: (specialty: string) => void;
@@ -48,7 +51,7 @@ interface ExaminationSlotStore {
 }
 
 export const useExaminationSlotStore = create<ExaminationSlotStore>((set) => ({
-  slots: INITIAL_EXAMINATION_SLOTS,
+  slots: [],
   searchQuery: '',
   dateFilter: '',
   specialtyFilter: '',
@@ -132,9 +135,7 @@ export const useExaminationSlotStore = create<ExaminationSlotStore>((set) => ({
       }),
     })),
   closeSlot: async (id, payload) => {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 200);
-    });
+    const res = await closeAdminExaminationSlotApi(id, payload);
     const now = new Date().toISOString();
     set((state) => ({
       slots: state.slots.map((item) => {
@@ -151,16 +152,11 @@ export const useExaminationSlotStore = create<ExaminationSlotStore>((set) => ({
         return item;
       }),
     }));
-    return {
-      success: true,
-      message: 'Khung giờ khám đã được đóng thành công.',
-    };
+    return res;
   },
 
   reopenSlot: async (id) => {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 150);
-    });
+    const res = await reopenAdminExaminationSlotApi(id);
     set((state) => ({
       slots: state.slots.map((item) => {
         if (item.id === id || item.code === id) {
@@ -178,16 +174,11 @@ export const useExaminationSlotStore = create<ExaminationSlotStore>((set) => ({
         return item;
       }),
     }));
-    return {
-      success: true,
-      message: 'Khung giờ khám đã được mở lại thành công.',
-    };
+    return res;
   },
 
   batchCloseSlots: async (ids, payload) => {
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 250);
-    });
+    const res = await batchCloseAdminExaminationSlotsApi(ids, payload);
     const now = new Date().toISOString();
     set((state) => ({
       slots: state.slots.map((item) => {
@@ -205,10 +196,7 @@ export const useExaminationSlotStore = create<ExaminationSlotStore>((set) => ({
       }),
       selectedIds: state.selectedIds.filter((id) => !ids.includes(id)),
     }));
-    return {
-      success: true,
-      count: ids.length,
-    };
+    return res;
   },
 
   saveDraft: (draft) => set({ draft }),

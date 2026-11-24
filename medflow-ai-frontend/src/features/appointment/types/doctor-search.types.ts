@@ -13,7 +13,8 @@ export interface DoctorSearchResult {
   nearestSchedule: string;
   scheduleStatus: ScheduleBadgeStatus;
   scheduleStatusText: string;
-  price: number;
+  price: number | null;
+  priceFormatted?: string;
   avatarUrl: string;
   hasScheduleToday: boolean;
   hasScheduleThisWeek: boolean;

@@ -1,6 +1,6 @@
-import { Info, Save } from 'lucide-react';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useEffect, useState } from 'react';
+import { Info, Save } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
 
@@ -12,44 +12,55 @@ import {
   DoctorCreateBiography,
   DoctorCreateCredentials,
 } from '../components/doctor-create-professional';
+import { useCreateAdminDoctorMutation } from '../hooks/use-admin-doctors';
 import { doctorSchema, type DoctorFormValues } from '../schemas/doctor.schema';
-import { useDoctorDemoStore } from '../store/doctor-demo.store';
 import type { Doctor, WorkHistoryEntry } from '../types/doctor.types';
 
-const SAMPLE: Doctor = {
-  id: 'DOC-0245',
-  staffId: 'NV-0089',
-  name: 'BS. Phạm Quang Duy',
-  email: 'duy.pq@medflow.vn',
-  degree: 'Bác sĩ Chuyên khoa I',
-  specialty: 'Nội Tiêu hóa & Gan mật - Nội soi can thiệp dải tần hẹp NBI',
-  department: 'Khoa Nội Tiêu hóa',
-  license: '018492/BYT-CCHN',
-  room: 'PK-102 (Phòng Tiêu hóa 2) - Tầng 2, Tòa A',
-  phone: '024.3825.8899 - Ext: 204',
-  experience: 12,
-  scope: 'Khám bệnh, chữa bệnh chuyên khoa Nội Tiêu hóa & Nội soi can thiệp',
-  biography:
-    'Hơn 12 năm kinh nghiệm trong lĩnh vực Nội Tiêu hóa & Gan Mật. Chuyên sâu chẩn đoán và điều trị viêm loét dạ dày - tá tràng, bệnh lý trào ngược GERD và tầm soát sớm ung thư đường tiêu hóa.',
+export const DOCTOR_CREATE_DRAFT_STORAGE_KEY = 'medflow.admin-doctor-create.draft';
+
+const EMPTY_DOCTOR_FORM: DoctorFormValues = {
+  id: '',
+  staffId: '',
+  name: '',
+  email: '',
+  degree: '',
+  specialty: '',
+  department: '',
+  license: '',
+  room: '',
+  phone: '',
+  experience: 1,
+  scope: '',
+  biography: '',
   active: true,
-  history: [
-    { year: '2012', description: 'Tốt nghiệp Bác sĩ Đa khoa - Đại học Y Hà Nội' },
-    { year: '2017', description: 'Tốt nghiệp Bác sĩ Chuyên khoa I Nội Tiêu hóa - ĐHY Hà Nội' },
-    { year: '2018 - 2024', description: 'Bác sĩ điều trị Khoa Tiêu hóa - BV Bạch Mai' },
-  ],
 };
 
-/** SCR-ADM-DOC-02 — create a local demonstration doctor record. */
+function loadDoctorDraft(): Doctor | null {
+  try {
+    const raw = window.sessionStorage.getItem(DOCTOR_CREATE_DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<Doctor>;
+    return {
+      ...EMPTY_DOCTOR_FORM,
+      ...parsed,
+      history: Array.isArray(parsed.history) ? parsed.history : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** SCR-ADM-DOC-02 — create doctor profile via POST /api/v1/admin/doctors. */
 export function DoctorCreatePage() {
   const navigate = useNavigate();
-  const draft = useDoctorDemoStore((state) => state.draft);
-  const doctors = useDoctorDemoStore((state) => state.doctors);
-  const addDoctor = useDoctorDemoStore((state) => state.addDoctor);
-  const saveDraft = useDoctorDemoStore((state) => state.saveDraft);
-  const [history, setHistory] = useState<WorkHistoryEntry[]>(draft?.history ?? SAMPLE.history);
-  const [portrait, setPortrait] = useState<string | null>(draft?.portrait ?? null);
+  const createDoctorMutation = useCreateAdminDoctorMutation();
+
+  const [initialDraft] = useState<Doctor | null>(() => loadDoctorDraft());
+  const [history, setHistory] = useState<WorkHistoryEntry[]>(initialDraft?.history ?? []);
+  const [portrait, setPortrait] = useState<string | null>(initialDraft?.portrait ?? null);
   const [portraitError, setPortraitError] = useState('');
   const [message, setMessage] = useState('');
+
   const {
     register,
     handleSubmit,
@@ -58,17 +69,29 @@ export function DoctorCreatePage() {
     formState: { errors, isDirty },
   } = useForm<DoctorFormValues>({
     resolver: zodResolver(doctorSchema),
-    defaultValues: draft ?? SAMPLE,
+    defaultValues: initialDraft ?? EMPTY_DOCTOR_FORM,
   });
+
   const biography = useWatch({ control, name: 'biography' }) ?? '';
+
+  const persistDraft = useCallback(
+    (values: DoctorFormValues, nextHistory: WorkHistoryEntry[], nextPortrait: string | null) => {
+      const payload: Doctor = {
+        ...values,
+        history: nextHistory,
+        portrait: nextPortrait ?? undefined,
+      };
+      window.sessionStorage.setItem(DOCTOR_CREATE_DRAFT_STORAGE_KEY, JSON.stringify(payload));
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!isDirty) return;
-    const timer = window.setInterval(
-      () => saveDraft({ ...getValues(), history, portrait: portrait ?? undefined }),
-      30_000,
-    );
+    const timer = window.setInterval(() => persistDraft(getValues(), history, portrait), 30_000);
     return () => window.clearInterval(timer);
-  }, [getValues, history, isDirty, portrait, saveDraft]);
+  }, [getValues, history, isDirty, persistDraft, portrait]);
+
   useEffect(() => {
     const handleKeys = (event: KeyboardEvent) => {
       if (event.key === 'Escape') navigate('/admin/doctors');
@@ -97,22 +120,30 @@ export function DoctorCreatePage() {
     reader.onerror = () => setPortraitError('Không đọc được ảnh đã chọn.');
     reader.readAsDataURL(file);
   };
+
   const handleDraft = () => {
-    saveDraft({ ...getValues(), history, portrait: portrait ?? undefined });
+    persistDraft(getValues(), history, portrait);
     setMessage('Đã lưu bản nháp trong phiên hiện tại.');
   };
-  const handleCreate = (values: DoctorFormValues) => {
-    if (doctors.some((doctor) => doctor.id === values.id || doctor.staffId === values.staffId)) {
-      setMessage('Mã bác sĩ hoặc nhân sự đã được sử dụng trong danh sách minh họa.');
-      return;
+
+  const handleCreate = async (values: DoctorFormValues) => {
+    setMessage('');
+    try {
+      await createDoctorMutation.mutateAsync({
+        ...values,
+        history,
+        portrait: portrait ?? undefined,
+      });
+      window.sessionStorage.removeItem(DOCTOR_CREATE_DRAFT_STORAGE_KEY);
+      navigate('/admin/doctors');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Không thể tạo hồ sơ bác sĩ.');
     }
-    addDoctor({ ...values, history, portrait: portrait ?? undefined });
-    navigate('/admin/doctors');
   };
 
   return (
     <AdminDoctorShell>
-      <form onSubmit={handleSubmit(handleCreate)}>
+      <form onSubmit={handleSubmit(handleCreate)} noValidate>
         <main className="mx-auto max-w-[1280px] px-6 pb-24 pt-7">
           <div className="flex flex-wrap items-center gap-3 text-[11px]">
             <Link
@@ -135,9 +166,8 @@ export function DoctorCreatePage() {
             <p>
               <b>Lưu ý vận hành Khám Ngoại trú & Đồng bộ dữ liệu Cổng Bệnh nhân:</b>
               <br />
-              Biểu mẫu này minh họa liên kết định danh nhân sự (Staff SSO), thông tin chuyên môn và
-              buồng khám mặc định. Dữ liệu chỉ tồn tại trong phiên và chưa đồng bộ với Cổng Đặt hẹn
-              Bệnh nhân.
+              Hồ sơ bác sĩ cần liên kết với mã nhân sự (Staff Code) hợp lệ tại cơ sở y tế để đồng bộ
+              danh mục bác sĩ và lịch khám trực tuyến.
             </p>
           </div>
           {message && (
@@ -189,7 +219,12 @@ export function DoctorCreatePage() {
               <Button type="button" variant="secondary" size="sm" onClick={handleDraft}>
                 Lưu bản nháp
               </Button>
-              <Button id="doctor-create-submit" type="submit" size="sm">
+              <Button
+                id="doctor-create-submit"
+                type="submit"
+                size="sm"
+                disabled={createDoctorMutation.isPending}
+              >
                 <Save className="h-4 w-4" aria-hidden="true" />
                 Tạo Hồ sơ Bác sĩ [Ctrl+S]
               </Button>

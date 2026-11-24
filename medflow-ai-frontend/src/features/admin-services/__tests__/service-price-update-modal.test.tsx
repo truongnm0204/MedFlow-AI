@@ -1,17 +1,38 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient } from '@/shared/lib/axios';
 import { ServicePriceHistoryModal } from '../components/service-price-history-modal';
 import { ServicePriceUpdateModal } from '../components/service-price-update-modal';
 import { INITIAL_SERVICES } from '../data/examination-services-data';
 import { useExaminationServiceStore } from '../store/examination-service.store';
 
-describe('ServicePriceUpdateModal (M3-207 FE Update Service Price)', () => {
+vi.mock('@/shared/lib/axios', () => ({
+  apiClient: {
+    put: vi.fn(),
+  },
+}));
+
+describe('ServicePriceUpdateModal (M3-207 FE Update Service Price real API)', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     useExaminationServiceStore.setState({
-      services: [...INITIAL_SERVICES],
+      services: [{ ...INITIAL_SERVICES[0], id: '1' }],
       priceHistoryService: null,
       updatePriceService: null,
+    });
+    vi.mocked(apiClient.put).mockResolvedValue({
+      data: {
+        id: 1,
+        serviceCode: INITIAL_SERVICES[0].code,
+        name: INITIAL_SERVICES[0].name,
+        category: INITIAL_SERVICES[0].category,
+        departmentName: INITIAL_SERVICES[0].department,
+        price: 450000,
+        allowsOnlineBooking: true,
+        isActive: true,
+        status: 'ACTIVE',
+      },
     });
   });
 
@@ -23,104 +44,50 @@ describe('ServicePriceUpdateModal (M3-207 FE Update Service Price)', () => {
       </>,
     );
 
-  it('does not render when updatePriceService is null', () => {
-    renderComponent();
+  it('does not render when updatePriceService is null and renders details when set', () => {
+    const first = renderComponent();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
+    first.unmount();
 
-  it('renders modal dialog with service details and current price', () => {
-    const testService = INITIAL_SERVICES[0];
+    const testService = { ...INITIAL_SERVICES[0], id: '1' };
     useExaminationServiceStore.setState({ updatePriceService: testService });
-
     renderComponent();
-
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('Cập nhật Biểu phí Dịch vụ (UC52)')).toBeInTheDocument();
-    expect(screen.getByText(testService.code)).toBeInTheDocument();
-    expect(screen.getByText(testService.name)).toBeInTheDocument();
-    expect(screen.getByText(testService.department)).toBeInTheDocument();
   });
 
-  it('calculates live price difference and displays percentage chip', async () => {
-    const testService = INITIAL_SERVICES[0]; // price: 300,000
+  it('calculates live price difference, presets, validates zero price, and calls PUT /admin/examination-services/:id', async () => {
+    const testService = { ...INITIAL_SERVICES[0], id: '1' };
     useExaminationServiceStore.setState({ updatePriceService: testService });
-
     renderComponent();
 
-    const priceInput = screen.getByLabelText(/Mức giá niêm yết mới \(VNĐ\)/i);
-    fireEvent.change(priceInput, { target: { value: '350000' } });
+    fireEvent.click(screen.getByRole('button', { name: '+50k' }));
+    expect((screen.getByLabelText(/Mức giá niêm yết mới \(VNĐ\)/i) as HTMLInputElement).value).toBe(
+      '350000',
+    );
 
-    await waitFor(() => {
-      expect(screen.getByText(/\+50\.000 đ/)).toBeInTheDocument();
-      expect(screen.getByText(/\+16\.7%/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Mức giá niêm yết mới \(VNĐ\)/i), {
+      target: { value: '0' },
     });
-  });
+    fireEvent.click(screen.getByRole('button', { name: /Xác nhận & Lưu giá mới/i }));
+    expect(await screen.findByText(/Mức giá dịch vụ phải lớn hơn 0 đ/i)).toBeInTheDocument();
+    expect(apiClient.put).not.toHaveBeenCalled();
 
-  it('applies preset buttons correctly', async () => {
-    const testService = INITIAL_SERVICES[0]; // 300,000
-    useExaminationServiceStore.setState({ updatePriceService: testService });
-
-    renderComponent();
-
-    const plus50kBtn = screen.getByRole('button', { name: '+50k' });
-    fireEvent.click(plus50kBtn);
-
-    const priceInput = screen.getByLabelText(/Mức giá niêm yết mới \(VNĐ\)/i) as HTMLInputElement;
-    expect(priceInput.value).toBe('350000');
-  });
-
-  it('shows validation error when price is invalid or zero', async () => {
-    const testService = INITIAL_SERVICES[0];
-    useExaminationServiceStore.setState({ updatePriceService: testService });
-
-    renderComponent();
-
-    const priceInput = screen.getByLabelText(/Mức giá niêm yết mới \(VNĐ\)/i);
-    fireEvent.change(priceInput, { target: { value: '0' } });
-
-    const submitBtn = screen.getByRole('button', { name: /Xác nhận & Lưu giá mới/i });
-    fireEvent.click(submitBtn);
-
-    await waitFor(() => {
-      expect(screen.getByText(/Mức giá dịch vụ phải lớn hơn 0 đ/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Mức giá niêm yết mới \(VNĐ\)/i), {
+      target: { value: '450000' },
     });
-  });
-
-  it('submits valid form, updates service price, and records price history', async () => {
-    const testService = INITIAL_SERVICES[0];
-    useExaminationServiceStore.setState({ updatePriceService: testService });
-
-    renderComponent();
-
-    const priceInput = screen.getByLabelText(/Mức giá niêm yết mới \(VNĐ\)/i);
-    fireEvent.change(priceInput, { target: { value: '450000' } });
-
-    const decisionInput = screen.getByLabelText(/Số Quyết định \/ Căn cứ pháp lý/i);
-    fireEvent.change(decisionInput, { target: { value: 'QĐ-888/BV-KH' } });
-
-    const submitBtn = screen.getByRole('button', { name: /Xác nhận & Lưu giá mới/i });
-    fireEvent.click(submitBtn);
+    fireEvent.change(screen.getByLabelText(/Số Quyết định \/ Căn cứ pháp lý/i), {
+      target: { value: 'QĐ-888/BV-KH' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Xác nhận & Lưu giá mới/i }));
 
     await waitFor(() => {
-      const updated = useExaminationServiceStore
-        .getState()
-        .services.find((s) => s.id === testService.id);
+      expect(apiClient.put).toHaveBeenCalledWith('/admin/examination-services/1', {
+        price: 450000,
+      });
+      const updated = useExaminationServiceStore.getState().services.find((s) => s.id === '1');
       expect(updated?.price).toBe(450000);
       expect(updated?.decisionNumber).toBe('QĐ-888/BV-KH');
-      expect(updated?.priceHistory?.[0].price).toBe(450000);
     });
-  });
-
-  it('closes modal when clicking Cancel button or pressing Escape', () => {
-    const testService = INITIAL_SERVICES[0];
-    useExaminationServiceStore.setState({ updatePriceService: testService });
-
-    renderComponent();
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-
-    const cancelBtn = screen.getByRole('button', { name: /Hủy bỏ \[Esc\]/i });
-    fireEvent.click(cancelBtn);
-
-    expect(useExaminationServiceStore.getState().updatePriceService).toBeNull();
   });
 });

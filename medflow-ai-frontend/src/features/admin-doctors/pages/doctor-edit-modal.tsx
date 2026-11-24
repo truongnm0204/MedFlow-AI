@@ -1,26 +1,37 @@
-import { Info } from 'lucide-react';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useEffect, useState } from 'react';
+import { Info, Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { Button } from '@/shared/ui/button';
 
+import type { AdminDoctorRecord } from '../api/doctor-admin.api';
 import { DoctorDeactivateModal } from '../components/doctor-deactivate-modal';
 import { DoctorEditFooter, DoctorEditHeader } from '../components/doctor-edit-chrome';
-import { DEGREES, DEPARTMENTS } from '../data/doctor-demo-data';
-import { doctorSchema, type DoctorFormValues } from '../schemas/doctor.schema';
-import { useDoctorDemoStore } from '../store/doctor-demo.store';
 import { DoctorField, doctorControlClass } from '../components/doctor-form-primitives';
+import { DEGREES, DEPARTMENTS } from '../data/doctor-demo-data';
+import { useAdminDoctors, useUpdateAdminDoctorMutation } from '../hooks/use-admin-doctors';
+import { doctorSchema, type DoctorFormValues } from '../schemas/doctor.schema';
 
-/** SCR-ADM-DOC-03 — edit dialog layered over the list as in Figma. */
-export function DoctorEditModal() {
-  const { doctorId } = useParams();
+function DoctorEditDialogForm({ doctor }: { doctor: AdminDoctorRecord }) {
   const navigate = useNavigate();
-  const doctor = useDoctorDemoStore((state) => state.doctors.find((item) => item.id === doctorId));
-  const updateDoctor = useDoctorDemoStore((state) => state.updateDoctor);
+  const updateMutation = useUpdateAdminDoctorMutation();
   const [message, setMessage] = useState('');
   const [showDeactivateModal, setShowDeactivateModal] = useState(false);
+
+  const departmentOptions = useMemo(() => {
+    const set = new Set<string>(DEPARTMENTS);
+    if (doctor.department) set.add(doctor.department);
+    return Array.from(set);
+  }, [doctor.department]);
+
+  const degreeOptions = useMemo(() => {
+    const set = new Set<string>(DEGREES);
+    if (doctor.degree) set.add(doctor.degree);
+    return Array.from(set);
+  }, [doctor.degree]);
+
   const {
     register,
     handleSubmit,
@@ -46,20 +57,17 @@ export function DoctorEditModal() {
     return () => window.removeEventListener('keydown', handleKeys);
   }, [navigate]);
 
-  if (!doctor)
-    return (
-      <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 p-4">
-        <div className="rounded-xl bg-white p-8 text-sm">
-          <p>Không tìm thấy hồ sơ bác sĩ minh họa.</p>
-          <Button className="mt-4" onClick={() => navigate('/admin/doctors')}>
-            Quay lại danh sách
-          </Button>
-        </div>
-      </div>
-    );
-  const save = (values: DoctorFormValues) => {
-    updateDoctor({ ...doctor, ...values });
-    navigate('/admin/doctors');
+  const save = async (values: DoctorFormValues) => {
+    setMessage('');
+    try {
+      await updateMutation.mutateAsync({
+        idOrCode: doctor.backendId || doctor.id,
+        doctor: { ...doctor, ...values },
+      });
+      navigate('/admin/doctors');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Không thể lưu hồ sơ bác sĩ.');
+    }
   };
 
   return (
@@ -75,6 +83,7 @@ export function DoctorEditModal() {
         aria-modal="true"
         aria-labelledby="doctor-edit-title"
         onSubmit={handleSubmit(save)}
+        noValidate
         className="my-auto flex max-h-[calc(100vh-24px)] w-full max-w-[896px] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl"
       >
         <DoctorEditHeader
@@ -86,8 +95,8 @@ export function DoctorEditModal() {
           <div className="mx-6 mt-5 flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-[11px] leading-relaxed text-sky-900">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
             <p>
-              <b>Lưu ý vận hành Khám Ngoại trú:</b> Thông tin buồng khám mặc định và trạng thái nhận
-              lịch của Bác sĩ hiện chỉ được chỉnh sửa trên dữ liệu minh họa trong phiên này.
+              <b>Lưu ý vận hành Khám Ngoại trú:</b> Cập nhật thông tin chuyên môn và trạng thái nhận
+              lịch của bác sĩ sẽ áp dụng trực tiếp cho danh mục bác sĩ và lịch khám trực tuyến.
             </p>
           </div>
           {message && (
@@ -121,7 +130,7 @@ export function DoctorEditModal() {
               error={errors.department?.message}
             >
               <select className={doctorControlClass} {...register('department')}>
-                {DEPARTMENTS.map((item) => (
+                {departmentOptions.map((item) => (
                   <option key={item}>{item}</option>
                 ))}
               </select>
@@ -140,7 +149,7 @@ export function DoctorEditModal() {
             <DoctorField
               label="Chứng chỉ hành nghề (CCHN Bộ Y tế)"
               required
-              hint="Số chứng chỉ minh họa; chưa xác minh với Bộ Y tế."
+              hint="Số chứng chỉ hành nghề được cấp bởi cơ quan có thẩm quyền."
               error={errors.license?.message}
             >
               <input className={doctorControlClass} {...register('license')} />
@@ -158,7 +167,7 @@ export function DoctorEditModal() {
             </DoctorField>
             <DoctorField label="Học hàm / Học vị đào tạo" required error={errors.degree?.message}>
               <select className={doctorControlClass} {...register('degree')}>
-                {DEGREES.map((item) => (
+                {degreeOptions.map((item) => (
                   <option key={item}>{item}</option>
                 ))}
               </select>
@@ -208,7 +217,7 @@ export function DoctorEditModal() {
                 <textarea rows={3} className={doctorControlClass} {...register('biography')} />
               </DoctorField>
               <div className="mt-1 flex justify-between text-[10px] text-slate-400">
-                <span>Nội dung minh họa chưa được đồng bộ lên Ứng dụng Di động.</span>
+                <span>Thông tin hiển thị công khai trên Cổng Bệnh nhân.</span>
                 <span>{biography.length} / 1000 ký tự</span>
               </div>
             </div>
@@ -230,4 +239,47 @@ export function DoctorEditModal() {
       />
     </div>
   );
+}
+
+/** SCR-ADM-DOC-03 — edit dialog layered over the list backed by GET/PUT /api/v1/admin/doctors. */
+export function DoctorEditModal() {
+  const { doctorId } = useParams();
+  const navigate = useNavigate();
+  const { data: doctors = [], isLoading, isError, error } = useAdminDoctors();
+
+  const doctor = useMemo(() => {
+    if (!doctorId) return undefined;
+    const normalized = doctorId.trim().toLowerCase();
+    return doctors.find(
+      (item) => item.id.toLowerCase() === normalized || item.backendId.toLowerCase() === normalized,
+    );
+  }, [doctorId, doctors]);
+
+  if (isLoading) {
+    return (
+      <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 p-4">
+        <div className="flex items-center gap-2 rounded-xl bg-white p-6 text-sm text-sub">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+          <span>Đang tải hồ sơ bác sĩ...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (isError || !doctor) {
+    return (
+      <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 p-4">
+        <div className="rounded-xl bg-white p-8 text-sm">
+          <p>
+            {isError && error instanceof Error ? error.message : 'Không tìm thấy hồ sơ bác sĩ.'}
+          </p>
+          <Button className="mt-4" onClick={() => navigate('/admin/doctors')}>
+            Quay lại danh sách
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return <DoctorEditDialogForm key={doctor.id} doctor={doctor} />;
 }

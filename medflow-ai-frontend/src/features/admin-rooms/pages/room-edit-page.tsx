@@ -1,10 +1,14 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { Loader2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
+import { useAdminDepartments } from '@/features/admin-departments/hooks/use-departments';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
 
-import { findRoomById, ROOM_DEPARTMENTS } from '../data/room-edit-mock';
+import { useAdminRooms, useUpdateRoomMutation } from '../hooks/use-rooms';
+import { ROOM_DEPARTMENTS } from '../schemas/room-create.schema';
 import { roomUpdateSchema, type RoomUpdateFormValues } from '../schemas/room-update.schema';
 import type { RoomRecord, RoomStatus, RoomType } from '../types/room-update.types';
 
@@ -26,6 +30,18 @@ const inputClass =
 
 function RoomEditForm({ room }: { room: RoomRecord }) {
   const navigate = useNavigate();
+  const { data: apiDepartments = [] } = useAdminDepartments();
+  const updateRoomMutation = useUpdateRoomMutation();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const departmentOptions = useMemo(() => {
+    const names = new Set<string>();
+    if (room.department) names.add(room.department);
+    for (const dept of apiDepartments) names.add(dept.name);
+    for (const fallback of ROOM_DEPARTMENTS) names.add(fallback);
+    return Array.from(names);
+  }, [apiDepartments, room.department]);
+
   const {
     register,
     handleSubmit,
@@ -46,8 +62,29 @@ function RoomEditForm({ room }: { room: RoomRecord }) {
 
   const values = useWatch({ control });
 
-  const onSubmit = () => {
-    navigate('/admin/rooms');
+  const onSubmit = async (formValues: RoomUpdateFormValues) => {
+    setSubmitError(null);
+    const matchedDepartment = apiDepartments.find((d) => d.name === formValues.department);
+    const parsedDepartmentId = matchedDepartment ? Number(matchedDepartment.id) : null;
+
+    try {
+      await updateRoomMutation.mutateAsync({
+        id: room.id,
+        payload: {
+          roomCode: room.code,
+          name: formValues.name,
+          type: formValues.type,
+          department: formValues.department,
+          departmentId: Number.isFinite(parsedDepartmentId) ? parsedDepartmentId : null,
+          location: formValues.location,
+          capacity: formValues.capacity,
+          status: formValues.status,
+        },
+      });
+      navigate('/admin/rooms');
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Không thể cập nhật buồng khám.');
+    }
   };
 
   return (
@@ -72,6 +109,15 @@ function RoomEditForm({ room }: { room: RoomRecord }) {
           <p className="mt-1 text-sm text-sub">
             Khởi tạo cơ sở, khoa, vị trí, sức chứa và trạng thái phòng
           </p>
+
+          {submitError ? (
+            <div
+              role="alert"
+              className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+            >
+              {submitError}
+            </div>
+          ) : null}
 
           <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
             <div className="space-y-6 rounded-xl border border-border bg-white p-6">
@@ -129,7 +175,7 @@ function RoomEditForm({ room }: { room: RoomRecord }) {
                   </label>
                   <select id="room-dept" {...register('department')} className={inputClass}>
                     <option value="">-- Chọn khoa --</option>
-                    {ROOM_DEPARTMENTS.map((d) => (
+                    {departmentOptions.map((d) => (
                       <option key={d} value={d}>
                         {d}
                       </option>
@@ -247,6 +293,7 @@ function RoomEditForm({ room }: { room: RoomRecord }) {
             <button
               type="submit"
               aria-label="Lưu thay đổi"
+              disabled={updateRoomMutation.isPending}
               className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-dark"
             >
               Lưu thay đổi
@@ -260,14 +307,35 @@ function RoomEditForm({ room }: { room: RoomRecord }) {
 
 export function RoomEditPage() {
   const { id } = useParams<{ id: string }>();
-  const room = findRoomById(id);
+  const { data, isLoading, isError, error } = useAdminRooms();
 
-  if (!room) {
+  const room = useMemo(() => {
+    if (!id || !data?.records) return null;
+    const normalized = id.trim().toLowerCase();
+    return (
+      data.records.find(
+        (item) => item.id.toLowerCase() === normalized || item.code.toLowerCase() === normalized,
+      ) ?? null
+    );
+  }, [data?.records, id]);
+
+  if (isLoading) {
+    return (
+      <AdminPortalShell activeTab="Buồng khám & Kỹ thuật" showTabs={false}>
+        <main className="mx-auto flex max-w-[1720px] items-center gap-2 px-6 py-10 text-sm text-sub">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+          <span>Đang tải thông tin buồng khám...</span>
+        </main>
+      </AdminPortalShell>
+    );
+  }
+
+  if (isError || !room) {
     return (
       <AdminPortalShell activeTab="Buồng khám & Kỹ thuật" showTabs={false}>
         <main className="mx-auto max-w-[1720px] px-6 py-10">
           <p role="alert" className="text-sm text-ink">
-            Không tìm thấy buồng khám
+            {isError && error instanceof Error ? error.message : 'Không tìm thấy buồng khám'}
           </p>
           <Link to="/admin/rooms" className="text-sm text-primary">
             ← Danh mục Buồng khám (SCR-ADM-ROOM-01)

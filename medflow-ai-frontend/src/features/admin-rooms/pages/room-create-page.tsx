@@ -1,11 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
 
+import { useAdminDepartments } from '@/features/admin-departments/hooks/use-departments';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
 
+import { useCreateRoomMutation } from '../hooks/use-rooms';
 import {
   DEFAULT_ROOM_FORM_VALUES,
   ROOM_CAPACITY_OPTIONS,
@@ -49,6 +51,16 @@ function loadDraft(): RoomCreateFormValues {
 export function RoomCreatePage() {
   const navigate = useNavigate();
   const [message, setMessage] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const { data: apiDepartments = [] } = useAdminDepartments();
+  const createRoomMutation = useCreateRoomMutation();
+
+  const departmentOptions = useMemo(() => {
+    const names = new Set<string>(apiDepartments.map((d) => d.name));
+    for (const fallback of ROOM_DEPARTMENTS) names.add(fallback);
+    return Array.from(names);
+  }, [apiDepartments]);
 
   const {
     register,
@@ -64,10 +76,28 @@ export function RoomCreatePage() {
 
   const values = useWatch({ control });
 
-  const handleCreate = (data: RoomCreateFormValues) => {
-    window.sessionStorage.removeItem(DRAFT_KEY);
-    setMessage(`Đã khai báo buồng khám ${data.code} - ${data.name}.`);
-    navigate('/admin/rooms');
+  const handleCreate = async (data: RoomCreateFormValues) => {
+    setSubmitError(null);
+    const matchedDepartment = apiDepartments.find((d) => d.name === data.department);
+    const parsedDepartmentId = matchedDepartment ? Number(matchedDepartment.id) : null;
+
+    try {
+      await createRoomMutation.mutateAsync({
+        code: data.code,
+        name: data.name,
+        type: data.type,
+        department: data.department,
+        departmentId: Number.isFinite(parsedDepartmentId) ? parsedDepartmentId : null,
+        location: data.location,
+        capacity: data.capacity,
+        status: data.status,
+      });
+      window.sessionStorage.removeItem(DRAFT_KEY);
+      setMessage(`Đã khai báo buồng khám ${data.code} - ${data.name}.`);
+      navigate('/admin/rooms');
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Không thể khai báo buồng khám.');
+    }
   };
 
   const handleSaveDraft = () => {
@@ -113,6 +143,15 @@ export function RoomCreatePage() {
               className="mt-4 rounded-lg border border-border bg-white p-3 text-sm text-ink"
             >
               {message}
+            </div>
+          ) : null}
+
+          {submitError ? (
+            <div
+              role="alert"
+              className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+            >
+              {submitError}
             </div>
           ) : null}
 
@@ -169,7 +208,7 @@ export function RoomCreatePage() {
                   </label>
                   <select id="room-department" className={inputClass} {...register('department')}>
                     <option value="">Chọn khoa phụ trách</option>
-                    {ROOM_DEPARTMENTS.map((department) => (
+                    {departmentOptions.map((department) => (
                       <option key={department} value={department}>
                         {department}
                       </option>
@@ -284,7 +323,7 @@ export function RoomCreatePage() {
           <button
             type="submit"
             aria-label="Khai báo buồng khám"
-            disabled={isSubmitting}
+            disabled={isSubmitting || createRoomMutation.isPending}
             className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-dark"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />

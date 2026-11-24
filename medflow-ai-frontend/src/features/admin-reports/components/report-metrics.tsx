@@ -1,49 +1,53 @@
-import { CheckCircle2, Clock, FileBarChart2, Users } from 'lucide-react';
+import { CalendarX2, CheckCircle2, Clock, Users } from 'lucide-react';
 
-import type { OperationalReportItem } from '../types/operational-report.types';
+import type { OperationalReportSummary } from '../api/operational-report.api';
 
 interface ReportMetricsProps {
-  reports: OperationalReportItem[];
+  summary: OperationalReportSummary;
+  periodLabel: string;
 }
 
-export function ReportMetrics({ reports }: ReportMetricsProps) {
-  const reportCount = String(reports.length).padStart(2, '0');
+export function ReportMetrics({ summary, periodLabel }: ReportMetricsProps) {
+  const hasMedianWait = summary.medianWaitMinutes != null;
 
   const cards = [
     {
       title: 'LƯỢT TIẾP NHẬN',
-      value: '326',
+      value: String(summary.totalVisits),
       unit: 'Lượt',
-      subtext: 'Số liệu tổng hợp trong ngày',
+      subtext: `Kỳ ${periodLabel} • ${summary.walkInVisits} vãng lai`,
       isBadgeSubtext: false,
       icon: Users,
       iconBg: 'bg-sky-50 text-primary border border-sky-100',
     },
     {
       title: 'THỜI GIAN CHỜ TRUNG VỊ',
-      value: '18',
-      unit: 'Phút',
-      subtext: 'Theo điểm phục vụ',
+      value: hasMedianWait ? String(summary.medianWaitMinutes) : '—',
+      unit: hasMedianWait ? 'Phút' : '',
+      subtext:
+        summary.averageWaitMinutes != null
+          ? `Trung bình ${summary.averageWaitMinutes} phút`
+          : 'Chưa đủ dữ liệu hàng đợi',
       isBadgeSubtext: true,
       icon: Clock,
       iconBg: 'bg-sky-50 text-primary border border-sky-100',
     },
     {
       title: 'TỶ LỆ HOÀN TẤT',
-      value: '94%',
-      unit: 'Lượt',
-      subtext: 'Không bao gồm ca đang xử lý',
+      value: `${summary.completionRatePercent}%`,
+      unit: `${summary.completedVisits}/${summary.totalVisits} ca`,
+      subtext: 'Tính trên tổng lượt tiếp nhận',
       isBadgeSubtext: false,
       icon: CheckCircle2,
       iconBg: 'bg-emerald-50 text-emerald-600 border border-emerald-100',
     },
     {
-      title: 'BÁO CÁO ĐÃ TẠO',
-      value: reportCount,
-      unit: 'Báo cáo',
-      subtext: 'Dữ liệu tổng hợp, ít định danh',
+      title: 'LỊCH HẸN & VẮNG MẶT',
+      value: String(summary.totalAppointments),
+      unit: 'Lịch hẹn',
+      subtext: `Vắng mặt (No-show): ${summary.noShowAppointments} ca`,
       isBadgeSubtext: false,
-      icon: FileBarChart2,
+      icon: CalendarX2,
       iconBg: 'bg-sky-50 text-primary border border-sky-100',
     },
   ];
@@ -64,7 +68,7 @@ export function ReportMetrics({ reports }: ReportMetricsProps) {
               <p className="text-xs font-bold tracking-wide text-sub">{card.title}</p>
               <div className="mt-2 flex items-baseline gap-2">
                 <span className="text-3xl font-bold leading-none text-ink">{card.value}</span>
-                <span className="text-xs font-semibold text-sub">{card.unit}</span>
+                {card.unit && <span className="text-xs font-semibold text-sub">{card.unit}</span>}
               </div>
               <div className="mt-3">
                 {card.isBadgeSubtext ? (

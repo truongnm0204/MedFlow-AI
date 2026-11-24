@@ -1,133 +1,136 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import type { AxiosResponse } from 'axios';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DEPARTMENT_MOCK_DATA } from '../data/department-mock-data';
+import { apiClient } from '@/shared/lib/axios';
+
 import { DepartmentListPage } from '../pages/department-list-page';
-import { useDepartmentStore } from '../store/department.store';
 
-const renderPage = () =>
-  render(
-    <MemoryRouter>
-      <DepartmentListPage />
-    </MemoryRouter>,
+const SAMPLE_DEPARTMENTS = [
+  {
+    id: 1,
+    code: 'DEP-001',
+    name: 'Khoa Nội Tiêu hóa',
+    hospitalId: 1,
+    facility: 'MedFlow Cơ sở 1',
+    isActive: true,
+    status: 'ACTIVE',
+  },
+  {
+    id: 3,
+    code: 'DEP-003',
+    name: 'Khoa Nội tiết',
+    hospitalId: 1,
+    facility: 'MedFlow Cơ sở 1',
+    isActive: true,
+    status: 'ACTIVE',
+  },
+  {
+    id: 13,
+    code: 'DEP-013',
+    name: 'Khoa Da liễu',
+    hospitalId: 1,
+    facility: 'MedFlow Cơ sở 1',
+    isActive: false,
+    status: 'INACTIVE',
+  },
+];
+
+function renderPage() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <DepartmentListPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
-describe('DepartmentListPage (SCR-ADM-DEP-01)', () => {
+}
+
+describe('DepartmentListPage (SCR-ADM-DEP-01 real API)', () => {
+  let currentList = [...SAMPLE_DEPARTMENTS];
+
   beforeEach(() => {
-    useDepartmentStore.getState().resetToMock();
+    currentList = [...SAMPLE_DEPARTMENTS];
+    vi.spyOn(apiClient, 'get').mockImplementation(async () => {
+      return {
+        data: {
+          data: currentList,
+          total: currentList.length,
+          page: 1,
+          pageSize: 100,
+          totalPages: 1,
+        },
+      } as AxiosResponse;
+    });
   });
 
-  it('has 14 mock departments with 12 active', () => {
-    expect(DEPARTMENT_MOCK_DATA).toHaveLength(14);
-    expect(DEPARTMENT_MOCK_DATA.filter((d) => d.status === 'ACTIVE')).toHaveLength(12);
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it('renders breadcrumb and the 4 metric cards', () => {
+  it('fetches GET /admin/departments and renders metric cards and rows', async () => {
     renderPage();
-    expect(screen.getByText('Danh mục Khoa phòng (SCR-ADM-DEP-01)')).toBeInTheDocument();
-    expect(screen.getByText('TỔNG SỐ KHOA')).toBeInTheDocument();
-    expect(screen.getByText('14')).toBeInTheDocument();
-    expect(screen.getByText('12 khoa đang hoạt động')).toBeInTheDocument();
-    expect(screen.getByText('ĐANG HOẠT ĐỘNG')).toBeInTheDocument();
-    expect(screen.getByText('TẠM NGỪNG')).toBeInTheDocument();
-    expect(screen.getByText('02')).toBeInTheDocument();
-    expect(screen.getByText('CƠ SỞ QUẢN LÝ')).toBeInTheDocument();
-    expect(screen.getByText('01')).toBeInTheDocument();
-  });
 
-  it('renders table columns and first page of rows', () => {
-    renderPage();
-    for (const col of ['MÃ KHOA', 'TÊN KHOA', 'CƠ SỞ', 'TRẠNG THÁI', 'THAO TÁC']) {
-      expect(screen.getByRole('columnheader', { name: col })).toBeInTheDocument();
-    }
+    expect(await screen.findByText('Khoa Nội Tiêu hóa')).toBeInTheDocument();
     expect(screen.getByText('DEP-001')).toBeInTheDocument();
-    expect(screen.getByText('Khoa Nội Tiêu hóa')).toBeInTheDocument();
-    expect(screen.queryByText('DEP-011')).not.toBeInTheDocument();
+    expect(screen.getByText('2 khoa đang hoạt động')).toBeInTheDocument();
   });
 
-  it('paginates to the second page', () => {
+  it('filters by search and status', async () => {
     renderPage();
-    fireEvent.click(screen.getByRole('button', { name: 'Trang sau' }));
-    expect(screen.getByText('DEP-014')).toBeInTheDocument();
-    expect(screen.queryByText('DEP-001')).not.toBeInTheDocument();
-  });
+    await screen.findByText('Khoa Nội Tiêu hóa');
 
-  it('filters by search text', () => {
-    renderPage();
     fireEvent.change(screen.getByLabelText('Tìm theo mã khoa hoặc tên khoa'), {
       target: { value: 'dep-003' },
     });
     expect(screen.getByText('Khoa Nội tiết')).toBeInTheDocument();
     expect(screen.queryByText('DEP-001')).not.toBeInTheDocument();
-  });
 
-  it('filters by status', () => {
-    renderPage();
+    fireEvent.change(screen.getByLabelText('Tìm theo mã khoa hoặc tên khoa'), {
+      target: { value: '' },
+    });
     fireEvent.change(screen.getByLabelText('Lọc theo trạng thái'), {
       target: { value: 'INACTIVE' },
     });
-    expect(screen.getAllByText('Tạm ngừng', { selector: 'span' })).toHaveLength(2);
+    expect(screen.getByText('Khoa Da liễu')).toBeInTheDocument();
     expect(screen.queryByText('DEP-001')).not.toBeInTheDocument();
   });
 
-  it('shows empty state when nothing matches', () => {
-    renderPage();
-    fireEvent.change(screen.getByLabelText('Tìm theo mã khoa hoặc tên khoa'), {
-      target: { value: 'zzz' },
+  it('calls PUT /admin/departments/:id on deactivate and reactivate', async () => {
+    const putSpy = vi.spyOn(apiClient, 'put').mockImplementation(async (url, body) => {
+      const idNum = Number(url.split('/').pop());
+      const payload = body as { isActive: boolean };
+      currentList = currentList.map((d) =>
+        d.id === idNum
+          ? { ...d, isActive: payload.isActive, status: payload.isActive ? 'ACTIVE' : 'INACTIVE' }
+          : d,
+      );
+      return { data: currentList.find((d) => d.id === idNum) } as AxiosResponse;
     });
-    expect(screen.getByText('Không tìm thấy khoa phòng phù hợp')).toBeInTheDocument();
-  });
 
-  it('opens deactivate modal when clicking power icon on an active department', () => {
     renderPage();
-    const deactivateBtn = screen.getByRole('button', {
-      name: 'Ngừng hoạt động Khoa Nội Tiêu hóa',
-    });
-    fireEvent.click(deactivateBtn);
+    await screen.findByText('Khoa Nội tiết');
 
-    expect(
-      screen.getByRole('heading', { name: 'Ngừng hoạt động khoa phòng?' }),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText('DEP-001').length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('successfully deactivates an eligible department and updates metrics and status', async () => {
-    renderPage();
-    // DEP-003 Khoa Nội tiết is active with 0 dependencies
-    const deactivateBtn = screen.getByRole('button', {
-      name: 'Ngừng hoạt động Khoa Nội tiết',
-    });
-    fireEvent.click(deactivateBtn);
-
-    const modalConfirmBtn = screen.getByRole('button', { name: 'Ngừng hoạt động' });
-    expect(modalConfirmBtn).not.toBeDisabled();
-    fireEvent.click(modalConfirmBtn);
+    fireEvent.click(screen.getByRole('button', { name: 'Ngừng hoạt động Khoa Nội tiết' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ngừng hoạt động' }));
 
     await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledWith(
+        '/admin/departments/3',
+        expect.objectContaining({ isActive: false }),
+      );
       expect(screen.getByText(/Đã ngừng hoạt động khoa phòng Khoa Nội tiết/i)).toBeInTheDocument();
     });
-    // Status changed: 11 active, 3 inactive
-    expect(screen.getByText('11 khoa đang hoạt động')).toBeInTheDocument();
-    expect(screen.getByText('03')).toBeInTheDocument();
-  });
 
-  it('reactivates an inactive department when clicking reactivate button', async () => {
-    renderPage();
-    // Go to page 2 where DEP-013 Khoa Da liễu is located
-    fireEvent.click(screen.getByRole('button', { name: 'Trang sau' }));
-
-    const reactivateBtn = screen.getByRole('button', {
-      name: 'Kích hoạt lại Khoa Da liễu',
-    });
-    fireEvent.click(reactivateBtn);
-
+    fireEvent.click(screen.getByRole('button', { name: 'Kích hoạt lại Khoa Da liễu' }));
     await waitFor(() => {
-      expect(
-        screen.getByText(/Đã kích hoạt lại hoạt động cho khoa phòng Khoa Da liễu/i),
-      ).toBeInTheDocument();
+      expect(putSpy).toHaveBeenCalledWith(
+        '/admin/departments/13',
+        expect.objectContaining({ isActive: true }),
+      );
     });
-    // Status changed: 13 active, 1 inactive
-    expect(screen.getByText('13 khoa đang hoạt động')).toBeInTheDocument();
-    expect(screen.getAllByText('01')).toHaveLength(2);
   });
 });

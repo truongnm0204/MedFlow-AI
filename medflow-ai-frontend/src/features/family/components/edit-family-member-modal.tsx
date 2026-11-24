@@ -42,13 +42,11 @@ function EditFamilyMemberForm({ member, onClose, onSave }: EditFamilyMemberFormP
   const [address, setAddress] = useState(member.address ?? '');
 
   const defaultRel = member.emergencyContactRelation ?? 'Chủ tài khoản chính';
-  const defaultName = member.emergencyContactName ?? member.guardian ?? 'Nguyễn Văn An';
+  const defaultName = member.emergencyContactName ?? member.guardian ?? '';
   const [emergencyNameAndRel, setEmergencyNameAndRel] = useState(
-    defaultName.includes('-') ? defaultName : `${defaultName} - ${defaultRel}`,
+    defaultName ? (defaultName.includes('-') ? defaultName : `${defaultName} - ${defaultRel}`) : '',
   );
-  const [emergencyPhone, setEmergencyPhone] = useState(
-    member.emergencyPhone ?? member.phone ?? '0912 345 678',
-  );
+  const [emergencyPhone, setEmergencyPhone] = useState(member.emergencyPhone ?? member.phone ?? '');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -57,9 +55,8 @@ function EditFamilyMemberForm({ member, onClose, onSave }: EditFamilyMemberFormP
 
     // Parse Họ tên & Mối quan hệ
     const parts = emergencyNameAndRel.split('-').map((s) => s.trim());
-    const emergencyContactName = parts[0] || member.emergencyContactName || 'Nguyễn Văn An';
-    const emergencyContactRelation =
-      parts[1] || member.emergencyContactRelation || 'Chủ tài khoản chính';
+    const emergencyContactName = parts[0] || member.emergencyContactName || undefined;
+    const emergencyContactRelation = parts[1] || member.emergencyContactRelation || undefined;
 
     const inputData: UpdateFamilyMemberInput = {
       phone: phone.trim() || undefined,

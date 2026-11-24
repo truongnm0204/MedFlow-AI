@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { DollarSign, Info } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { DollarSign, Info, Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -12,24 +12,44 @@ import { ServicePriceHistoryModal } from '../components/service-price-history-mo
 import { ServicePriceUpdateModal } from '../components/service-price-update-modal';
 import { DEPARTMENTS } from '../data/examination-services-data';
 import {
+  useAdminExaminationServices,
+  useUpdateExaminationServiceMutation,
+} from '../hooks/use-examination-services';
+import {
   examinationServiceSchema,
   type ExaminationServiceFormValues,
 } from '../schemas/examination-service.schema';
 import { useExaminationServiceStore } from '../store/examination-service.store';
 
-/** SCR-ADM-ESV-03 — edit dialog layered over the services list, matching DoctorEditModal architecture. */
 export function ServiceEditModal() {
   const { serviceId } = useParams();
   const navigate = useNavigate();
 
-  const service = useExaminationServiceStore((state) =>
-    state.services.find((item) => item.id === serviceId || item.code === serviceId),
-  );
-  const updateService = useExaminationServiceStore((state) => state.updateService);
+  const { isLoading } = useAdminExaminationServices();
+  const updateMutation = useUpdateExaminationServiceMutation();
+
+  const services = useExaminationServiceStore((state) => state.services);
+  const updateServiceInStore = useExaminationServiceStore((state) => state.updateService);
   const setPriceHistoryService = useExaminationServiceStore(
     (state) => state.setPriceHistoryService,
   );
   const setUpdatePriceService = useExaminationServiceStore((state) => state.setUpdatePriceService);
+
+  const service = useMemo(
+    () =>
+      services.find(
+        (item) =>
+          item.id.toLowerCase() === (serviceId ?? '').toLowerCase() ||
+          item.code.toLowerCase() === (serviceId ?? '').toLowerCase(),
+      ),
+    [serviceId, services],
+  );
+
+  const departmentOptions = useMemo(() => {
+    const set = new Set<string>(DEPARTMENTS);
+    if (service?.department) set.add(service.department);
+    return Array.from(set);
+  }, [service?.department]);
 
   const [message, setMessage] = useState('');
 
@@ -67,11 +87,22 @@ export function ServiceEditModal() {
     return () => window.removeEventListener('keydown', handleKeys);
   }, [navigate]);
 
+  if (isLoading && !service) {
+    return (
+      <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 p-4">
+        <div className="flex items-center gap-2 rounded-xl bg-white p-6 text-sm text-sub">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+          <span>Đang tải thông tin dịch vụ khám...</span>
+        </div>
+      </div>
+    );
+  }
+
   if (!service) {
     return (
       <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 p-4">
         <div className="rounded-xl bg-white p-8 text-sm">
-          <p>Không tìm thấy hồ sơ dịch vụ khám minh họa.</p>
+          <p>Không tìm thấy hồ sơ dịch vụ khám.</p>
           <Button className="mt-4" onClick={() => navigate('/admin/services')}>
             Quay lại danh sách
           </Button>
@@ -80,16 +111,25 @@ export function ServiceEditModal() {
     );
   }
 
-  const save = (values: ExaminationServiceFormValues) => {
-    updateService(service.id, {
-      name: values.name,
-      category: values.category as ExaminationServiceFormValues['category'],
-      department: values.department,
-      description: values.description,
-      onlineBooking: values.onlineBooking,
-      status: values.status,
-    });
-    navigate('/admin/services');
+  const save = async (values: ExaminationServiceFormValues) => {
+    setMessage('');
+    try {
+      await updateMutation.mutateAsync({
+        serviceId: service.id,
+        values,
+      });
+      updateServiceInStore(service.id, {
+        name: values.name,
+        category: values.category,
+        department: values.department,
+        description: values.description,
+        onlineBooking: values.onlineBooking,
+        status: values.status,
+      });
+      navigate('/admin/services');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Không thể cập nhật dịch vụ khám.');
+    }
   };
 
   return (
@@ -105,6 +145,7 @@ export function ServiceEditModal() {
         aria-modal="true"
         aria-labelledby="service-edit-title"
         onSubmit={handleSubmit(save)}
+        noValidate
         className="my-auto flex max-h-[calc(100vh-24px)] w-full max-w-[896px] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl"
       >
         <ServiceEditHeader
@@ -114,13 +155,12 @@ export function ServiceEditModal() {
         />
 
         <div className="overflow-y-auto">
-          {/* Operational notice banner */}
           <div className="mx-6 mt-5 flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-[11px] leading-relaxed text-sky-900">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
             <p>
               <b>Lưu ý vận hành Khám Ngoại trú:</b> Cập nhật thông tin dịch vụ khám và cờ đặt lịch
-              trực tuyến sẽ áp dụng ngay vào phiên làm việc hiện tại. Biểu phí được đồng bộ theo
-              UC52; buồng khám và slot phân bổ theo UC53.
+              trực tuyến sẽ áp dụng trực tiếp trên hệ thống. Biểu phí được đồng bộ theo UC52; buồng
+              khám và slot phân bổ theo UC53.
             </p>
           </div>
 
@@ -134,7 +174,6 @@ export function ServiceEditModal() {
           )}
 
           <div className="grid gap-x-5 gap-y-4 px-6 py-5 sm:grid-cols-2">
-            {/* Service Code */}
             <FormField
               label="Mã Dịch vụ khám (Service ID)"
               required
@@ -147,20 +186,18 @@ export function ServiceEditModal() {
               />
             </FormField>
 
-            {/* Department */}
             <FormField
               label="Khoa công tác trực thuộc / Chuyên môn quản lý"
               required
               error={errors.department?.message}
             >
               <select className={formControlClass} {...register('department')}>
-                {DEPARTMENTS.map((item) => (
+                {departmentOptions.map((item) => (
                   <option key={item}>{item}</option>
                 ))}
               </select>
             </FormField>
 
-            {/* Service Name */}
             <div className="sm:col-span-2">
               <FormField label="Tên Dịch vụ khám ngoại trú" required error={errors.name?.message}>
                 <input
@@ -172,7 +209,6 @@ export function ServiceEditModal() {
               </FormField>
             </div>
 
-            {/* Category */}
             <FormField label="Phân loại dịch vụ" required error={errors.category?.message}>
               <select className={formControlClass} {...register('category')}>
                 <option value="Khám Lâm sàng">Khám Lâm sàng (EXAMINATION)</option>
@@ -181,7 +217,6 @@ export function ServiceEditModal() {
               </select>
             </FormField>
 
-            {/* Price Reference (UC52) */}
             <FormField
               label="Đơn giá niêm yết hiện hành"
               hint="Chỉ xem tại đây. Biểu phí được phê duyệt theo quy trình UC52."
@@ -212,7 +247,6 @@ export function ServiceEditModal() {
               </div>
             </FormField>
 
-            {/* Online Booking Switch Card */}
             <label className="flex items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] sm:col-span-2 cursor-pointer">
               <span>
                 <b>● Cho phép đặt lịch trực tuyến (Online Booking)</b>
@@ -230,7 +264,6 @@ export function ServiceEditModal() {
               />
             </label>
 
-            {/* Service Status Switch Card */}
             <label
               className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[11px] sm:col-span-2 cursor-pointer ${
                 status === 'ACTIVE'
@@ -263,7 +296,6 @@ export function ServiceEditModal() {
               />
             </label>
 
-            {/* Description */}
             <div className="sm:col-span-2">
               <FormField
                 label="Mô tả chi tiết phạm vi khám & Chỉ định lâm sàng"

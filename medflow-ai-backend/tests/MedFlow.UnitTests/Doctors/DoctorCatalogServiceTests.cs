@@ -638,4 +638,59 @@ public sealed class DoctorCatalogServiceTests : IDisposable
 
         await Assert.ThrowsAsync<ValidationException>(() => _sut.SearchAsync(request));
     }
+
+    [Fact]
+    public async Task ResolveConsultationPrice_WhenMissingOrZero_NeverFallsBackTo200k()
+    {
+        _db.Services.AddRange(
+            new Service
+            {
+                Id = 40,
+                HospitalId = 1,
+                DepartmentId = 2,
+                SpecialtyId = 1,
+                ServiceCode = "EX-GI-NOPRICE",
+                Name = "Khám chưa cấu hình giá",
+                ServiceType = "EXAMINATION",
+                AllowsOnlineBooking = true,
+                IsActive = true,
+            },
+            new Service
+            {
+                Id = 41,
+                HospitalId = 1,
+                DepartmentId = 3,
+                SpecialtyId = 2,
+                ServiceCode = "EX-CARD-ZERO",
+                Name = "Khám miễn phí",
+                ServiceType = "EXAMINATION",
+                AllowsOnlineBooking = true,
+                IsActive = true,
+            });
+        _db.ServicePrices.Add(new ServicePrice
+        {
+            Id = 41,
+            ServiceId = 41,
+            PriceAmount = 0m,
+            EffectiveFrom = new DateTime(2026, 1, 1),
+        });
+        _db.Staff.AddRange(
+            new Staff { Id = 40, UserId = 140, HospitalId = 1, DepartmentId = 2, StaffCode = "STF-040", FullName = "BS Chưa Có Giá", Status = "ACTIVE" },
+            new Staff { Id = 41, UserId = 141, HospitalId = 1, DepartmentId = 3, StaffCode = "STF-041", FullName = "BS Miễn Phí", Status = "ACTIVE" });
+        _db.Doctors.AddRange(
+            new Doctor { Id = 40, StaffId = 40, HospitalId = 1, DoctorCode = "DOC-040", SpecialtyId = 1, ProfessionalTitle = "BS", IsActive = true },
+            new Doctor { Id = 41, StaffId = 41, HospitalId = 1, DoctorCode = "DOC-041", SpecialtyId = 2, ProfessionalTitle = "BS", IsActive = true });
+        _db.DoctorServiceAuthorizations.AddRange(
+            new DoctorServiceAuthorization { DoctorId = 40, ServiceId = 40, IsActive = true },
+            new DoctorServiceAuthorization { DoctorId = 41, ServiceId = 41, IsActive = true });
+        await _db.SaveChangesAsync();
+
+        var unpricedDoc = await _sut.GetByIdOrCodeAsync("DOC-040");
+        Assert.Null(unpricedDoc.Price);
+        Assert.Equal("Chưa cập nhật", unpricedDoc.PriceFormatted);
+
+        var zeroDoc = await _sut.GetByIdOrCodeAsync("DOC-041");
+        Assert.Equal(0m, zeroDoc.Price);
+        Assert.Equal("0 VNĐ", zeroDoc.PriceFormatted);
+    }
 }

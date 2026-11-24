@@ -20,12 +20,14 @@ import { Button } from '@/shared/ui/button';
 import { ServicePriceHistoryModal } from '../components/service-price-history-modal';
 import { ServicePriceUpdateModal } from '../components/service-price-update-modal';
 import { CATEGORIES, DEPARTMENTS } from '../data/examination-services-data';
+import { useAdminExaminationServices } from '../hooks/use-examination-services';
 import { useExaminationServiceStore } from '../store/examination-service.store';
 
 export function ServicePricingPage() {
   const user = useAuthStore((state) => state.user);
   const canUpdatePrice = hasAnyRole(user?.roles, ['HOSPITAL_ADMIN', 'SYSTEM_ADMIN']);
 
+  useAdminExaminationServices();
   const services = useExaminationServiceStore((state) => state.services);
   const setPriceHistoryService = useExaminationServiceStore(
     (state) => state.setPriceHistoryService,
@@ -52,8 +54,9 @@ export function ServicePricingPage() {
         avgPrice: 0,
         maxPrice: 0,
         minPrice: 0,
-        latestDecision: 'N/A',
-        latestDate: 'N/A',
+        latestDecision: 'Chưa cập nhật',
+        latestDate: 'Chưa cập nhật',
+        pricedRatio: 0,
       };
     }
     const prices = services.map((s) => s.price);
@@ -64,8 +67,10 @@ export function ServicePricingPage() {
 
     // Find the latest decision entry
     const latestService = services.find((s) => s.decisionNumber);
-    const latestDecision = latestService?.decisionNumber ?? 'QĐ-142/BV-KH';
-    const latestDate = latestService?.effectiveDate ?? '2026-01-01';
+    const latestDecision = latestService?.decisionNumber ?? 'Chưa cập nhật';
+    const latestDate = latestService?.effectiveDate ?? 'Chưa cập nhật';
+    const pricedCount = services.filter((s) => s.price > 0).length;
+    const pricedRatio = Math.round((pricedCount / services.length) * 100);
 
     return {
       total: services.length,
@@ -74,6 +79,7 @@ export function ServicePricingPage() {
       minPrice: min,
       latestDecision,
       latestDate,
+      pricedRatio,
     };
   }, [services]);
 
@@ -135,8 +141,8 @@ export function ServicePricingPage() {
       s.department,
       s.category,
       s.price.toString(),
-      s.decisionNumber ?? 'QĐ-142/BV-KH',
-      s.effectiveDate ?? '2026-01-01',
+      s.decisionNumber ?? 'Chưa cập nhật',
+      s.effectiveDate ?? 'Chưa cập nhật',
       s.status === 'ACTIVE' ? 'Hoạt động' : 'Tạm dừng',
     ]);
     const csvContent = [
@@ -210,7 +216,7 @@ export function ServicePricingPage() {
             <div className="mt-2 text-2xl font-bold text-ink">{metrics.total}</div>
             <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-700 font-medium">
               <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>100% dịch vụ đã áp dụng giá</span>
+              <span>{metrics.pricedRatio}% dịch vụ đã áp dụng giá</span>
             </div>
           </div>
 
@@ -415,10 +421,10 @@ export function ServicePricingPage() {
                     {/* Decision */}
                     <td className="px-4 py-3.5">
                       <div className="font-mono text-[11px] font-semibold text-slate-700">
-                        {service.decisionNumber ?? 'QĐ-142/BV-KH'}
+                        {service.decisionNumber ?? 'Chưa cập nhật'}
                       </div>
                       <div className="text-[10px] text-slate-400 mt-0.5">
-                        {service.effectiveDate ?? '01/01/2026'}
+                        {service.effectiveDate ?? 'Chưa cập nhật'}
                       </div>
                     </td>
 

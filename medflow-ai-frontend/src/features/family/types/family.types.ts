@@ -4,9 +4,9 @@ export type RelationshipType =
 export type RelationshipStatus = 'ACTIVE' | 'PENDING' | 'REVOKED' | 'NEEDS_REVIEW';
 
 export interface FamilyMemberVitals {
-  bloodType: string;
-  heightCm: number;
-  weightKg: number;
+  bloodType: string | null;
+  heightCm: number | null;
+  weightKg: number | null;
 }
 
 export interface FamilyMemberNotice {
@@ -30,7 +30,7 @@ export interface FamilyMember {
   patientCode: string;
   subStatus: string;
   isPrimaryAccount: boolean;
-  avatarUrl: string;
+  avatarUrl?: string | null;
   birthDate: string;
   age: number;
   gender: 'Nam' | 'Nữ';

@@ -17,8 +17,9 @@ export interface WalkInService {
   id: string;
   code: string;
   name: string;
-  price: number;
+  price: number | null;
   priceFormatted: string;
+  hasEffectivePrice?: boolean;
 }
 
 export interface WalkInDepartment {

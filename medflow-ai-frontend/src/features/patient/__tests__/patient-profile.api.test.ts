@@ -13,10 +13,9 @@ import {
   mapStaffUserToProfileModel,
   type PatientProfileResponseDto,
 } from '../api/patient-profile.api';
-import { mockPatientProfile } from '../data/patient-profile.mock';
 import { usePatientProfileQuery } from '../hooks/use-patient-profile';
 
-describe('patient-profile.api (M1-24 HTTP + fallback)', () => {
+describe('patient-profile.api (PHI safety & strict HTTP)', () => {
   afterEach(() => {
     useAuthStore.getState().clearAuth();
     vi.restoreAllMocks();
@@ -39,11 +38,7 @@ describe('patient-profile.api (M1-24 HTTP + fallback)', () => {
       status: 'ACTIVE',
       address: 'Địa chỉ demo số 1, Hà Nội',
       bloodType: 'A+',
-      allowedActions: [
-        'UPDATE_PERSONAL_PROFILE',
-        'MANAGE_FAMILY_PROFILES',
-        'DOWNLOAD_PROFILE_SUMMARY',
-      ],
+      allowedActions: ['UPDATE_PERSONAL_PROFILE'],
     };
 
     const getSpy = vi
@@ -58,17 +53,13 @@ describe('patient-profile.api (M1-24 HTTP + fallback)', () => {
     expect(result.identity.dateOfBirth).toBe('02/02/1980');
     expect(result.identity.age).toBe(46);
     expect(result.identity.gender).toBe('Nam');
-    expect(result.identity.isIdentityVerified).toBe(true);
-    expect(result.identity.identityNumber).toBe('****** (Đã xác thực CCCD)');
-    expect(result.identity.pidNumber).toBe('PAT-0001');
     expect(result.vitals.bloodType).toBe('A+');
+    expect(result.vitals.heightCm).toBeNull();
+    expect(result.vitals.weightKg).toBeNull();
     expect(result.contact.phone).toBe('0900000001');
-    expect(result.contact.email).toBe('patient01@medflow.test');
-    expect(result.contact.isEmailVerified).toBe(true);
-    expect(result.contact.permanentAddress).toBe('Địa chỉ demo số 1, Hà Nội');
   });
 
-  it('maps FEMALE and OTHER genders and falls back when optional fields are null', () => {
+  it('never leaks mock O+ blood type, height, weight, or fake emergency contact when DTO fields are null', () => {
     const femaleDto: PatientProfileResponseDto = {
       id: 2,
       userId: 2,
@@ -88,49 +79,44 @@ describe('patient-profile.api (M1-24 HTTP + fallback)', () => {
       allowedActions: [],
     };
 
-    const mapped = mapPatientProfileDtoToModel(femaleDto, mockPatientProfile);
+    const mapped = mapPatientProfileDtoToModel(femaleDto);
     expect(mapped.identity.gender).toBe('Nữ');
     expect(mapped.identity.isIdentityVerified).toBe(false);
     expect(mapped.identity.identityNumber).toBe('Chưa cập nhật CCCD');
-    expect(mapped.contact.isEmailVerified).toBe(false);
-    expect(mapped.vitals.bloodType).toBe(mockPatientProfile.vitals.bloodType);
+    expect(mapped.vitals.bloodType).toBe('Chưa cập nhật');
+    expect(mapped.vitals.bloodType).not.toBe('O+');
+    expect(mapped.vitals.heightCm).toBeNull();
+    expect(mapped.vitals.weightKg).toBeNull();
+    expect(mapped.contact.emergencyContact.fullName).toBe('Chưa cập nhật');
 
-    const otherMapped = mapPatientProfileDtoToModel(
-      { ...femaleDto, gender: 'OTHER' },
-      mockPatientProfile,
-    );
+    const otherMapped = mapPatientProfileDtoToModel({ ...femaleDto, gender: 'OTHER' });
     expect(otherMapped.identity.gender).toBe('Khác');
   });
 
-  it('falls back to mockPatientProfile when backend is offline or returns 404', async () => {
-    const networkError = new AxiosError('Network Error', 'ERR_NETWORK');
+  it('propagates 401, 404, and network errors instead of falling back to mockPatientProfile', async () => {
+    const unauthorizedError = new AxiosError(
+      'Unauthorized',
+      'ERR_BAD_REQUEST',
+      undefined,
+      undefined,
+      { status: 401 } as AxiosResponse,
+    );
     const notFoundError = new AxiosError('Not Found', 'ERR_BAD_REQUEST', undefined, undefined, {
       status: 404,
     } as AxiosResponse);
-    const getSpy = vi
-      .spyOn(apiClient, 'get')
-      .mockRejectedValueOnce(networkError)
-      .mockRejectedValueOnce(notFoundError);
+    const networkError = new AxiosError('Network Error', 'ERR_NETWORK');
 
-    await expect(getMyPatientProfileApi()).resolves.toEqual(mockPatientProfile);
-    await expect(getMyPatientProfileApi()).resolves.toEqual(mockPatientProfile);
-    expect(getSpy).toHaveBeenCalledTimes(2);
+    vi.spyOn(apiClient, 'get')
+      .mockRejectedValueOnce(unauthorizedError)
+      .mockRejectedValueOnce(notFoundError)
+      .mockRejectedValueOnce(networkError);
+
+    await expect(getMyPatientProfileApi()).rejects.toThrow('Unauthorized');
+    await expect(getMyPatientProfileApi()).rejects.toThrow('Not Found');
+    await expect(getMyPatientProfileApi()).rejects.toThrow('Network Error');
   });
 
-  it('rethrows unexpected server errors (500) instead of swallowing them', async () => {
-    const serverError = new AxiosError(
-      'Internal Server Error',
-      'ERR_BAD_RESPONSE',
-      undefined,
-      undefined,
-      { status: 500 } as AxiosResponse,
-    );
-    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(serverError);
-
-    await expect(getMyPatientProfileApi()).rejects.toThrow('Internal Server Error');
-  });
-
-  it('fetches remote profile on first mount even with mock initialData', async () => {
+  it('fetches remote profile via usePatientProfileQuery without mock initialData', async () => {
     const remoteDto: PatientProfileResponseDto = {
       id: 99,
       userId: 99,
@@ -161,16 +147,17 @@ describe('patient-profile.api (M1-24 HTTP + fallback)', () => {
       createElement(QueryClientProvider, { client: queryClient }, children);
 
     const { result } = renderHook(() => usePatientProfileQuery(), { wrapper });
+    expect(result.current.data).toBeUndefined();
 
     await waitFor(() => {
-      expect(result.current.data.id).toBe('PAT-0099');
+      expect(result.current.data?.id).toBe('PAT-0099');
     });
 
     expect(getSpy).toHaveBeenCalledWith('/patients/me/profile');
-    expect(result.current.data.identity.fullName).toBe('LÊ MINH CHI');
+    expect(result.current.data?.identity.fullName).toBe('LÊ MINH CHI');
   });
 
-  it('maps staff/doctor user without calling /patients/me/profile (no 403)', async () => {
+  it('maps staff/doctor user without calling /patients/me/profile or leaking O+ blood type', async () => {
     useAuthStore.getState().setAuth({
       user: {
         id: 3,
@@ -189,7 +176,7 @@ describe('patient-profile.api (M1-24 HTTP + fallback)', () => {
     expect(profile.id).toBe('STF-001');
     expect(profile.identity.fullName).toBe('BS NGUYỄN MINH ĐỨC');
     expect(profile.identity.identityNumber).toBe('STF-001 (Bác sĩ lâm sàng)');
-    expect(profile.contact.email).toBe('doctor01@medflow.test');
+    expect(profile.vitals.bloodType).toBe('Chưa cập nhật');
 
     const directMapped = mapStaffUserToProfileModel({
       id: 5,

@@ -1,4 +1,4 @@
-import { AlertCircle, Calendar, Flag, Lock, ShieldCheck } from 'lucide-react';
+import { AlertCircle, Calendar, Flag, Lock, ShieldCheck, User } from 'lucide-react';
 import type { PatientIdentity } from '../types/patient-profile.types';
 
 interface PatientMedicalIdentityCardProps {
@@ -64,9 +64,11 @@ export function PatientMedicalIdentityCard({ identity }: PatientMedicalIdentityC
           </div>
           <div className="mt-1.5 flex items-center gap-2">
             <span className="text-sm font-bold text-slate-900">{identity.dateOfBirth}</span>
-            <span className="rounded-md bg-slate-200/80 px-2 py-0.5 text-xs font-semibold text-slate-700">
-              Tuổi: {identity.age}
-            </span>
+            {identity.age != null && (
+              <span className="rounded-md bg-slate-200/80 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                Tuổi: {identity.age}
+              </span>
+            )}
           </div>
         </div>
 
@@ -76,7 +78,7 @@ export function PatientMedicalIdentityCard({ identity }: PatientMedicalIdentityC
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
               Giới tính
             </span>
-            <span className="text-sm font-bold text-slate-400">♂</span>
+            <User className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
           </div>
           <p className="mt-1.5 text-sm font-bold text-slate-900">{identity.gender}</p>
         </div>

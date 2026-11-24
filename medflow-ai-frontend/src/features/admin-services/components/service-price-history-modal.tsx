@@ -11,22 +11,20 @@ export function ServicePriceHistoryModal() {
 
   if (!service) return null;
 
-  const history = service.priceHistory ?? [
-    {
-      date: service.effectiveDate ?? '2026-01-01',
-      price: service.price,
-      decisionNumber: service.decisionNumber ?? 'QĐ-142/BV-KH',
-      note: 'Biểu phí hiện hành áp dụng năm 2026',
-      appliedBy: 'Hội đồng Giá Bệnh viện',
-    },
-    {
-      date: '2025-01-01',
-      price: Math.round(service.price * 0.85),
-      decisionNumber: 'QĐ-088/BV-KH',
-      note: 'Biểu phí ban hành năm 2025',
-      appliedBy: 'Ban Giám đốc',
-    },
-  ];
+  const history =
+    service.priceHistory && service.priceHistory.length > 0
+      ? service.priceHistory
+      : service.price > 0 || service.decisionNumber || service.effectiveDate
+        ? [
+            {
+              date: service.effectiveDate ?? 'Chưa cập nhật',
+              price: service.price,
+              decisionNumber: service.decisionNumber ?? 'Chưa cập nhật',
+              note: 'Biểu phí đang niêm yết tại cơ sở',
+              appliedBy: 'Chưa cập nhật',
+            },
+          ]
+        : [];
 
   const formatVnd = (num: number) => num.toLocaleString('vi-VN') + ' đ';
 
@@ -53,7 +51,7 @@ export function ServicePriceHistoryModal() {
             className="rounded p-1 text-slate-400 hover:text-slate-600"
             aria-label="Đóng"
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
 
@@ -75,7 +73,7 @@ export function ServicePriceHistoryModal() {
 
           <div>
             <h3 className="text-xs font-bold text-ink mb-2 flex items-center gap-1.5">
-              <Calendar className="h-3.5 w-3.5 text-primary" />
+              <Calendar className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
               Lịch sử các quyết định áp dụng giá:
             </h3>
             <div className="overflow-hidden rounded-lg border border-border">
@@ -89,34 +87,42 @@ export function ServicePriceHistoryModal() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {history.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/50">
-                      <td className="px-3 py-2.5 font-medium text-slate-800">
-                        <div className="flex items-center gap-1.5">
-                          <span>{item.date}</span>
-                          {idx === 0 && (
-                            <span className="rounded-full bg-emerald-100 px-1.5 py-0.2 text-[9px] font-bold text-emerald-800">
-                              Đang áp dụng
-                            </span>
-                          )}
-                        </div>
+                  {history.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-sub">
+                        Chưa có lịch sử quyết định giá được ghi nhận.
                       </td>
-                      <td className="px-3 py-2.5 font-mono text-[11px] text-slate-600">
-                        {item.decisionNumber}
-                      </td>
-                      <td className="px-3 py-2.5 font-bold text-emerald-700">
-                        {formatVnd(item.price)}
-                      </td>
-                      <td className="px-3 py-2.5 text-sub text-[11px]">{item.appliedBy}</td>
                     </tr>
-                  ))}
+                  ) : (
+                    history.map((item, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50/50">
+                        <td className="px-3 py-2.5 font-medium text-slate-800">
+                          <div className="flex items-center gap-1.5">
+                            <span>{item.date}</span>
+                            {idx === 0 && (
+                              <span className="rounded-full bg-emerald-100 px-1.5 py-0.2 text-[9px] font-bold text-emerald-800">
+                                Đang áp dụng
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-[11px] text-slate-600">
+                          {item.decisionNumber}
+                        </td>
+                        <td className="px-3 py-2.5 font-bold text-emerald-700">
+                          {formatVnd(item.price)}
+                        </td>
+                        <td className="px-3 py-2.5 text-sub text-[11px]">{item.appliedBy}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
 
           <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3 text-[11px] text-sky-900 flex gap-2.5 items-start">
-            <AlertCircle className="h-4 w-4 shrink-0 text-primary mt-0.5" />
+            <AlertCircle className="h-4 w-4 shrink-0 text-primary mt-0.5" aria-hidden="true" />
             <div>
               <p className="font-bold">Quy tắc liên kết UC52 (Quản lý Biểu phí Cơ sở):</p>
               <p className="mt-0.5 text-sky-800 leading-relaxed">

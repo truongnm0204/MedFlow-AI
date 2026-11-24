@@ -1,9 +1,9 @@
-export type GenderType = 'Nam' | 'Nữ' | 'Khác';
+export type GenderType = 'Nam' | 'Nữ' | 'Khác' | 'Chưa cập nhật';
 
 export interface PatientIdentity {
   fullName: string;
   dateOfBirth: string;
-  age: number;
+  age: number | null;
   gender: GenderType;
   nationality: string;
   identityNumber: string;
@@ -15,14 +15,14 @@ export interface PatientIdentity {
 
 export interface PatientVitals {
   bloodType: string;
-  heightCm: number;
-  weightKg: number;
+  heightCm: number | null;
+  weightKg: number | null;
 }
 
 export interface PatientShortcuts {
-  familyMembersCount: number;
-  outpatientVisitsCount: number;
-  activePrescriptionsCount: number;
+  familyMembersCount: number | null;
+  outpatientVisitsCount: number | null;
+  activePrescriptionsCount: number | null;
 }
 
 export interface EmergencyContact {
@@ -42,7 +42,7 @@ export interface PatientContact {
 
 export interface PatientProfile {
   id: string;
-  avatarUrl?: string;
+  avatarUrl?: string | null;
   identity: PatientIdentity;
   vitals: PatientVitals;
   shortcuts: PatientShortcuts;

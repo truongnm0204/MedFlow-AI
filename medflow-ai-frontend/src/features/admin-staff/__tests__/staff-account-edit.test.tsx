@@ -1,32 +1,63 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { staffUpdateSchema } from '../schemas/staff-update.schema';
+import { apiClient } from '@/shared/lib/axios';
 import { StaffAccountEditPage } from '../pages/staff-account-edit-page';
+import { staffUpdateSchema } from '../schemas/staff-update.schema';
 
-const renderPage = (id = 'STF-0142') =>
-  render(
-    <MemoryRouter initialEntries={[`/admin/staff/${id}/edit`]}>
-      <Routes>
-        <Route path="/admin/staff/:id/edit" element={<StaffAccountEditPage />} />
-        <Route path="/admin/doctors" element={<div>Doctors list mock</div>} />
-      </Routes>
-    </MemoryRouter>,
+vi.mock('@/shared/lib/axios', () => ({
+  apiClient: {
+    get: vi.fn(),
+    put: vi.fn(),
+  },
+}));
+
+const renderPage = (id = 'STF-0142') => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[`/admin/staff/${id}/edit`]}>
+        <Routes>
+          <Route path="/admin/staff/:id/edit" element={<StaffAccountEditPage />} />
+          <Route path="/admin/staff" element={<div>Staff list mock</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
+};
 
-describe('StaffAccountEditPage', () => {
-  it('pre-fills the form from mock data', () => {
-    renderPage();
-    expect(screen.getByRole('heading', { name: 'Cập nhật tài khoản nhân sự' })).toBeInTheDocument();
-    const code = screen.getByDisplayValue('STF-0142') as HTMLInputElement;
-    expect(code.readOnly).toBe(true);
-    expect(screen.getByDisplayValue('Lê Hoàng Minh')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('minh.le@medflow.vn')).toBeInTheDocument();
+describe('StaffAccountEditPage (real API)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        data: [
+          {
+            staffId: 142,
+            code: 'STF-0142',
+            fullName: 'Lê Hoàng Minh',
+            email: 'minh.le@medflow.vn',
+            roleCode: 'DOCTOR',
+            role: 'Bác sĩ',
+            department: 'Khoa Nội Tiêu hóa',
+            facility: 'MedFlow Cơ sở 1 - Hà Nội',
+            status: 'ACTIVE',
+            authProvider: 'LOCAL',
+          },
+        ],
+      },
+    });
+    vi.mocked(apiClient.put).mockResolvedValue({ data: { staffId: 142 } });
   });
 
-  it('updates the live preview while editing', () => {
+  it('pre-fills form from GET /admin/staff and updates live preview', async () => {
     renderPage();
+    expect(await screen.findByDisplayValue('Lê Hoàng Minh')).toBeInTheDocument();
+    const code = screen.getByDisplayValue('STF-0142') as HTMLInputElement;
+    expect(code.readOnly).toBe(true);
+
     fireEvent.change(screen.getByDisplayValue('Lê Hoàng Minh'), {
       target: { value: 'Trần Văn B' },
     });
@@ -36,29 +67,32 @@ describe('StaffAccountEditPage', () => {
     expect(preview.getByText('Điều dưỡng')).toBeInTheDocument();
   });
 
-  it('shows validation errors and blocks save for invalid email', () => {
-    renderPage();
+  it('validates email, calls PUT /admin/staff-accounts/:id, navigates to /admin/staff, and shows alert for unknown id', async () => {
+    const first = renderPage();
+    expect(await screen.findByDisplayValue('minh.le@medflow.vn')).toBeInTheDocument();
+
     fireEvent.change(screen.getByDisplayValue('minh.le@medflow.vn'), {
       target: { value: 'not-an-email' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Lưu thay đổi' }));
     expect(screen.getByText('Email không hợp lệ')).toBeInTheDocument();
-    expect(screen.queryByText('Doctors list mock')).not.toBeInTheDocument();
-  });
+    expect(apiClient.put).not.toHaveBeenCalled();
 
-  it('navigates back on cancel and after valid save', () => {
-    const first = renderPage();
-    fireEvent.click(screen.getByRole('button', { name: 'Hủy bỏ' }));
-    expect(screen.getByText('Doctors list mock')).toBeInTheDocument();
-    first.unmount();
-    renderPage();
+    fireEvent.change(screen.getByDisplayValue('not-an-email'), {
+      target: { value: 'minh.le@medflow.vn' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Lưu thay đổi' }));
-    expect(screen.getByText('Doctors list mock')).toBeInTheDocument();
-  });
+    await waitFor(() => {
+      expect(apiClient.put).toHaveBeenCalledWith(
+        '/admin/staff-accounts/STF-0142',
+        expect.objectContaining({ fullName: 'Lê Hoàng Minh', email: 'minh.le@medflow.vn' }),
+      );
+      expect(screen.getByText('Staff list mock')).toBeInTheDocument();
+    });
+    first.unmount();
 
-  it('shows not-found for unknown staff id', () => {
     renderPage('STF-9999');
-    expect(screen.getByRole('alert')).toHaveTextContent('STF-9999');
+    expect(await screen.findByRole('alert')).toHaveTextContent('STF-9999');
   });
 });
 

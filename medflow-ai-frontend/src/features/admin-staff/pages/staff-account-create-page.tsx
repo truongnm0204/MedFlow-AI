@@ -1,11 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus } from 'lucide-react';
+import { useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
 import { Button } from '@/shared/ui/button';
 
+import { useCreateStaffAccountMutation } from '../hooks/use-staff-accounts';
 import {
   STAFF_DEPARTMENTS,
   STAFF_FACILITIES,
@@ -14,7 +16,7 @@ import {
   type StaffCreateFormValues,
 } from '../schemas/staff-create.schema';
 
-const LIST_PATH = '/admin/doctors';
+const LIST_PATH = '/admin/staff';
 
 const DEFAULT_VALUES: StaffCreateFormValues = {
   staffCode: '',
@@ -50,12 +52,15 @@ function PreviewRow({ label, value }: { label: string; value: string }) {
 
 export function StaffAccountCreatePage() {
   const navigate = useNavigate();
+  const createStaffMutation = useCreateStaffAccountMutation();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
   const {
     register,
     handleSubmit,
     control,
     setValue,
-    formState: { errors },
+    formState: { errors, isSubmitting },
   } = useForm<StaffCreateFormValues>({
     resolver: zodResolver(staffCreateSchema),
     defaultValues: DEFAULT_VALUES,
@@ -65,8 +70,14 @@ export function StaffAccountCreatePage() {
   const roleLabel = STAFF_ROLE_OPTIONS.find((r) => r.value === values.role)?.label ?? '';
   const isLocal = values.authProvider === 'LOCAL';
 
-  const onSubmit = () => {
-    navigate(LIST_PATH);
+  const onSubmit = async (formValues: StaffCreateFormValues) => {
+    setSubmitError(null);
+    try {
+      await createStaffMutation.mutateAsync(formValues);
+      navigate(LIST_PATH);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Không thể tạo tài khoản nhân sự.');
+    }
   };
 
   return (
@@ -82,6 +93,15 @@ export function StaffAccountCreatePage() {
           <p className="mt-1 text-sm text-sub">
             Liên kết hồ sơ nhân sự với email đăng nhập, cơ sở, khoa công tác và vai trò
           </p>
+
+          {submitError ? (
+            <div
+              role="alert"
+              className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+            >
+              {submitError}
+            </div>
+          ) : null}
 
           <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_360px]">
             <div className="space-y-6">
@@ -281,7 +301,13 @@ export function StaffAccountCreatePage() {
           >
             Hủy bỏ
           </Button>
-          <Button type="submit" size="sm" aria-label="Tạo tài khoản" className="gap-1.5 font-bold">
+          <Button
+            type="submit"
+            size="sm"
+            aria-label="Tạo tài khoản"
+            disabled={isSubmitting || createStaffMutation.isPending}
+            className="gap-1.5 font-bold"
+          >
             <Plus className="h-4 w-4" aria-hidden="true" />
             <span>Tạo tài khoản</span>
           </Button>

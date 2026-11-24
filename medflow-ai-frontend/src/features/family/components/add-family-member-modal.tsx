@@ -48,12 +48,10 @@ export function AddFamilyMemberModal({
   const [nationality, setNationality] = useState('Việt Nam');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [address, setAddress] = useState(
-    'Số 45 Tràng Tiền, Phường Tràng Tiền, Quận Hoàn Kiếm, Hà Nội',
-  );
-  const [emergencyContactName, setEmergencyContactName] = useState('Nguyễn Văn An');
-  const emergencyContactRelation = 'Bố ruột (Giám hộ)';
-  const [emergencyPhone, setEmergencyPhone] = useState('0912 345 678');
+  const [address, setAddress] = useState('');
+  const [emergencyContactName, setEmergencyContactName] = useState('');
+  const emergencyContactRelation = 'Chủ tài khoản chính';
+  const [emergencyPhone, setEmergencyPhone] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
@@ -401,14 +399,19 @@ export function AddFamilyMemberModal({
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700">
+              <label
+                htmlFor="add-family-address"
+                className="block text-xs font-semibold text-slate-700"
+              >
                 Địa chỉ thường trú / nơi ở hiện tại <span className="text-rose-500">*</span>
               </label>
               <div className="relative mt-1.5 flex items-center">
-                <MapPin className="absolute left-3.5 h-4 w-4 text-slate-400" />
+                <MapPin className="absolute left-3.5 h-4 w-4 text-slate-400" aria-hidden="true" />
                 <input
+                  id="add-family-address"
                   type="text"
                   value={address}
+                  placeholder="Số nhà, đường/phố, phường/xã, quận/huyện, tỉnh/thành phố"
                   onChange={(e) => {
                     setAddress(e.target.value);
                     clearFieldError('address');

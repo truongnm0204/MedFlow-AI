@@ -26,7 +26,7 @@ public sealed record CreateWalkInVisitResponseDto(
     long ServiceId,
     string ServiceCode,
     string ServiceName,
-    decimal ServicePrice,
+    decimal? ServicePrice,
     string PriceFormatted,
     string PaymentMethod,
     string PaymentStatus,

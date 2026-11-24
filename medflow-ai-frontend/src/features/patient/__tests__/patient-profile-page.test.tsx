@@ -1,9 +1,32 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
+import type { AxiosResponse } from 'axios';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient } from '@/shared/lib/axios';
+
+import type { PatientProfileResponseDto } from '../api/patient-profile.api';
 import { PatientProfilePage } from '../pages/patient-profile-page';
+
+const SAMPLE_PROFILE_DTO: PatientProfileResponseDto = {
+  id: 10,
+  userId: 10,
+  patientCode: 'PAT-2026-0010',
+  fullName: 'Nguyễn Văn An',
+  dateOfBirth: '1988-08-15',
+  age: 38,
+  gender: 'MALE',
+  phone: '0912345678',
+  email: 'nguyenvana.patient@gmail.com',
+  isEmailVerified: true,
+  isIdentityVerified: true,
+  maskedIdentification: '****** (Đã xác thực CCCD)',
+  status: 'ACTIVE',
+  address: 'Số 45 Tràng Tiền, Hoàn Kiếm, Hà Nội',
+  bloodType: null,
+  allowedActions: ['UPDATE_PERSONAL_PROFILE'],
+};
 
 function renderPage() {
   const queryClient = new QueryClient({
@@ -20,72 +43,54 @@ function renderPage() {
 }
 
 describe('PatientProfilePage', () => {
-  it('hiển thị đầy đủ thông tin tổng quan bệnh nhân ở sidebar', () => {
-    renderPage();
-
-    expect(screen.getAllByText('NGUYỄN VĂN AN').length).toBe(2);
-    expect(screen.getByText('Đã xác thực danh tính (CCCD)')).toBeInTheDocument();
-    expect(screen.getByText('O+')).toBeInTheDocument();
-    expect(screen.getByText('172 cm')).toBeInTheDocument();
-    expect(screen.getByText('68 kg')).toBeInTheDocument();
-    expect(screen.getByText('Hồ sơ người thân')).toBeInTheDocument();
-    expect(screen.getByText('3 người')).toBeInTheDocument();
-    expect(screen.getByText('Lịch sử khám ngoại trú')).toBeInTheDocument();
-    expect(screen.getByText('4 lượt khám')).toBeInTheDocument();
-    expect(screen.getByText('Đơn thuốc điện tử gần nhất')).toBeInTheDocument();
-    expect(screen.getByText('1 đơn còn hạn')).toBeInTheDocument();
-    expect(screen.getByText('Cần đặt lịch hẹn mới?')).toBeInTheDocument();
+  beforeEach(() => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: SAMPLE_PROFILE_DTO,
+    } as AxiosResponse<PatientProfileResponseDto>);
   });
 
-  it('hiển thị chính xác thẻ thông tin định danh y tế (Read-only)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('hiển thị thông tin bệnh nhân từ API thật và không gán nhầm nhóm máu O+ khi null', async () => {
     renderPage();
 
-    expect(screen.getByText('Thông tin định danh y tế')).toBeInTheDocument();
+    expect((await screen.findAllByText('NGUYỄN VĂN AN')).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('Đã xác thực danh tính (CCCD)')).toBeInTheDocument();
+    expect(screen.queryByText('O+')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Chưa cập nhật').length).toBeGreaterThan(0);
+    expect(screen.getByText('Hồ sơ người thân')).toBeInTheDocument();
+    expect(screen.getByText('Lịch sử khám ngoại trú')).toBeInTheDocument();
+  });
+
+  it('hiển thị chính xác thẻ thông tin định danh y tế (Read-only)', async () => {
+    renderPage();
+
+    expect(await screen.findByText('Thông tin định danh y tế')).toBeInTheDocument();
     expect(screen.getByText('Chỉ đọc (Read-only)')).toBeInTheDocument();
     expect(screen.getByText('15/08/1988')).toBeInTheDocument();
-    expect(screen.getByText('Tuổi: 37')).toBeInTheDocument();
+    expect(screen.getByText('Tuổi: 38')).toBeInTheDocument();
     expect(screen.getByText('Nam')).toBeInTheDocument();
-    expect(screen.getByText('Việt Nam')).toBeInTheDocument();
-    expect(screen.getByText(/001088\*\*\*\*\*\*/)).toBeInTheDocument();
   });
 
-  it('hiển thị thẻ thông tin liên hệ, cư trú & người liên hệ khẩn cấp', () => {
+  it('hiển thị thẻ thông tin liên hệ và mở modal cập nhật', async () => {
     renderPage();
 
-    expect(screen.getByText('Thông tin liên hệ & cư trú')).toBeInTheDocument();
-    expect(screen.getByText('0912 345 678')).toBeInTheDocument();
-    expect(screen.getByText('Đã xác thực SMS')).toBeInTheDocument();
+    expect(await screen.findByText('Thông tin liên hệ & cư trú')).toBeInTheDocument();
+    expect(screen.getByText('0912345678')).toBeInTheDocument();
     expect(screen.getByText('nguyenvana.patient@gmail.com')).toBeInTheDocument();
-    expect(screen.getByText('Đã xác thực Email')).toBeInTheDocument();
-    expect(
-      screen.getByText('Số 45 Tràng Tiền, Phường Tràng Tiền, Quận Hoàn Kiếm, Thành phố Hà Nội'),
-    ).toBeInTheDocument();
 
-    expect(screen.getByText('Người liên hệ khẩn cấp (Emergency Contact)')).toBeInTheDocument();
-    expect(screen.getByText('Nguyễn Thị Bình')).toBeInTheDocument();
-    expect(screen.getByText('Vợ')).toBeInTheDocument();
-    expect(screen.getByText('0988 765 432')).toBeInTheDocument();
-  });
-
-  it('hiển thị các nút hành động phía dưới', () => {
-    renderPage();
-
-    expect(screen.getByText('Chỉnh sửa thông tin liên hệ')).toBeInTheDocument();
-    expect(screen.getByText('Quản lý người thân')).toBeInTheDocument();
-    expect(screen.getByText('Tải tóm tắt hồ sơ y tế (PDF)')).toBeInTheDocument();
-  });
-
-  it('mở modal cập nhật thông tin liên hệ khi bấm chỉnh sửa', () => {
-    renderPage();
-
-    const editBtn = screen.getByText('Chỉnh sửa thông tin liên hệ');
-    fireEvent.click(editBtn);
-
+    fireEvent.click(screen.getByText('Chỉnh sửa thông tin liên hệ'));
     expect(screen.getByText('Cập nhật Thông tin Liên hệ Cá nhân')).toBeInTheDocument();
-    expect(screen.getByText('Thông tin định danh pháp lý (Không thể sửa)')).toBeInTheDocument();
-    expect(screen.getByText('Thông tin tiếp nhận kết quả & liên hệ')).toBeInTheDocument();
-    expect(screen.getByText('Đã xác thực OTP')).toBeInTheDocument();
-    expect(screen.getByText('Lưu thay đổi')).toBeInTheDocument();
-    expect(screen.getByText('Hủy bỏ')).toBeInTheDocument();
+  });
+
+  it('hiển thị trạng thái lỗi minh bạch khi API thất bại thay vì trả dữ liệu giả', async () => {
+    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('Phiên làm việc hết hạn'));
+    renderPage();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Không thể tải thông tin hồ sơ bệnh nhân',
+    );
   });
 });

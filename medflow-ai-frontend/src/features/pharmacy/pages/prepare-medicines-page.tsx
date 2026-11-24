@@ -1,6 +1,14 @@
-import { ArrowLeft, CheckCircle2, PackageCheck, Printer, ShieldAlert } from 'lucide-react';
-import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import {
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  PackageCheck,
+  Printer,
+  RefreshCw,
+  ShieldAlert,
+} from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/features/auth/store/auth.store';
@@ -12,25 +20,42 @@ import { PharmacySidebar } from '../components/pharmacy-sidebar';
 import { PrepareGppChecklist } from '../components/prepare-gpp-checklist';
 import { PrepareMedicineTable } from '../components/prepare-medicine-table';
 import { PHARMACY_WORKBENCH_META } from '../data/pharmacy-mock-data';
-import { PREPARE_MEDICINE_CONTEXT_MOCK } from '../data/prepare-medicine-mock';
+import {
+  usePreparePrescriptionContext,
+  useSubmitPreparePrescription,
+} from '../hooks/use-pharmacy-workbench';
 import type { GppCheckItem, PrepareMedicineItem } from '../types/prepare-medicine.types';
 
 export function PrepareMedicinesPage() {
   const params = useParams<{ prescriptionCode?: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
 
-  const ctx = PREPARE_MEDICINE_CONTEXT_MOCK;
-  const activeRxCode = params.prescriptionCode?.trim() || ctx.rxCode;
+  const activeRxCode = params.prescriptionCode?.trim() || searchParams.get('rxCode')?.trim() || '';
 
-  const [items, setItems] = useState<PrepareMedicineItem[]>(ctx.items);
-  const [gppChecks, setGppChecks] = useState<GppCheckItem[]>(ctx.gppChecks);
+  const contextQuery = usePreparePrescriptionContext(activeRxCode);
+  const submitMutation = useSubmitPreparePrescription(activeRxCode);
+
+  const [items, setItems] = useState<PrepareMedicineItem[]>([]);
+  const [gppChecks, setGppChecks] = useState<GppCheckItem[]>([]);
   const [notice, setNotice] = useState<{
     tone: 'error' | 'info' | 'success';
     message: string;
   } | null>(null);
   const [isReadyForDispense, setIsReadyForDispense] = useState(false);
+
+  useEffect(() => {
+    if (contextQuery.data) {
+      setItems(contextQuery.data.items);
+      setGppChecks(contextQuery.data.gppChecks);
+      setIsReadyForDispense(
+        contextQuery.data.status === 'PREPARED' ||
+          contextQuery.data.status === 'READY_FOR_DISPENSE',
+      );
+    }
+  }, [contextQuery.data]);
 
   const handlePickedQtyChange = (itemId: string, qty: number) => {
     setItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, pickedQty: qty } : it)));
@@ -38,7 +63,15 @@ export function PrepareMedicinesPage() {
 
   const handleBatchChange = (itemId: string, batchCode: string) => {
     setItems((prev) =>
-      prev.map((it) => (it.id === itemId ? { ...it, selectedBatchCode: batchCode } : it)),
+      prev.map((it) => {
+        if (it.id !== itemId) return it;
+        const matched = it.availableBatches.find((b) => b.batchCode === batchCode);
+        return {
+          ...it,
+          selectedBatchCode: batchCode,
+          selectedBatchId: matched?.batchId ?? null,
+        };
+      }),
     );
   };
 
@@ -52,7 +85,7 @@ export function PrepareMedicinesPage() {
     setGppChecks((prev) => prev.map((c) => (c.id === checkId ? { ...c, checked: !c.checked } : c)));
   };
 
-  const handleConfirmPreparation = () => {
+  const handleConfirmPreparation = async () => {
     const unprepared = items.filter((i) => !i.isPrepared);
     const uncheckedGpp = gppChecks.filter((c) => !c.checked);
     const mismatchedQty = items.filter((i) => i.pickedQty !== i.prescribedQty);
@@ -81,13 +114,33 @@ export function PrepareMedicinesPage() {
       return;
     }
 
-    setIsReadyForDispense(true);
-    setNotice({
-      tone: 'success',
-      message: `Đã hoàn tất soạn đơn ${activeRxCode} theo nguyên tắc FEFO/GPP và chuyển sang quầy phát thuốc!`,
-    });
+    try {
+      const response = await submitMutation.mutateAsync({
+        items: items.map((item) => ({
+          prescriptionItemId: item.prescriptionItemId ?? Number(item.id),
+          medicineBatchId: item.selectedBatchId ?? null,
+          batchCode: item.selectedBatchCode || null,
+          pickedQuantity: item.pickedQty,
+        })),
+      });
+
+      setIsReadyForDispense(true);
+      setNotice({
+        tone: 'success',
+        message:
+          response.message ||
+          `Đã hoàn tất soạn đơn ${activeRxCode} theo nguyên tắc FEFO/GPP và chuyển sang quầy phát thuốc!`,
+      });
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        message:
+          error instanceof Error ? error.message : 'Không thể lưu kết quả soạn thuốc lên máy chủ.',
+      });
+    }
   };
 
+  const ctx = contextQuery.data;
   const totalPickedUnits = items.reduce((sum, i) => sum + i.pickedQty, 0);
   const preparedCount = items.filter((i) => i.isPrepared).length;
 
@@ -99,6 +152,7 @@ export function PrepareMedicinesPage() {
         counterLabel={PHARMACY_WORKBENCH_META.counterLabel}
         onItemSelect={(id) => {
           if (id === 'dashboard') navigate('/pharmacy');
+          if (id === 'search') navigate('/pharmacy/prescriptions');
         }}
       />
 
@@ -107,20 +161,27 @@ export function PrepareMedicinesPage() {
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
-              onClick={() => navigate('/pharmacy')}
-              aria-label="Quay lại tổng quan nhà thuốc"
+              onClick={() => navigate('/pharmacy/prescriptions')}
+              aria-label="Quay lại hàng đợi đơn thuốc"
               className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-navy transition-colors hover:bg-canvas"
             >
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             </button>
             <div className="min-w-0">
-              <h1 className="truncate text-sm font-bold text-navy flex items-center gap-2">
+              <h1 className="flex items-center gap-2 truncate text-sm font-bold text-navy">
                 <PackageCheck className="h-4 w-4 text-primary" aria-hidden="true" />
                 <span>Bàn làm việc Soạn thuốc &amp; Kiểm tra Lô hạn dùng (SCR-PHA-02)</span>
               </h1>
               <p className="truncate text-[11px] text-sub">
-                Đơn thuốc <span className="font-mono font-bold text-primary">{activeRxCode}</span> •{' '}
-                {ctx.doctorName} ({ctx.roomLabel})
+                {activeRxCode ? (
+                  <>
+                    Đơn thuốc{' '}
+                    <span className="font-mono font-bold text-primary">{activeRxCode}</span>
+                    {ctx ? ` • ${ctx.doctorName} (${ctx.roomLabel})` : ''}
+                  </>
+                ) : (
+                  'Chưa chọn đơn thuốc'
+                )}
               </p>
             </div>
           </div>
@@ -136,115 +197,192 @@ export function PrepareMedicinesPage() {
         </header>
 
         <main className="flex-1 space-y-5 overflow-y-auto p-6 pb-28">
-          {/* Patient & Prescription Summary Card */}
-          <section
-            aria-label="Thông tin bệnh nhân và đơn thuốc"
-            className="rounded-2xl border border-border bg-white p-5 shadow-2xs space-y-4"
-          >
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="space-y-1">
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <p className="text-base font-bold text-navy">{ctx.patientName}</p>
-                  <span className="text-xs text-sub">
-                    • {ctx.gender}, {ctx.ageLabel}
-                  </span>
-                  <Badge tone={isReadyForDispense ? 'emerald' : 'sky'}>
-                    {isReadyForDispense ? 'Đã soạn xong • Chờ phát' : 'Đang soạn thuốc'}
-                  </Badge>
-                </div>
-                <p className="font-mono text-xs text-sub">
-                  Mã BN: <strong className="text-navy">{ctx.patientCode}</strong> • Mã đơn:{' '}
-                  <strong className="text-primary">{activeRxCode}</strong> • Lượt khám:{' '}
-                  <strong className="text-navy">{ctx.visitCode}</strong>
-                </p>
-                <p className="text-xs text-ink">
-                  <strong className="text-navy">Chẩn đoán xác định:</strong> {ctx.primaryDiagnosis}{' '}
-                  • {ctx.secondaryDiagnosis}
-                </p>
-              </div>
-
-              <div className="space-y-2 text-right">
-                <Badge tone="emerald">{ctx.paymentBadge}</Badge>
-                <div className="text-[11px] text-sub">
-                  BS kê đơn: <strong className="text-navy">{ctx.doctorName}</strong>
-                </div>
-              </div>
-            </div>
-
-            <div
-              role="note"
-              className="flex items-center gap-2 rounded-xl border border-rose-300 bg-rose-50 px-4 py-2.5 text-xs font-bold text-rose-700"
-            >
-              <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>{ctx.criticalAllergy}</span>
-            </div>
-          </section>
-
-          {notice && (
-            <div role="status" aria-live="polite">
-              <Alert tone={notice.tone}>{notice.message}</Alert>
+          {!activeRxCode && (
+            <div className="rounded-2xl border border-border bg-white p-8 text-center space-y-3">
+              <p className="text-sm font-bold text-navy">
+                Chưa chọn đơn thuốc cần chuẩn bị &amp; kiểm tra lô FEFO
+              </p>
+              <p className="text-xs text-sub">
+                Vui lòng chọn một đơn thuốc từ Hàng đợi Nhà thuốc để tải dữ liệu y lệnh thực tế.
+              </p>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                onClick={() => navigate('/pharmacy/prescriptions')}
+              >
+                Mở Hàng đợi Đơn thuốc
+              </Button>
             </div>
           )}
 
-          {/* Medicine Preparation Table */}
-          <PrepareMedicineTable
-            items={items}
-            onPickedQtyChange={handlePickedQtyChange}
-            onBatchChange={handleBatchChange}
-            onTogglePrepared={handleTogglePrepared}
-          />
+          {activeRxCode && contextQuery.isPending && (
+            <div
+              role="status"
+              className="rounded-2xl border border-border bg-white p-8 text-center text-xs text-sub"
+            >
+              Đang tải thông tin đơn thuốc và tồn kho lô FEFO...
+            </div>
+          )}
 
-          {/* GPP Quality Check Checklist */}
-          <PrepareGppChecklist checks={gppChecks} onToggleCheck={handleToggleCheck} />
+          {activeRxCode && !contextQuery.isPending && contextQuery.isError && (
+            <div role="alert">
+              <Alert tone="error">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span>
+                    {contextQuery.error instanceof Error
+                      ? contextQuery.error.message
+                      : 'Không thể tải ngữ cảnh soạn thuốc.'}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void contextQuery.refetch()}
+                    className="gap-1.5"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Thử lại</span>
+                  </Button>
+                </div>
+              </Alert>
+            </div>
+          )}
+
+          {activeRxCode && ctx && (
+            <>
+              <section
+                aria-label="Thông tin bệnh nhân và đơn thuốc"
+                className="rounded-2xl border border-border bg-white p-5 shadow-2xs space-y-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <p className="text-base font-bold text-navy">{ctx.patientName}</p>
+                      <span className="text-xs text-sub">
+                        • {ctx.gender}, {ctx.ageLabel}
+                      </span>
+                      <Badge tone={isReadyForDispense ? 'emerald' : 'sky'}>
+                        {isReadyForDispense ? 'Đã soạn xong • Chờ phát' : 'Đang soạn thuốc'}
+                      </Badge>
+                    </div>
+                    <p className="font-mono text-xs text-sub">
+                      Mã BN: <strong className="text-navy">{ctx.patientCode}</strong> • Mã đơn:{' '}
+                      <strong className="text-primary">{ctx.rxCode}</strong> • Lượt khám:{' '}
+                      <strong className="text-navy">{ctx.visitCode}</strong>
+                    </p>
+                    <p className="text-xs text-ink">
+                      <strong className="text-navy">Chẩn đoán xác định:</strong>{' '}
+                      {ctx.primaryDiagnosis}
+                      {ctx.secondaryDiagnosis ? ` • ${ctx.secondaryDiagnosis}` : ''}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2 text-right">
+                    <Badge tone="emerald">{ctx.paymentBadge}</Badge>
+                    <div className="text-[11px] text-sub">
+                      BS kê đơn: <strong className="text-navy">{ctx.doctorName}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {ctx.criticalAllergy && (
+                  <div
+                    role="note"
+                    className="flex items-center gap-2 rounded-xl border border-rose-300 bg-rose-50 px-4 py-2.5 text-xs font-bold text-rose-700"
+                  >
+                    <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>{ctx.criticalAllergy}</span>
+                  </div>
+                )}
+              </section>
+
+              {notice && (
+                <div role="status" aria-live="polite">
+                  <Alert tone={notice.tone}>{notice.message}</Alert>
+                </div>
+              )}
+
+              <PrepareMedicineTable
+                items={items}
+                onPickedQtyChange={handlePickedQtyChange}
+                onBatchChange={handleBatchChange}
+                onTogglePrepared={handleTogglePrepared}
+              />
+
+              <PrepareGppChecklist checks={gppChecks} onToggleCheck={handleToggleCheck} />
+            </>
+          )}
         </main>
 
-        {/* Sticky Footer Bar */}
-        <footer className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-white px-6 py-3 shadow-sm print:hidden">
-          <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => navigate('/pharmacy')}
-              className="gap-1.5"
-            >
-              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-              <span>Quay lại hàng đợi</span>
-            </Button>
+        {ctx && (
+          <footer className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-white px-6 py-3 shadow-sm print:hidden">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => navigate('/pharmacy/prescriptions')}
+                className="gap-1.5"
+              >
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                <span>Quay lại hàng đợi</span>
+              </Button>
 
-            <span className="text-xs font-medium text-sub">
-              Tiến độ:{' '}
-              <strong className="text-navy">
-                {preparedCount}/{items.length} khoản
-              </strong>{' '}
-              • Tổng <strong className="font-mono text-navy">{totalPickedUnits} viên</strong>
-            </span>
-          </div>
+              <span className="text-xs font-medium text-sub">
+                Tiến độ:{' '}
+                <strong className="text-navy">
+                  {preparedCount}/{items.length} khoản
+                </strong>{' '}
+                • Tổng <strong className="font-mono text-navy">{totalPickedUnits} đơn vị</strong>
+              </span>
+            </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => window.print()}
-              className="gap-1.5"
-            >
-              <Printer className="h-4 w-4" aria-hidden="true" />
-              <span>In nhãn hướng dẫn uống thuốc</span>
-            </Button>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => window.print()}
+                className="gap-1.5"
+              >
+                <Printer className="h-4 w-4" aria-hidden="true" />
+                <span>In nhãn hướng dẫn uống thuốc</span>
+              </Button>
 
-            <Button
-              type="button"
-              variant="primary"
-              size="sm"
-              onClick={handleConfirmPreparation}
-              className="gap-1.5 shadow-xs"
-            >
-              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-              <span>Xác nhận Đã soạn xong &amp; Chuyển Phát thuốc</span>
-            </Button>
-          </div>
-        </footer>
+              {isReadyForDispense && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    navigate(`/pharmacy/prescriptions/${encodeURIComponent(ctx.rxCode)}/dispense`)
+                  }
+                  className="gap-1.5"
+                >
+                  <span>Mở màn hình Bàn giao</span>
+                  <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              )}
+
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                disabled={submitMutation.isPending}
+                onClick={() => void handleConfirmPreparation()}
+                className="gap-1.5 shadow-xs"
+              >
+                <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                <span>
+                  {submitMutation.isPending
+                    ? 'Đang xác nhận...'
+                    : 'Xác nhận Đã soạn xong & Chuyển Phát thuốc'}
+                </span>
+              </Button>
+            </div>
+          </footer>
+        )}
       </div>
     </div>
   );

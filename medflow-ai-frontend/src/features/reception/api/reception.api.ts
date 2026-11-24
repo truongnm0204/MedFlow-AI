@@ -202,8 +202,9 @@ interface WalkInServiceDto {
   id: number;
   code: string;
   name: string;
-  price: number;
+  price: number | null;
   priceFormatted: string;
+  hasEffectivePrice?: boolean;
 }
 
 interface WalkInDepartmentDto {
@@ -240,6 +241,7 @@ export async function fetchWalkInCatalog(): Promise<WalkInCatalog> {
         name: service.name,
         price: service.price,
         priceFormatted: service.priceFormatted,
+        hasEffectivePrice: service.hasEffectivePrice ?? service.price !== null,
       })),
     })),
   };

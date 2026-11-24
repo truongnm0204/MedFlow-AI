@@ -1,4 +1,8 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+
+import { Alert } from '@/shared/ui/alert';
+import { Button } from '@/shared/ui/button';
 
 import { AdminReportsShell } from '../components/admin-reports-shell';
 import { ReportFilters } from '../components/report-filters';
@@ -6,7 +10,7 @@ import { ReportMetrics } from '../components/report-metrics';
 import { ReportOperationalCharts } from '../components/report-operational-charts';
 import { ReportPagination } from '../components/report-pagination';
 import { ReportTable } from '../components/report-table';
-import { useOperationalReportStore } from '../store/operational-report.store';
+import { useOperationalReport } from '../hooks/use-operational-report';
 import type { OperationalReportItem } from '../types/operational-report.types';
 
 function exportOperationalReportsToCsv(reports: OperationalReportItem[]) {
@@ -15,7 +19,7 @@ function exportOperationalReportsToCsv(reports: OperationalReportItem[]) {
     'Mã BC',
     'Tên báo cáo',
     'Kỳ tổng hợp',
-    'Phân nhóm',
+    'Khoa phòng',
     'Cơ sở',
     'Lượt tiếp nhận',
     'Chờ trung vị',
@@ -48,48 +52,39 @@ function exportOperationalReportsToCsv(reports: OperationalReportItem[]) {
   URL.revokeObjectURL(url);
 }
 
-/** SCR-ADM-RPT-01 · Báo cáo vận hành — Hospital Admin Portal operational analytics. */
+/** SCR-ADM-RPT-01 · Báo cáo vận hành — Hospital Admin Portal operational analytics (UC56). */
 export function OperationalReportsPage() {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const reports = useOperationalReportStore((state) => state.reports);
-  const searchQuery = useOperationalReportStore((state) => state.searchQuery);
-  const periodFilter = useOperationalReportStore((state) => state.periodFilter);
-  const facilityFilter = useOperationalReportStore((state) => state.facilityFilter);
-  const categoryFilter = useOperationalReportStore((state) => state.categoryFilter);
-  const page = useOperationalReportStore((state) => state.page);
-  const pageSize = useOperationalReportStore((state) => state.pageSize);
-  const selectedIds = useOperationalReportStore((state) => state.selectedIds);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  const setPage = useOperationalReportStore((state) => state.setPage);
-  const setPageSize = useOperationalReportStore((state) => state.setPageSize);
-  const toggleSelection = useOperationalReportStore((state) => state.toggleSelection);
-  const toggleAll = useOperationalReportStore((state) => state.toggleAll);
-  const refreshReport = useOperationalReportStore((state) => state.refreshReport);
+  const reportQuery = useOperationalReport({
+    fromDate: fromDate || undefined,
+    toDate: toDate || undefined,
+    departmentId: departmentId ? Number(departmentId) : undefined,
+  });
+
+  const data = reportQuery.data;
+  const reports = useMemo(() => data?.reports ?? [], [data]);
 
   const filteredReports = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
+    if (!normalizedQuery) return reports;
 
-    return reports.filter((report) => {
-      const matchesQuery =
-        !normalizedQuery ||
+    return reports.filter(
+      (report) =>
         report.code.toLowerCase().includes(normalizedQuery) ||
         report.name.toLowerCase().includes(normalizedQuery) ||
         report.periodLabel.toLowerCase().includes(normalizedQuery) ||
-        report.category.toLowerCase().includes(normalizedQuery);
-
-      const matchesPeriod =
-        !periodFilter ||
-        periodFilter === '22/10/2026' ||
-        periodFilter === 'Tất cả kỳ báo cáo' ||
-        report.periodLabel === periodFilter;
-
-      const matchesFacility = !facilityFilter || report.facility === facilityFilter;
-      const matchesCategory = !categoryFilter || report.category === categoryFilter;
-
-      return matchesQuery && matchesPeriod && matchesFacility && matchesCategory;
-    });
-  }, [reports, searchQuery, periodFilter, facilityFilter, categoryFilter]);
+        report.category.toLowerCase().includes(normalizedQuery),
+    );
+  }, [reports, searchQuery]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -105,6 +100,32 @@ export function OperationalReportsPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [filteredReports]);
 
+  const hasActiveFilters =
+    Boolean(searchQuery) || Boolean(fromDate) || Boolean(toDate) || Boolean(departmentId);
+
+  const handleResetFilters = () => {
+    setSearchQuery('');
+    setFromDate('');
+    setToDate('');
+    setDepartmentId('');
+    setPage(1);
+  };
+
+  const toggleSelection = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    );
+  };
+
+  const toggleAll = (visibleIds: string[]) => {
+    setSelectedIds((prev) => {
+      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.includes(id));
+      return allSelected
+        ? prev.filter((id) => !visibleIds.includes(id))
+        : [...new Set([...prev, ...visibleIds])];
+    });
+  };
+
   const totalPages = Math.max(1, Math.ceil(filteredReports.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const paginatedReports = filteredReports.slice(
@@ -115,36 +136,104 @@ export function OperationalReportsPage() {
   return (
     <AdminReportsShell>
       <main className="mx-auto max-w-[1720px] space-y-6 px-6 py-6">
-        <ReportMetrics reports={reports} />
-
         <ReportFilters
           searchRef={searchInputRef}
+          searchQuery={searchQuery}
+          onSearchChange={(val) => {
+            setSearchQuery(val);
+            setPage(1);
+          }}
+          fromDate={fromDate}
+          toDate={toDate}
+          onFromDateChange={(val) => {
+            setFromDate(val);
+            setPage(1);
+          }}
+          onToDateChange={(val) => {
+            setToDate(val);
+            setPage(1);
+          }}
+          departmentId={departmentId}
+          onDepartmentChange={(val) => {
+            setDepartmentId(val);
+            setPage(1);
+          }}
+          departments={data?.availableDepartments ?? []}
+          hasActiveFilters={hasActiveFilters}
+          onResetFilters={handleResetFilters}
+          onRefresh={() => void reportQuery.refetch()}
           filteredReports={filteredReports}
           onExportCsv={exportOperationalReportsToCsv}
         />
 
-        <ReportOperationalCharts />
+        {reportQuery.isPending && (
+          <div
+            role="status"
+            className="rounded-lg border border-border bg-white p-10 text-center text-xs text-sub"
+          >
+            Đang tổng hợp dữ liệu báo cáo vận hành từ hệ thống...
+          </div>
+        )}
 
-        <section
-          className="overflow-hidden rounded-lg border border-border bg-white shadow-sm"
-          aria-label="Bảng danh sách báo cáo vận hành"
-        >
-          <ReportTable
-            reports={paginatedReports}
-            selectedIds={selectedIds}
-            onToggleSelection={toggleSelection}
-            onToggleAll={toggleAll}
-            onRefreshReport={refreshReport}
-          />
-          <ReportPagination
-            count={filteredReports.length}
-            currentPage={currentPage}
-            pageSize={pageSize}
-            totalPages={totalPages}
-            onPageChange={setPage}
-            onPageSizeChange={setPageSize}
-          />
-        </section>
+        {!reportQuery.isPending && reportQuery.isError && (
+          <div role="alert">
+            <Alert tone="error">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span>
+                  {reportQuery.error instanceof Error
+                    ? reportQuery.error.message
+                    : 'Không thể tải báo cáo vận hành.'}
+                </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void reportQuery.refetch()}
+                  className="gap-1.5"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Thử lại</span>
+                </Button>
+              </div>
+            </Alert>
+          </div>
+        )}
+
+        {!reportQuery.isPending && data && (
+          <>
+            <ReportMetrics summary={data.summary} periodLabel={data.periodLabel} />
+
+            <ReportOperationalCharts
+              facilityName={data.facilityName}
+              periodLabel={data.periodLabel}
+              totalVisits={data.summary.totalVisits}
+              hourlyIntake={data.hourlyIntake}
+              departmentVisits={data.departmentVisits}
+              visitStatusSegments={data.visitStatusSegments}
+            />
+
+            <section
+              className="overflow-hidden rounded-lg border border-border bg-white shadow-sm"
+              aria-label="Bảng danh sách báo cáo vận hành"
+            >
+              <ReportTable
+                reports={paginatedReports}
+                selectedIds={selectedIds}
+                onToggleSelection={toggleSelection}
+                onToggleAll={toggleAll}
+                onRefreshReport={() => void reportQuery.refetch()}
+              />
+              <ReportPagination
+                count={filteredReports.length}
+                currentPage={currentPage}
+                pageSize={pageSize}
+                totalPages={totalPages}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
+            </section>
+          </>
+        )}
       </main>
     </AdminReportsShell>
   );

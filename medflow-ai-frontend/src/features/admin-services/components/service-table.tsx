@@ -10,6 +10,7 @@ interface ServiceTableProps {
   onViewHistory: (service: ExaminationService) => void;
   onToggleStatus?: (id: string) => void;
   onRequestDeactivate?: (service: ExaminationService) => void;
+  onBatchToggleStatus?: (ids: string[], newStatus: 'ACTIVE' | 'SUSPENDED') => void;
 }
 
 export function ServiceTable({
@@ -17,6 +18,7 @@ export function ServiceTable({
   onViewHistory,
   onToggleStatus,
   onRequestDeactivate,
+  onBatchToggleStatus,
 }: ServiceTableProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -56,14 +58,28 @@ export function ServiceTable({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => batchToggleStatus('ACTIVE')}
+              onClick={() => {
+                if (onBatchToggleStatus) {
+                  onBatchToggleStatus(selectedIds, 'ACTIVE');
+                  clearSelection();
+                } else {
+                  batchToggleStatus('ACTIVE');
+                }
+              }}
               className="rounded bg-white px-2.5 py-1 text-emerald-700 shadow-xs border border-emerald-200 hover:bg-emerald-50"
             >
               Kích hoạt hàng loạt
             </button>
             <button
               type="button"
-              onClick={() => batchToggleStatus('SUSPENDED')}
+              onClick={() => {
+                if (onBatchToggleStatus) {
+                  onBatchToggleStatus(selectedIds, 'SUSPENDED');
+                  clearSelection();
+                } else {
+                  batchToggleStatus('SUSPENDED');
+                }
+              }}
               className="rounded bg-white px-2.5 py-1 text-amber-700 shadow-xs border border-amber-200 hover:bg-amber-50"
             >
               Tạm dừng hàng loạt

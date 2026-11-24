@@ -104,7 +104,7 @@ export function PrepareMedicineTable({
                       <input
                         type="number"
                         min={0}
-                        max={selectedBatch.availableStock}
+                        max={selectedBatch?.availableStock ?? undefined}
                         value={item.pickedQty}
                         aria-label={`Số lượng thực soạn ${item.drugName}`}
                         onChange={(e) => onPickedQtyChange(item.id, Number(e.target.value) || 0)}
@@ -117,29 +117,37 @@ export function PrepareMedicineTable({
                     </td>
 
                     <td className="px-4 py-4 text-center font-mono text-ink whitespace-nowrap">
-                      {selectedBatch.availableStock} {item.unit}
+                      {selectedBatch
+                        ? `${selectedBatch.availableStock} ${item.unit}`
+                        : 'Hết tồn kho'}
                     </td>
 
                     <td className="px-4 py-4">
-                      <select
-                        value={selectedBatch.batchCode}
-                        aria-label={`Chọn lô thuốc ${item.drugName}`}
-                        onChange={(e) => onBatchChange(item.id, e.target.value)}
-                        className="w-full min-w-[180px] rounded-lg border border-border bg-white px-2.5 py-1.5 font-mono text-[11px] text-navy focus:outline-hidden focus:ring-2 focus:ring-primary"
-                      >
-                        {item.availableBatches.map((b) => (
-                          <option key={b.batchCode} value={b.batchCode}>
-                            {b.batchCode} • HSD: {b.expiryDate}
-                            {b.isFefoRecommended ? ' (FEFO)' : ''}
-                          </option>
-                        ))}
-                      </select>
+                      {item.availableBatches.length > 0 ? (
+                        <select
+                          value={selectedBatch?.batchCode ?? ''}
+                          aria-label={`Chọn lô thuốc ${item.drugName}`}
+                          onChange={(e) => onBatchChange(item.id, e.target.value)}
+                          className="w-full min-w-[180px] rounded-lg border border-border bg-white px-2.5 py-1.5 font-mono text-[11px] text-navy focus:outline-hidden focus:ring-2 focus:ring-primary"
+                        >
+                          {item.availableBatches.map((b) => (
+                            <option key={b.batchCode} value={b.batchCode}>
+                              {b.batchCode} • HSD: {b.expiryDate}
+                              {b.isFefoRecommended ? ' (FEFO)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-xs font-semibold text-rose-600">
+                          Chưa có lô khả dụng
+                        </span>
+                      )}
                     </td>
 
                     <td className="px-4 py-4 whitespace-nowrap text-sub">
                       <span className="inline-flex items-center gap-1 font-medium text-ink">
                         <MapPin className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
-                        {selectedBatch.shelfLocation}
+                        {selectedBatch?.shelfLocation ?? 'Chưa cập nhật kệ'}
                       </span>
                     </td>
 

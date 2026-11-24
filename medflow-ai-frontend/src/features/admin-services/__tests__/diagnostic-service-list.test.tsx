@@ -271,9 +271,11 @@ describe('DiagnosticServiceListPage (SCR-ADM-DSV-01)', () => {
     unmount();
 
     const { unmount: unmountExamSys } = render(
-      <MemoryRouter initialEntries={['/admin/services']}>
-        <ExaminationServiceListPage />
-      </MemoryRouter>,
+      <QueryClientProvider client={createTestQueryClient()}>
+        <MemoryRouter initialEntries={['/admin/services']}>
+          <ExaminationServiceListPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
 
     expect(screen.queryByRole('link', { name: /Dịch vụ cận lâm sàng/i })).not.toBeInTheDocument();
@@ -293,9 +295,11 @@ describe('DiagnosticServiceListPage (SCR-ADM-DSV-01)', () => {
     });
 
     render(
-      <MemoryRouter initialEntries={['/admin/services']}>
-        <ExaminationServiceListPage />
-      </MemoryRouter>,
+      <QueryClientProvider client={createTestQueryClient()}>
+        <MemoryRouter initialEntries={['/admin/services']}>
+          <ExaminationServiceListPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
 
     const diagLink = screen.getByRole('link', { name: /Dịch vụ cận lâm sàng/i });

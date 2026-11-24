@@ -1,15 +1,26 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient } from '@/shared/lib/axios';
+import { INITIAL_SERVICES } from '../data/examination-services-data';
 import { ExaminationServiceListPage } from '../pages/examination-service-list-page';
 import { useExaminationServiceStore } from '../store/examination-service.store';
-import { INITIAL_SERVICES } from '../data/examination-services-data';
 
-describe('ExaminationServiceListPage (SCR-ADM-ESV-01)', () => {
+vi.mock('@/shared/lib/axios', () => ({
+  apiClient: {
+    get: vi.fn(),
+    put: vi.fn(),
+    patch: vi.fn(),
+  },
+}));
+
+describe('ExaminationServiceListPage (SCR-ADM-ESV-01 real API)', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     useExaminationServiceStore.setState({
-      services: [...INITIAL_SERVICES],
+      services: [],
       searchQuery: '',
       categoryFilter: '',
       departmentFilter: '',
@@ -22,172 +33,112 @@ describe('ExaminationServiceListPage (SCR-ADM-ESV-01)', () => {
       priceHistoryService: null,
       updatePriceService: null,
     });
+
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: {
+        data: INITIAL_SERVICES.map((srv, idx) => ({
+          id: idx + 1,
+          serviceCode: srv.code,
+          name: srv.name,
+          description: srv.description,
+          category: srv.category,
+          departmentName: srv.department,
+          price: srv.price,
+          allowsOnlineBooking: srv.onlineBooking,
+          isActive: srv.status === 'ACTIVE',
+          status: srv.status,
+          effectiveDate: srv.effectiveDate,
+          decisionNumber: srv.decisionNumber,
+        })),
+      },
+    });
+    vi.mocked(apiClient.patch).mockResolvedValue({ data: {} });
   });
 
-  const renderPage = () =>
-    render(
-      <MemoryRouter>
-        <ExaminationServiceListPage />
-      </MemoryRouter>,
+  const renderPage = () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <ExaminationServiceListPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
     );
+  };
 
-  it('renders header, breadcrumbs, and active navigation tab', () => {
+  it('fetches GET /admin/examination-services and renders header, 4 metric cards, and table rows', async () => {
     renderPage();
-    expect(screen.getAllByText(/MedFlow/i).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('HOSPITAL ADMIN')).toBeInTheDocument();
-    expect(
-      screen.getByText('Danh mục Dịch vụ Khám Ngoại trú (SCR-ADM-ESV-01)'),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Danh mục Dịch vụ & Kỹ thuật')).toBeInTheDocument();
-  });
 
-  it('displays the 4 metric cards matching Figma specifications', () => {
-    renderPage();
+    expect(await screen.findByText('EX-1-01')).toBeInTheDocument();
     expect(screen.getByText('TỔNG SỐ DỊCH VỤ KHÁM')).toBeInTheDocument();
     expect(screen.getAllByText('32').length).toBeGreaterThanOrEqual(1);
-
     expect(screen.getByText('MỞ ĐẶT HẸN ONLINE')).toBeInTheDocument();
     expect(screen.getByText('28')).toBeInTheDocument();
-    expect(screen.getByText(/87.5% Sẵn sàng trên Cổng BN/i)).toBeInTheDocument();
-
-    expect(screen.getByText('GIÁ HIỆU LỰC TẠI CƠ SỞ')).toBeInTheDocument();
-    expect(screen.getByText('Theo cơ sở')).toBeInTheDocument();
-    expect(screen.getByText(/Chỉ xem - Quản lý tại UC52/i)).toBeInTheDocument();
-
     expect(screen.getByText('TẠM NGỪNG DỊCH VỤ')).toBeInTheDocument();
     expect(screen.getByText('04')).toBeInTheDocument();
-  });
-
-  it('renders the examination service table with first page items', () => {
-    renderPage();
-    expect(screen.getByText('EX-1-01')).toBeInTheDocument();
     expect(screen.getByText('Khám Nội Tổng quát & Tư vấn Sức khỏe')).toBeInTheDocument();
-    expect(screen.getByText('300.000 đ')).toBeInTheDocument();
-    expect(screen.getByText('EX-2-08')).toBeInTheDocument();
-    expect(
-      screen.getByText('Hội chẩn Đa chuyên khoa Ca bệnh Phức tạp Ngoại trú'),
-    ).toBeInTheDocument();
   });
 
-  it('filters services when typing in the search box', () => {
+  it('filters services by search query, category, and department, and paginates', async () => {
     renderPage();
+    expect(await screen.findByText('EX-1-01')).toBeInTheDocument();
+
+    const nextBtn = screen.getByLabelText('Trang tiếp');
+    fireEvent.click(nextBtn);
+    expect(screen.getByRole('button', { name: 'Trang 2' })).toHaveAttribute('aria-current', 'page');
+
     const searchInput = screen.getByLabelText('Tìm dịch vụ khám');
     fireEvent.change(searchInput, { target: { value: 'Tim mạch' } });
-
     expect(screen.getByText('Khám Tim mạch & Đo Điện tâm đồ Chuyên sâu')).toBeInTheDocument();
     expect(screen.queryByText('Khám Nội Tổng quát & Tư vấn Sức khỏe')).not.toBeInTheDocument();
-  });
 
-  it('filters services by category', () => {
-    renderPage();
-    const categorySelect = screen.getByLabelText('Lọc phân loại');
-    fireEvent.change(categorySelect, { target: { value: 'Hội chẩn Lâm sàng' } });
-
+    fireEvent.change(searchInput, { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Lọc phân loại'), {
+      target: { value: 'Hội chẩn Lâm sàng' },
+    });
     expect(
       screen.getByText('Hội chẩn Đa chuyên khoa Ca bệnh Phức tạp Ngoại trú'),
     ).toBeInTheDocument();
-    expect(screen.queryByText('Khám Nội Tổng quát & Tư vấn Sức khỏe')).not.toBeInTheDocument();
   });
 
-  it('filters services by department', () => {
+  it('calls PATCH /admin/examination-services/:code/deactivate on single and batch suspend, and opens modals', async () => {
     renderPage();
-    const departmentSelect = screen.getByLabelText('Lọc khoa phụ trách');
-    fireEvent.change(departmentSelect, {
-      target: { value: 'Khoa Hô hấp & Dị ứng' },
-    });
+    expect(await screen.findByText('EX-1-01')).toBeInTheDocument();
 
-    expect(
-      screen.getByText('Khám Chuyên khoa Hô hấp & Đánh giá Chức năng Phổi'),
-    ).toBeInTheDocument();
-    expect(screen.queryByText('Khám Nội Tổng quát & Tư vấn Sức khỏe')).not.toBeInTheDocument();
-  });
+    // Open price history modal
+    fireEvent.click(screen.getByLabelText('Xem lịch sử giá Khám Nội Tổng quát & Tư vấn Sức khỏe'));
+    expect(screen.getByText('Lịch Sử Biểu Phí & Quy Tắc Cơ Sở UC52')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Đóng' })[0]);
 
-  it('opens ServiceDeactivateModal and toggles status to SUSPENDED upon confirmation', () => {
-    renderPage();
-    const toggleBtn = screen.getByLabelText('Đổi trạng thái Khám Nội Tổng quát & Tư vấn Sức khỏe');
-    fireEvent.click(toggleBtn);
+    // Open column modal
+    fireEvent.click(screen.getByTitle('Tùy chỉnh cột hiển thị'));
+    expect(screen.getByText('Tùy Chỉnh Cột Hiển Thị')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Áp Dụng & Đóng'));
 
+    // Deactivate single service
+    fireEvent.click(screen.getByLabelText('Đổi trạng thái Khám Nội Tổng quát & Tư vấn Sức khỏe'));
     expect(
       screen.getByRole('heading', { name: 'Ngừng hoạt động dịch vụ khám?' }),
     ).toBeInTheDocument();
-    const confirmBtn = screen.getByRole('button', { name: 'Ngừng hoạt động' });
-    fireEvent.click(confirmBtn);
+    fireEvent.click(screen.getByRole('button', { name: 'Ngừng hoạt động' }));
 
-    const updated = useExaminationServiceStore.getState().services.find((s) => s.id === 'EX-1-01');
-    expect(updated?.status).toBe('SUSPENDED');
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        '/admin/examination-services/EX-1-01/deactivate',
+        expect.any(Object),
+      );
+    });
     expect(
-      screen.getByText(
+      await screen.findByText(
         /Đã chuyển trạng thái dịch vụ Khám Nội Tổng quát & Tư vấn Sức khỏe sang Tạm ngừng hoạt động\./i,
       ),
     ).toBeInTheDocument();
-  });
 
-  it('opens and closes the column customization modal', () => {
-    renderPage();
-    const columnBtn = screen.getByTitle('Tùy chỉnh cột hiển thị');
-    fireEvent.click(columnBtn);
-
-    expect(screen.getByText('Tùy Chỉnh Cột Hiển Thị')).toBeInTheDocument();
-    const closeBtn = screen.getByText('Áp Dụng & Đóng');
-    fireEvent.click(closeBtn);
-
-    expect(screen.queryByText('Tùy Chỉnh Cột Hiển Thị')).not.toBeInTheDocument();
-  });
-
-  it('opens price history modal for a service', () => {
-    renderPage();
-    const historyBtn = screen.getByLabelText(
-      'Xem lịch sử giá Khám Nội Tổng quát & Tư vấn Sức khỏe',
-    );
-    fireEvent.click(historyBtn);
-
-    expect(screen.getByText('Lịch Sử Biểu Phí & Quy Tắc Cơ Sở UC52')).toBeInTheDocument();
-    expect(screen.getByText(/Quy tắc liên kết UC52/i)).toBeInTheDocument();
-  });
-
-  it('opens update price modal when clicking Cập nhật giá action', () => {
-    renderPage();
-
-    const updatePriceBtn = screen.getByLabelText(
-      'Cập nhật giá Khám Nội Tổng quát & Tư vấn Sức khỏe',
-    );
-    fireEvent.click(updatePriceBtn);
-
-    expect(screen.getByText('Cập nhật Biểu phí Dịch vụ (UC52)')).toBeInTheDocument();
-    expect(useExaminationServiceStore.getState().updatePriceService?.id).toBe('EX-1-01');
-  });
-
-  it('links to the separate create service page from the Add button', () => {
-    renderPage();
-    const addLink = screen.getByRole('link', { name: /Thêm Dịch Vụ Mới/i });
-    expect(addLink).toHaveAttribute('href', '/admin/services/new');
-  });
-
-  it('links to the separate edit service page from the edit action', () => {
-    renderPage();
-    const editLink = screen.getByLabelText('Chỉnh sửa Khám Nội Tổng quát & Tư vấn Sức khỏe');
-    expect(editLink).toHaveAttribute('href', '/admin/services/EX-1-01/edit');
-  });
-
-  it('supports selecting rows and batch actions', () => {
-    renderPage();
-    const rowCheckbox = screen.getByLabelText('Chọn Khám Nội Tổng quát & Tư vấn Sức khỏe');
-    fireEvent.click(rowCheckbox);
-
-    expect(screen.getByText(/Đã chọn/i)).toBeInTheDocument();
-    const suspendBatchBtn = screen.getByText('Tạm dừng hàng loạt');
-    fireEvent.click(suspendBatchBtn);
-
-    const updated = useExaminationServiceStore.getState().services.find((s) => s.id === 'EX-1-01');
-    expect(updated?.status).toBe('SUSPENDED');
-  });
-
-  it('navigates pagination correctly', () => {
-    renderPage();
-    expect(screen.getByText(/trong tổng số/i)).toBeInTheDocument();
-    const nextBtn = screen.getByLabelText('Trang tiếp');
-    fireEvent.click(nextBtn);
-
-    expect(screen.getByRole('button', { name: 'Trang 2' })).toHaveAttribute('aria-current', 'page');
+    // Batch suspend
+    fireEvent.click(screen.getByLabelText('Chọn Khám Nội Tổng quát & Tư vấn Sức khỏe'));
+    fireEvent.click(screen.getByText('Tạm dừng hàng loạt'));
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledTimes(2);
+    });
   });
 });

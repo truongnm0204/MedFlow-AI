@@ -1,19 +1,21 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { AlertTriangle, Info } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { AlertTriangle, Info, Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 
+import { useAdminDoctors } from '@/features/admin-doctors/hooks/use-admin-doctors';
+import { useAdminRooms } from '@/features/admin-rooms/hooks/use-rooms';
+import { useAdminExaminationServices } from '@/features/admin-services/hooks/use-examination-services';
 import { FormField, formControlClass } from '@/shared/components/form/form-primitives';
 import { Button } from '@/shared/ui/button';
 
 import { SlotEditFooter, SlotEditHeader } from '../components/slot-edit-chrome';
+import { SLOT_SPECIALTIES } from '../data/examination-slots-mock';
 import {
-  MOCK_SLOT_DOCTORS,
-  MOCK_SLOT_ROOMS,
-  MOCK_SLOT_SERVICES,
-  SLOT_SPECIALTIES,
-} from '../data/examination-slots-mock';
+  useAdminExaminationSlots,
+  useUpdateExaminationSlotMutation,
+} from '../hooks/use-examination-slots';
 import {
   examinationSlotSchema,
   type ExaminationSlotFormValues,
@@ -21,15 +23,85 @@ import {
 import { useExaminationSlotStore } from '../store/examination-slot.store';
 import type { ServiceType, SlotStatus } from '../types/examination-slot.types';
 
-/** SCR-ADM-SLT-03 — edit dialog layered over the slots list, matching ServiceEditModal architecture. */
 export function SlotEditModal() {
   const { slotId } = useParams();
   const navigate = useNavigate();
 
-  const slot = useExaminationSlotStore((state) =>
-    state.slots.find((item) => item.id === slotId || item.code === slotId),
+  const { isLoading } = useAdminExaminationSlots();
+  const updateSlotMutation = useUpdateExaminationSlotMutation();
+  const { data: apiServices = [] } = useAdminExaminationServices();
+  const { data: apiDoctors = [] } = useAdminDoctors();
+  const { data: roomsData } = useAdminRooms();
+
+  const slots = useExaminationSlotStore((state) => state.slots);
+  const updateSlotInStore = useExaminationSlotStore((state) => state.updateSlot);
+
+  const slot = useMemo(
+    () =>
+      slots.find(
+        (item) =>
+          item.id.toLowerCase() === (slotId ?? '').toLowerCase() ||
+          item.code.toLowerCase() === (slotId ?? '').toLowerCase(),
+      ),
+    [slotId, slots],
   );
-  const updateSlot = useExaminationSlotStore((state) => state.updateSlot);
+
+  const serviceOptions = useMemo(() => {
+    const list = apiServices.map((srv) => ({
+      id: srv.id,
+      code: srv.code,
+      name: srv.name,
+      specialty: srv.department,
+      type: (srv.category === 'Cận lâm sàng kỹ thuật' ? 'DIAGNOSTIC' : 'OUTPATIENT') as ServiceType,
+    }));
+    if (slot && slot.serviceId && !list.some((s) => s.id === slot.serviceId)) {
+      list.unshift({
+        id: slot.serviceId,
+        code: slot.serviceCode,
+        name: slot.serviceName,
+        specialty: slot.specialty,
+        type: slot.serviceType,
+      });
+    }
+    return list;
+  }, [apiServices, slot]);
+
+  const doctorOptions = useMemo(() => {
+    const list = apiDoctors.map((doc) => ({
+      id: doc.backendId || doc.id,
+      name: doc.name,
+      specialty: doc.specialty || doc.department,
+    }));
+    if (slot && slot.doctorId && !list.some((d) => d.id === slot.doctorId)) {
+      list.unshift({
+        id: slot.doctorId,
+        name: slot.doctorName,
+        specialty: slot.specialty,
+      });
+    }
+    return list;
+  }, [apiDoctors, slot]);
+
+  const roomOptions = useMemo(() => {
+    const list = (roomsData?.rooms ?? []).map((rm) => ({
+      id: rm.id,
+      code: rm.roomCode,
+      name: `${rm.roomCode} (${rm.roomName})`,
+    }));
+    if (slot && slot.room && !list.some((r) => r.code === slot.room)) {
+      list.unshift({ id: slot.room, code: slot.room, name: slot.room });
+    }
+    return list;
+  }, [roomsData?.rooms, slot]);
+
+  const specialtyOptions = useMemo(() => {
+    const set = new Set<string>(SLOT_SPECIALTIES);
+    if (slot?.specialty) set.add(slot.specialty);
+    for (const s of serviceOptions) {
+      if (s.specialty) set.add(s.specialty);
+    }
+    return Array.from(set);
+  }, [serviceOptions, slot?.specialty]);
 
   const [message, setMessage] = useState('');
 
@@ -53,7 +125,7 @@ export function SlotEditModal() {
           date: slot.date,
           startTime: slot.startTime,
           endTime: slot.endTime,
-          facility: 'Cơ sở Hà Nội',
+          facility: slot.facility || 'Cơ sở y tế',
           capacityMax: slot.capacityMax,
           room: slot.room,
           doctorId: slot.doctorId,
@@ -75,7 +147,7 @@ export function SlotEditModal() {
         date: slot.date,
         startTime: slot.startTime,
         endTime: slot.endTime,
-        facility: 'Cơ sở Hà Nội',
+        facility: slot.facility || 'Cơ sở y tế',
         capacityMax: slot.capacityMax,
         room: slot.room,
         doctorId: slot.doctorId,
@@ -91,7 +163,7 @@ export function SlotEditModal() {
   const selectedDoctorId = useWatch({ control, name: 'doctorId' }) ?? '';
   const capacityMax = useWatch({ control, name: 'capacityMax' }) ?? 8;
 
-  const filteredServices = MOCK_SLOT_SERVICES.filter((s) => s.type === serviceType);
+  const filteredServices = serviceOptions.filter((s) => s.type === serviceType);
 
   useEffect(() => {
     const handleKeys = (event: KeyboardEvent) => {
@@ -105,11 +177,22 @@ export function SlotEditModal() {
     return () => window.removeEventListener('keydown', handleKeys);
   }, [navigate]);
 
+  if (isLoading && !slot) {
+    return (
+      <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 p-4">
+        <div className="flex items-center gap-2 rounded-xl bg-white p-6 text-sm text-sub">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+          <span>Đang tải thông tin khung giờ khám...</span>
+        </div>
+      </div>
+    );
+  }
+
   if (!slot) {
     return (
       <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 p-4">
         <div className="rounded-xl bg-white p-8 text-sm">
-          <p>Không tìm thấy thông tin khung giờ khám minh họa.</p>
+          <p>Không tìm thấy thông tin khung giờ khám.</p>
           <Button className="mt-4" onClick={() => navigate('/admin/slots')}>
             Quay lại danh sách
           </Button>
@@ -118,29 +201,18 @@ export function SlotEditModal() {
     );
   }
 
-  const save = (values: ExaminationSlotFormValues) => {
-    const dateParts = values.date.split('-');
-    const dateDisplay = dateParts.length === 3 ? `${dateParts[2]}/${dateParts[1]}` : values.date;
-
-    updateSlot(slot.id, {
-      code: values.code,
-      serviceType: values.serviceType,
-      serviceId: values.serviceId,
-      serviceName: values.serviceName,
-      serviceCode: values.serviceCode,
-      specialty: values.specialty,
-      date: values.date,
-      dateDisplay,
-      startTime: values.startTime,
-      endTime: values.endTime,
-      facility: values.facility,
-      capacityMax: values.capacityMax,
-      room: values.room,
-      doctorId: values.doctorId,
-      doctorName: values.doctorName,
-      status: values.status,
-    });
-    navigate('/admin/slots');
+  const save = async (values: ExaminationSlotFormValues) => {
+    setMessage('');
+    try {
+      const updated = await updateSlotMutation.mutateAsync({
+        slotId: slot.id,
+        values,
+      });
+      updateSlotInStore(slot.id, updated);
+      navigate('/admin/slots');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Không thể cập nhật khung giờ khám.');
+    }
   };
 
   return (
@@ -156,12 +228,12 @@ export function SlotEditModal() {
         aria-modal="true"
         aria-labelledby="slot-edit-title"
         onSubmit={handleSubmit(save)}
+        noValidate
         className="my-auto flex max-h-[calc(100vh-24px)] w-full max-w-[896px] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl"
       >
         <SlotEditHeader slot={slot} status={status} onClose={() => navigate('/admin/slots')} />
 
         <div className="overflow-y-auto">
-          {/* Operational notice banner */}
           <div className="mx-6 mt-5 flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-[11px] leading-relaxed text-sky-900">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
             <p>
@@ -181,7 +253,6 @@ export function SlotEditModal() {
           )}
 
           <div className="grid gap-x-5 gap-y-4 px-6 py-5 sm:grid-cols-2">
-            {/* Slot Code */}
             <FormField
               label="Mã Slot khám (Slot ID)"
               required
@@ -194,14 +265,13 @@ export function SlotEditModal() {
               />
             </FormField>
 
-            {/* Service Type */}
             <FormField label="Phân loại dịch vụ" required error={errors.serviceType?.message}>
               <select
                 className={formControlClass}
                 {...register('serviceType', {
                   onChange: (e) => {
                     const newType = e.target.value as ServiceType;
-                    const matched = MOCK_SLOT_SERVICES.find((s) => s.type === newType);
+                    const matched = serviceOptions.find((s) => s.type === newType);
                     if (matched) {
                       setValue('serviceId', matched.id, {
                         shouldDirty: true,
@@ -229,13 +299,12 @@ export function SlotEditModal() {
               </select>
             </FormField>
 
-            {/* Service */}
             <FormField label="Dịch vụ khám" required error={errors.serviceId?.message}>
               <select
                 className={formControlClass}
                 value={selectedServiceId}
                 onChange={(e) => {
-                  const found = MOCK_SLOT_SERVICES.find((s) => s.id === e.target.value);
+                  const found = serviceOptions.find((s) => s.id === e.target.value);
                   if (found) {
                     setValue('serviceId', found.id, { shouldValidate: true, shouldDirty: true });
                     setValue('serviceName', found.name, {
@@ -261,10 +330,9 @@ export function SlotEditModal() {
               </select>
             </FormField>
 
-            {/* Specialty */}
             <FormField label="Chuyên khoa" required error={errors.specialty?.message}>
               <select className={formControlClass} {...register('specialty')}>
-                {SLOT_SPECIALTIES.map((item) => (
+                {specialtyOptions.map((item) => (
                   <option key={item} value={item}>
                     {item}
                   </option>
@@ -272,13 +340,12 @@ export function SlotEditModal() {
               </select>
             </FormField>
 
-            {/* Doctor */}
             <FormField label="Bác sĩ phụ trách" required error={errors.doctorId?.message}>
               <select
                 className={formControlClass}
                 value={selectedDoctorId}
                 onChange={(e) => {
-                  const found = MOCK_SLOT_DOCTORS.find((d) => d.id === e.target.value);
+                  const found = doctorOptions.find((d) => d.id === e.target.value);
                   if (found) {
                     setValue('doctorId', found.id, { shouldValidate: true, shouldDirty: true });
                     setValue('doctorName', found.name, { shouldValidate: true, shouldDirty: true });
@@ -289,7 +356,7 @@ export function SlotEditModal() {
                 }}
               >
                 <option value="">-- Chưa phân công bác sĩ --</option>
-                {MOCK_SLOT_DOCTORS.map((item) => (
+                {doctorOptions.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name} ({item.specialty})
                   </option>
@@ -297,10 +364,9 @@ export function SlotEditModal() {
               </select>
             </FormField>
 
-            {/* Room */}
             <FormField label="Phòng khám / Buồng khám" required error={errors.room?.message}>
               <select className={formControlClass} {...register('room')}>
-                {MOCK_SLOT_ROOMS.map((rm) => (
+                {roomOptions.map((rm) => (
                   <option key={rm.id} value={rm.code}>
                     {rm.name}
                   </option>
@@ -308,12 +374,10 @@ export function SlotEditModal() {
               </select>
             </FormField>
 
-            {/* Date */}
             <FormField label="Ngày áp dụng (YYYY-MM-DD)" required error={errors.date?.message}>
               <input type="date" className={formControlClass} {...register('date')} />
             </FormField>
 
-            {/* Time Slot Range */}
             <div>
               <div className="grid grid-cols-2 gap-2">
                 <FormField label="Giờ bắt đầu" required error={errors.startTime?.message}>
@@ -325,7 +389,6 @@ export function SlotEditModal() {
               </div>
             </div>
 
-            {/* Capacity */}
             <FormField
               label="Sức chứa tiếp nhận tối đa"
               required
@@ -364,7 +427,6 @@ export function SlotEditModal() {
               </div>
             </FormField>
 
-            {/* Status */}
             <FormField label="Trạng thái khung giờ" required error={errors.status?.message}>
               <select className={formControlClass} {...register('status')}>
                 <option value="OPEN">Đang mở (OPEN)</option>
@@ -372,7 +434,7 @@ export function SlotEditModal() {
                 <option value="CLOSED">Đã đóng (CLOSED)</option>
               </select>
             </FormField>
-            {/* Dependent Bookings Warning on Close */}
+
             {status === 'CLOSED' && slot.capacityBooked > 0 && (
               <div className="sm:col-span-2 rounded-xl border border-amber-300 bg-amber-50 p-4">
                 <div className="flex items-start gap-2.5">
@@ -394,12 +456,11 @@ export function SlotEditModal() {
               </div>
             )}
 
-            {/* Facility */}
             <div className="sm:col-span-2">
               <FormField label="Cơ sở y tế áp dụng" required error={errors.facility?.message}>
                 <input
                   className={formControlClass}
-                  placeholder="Ví dụ: Cơ sở Hà Nội..."
+                  placeholder="Ví dụ: MedFlow Cơ sở 1..."
                   {...register('facility')}
                 />
               </FormField>

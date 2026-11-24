@@ -717,7 +717,7 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
                 shortRoom = room[..sepIndex];
         }
 
-        var price = serviceDto.Price > 0 ? serviceDto.Price : doctorDto.Price;
+        var price = serviceDto.Price >= 0 ? serviceDto.Price : (doctorDto.Price ?? 0m);
         var availabilityLabel = bookableSlots.Any(s => s.Remaining > 0)
             ? "Sẵn sàng"
             : "Tạm hết lịch";

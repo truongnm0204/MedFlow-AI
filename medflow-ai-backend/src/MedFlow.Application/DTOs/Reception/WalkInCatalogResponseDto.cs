@@ -4,8 +4,9 @@ public sealed record WalkInServiceCatalogItemDto(
     long Id,
     string Code,
     string Name,
-    decimal Price,
-    string PriceFormatted);
+    decimal? Price,
+    string PriceFormatted,
+    bool HasEffectivePrice = true);
 
 public sealed record WalkInDepartmentCatalogItemDto(
     long Id,

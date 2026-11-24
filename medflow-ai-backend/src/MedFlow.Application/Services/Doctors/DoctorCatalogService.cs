@@ -9,7 +9,7 @@ namespace MedFlow.Application.Services.Doctors;
 
 public sealed class DoctorCatalogService : IDoctorCatalogService
 {
-    private const decimal DefaultExaminationPrice = 200_000m;
+    public const string UnpricedDisplayLabel = "Chưa cập nhật";
 
     private static readonly TimeSpan HospitalUtcOffset = TimeSpan.FromHours(7);
 
@@ -118,7 +118,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
         var mapped = doctors
             .Select(doctor =>
             {
-                var core = BuildProfileCore(doctor, utcNow);
+                var core = BuildProfileCore(doctor, nowLocal);
                 var dto = MapToSearchItem(doctor, core, nowLocal, today, weekEnd);
                 return (Doctor: doctor, Core: core, Dto: dto);
             })
@@ -204,7 +204,9 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
         if (doctor is null)
             throw new NotFoundException("Doctor", normalized);
 
-        return MapToDetailDto(doctor, _timeProvider.GetUtcNow().UtcDateTime);
+        var utcNow = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = DateTime.SpecifyKind(utcNow + HospitalUtcOffset, DateTimeKind.Unspecified);
+        return MapToDetailDto(doctor, nowLocal);
     }
 
     private IQueryable<Doctor> ActiveDoctorsWithCatalogGraph()
@@ -232,11 +234,12 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
         string DisplayName,
         string QualificationsSummary,
         string Room,
-        decimal Price,
+        decimal? Price,
+        string PriceFormatted,
         int YearsOfExperience,
         string AvatarUrl);
 
-    private static DoctorProfileCore BuildProfileCore(Doctor doctor, DateTime utcNow)
+    private static DoctorProfileCore BuildProfileCore(Doctor doctor, DateTime nowLocal)
     {
         var specialtyCode = doctor.Specialty?.SpecialtyCode?.Trim() ?? string.Empty;
         var specialtyName = !string.IsNullOrWhiteSpace(doctor.Specialty?.Name)
@@ -256,7 +259,8 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
             : "Bác sĩ chuyên khoa";
 
         var room = ResolveDoctorRoom(doctor);
-        var price = ResolveConsultationPrice(doctor, utcNow);
+        var price = ResolveConsultationPrice(doctor, nowLocal);
+        var priceFormatted = FormatConsultationPrice(price);
         var yearsOfExperience = Math.Max(0, (int)(doctor.YearsOfExperience ?? 0));
         var avatarUrl = !string.IsNullOrWhiteSpace(doctor.ProfileImageUrl)
             ? doctor.ProfileImageUrl!.Trim()
@@ -271,6 +275,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
             QualificationsSummary: qualificationsSummary,
             Room: room,
             Price: price,
+            PriceFormatted: priceFormatted,
             YearsOfExperience: yearsOfExperience,
             AvatarUrl: avatarUrl);
     }
@@ -375,7 +380,8 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
             Price: core.Price,
             AvatarUrl: core.AvatarUrl,
             HasScheduleToday: hasScheduleToday,
-            HasScheduleThisWeek: hasScheduleThisWeek);
+            HasScheduleThisWeek: hasScheduleThisWeek,
+            PriceFormatted: core.PriceFormatted);
     }
 
     private static string ResolveSpecialtySlug(string specialtyCode)
@@ -441,7 +447,8 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
             Education: education,
             Biography: biography,
             Hashtags: hashtags,
-            WeeklySchedule: weeklySchedule);
+            WeeklySchedule: weeklySchedule,
+            PriceFormatted: core.PriceFormatted);
     }
 
     private static string NormalizeAcademicTitle(string rawTitle)
@@ -527,7 +534,7 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
         return room.RoomCode?.Trim() ?? string.Empty;
     }
 
-    private static decimal ResolveConsultationPrice(Doctor doctor, DateTime now)
+    private static decimal? ResolveConsultationPrice(Doctor doctor, DateTime now)
     {
         var authorizedExamServices = doctor.ServiceAuthorizations?
             .Where(a =>
@@ -541,24 +548,34 @@ public sealed class DoctorCatalogService : IDoctorCatalogService
             .ToList();
 
         if (authorizedExamServices is null || authorizedExamServices.Count == 0)
-            return DefaultExaminationPrice;
+            return null;
 
         foreach (var service in authorizedExamServices)
         {
             var activePrice = service.ServicePrices?
                 .Where(p =>
                     p.PriceAmount.HasValue &&
+                    p.PriceAmount.Value >= 0m &&
                     (!p.EffectiveFrom.HasValue || p.EffectiveFrom.Value <= now) &&
                     (!p.EffectiveTo.HasValue || p.EffectiveTo.Value >= now))
                 .OrderByDescending(p => p.EffectiveFrom ?? DateTime.MinValue)
                 .ThenByDescending(p => p.Id)
                 .FirstOrDefault();
 
-            if (activePrice?.PriceAmount is > 0)
+            if (activePrice?.PriceAmount is >= 0m)
                 return activePrice.PriceAmount.Value;
         }
 
-        return DefaultExaminationPrice;
+        return null;
+    }
+
+    private static string FormatConsultationPrice(decimal? price)
+    {
+        if (!price.HasValue)
+            return UnpricedDisplayLabel;
+
+        var rounded = Math.Round(price.Value, 0, MidpointRounding.AwayFromZero);
+        return $"{rounded.ToString("#,##0", CultureInfo.InvariantCulture).Replace(',', '.')} VNĐ";
     }
 
     private static string ResolveDefaultAvatarUrl(long doctorId, string specialtyCode)

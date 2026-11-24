@@ -182,6 +182,11 @@ describe('HomePage & PatientHomeHub (M1-009)', () => {
     });
     fireEvent.click(screen.getByText('Gợi ý ngay'));
     expect(screen.getByText(/Chuyên khoa Nội Tiêu Hóa/i)).toBeInTheDocument();
+    expect(screen.queryByText(/TS\. BS Nguyễn Văn Hùng/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Tra cứu bác sĩ & lịch trống/i })).toHaveAttribute(
+      'href',
+      '/doctors?keyword=N%E1%BB%99i%20Ti%C3%AAu%20H%C3%B3a',
+    );
   });
 
   it('route /patient yêu cầu đăng nhập (redirect về /login khi chưa xác thực)', () => {

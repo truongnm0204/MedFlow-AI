@@ -2,69 +2,146 @@ import axios from 'axios';
 
 import { apiClient } from '@/shared/lib/axios';
 
-import { useDepartmentStore } from '../store/department.store';
 import type {
   DeactivateDepartmentPayload,
   DepartmentDependencySummary,
 } from '../types/department-deactivate.types';
 import type { DepartmentItem } from '../types/department.types';
 
-function shouldFallbackToMock(error: unknown): boolean {
-  if (!axios.isAxiosError(error)) return false;
-  return !error.response || error.response.status === 404 || error.response.status === 501;
+interface DepartmentApiItemDto {
+  id: number;
+  code: string;
+  name: string;
+  hospitalId: number | null;
+  facility: string;
+  isActive: boolean;
+  status: string;
+  activeRoomsCount?: number;
+  activeDoctorsCount?: number;
+  activeServicesCount?: number;
+  pendingAppointmentsCount?: number;
+  hasActiveDependencies?: boolean;
 }
 
-function shouldUseHttpApi(): boolean {
-  if ('mock' in apiClient.get || 'mock' in apiClient.put) return true;
-  if (import.meta.env.MODE === 'test') return false;
-  return (
-    typeof window !== 'undefined' && Boolean(window.localStorage?.getItem('medflow.access_token'))
-  );
+interface DepartmentListApiResponseDto {
+  data: DepartmentApiItemDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface HospitalFacilityOption {
+  id: number;
+  code: string;
+  name: string;
+}
+
+interface ProblemDetailsBody {
+  detail?: string;
+  title?: string;
+  message?: string;
+}
+
+function extractDepartmentApiError(error: unknown, fallbackMessage: string): Error {
+  if (axios.isAxiosError(error)) {
+    const body = error.response?.data as ProblemDetailsBody | undefined;
+    const msg = body?.detail || body?.message || body?.title;
+    if (msg && msg.trim().length > 0) return new Error(msg.trim());
+  }
+  if (error instanceof Error) return error;
+  return new Error(fallbackMessage);
+}
+
+function mapDepartmentDto(dto: DepartmentApiItemDto): DepartmentItem {
+  return {
+    id: String(dto.id),
+    code: dto.code,
+    name: dto.name,
+    facility: dto.facility || 'Cơ sở y tế',
+    status: dto.isActive || dto.status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE',
+    activeRoomsCount: dto.activeRoomsCount ?? 0,
+    activeDoctorsCount: dto.activeDoctorsCount ?? 0,
+    activeServicesCount: dto.activeServicesCount ?? 0,
+    pendingAppointmentsCount: dto.pendingAppointmentsCount ?? 0,
+    hasActiveDependencies: dto.hasActiveDependencies ?? false,
+  };
 }
 
 export async function fetchDepartmentsApi(): Promise<DepartmentItem[]> {
-  if (shouldUseHttpApi()) {
-    try {
-      const { data } = await apiClient.get<DepartmentItem[]>('/admin/departments');
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
+  try {
+    const { data } = await apiClient.get<DepartmentListApiResponseDto | DepartmentApiItemDto[]>(
+      '/admin/departments',
+      { params: { page: 1, pageSize: 100 } },
+    );
+    const raw = Array.isArray(data) ? data : (data.data ?? []);
+    return raw.map(mapDepartmentDto);
+  } catch (error) {
+    throw extractDepartmentApiError(error, 'Không thể tải danh mục khoa phòng.');
   }
+}
 
-  return useDepartmentStore.getState().departments;
+export async function fetchHospitalsForAdminApi(): Promise<HospitalFacilityOption[]> {
+  try {
+    const { data } =
+      await apiClient.get<
+        Array<{ id: number; hospitalCode?: string; code?: string; name: string }>
+      >('/hospitals');
+    const items = Array.isArray(data) ? data : [];
+    return items.map((h) => ({
+      id: h.id,
+      code: h.hospitalCode || h.code || `HOS-${h.id}`,
+      name: h.name,
+    }));
+  } catch (error) {
+    throw extractDepartmentApiError(error, 'Không thể tải danh sách cơ sở y tế.');
+  }
+}
+
+export async function createDepartmentApi(payload: {
+  code: string;
+  name: string;
+  hospitalId?: number | null;
+  isActive: boolean;
+}): Promise<DepartmentItem> {
+  try {
+    const { data } = await apiClient.post<DepartmentApiItemDto>('/admin/departments', payload);
+    return mapDepartmentDto(data);
+  } catch (error) {
+    throw extractDepartmentApiError(error, 'Không thể khai báo khoa phòng mới.');
+  }
+}
+
+export async function updateDepartmentApi(
+  id: string | number,
+  payload: {
+    code: string;
+    name: string;
+    hospitalId?: number | null;
+    isActive: boolean;
+  },
+): Promise<DepartmentItem> {
+  const numericId = String(id).replace(/\D/g, '') || String(id);
+  try {
+    const { data } = await apiClient.put<DepartmentApiItemDto>(
+      `/admin/departments/${encodeURIComponent(numericId)}`,
+      payload,
+    );
+    return mapDepartmentDto(data);
+  } catch (error) {
+    throw extractDepartmentApiError(error, 'Không thể cập nhật thông tin khoa phòng.');
+  }
 }
 
 export async function checkDepartmentDependenciesApi(
-  departmentId: string,
+  department: DepartmentItem,
 ): Promise<DepartmentDependencySummary> {
-  const store = useDepartmentStore.getState();
-  const department = store.departments.find(
-    (d) => d.id === departmentId || d.code === departmentId,
-  );
-
-  if (shouldUseHttpApi()) {
-    try {
-      const numericId = departmentId.replace(/\D/g, '');
-      const { data } = await apiClient.get<DepartmentDependencySummary>(
-        `/admin/departments/${numericId || departmentId}/dependencies`,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  const activeRooms = department?.activeRoomsCount ?? 0;
-  const activeDoctors = department?.activeDoctorsCount ?? 0;
-  const activeServices = department?.activeServicesCount ?? 0;
-  const pendingAppointments = department?.pendingAppointmentsCount ?? 0;
+  const activeRooms = department.activeRoomsCount ?? 0;
+  const activeDoctors = department.activeDoctorsCount ?? 0;
+  const activeServices = department.activeServicesCount ?? 0;
+  const pendingAppointments = department.pendingAppointmentsCount ?? 0;
   const hasDependencies =
-    department?.hasActiveDependencies ??
+    department.hasActiveDependencies ??
     (activeRooms > 0 || activeDoctors > 0 || pendingAppointments > 0);
 
   const canDeactivate = !hasDependencies;
@@ -89,16 +166,10 @@ export async function checkDepartmentDependenciesApi(
 }
 
 export async function deactivateDepartmentApi(
-  departmentId: string,
-  payload?: DeactivateDepartmentPayload,
+  department: DepartmentItem,
+  _payload?: DeactivateDepartmentPayload,
 ): Promise<{ success: boolean; message: string }> {
-  const store = useDepartmentStore.getState();
-  const department = store.departments.find(
-    (d) => d.id === departmentId || d.code === departmentId,
-  );
-
-  // Check dependencies before deactivating
-  const dependencyInfo = await checkDepartmentDependenciesApi(departmentId);
+  const dependencyInfo = await checkDepartmentDependenciesApi(department);
   if (!dependencyInfo.canDeactivate) {
     throw new Error(
       dependencyInfo.blockingReason ||
@@ -106,56 +177,29 @@ export async function deactivateDepartmentApi(
     );
   }
 
-  if (shouldUseHttpApi()) {
-    try {
-      const numericId = departmentId.replace(/\D/g, '') || departmentId;
-      await apiClient.put(`/admin/departments/${numericId}`, {
-        code: department?.code,
-        name: department?.name,
-        isActive: false,
-        reason: payload?.reason,
-        note: payload?.note,
-      });
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
+  await updateDepartmentApi(department.id, {
+    code: department.code,
+    name: department.name,
+    isActive: false,
+  });
 
-  store.deactivateDepartment(departmentId, payload);
   return {
     success: true,
-    message: `Đã ngừng hoạt động khoa phòng ${department?.name ?? departmentId}.`,
+    message: `Đã ngừng hoạt động khoa phòng ${department.name}.`,
   };
 }
 
 export async function reactivateDepartmentApi(
-  departmentId: string,
+  department: DepartmentItem,
 ): Promise<{ success: boolean; message: string }> {
-  const store = useDepartmentStore.getState();
-  const department = store.departments.find(
-    (d) => d.id === departmentId || d.code === departmentId,
-  );
+  await updateDepartmentApi(department.id, {
+    code: department.code,
+    name: department.name,
+    isActive: true,
+  });
 
-  if (shouldUseHttpApi()) {
-    try {
-      const numericId = departmentId.replace(/\D/g, '') || departmentId;
-      await apiClient.put(`/admin/departments/${numericId}`, {
-        code: department?.code,
-        name: department?.name,
-        isActive: true,
-      });
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  store.activateDepartment(departmentId);
   return {
     success: true,
-    message: `Đã kích hoạt lại hoạt động cho khoa phòng ${department?.name ?? departmentId}.`,
+    message: `Đã kích hoạt lại hoạt động cho khoa phòng ${department.name}.`,
   };
 }

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
-import { CheckCircle2, X } from 'lucide-react';
+import { CheckCircle2, Loader2, X } from 'lucide-react';
+
+import { Alert } from '@/shared/ui/alert';
+import { Button } from '@/shared/ui/button';
 
 import { AdminSlotShell } from '../components/admin-slot-shell';
 import { SlotBatchCloseModal } from '../components/slot-batch-close-modal';
@@ -10,6 +13,7 @@ import { SlotMetrics } from '../components/slot-metrics';
 import { SlotPagination } from '../components/slot-pagination';
 import { SlotReopenModal } from '../components/slot-reopen-modal';
 import { SlotTable } from '../components/slot-table';
+import { useAdminExaminationSlots } from '../hooks/use-examination-slots';
 import { useExaminationSlotStore } from '../store/examination-slot.store';
 import type { ExaminationSlot } from '../types/examination-slot.types';
 
@@ -60,6 +64,8 @@ function exportSlotsToCsv(slots: ExaminationSlot[]) {
 export function ExaminationSlotListPage() {
   const navigate = useNavigate();
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const { isLoading, isError, error, refetch } = useAdminExaminationSlots();
 
   const slots = useExaminationSlotStore((state) => state.slots);
   const searchQuery = useExaminationSlotStore((state) => state.searchQuery);
@@ -127,6 +133,20 @@ export function ExaminationSlotListPage() {
   return (
     <AdminSlotShell>
       <main className="space-y-5 px-6 py-6">
+        {isError ? (
+          <Alert tone="error">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                <b>Không thể tải danh sách khung giờ khám:</b>{' '}
+                {error instanceof Error ? error.message : 'Đã xảy ra lỗi kết nối máy chủ.'}
+              </span>
+              <Button type="button" size="sm" variant="secondary" onClick={() => void refetch()}>
+                Thử lại
+              </Button>
+            </div>
+          </Alert>
+        ) : null}
+
         {/* Operation Feedback Banner */}
         {feedbackMessage && (
           <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-800 shadow-2xs animate-in fade-in duration-200">
@@ -161,23 +181,32 @@ export function ExaminationSlotListPage() {
           className="overflow-hidden rounded-xl border border-border bg-white shadow-xs"
           aria-label="Danh sách khung giờ khám"
         >
-          <SlotTable
-            slots={paginatedSlots}
-            onEditSlot={(slot) => navigate(`/admin/slots/${slot.id}/edit`)}
-            onViewSchedule={(slot) => navigate(`/doctors/${slot.doctorId}`)}
-            onViewDetail={(slot) => navigate(`/admin/slots/${slot.id}`)}
-            onRequestCloseSlot={(slot) => setClosingSlot(slot)}
-            onRequestReopenSlot={(slot) => setReopeningSlot(slot)}
-            onRequestBatchClose={(selected) => setBatchClosingSlots(selected)}
-          />
-          <SlotPagination
-            count={filteredSlots.length}
-            currentPage={currentPage}
-            pageSize={pageSize}
-            totalPages={totalPages}
-            onPageChange={setPage}
-            onPageSizeChange={setPageSize}
-          />
+          {isLoading && slots.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-sm text-sub">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
+              <span>Đang tải danh sách khung giờ khám...</span>
+            </div>
+          ) : (
+            <>
+              <SlotTable
+                slots={paginatedSlots}
+                onEditSlot={(slot) => navigate(`/admin/slots/${slot.id}/edit`)}
+                onViewSchedule={(slot) => navigate(`/doctors/${slot.doctorId}`)}
+                onViewDetail={(slot) => navigate(`/admin/slots/${slot.id}`)}
+                onRequestCloseSlot={(slot) => setClosingSlot(slot)}
+                onRequestReopenSlot={(slot) => setReopeningSlot(slot)}
+                onRequestBatchClose={(selected) => setBatchClosingSlots(selected)}
+              />
+              <SlotPagination
+                count={filteredSlots.length}
+                currentPage={currentPage}
+                pageSize={pageSize}
+                totalPages={totalPages}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
+            </>
+          )}
         </section>
       </main>
       <Outlet />
