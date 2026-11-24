@@ -3,12 +3,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   confirmMedicineDispense,
   fetchDispenseConfirmContext,
+  fetchFefoBatchSelectionContext,
   fetchPreparePrescriptionContext,
   searchPharmacyPrescriptions,
+  submitFefoBatchSelection,
   submitPreparePrescription,
   type PrescriptionSearchQueryParams,
 } from '../api/pharmacy.api';
 import type { ConfirmDispensePayload } from '../types/dispense-confirm.types';
+import type { SelectFefoBatchesPayload } from '../types/fefo-batch.types';
 import type { PreparePrescriptionPayload } from '../types/prepare-medicine.types';
 
 export function usePharmacyPrescriptionSearch(params?: PrescriptionSearchQueryParams) {
@@ -36,6 +39,29 @@ export function useSubmitPreparePrescription(idOrCode: string) {
       submitPreparePrescription(idOrCode, payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['pharmacy', 'prescriptions'] });
+      void queryClient.invalidateQueries({ queryKey: ['pharmacy', 'prepare-context', idOrCode] });
+      void queryClient.invalidateQueries({ queryKey: ['pharmacy', 'fefo-batches', idOrCode] });
+    },
+  });
+}
+
+export function useFefoBatchSelectionContext(idOrCode: string | undefined) {
+  const code = idOrCode?.trim() || '';
+  return useQuery({
+    queryKey: ['pharmacy', 'fefo-batches', code] as const,
+    queryFn: () => fetchFefoBatchSelectionContext(code),
+    enabled: code.length > 0,
+    retry: false,
+  });
+}
+
+export function useSubmitFefoBatchSelection(idOrCode: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: SelectFefoBatchesPayload) => submitFefoBatchSelection(idOrCode, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['pharmacy', 'prescriptions'] });
+      void queryClient.invalidateQueries({ queryKey: ['pharmacy', 'fefo-batches', idOrCode] });
       void queryClient.invalidateQueries({ queryKey: ['pharmacy', 'prepare-context', idOrCode] });
     },
   });

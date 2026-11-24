@@ -11,79 +11,14 @@ import { FefoBatchSelectorCard } from '../components/fefo-batch-selector-card';
 import { PharmacySidebar } from '../components/pharmacy-sidebar';
 import { PHARMACY_WORKBENCH_META } from '../data/pharmacy-mock-data';
 import {
-  usePreparePrescriptionContext,
-  useSubmitPreparePrescription,
+  useFefoBatchSelectionContext,
+  useSubmitFefoBatchSelection,
 } from '../hooks/use-pharmacy-workbench';
-import type {
-  BatchStatus,
-  FefoBatchRecord,
-  MedicineBatchRequirement,
+import {
+  isRequirementFefoOverride,
+  type FefoBatchRecord,
+  type MedicineBatchRequirement,
 } from '../types/fefo-batch.types';
-import type { PreparePrescriptionContext } from '../types/prepare-medicine.types';
-
-function computeDaysUntilExpiry(expiryText: string): number {
-  const parts = expiryText.split('/');
-  const parsed =
-    parts.length === 3
-      ? new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00Z`)
-      : new Date(expiryText);
-  if (Number.isNaN(parsed.getTime())) return 90;
-  return Math.floor((parsed.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-}
-
-function mapContextToRequirements(ctx: PreparePrescriptionContext): MedicineBatchRequirement[] {
-  return ctx.items.map((item) => {
-    const batches: FefoBatchRecord[] = item.availableBatches.map((b) => {
-      const days = computeDaysUntilExpiry(b.expiryDate);
-      const isExpired = days < 0;
-      const isOutOfStock = b.availableStock <= 0;
-      let status: BatchStatus = 'AVAILABLE';
-      let blockReason: string | undefined;
-
-      if (isExpired) {
-        status = 'EXPIRED';
-        blockReason = 'Lô đã quá hạn sử dụng theo kiểm định GPP — Hệ thống khóa tự động';
-      } else if (isOutOfStock) {
-        status = 'BLOCKED';
-        blockReason = 'Lô không còn tồn kho khả dụng';
-      } else if (b.isFefoRecommended) {
-        status = 'FEFO_RECOMMENDED';
-      }
-
-      const id = b.batchId != null ? String(b.batchId) : b.batchCode;
-      return {
-        id,
-        batchCode: b.batchCode,
-        drugName: item.drugName,
-        manufacturer: 'Kho Dược Bệnh viện',
-        expiryDate: b.expiryDate,
-        daysUntilExpiry: days,
-        availableQty: b.availableStock,
-        unit: item.unit,
-        shelfLocation: b.shelfLocation,
-        status,
-        blockReason,
-      };
-    });
-
-    const selectedBatch =
-      batches.find(
-        (b) =>
-          (item.selectedBatchId != null && b.id === String(item.selectedBatchId)) ||
-          (item.selectedBatchCode && b.batchCode === item.selectedBatchCode),
-      ) ?? batches.find((b) => b.status === 'FEFO_RECOMMENDED');
-
-    return {
-      id: item.id,
-      drugName: item.drugName,
-      dosageForm: item.dosageForm,
-      requiredQty: item.prescribedQty,
-      unit: item.unit,
-      selectedBatchId: selectedBatch?.id ?? null,
-      batches,
-    };
-  });
-}
 
 export function FefoBatchSelectionPage() {
   const params = useParams<{ prescriptionCode?: string }>();
@@ -94,8 +29,8 @@ export function FefoBatchSelectionPage() {
 
   const activeRxCode = params.prescriptionCode?.trim() || searchParams.get('rxCode')?.trim() || '';
 
-  const contextQuery = usePreparePrescriptionContext(activeRxCode);
-  const submitMutation = useSubmitPreparePrescription(activeRxCode);
+  const contextQuery = useFefoBatchSelectionContext(activeRxCode);
+  const submitMutation = useSubmitFefoBatchSelection(activeRxCode);
 
   const [requirements, setRequirements] = useState<MedicineBatchRequirement[]>([]);
   const [notice, setNotice] = useState<{
@@ -105,12 +40,12 @@ export function FefoBatchSelectionPage() {
 
   useEffect(() => {
     if (contextQuery.data) {
-      setRequirements(mapContextToRequirements(contextQuery.data));
+      setRequirements(contextQuery.data.items);
     }
   }, [contextQuery.data]);
 
   const handleSelectBatch = (requirementId: string, batch: FefoBatchRecord) => {
-    if (batch.status === 'EXPIRED' || batch.status === 'BLOCKED') {
+    if (batch.status === 'EXPIRED' || batch.status === 'BLOCKED' || batch.isSelectable === false) {
       setNotice({
         tone: 'error',
         message: `Không thể chọn lô ${batch.batchCode}: ${batch.blockReason ?? 'Lô bị khóa'}.`,
@@ -127,6 +62,12 @@ export function FefoBatchSelectionPage() {
     });
   };
 
+  const handleOverrideReasonChange = (requirementId: string, reason: string) => {
+    setRequirements((prev) =>
+      prev.map((req) => (req.id === requirementId ? { ...req, overrideReason: reason } : req)),
+    );
+  };
+
   const handleSaveBatches = async () => {
     const missing = requirements.filter((r) => !r.selectedBatchId);
     if (missing.length > 0) {
@@ -137,22 +78,37 @@ export function FefoBatchSelectionPage() {
       return;
     }
 
+    const missingOverrideReason = requirements.find(
+      (req) => isRequirementFefoOverride(req) && (req.overrideReason?.trim().length ?? 0) < 5,
+    );
+    if (missingOverrideReason) {
+      setNotice({
+        tone: 'error',
+        message: `Vui lòng nhập lý do hợp lệ (tối thiểu 5 ký tự) cho ${missingOverrideReason.drugName} khi chọn lô có hạn dùng xa hơn lô ưu tiên FEFO.`,
+      });
+      return;
+    }
+
     try {
-      await submitMutation.mutateAsync({
+      const response = await submitMutation.mutateAsync({
         items: requirements.map((req) => {
           const chosen = req.batches.find((b) => b.id === req.selectedBatchId);
           const numericBatchId = chosen && /^\d+$/.test(chosen.id) ? Number(chosen.id) : null;
+          const trimmedReason = req.overrideReason?.trim() || null;
           return {
             prescriptionItemId: Number(req.id),
             medicineBatchId: numericBatchId,
             batchCode: chosen?.batchCode ?? null,
             pickedQuantity: req.requiredQty,
+            overrideReason: isRequirementFefoOverride(req) ? trimmedReason : null,
           };
         }),
       });
       setNotice({
         tone: 'success',
-        message: 'Đã xác nhận phân bổ lô thuốc theo nguyên tắc FEFO cho toàn bộ đơn thuốc.',
+        message:
+          response.message ||
+          'Đã xác nhận phân bổ lô thuốc theo nguyên tắc FEFO cho toàn bộ đơn thuốc.',
       });
     } catch (error) {
       setNotice({
@@ -201,7 +157,7 @@ export function FefoBatchSelectionPage() {
             type="button"
             onClick={() => logout.mutate()}
             disabled={logout.isPending}
-            className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-canvas disabled:opacity-50"
+            className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-canvas disabled:opacity-60"
           >
             Đăng xuất
           </button>
@@ -273,6 +229,7 @@ export function FefoBatchSelectionPage() {
                   key={req.id}
                   requirement={req}
                   onSelectBatch={handleSelectBatch}
+                  onOverrideReasonChange={handleOverrideReasonChange}
                 />
               ))}
             </div>

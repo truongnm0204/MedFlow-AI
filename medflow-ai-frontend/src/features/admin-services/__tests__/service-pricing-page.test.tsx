@@ -24,6 +24,7 @@ const MOCK_API_SERVICES = [
     category: 'Khám Lâm sàng',
     departmentName: 'Khoa Khám bệnh',
     price: 300000,
+    hasEffectivePrice: true,
     allowsOnlineBooking: true,
     isActive: true,
     status: 'ACTIVE',
@@ -36,13 +37,14 @@ const MOCK_API_SERVICES = [
     category: 'Hội chẩn Lâm sàng',
     departmentName: 'Khoa Tim mạch',
     price: 550000,
+    hasEffectivePrice: true,
     allowsOnlineBooking: true,
     isActive: true,
     status: 'ACTIVE',
   },
 ];
 
-describe('ServicePricingPage (UC52 real API, no QĐ-142/BV-KH fallback)', () => {
+describe('ServicePricingPage (UC52 / GH-818 GET /admin/service-prices)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useAuthStore.setState({
@@ -76,10 +78,14 @@ describe('ServicePricingPage (UC52 real API, no QĐ-142/BV-KH fallback)', () => 
     );
   };
 
-  it('fetches GET /admin/examination-services and shows Chưa cập nhật instead of QĐ-142/BV-KH when decisionNumber is null', async () => {
+  it('fetches GET /admin/service-prices and shows Chưa cập nhật when decisionNumber is null', async () => {
     renderPage();
 
     expect(await screen.findByText('EX-1-01')).toBeInTheDocument();
+    expect(apiClient.get).toHaveBeenCalledWith(
+      '/admin/service-prices',
+      expect.objectContaining({ params: { page: 1, pageSize: 200 } }),
+    );
     expect(screen.getByText('TỔNG DỊCH VỤ ĐỊNH GIÁ')).toBeInTheDocument();
     expect(screen.getByText('300.000 đ')).toBeInTheDocument();
     expect(screen.queryByText('QĐ-142/BV-KH')).not.toBeInTheDocument();

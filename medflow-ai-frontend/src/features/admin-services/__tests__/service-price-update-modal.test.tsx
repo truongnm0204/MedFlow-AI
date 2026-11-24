@@ -13,7 +13,7 @@ vi.mock('@/shared/lib/axios', () => ({
   },
 }));
 
-describe('ServicePriceUpdateModal (M3-207 FE Update Service Price real API)', () => {
+describe('ServicePriceUpdateModal (UC52 / GH-818 real API)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useExaminationServiceStore.setState({
@@ -29,9 +29,25 @@ describe('ServicePriceUpdateModal (M3-207 FE Update Service Price real API)', ()
         category: INITIAL_SERVICES[0].category,
         departmentName: INITIAL_SERVICES[0].department,
         price: 450000,
+        currentPriceAmount: 450000,
+        hasEffectivePrice: true,
+        effectiveDate: '2026-11-25',
+        decisionNumber: 'QĐ-888/BV-KH',
+        appliedBy: 'Hội đồng Giá Bệnh viện',
         allowsOnlineBooking: true,
         isActive: true,
         status: 'ACTIVE',
+        priceHistory: [
+          {
+            id: 101,
+            date: '2026-11-25',
+            price: 450000,
+            decisionNumber: 'QĐ-888/BV-KH',
+            appliedBy: 'Hội đồng Giá Bệnh viện',
+            note: 'Điều chỉnh mới',
+            isActive: true,
+          },
+        ],
       },
     });
   });
@@ -56,7 +72,7 @@ describe('ServicePriceUpdateModal (M3-207 FE Update Service Price real API)', ()
     expect(screen.getByText('Cập nhật Biểu phí Dịch vụ (UC52)')).toBeInTheDocument();
   });
 
-  it('calculates live price difference, presets, validates zero price, and calls PUT /admin/examination-services/:id', async () => {
+  it('validates negative price, applies presets, and submits PUT /admin/examination-services/:id/prices', async () => {
     const testService = { ...INITIAL_SERVICES[0], id: '1' };
     useExaminationServiceStore.setState({ updatePriceService: testService });
     renderComponent();
@@ -67,10 +83,10 @@ describe('ServicePriceUpdateModal (M3-207 FE Update Service Price real API)', ()
     );
 
     fireEvent.change(screen.getByLabelText(/Mức giá niêm yết mới \(VNĐ\)/i), {
-      target: { value: '0' },
+      target: { value: '-1000' },
     });
     fireEvent.click(screen.getByRole('button', { name: /Xác nhận & Lưu giá mới/i }));
-    expect(await screen.findByText(/Mức giá dịch vụ phải lớn hơn 0 đ/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Mức giá dịch vụ không được âm/i)).toBeInTheDocument();
     expect(apiClient.put).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText(/Mức giá niêm yết mới \(VNĐ\)/i), {
@@ -82,9 +98,13 @@ describe('ServicePriceUpdateModal (M3-207 FE Update Service Price real API)', ()
     fireEvent.click(screen.getByRole('button', { name: /Xác nhận & Lưu giá mới/i }));
 
     await waitFor(() => {
-      expect(apiClient.put).toHaveBeenCalledWith('/admin/examination-services/1', {
-        price: 450000,
-      });
+      expect(apiClient.put).toHaveBeenCalledWith(
+        '/admin/examination-services/1/prices',
+        expect.objectContaining({
+          priceAmount: 450000,
+          decisionNumber: 'QĐ-888/BV-KH',
+        }),
+      );
       const updated = useExaminationServiceStore.getState().services.find((s) => s.id === '1');
       expect(updated?.price).toBe(450000);
       expect(updated?.decisionNumber).toBe('QĐ-888/BV-KH');

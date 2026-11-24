@@ -15,19 +15,20 @@ import { Link } from 'react-router-dom';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { hasAnyRole } from '@/features/auth/utils/rbac';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { Alert } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 
 import { ServicePriceHistoryModal } from '../components/service-price-history-modal';
 import { ServicePriceUpdateModal } from '../components/service-price-update-modal';
 import { CATEGORIES, DEPARTMENTS } from '../data/examination-services-data';
-import { useAdminExaminationServices } from '../hooks/use-examination-services';
+import { useAdminServicePrices } from '../hooks/use-examination-services';
 import { useExaminationServiceStore } from '../store/examination-service.store';
 
 export function ServicePricingPage() {
   const user = useAuthStore((state) => state.user);
   const canUpdatePrice = hasAnyRole(user?.roles, ['HOSPITAL_ADMIN', 'SYSTEM_ADMIN']);
 
-  useAdminExaminationServices();
+  const pricingQuery = useAdminServicePrices();
   const services = useExaminationServiceStore((state) => state.services);
   const setPriceHistoryService = useExaminationServiceStore(
     (state) => state.setPriceHistoryService,
@@ -69,7 +70,7 @@ export function ServicePricingPage() {
     const latestService = services.find((s) => s.decisionNumber);
     const latestDecision = latestService?.decisionNumber ?? 'Chưa cập nhật';
     const latestDate = latestService?.effectiveDate ?? 'Chưa cập nhật';
-    const pricedCount = services.filter((s) => s.price > 0).length;
+    const pricedCount = services.filter((s) => s.hasEffectivePrice ?? s.price > 0).length;
     const pricedRatio = Math.round((pricedCount / services.length) * 100);
 
     return {
@@ -197,6 +198,26 @@ export function ServicePricingPage() {
             </Link>
           </div>
         </div>
+
+        {pricingQuery.isError && (
+          <Alert tone="error">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                {pricingQuery.error instanceof Error
+                  ? pricingQuery.error.message
+                  : 'Không thể tải bảng giá dịch vụ của cơ sở y tế.'}
+              </span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => void pricingQuery.refetch()}
+              >
+                Thử lại
+              </Button>
+            </div>
+          </Alert>
+        )}
 
         {/* 4 KPI Metric Cards */}
         <section

@@ -8,6 +8,14 @@ import type {
 } from '../types/dispense-confirm.types';
 import type { DispensingResultDetail } from '../types/dispensing-result.types';
 import type {
+  BatchStatus,
+  FefoBatchRecord,
+  FefoBatchSelectionContext,
+  MedicineBatchRequirement,
+  SelectFefoBatchesPayload,
+  SelectFefoBatchesResponse,
+} from '../types/fefo-batch.types';
+import type {
   PharmacyDashboardQueryParams,
   PharmacyDashboardSummary,
 } from '../types/pharmacy.types';
@@ -318,6 +326,154 @@ export async function submitPreparePrescription(
     return data;
   } catch (error) {
     throw extractPharmacyApiError(error, 'Không thể xác nhận hoàn tất soạn đơn thuốc.');
+  }
+}
+
+interface FefoBatchCandidateApiDto {
+  batchId: number;
+  batchCode: string;
+  expiryDate: string;
+  expiryDateIso?: string | null;
+  daysUntilExpiry: number;
+  availableStock: number;
+  shelfLocation: string;
+  status: string;
+  isFefoRecommended: boolean;
+  isSelectable: boolean;
+  blockReason?: string | null;
+}
+
+interface FefoPrescriptionItemApiDto {
+  prescriptionItemId: number;
+  orderIndex: number;
+  medicineId: number;
+  medicineCode?: string | null;
+  drugName: string;
+  activeIngredient?: string | null;
+  strength?: string | null;
+  dosageForm: string;
+  requiredQuantity: number;
+  unit: string;
+  selectedBatchId?: number | null;
+  selectedBatchCode?: string | null;
+  overrideReason?: string | null;
+  batches: FefoBatchCandidateApiDto[];
+}
+
+interface FefoBatchSelectionContextApiDto {
+  prescriptionId: number;
+  prescriptionCode: string;
+  visitId: number;
+  visitCode: string;
+  patientCode: string;
+  patientName: string;
+  status: string;
+  dispenseId?: number | null;
+  todayHospitalDate: string;
+  items: FefoPrescriptionItemApiDto[];
+}
+
+function normalizeBatchStatus(rawStatus: string, isFefoRecommended: boolean): BatchStatus {
+  const upper = rawStatus?.trim().toUpperCase() || '';
+  if (upper === 'EXPIRED') return 'EXPIRED';
+  if (upper === 'BLOCKED') return 'BLOCKED';
+  if (upper === 'FEFO_RECOMMENDED' || isFefoRecommended) return 'FEFO_RECOMMENDED';
+  return 'AVAILABLE';
+}
+
+/**
+ * Lấy danh sách lô thuốc khả dụng theo chuẩn FEFO (`GET /pharmacy/prescriptions/:idOrCode/fefo-batches`).
+ */
+export async function fetchFefoBatchSelectionContext(
+  idOrCode: string,
+): Promise<FefoBatchSelectionContext> {
+  const trimmed = idOrCode.trim();
+  if (!trimmed) {
+    throw new Error('Mã đơn thuốc không được để trống.');
+  }
+
+  try {
+    const { data } = await apiClient.get<FefoBatchSelectionContextApiDto>(
+      `/pharmacy/prescriptions/${encodeURIComponent(trimmed)}/fefo-batches`,
+    );
+
+    const items: MedicineBatchRequirement[] = (data.items ?? []).map((item) => {
+      const batches: FefoBatchRecord[] = (item.batches ?? []).map((b) => {
+        const status = normalizeBatchStatus(b.status, Boolean(b.isFefoRecommended));
+        return {
+          id: String(b.batchId),
+          batchCode: b.batchCode,
+          drugName: item.drugName,
+          manufacturer: 'Kho Dược Bệnh viện',
+          expiryDate: b.expiryDate,
+          daysUntilExpiry: Number(b.daysUntilExpiry ?? 0),
+          availableQty: Number(b.availableStock ?? 0),
+          unit: item.unit || 'viên',
+          shelfLocation: b.shelfLocation || 'Chưa cập nhật',
+          status,
+          isSelectable: Boolean(b.isSelectable) && status !== 'EXPIRED' && status !== 'BLOCKED',
+          isFefoRecommended: Boolean(b.isFefoRecommended),
+          blockReason: b.blockReason ?? undefined,
+        };
+      });
+
+      const resolvedSelected =
+        batches.find(
+          (b) =>
+            b.isSelectable !== false &&
+            ((item.selectedBatchId != null && b.id === String(item.selectedBatchId)) ||
+              (item.selectedBatchCode && b.batchCode === item.selectedBatchCode)),
+        ) ?? batches.find((b) => b.status === 'FEFO_RECOMMENDED');
+
+      return {
+        id: String(item.prescriptionItemId),
+        drugName: item.drugName,
+        dosageForm: item.dosageForm || item.strength || 'Viên',
+        requiredQty: Number(item.requiredQuantity),
+        unit: item.unit || 'viên',
+        selectedBatchId: resolvedSelected?.id ?? null,
+        overrideReason: item.overrideReason ?? '',
+        batches,
+      };
+    });
+
+    return {
+      prescriptionId: data.prescriptionId,
+      prescriptionCode: data.prescriptionCode,
+      visitId: data.visitId,
+      visitCode: data.visitCode,
+      patientCode: data.patientCode,
+      patientName: data.patientName,
+      status: data.status,
+      dispenseId: data.dispenseId,
+      todayHospitalDate: data.todayHospitalDate,
+      items,
+    };
+  } catch (error) {
+    throw extractPharmacyApiError(error, 'Không thể tải danh sách lô thuốc FEFO.');
+  }
+}
+
+/**
+ * Xác thực & lưu lựa chọn lô thuốc theo chuẩn FEFO (`POST /pharmacy/prescriptions/:idOrCode/fefo-batches`).
+ */
+export async function submitFefoBatchSelection(
+  idOrCode: string,
+  payload: SelectFefoBatchesPayload,
+): Promise<SelectFefoBatchesResponse> {
+  const trimmed = idOrCode.trim();
+  if (!trimmed) {
+    throw new Error('Mã đơn thuốc không được để trống.');
+  }
+
+  try {
+    const { data } = await apiClient.post<SelectFefoBatchesResponse>(
+      `/pharmacy/prescriptions/${encodeURIComponent(trimmed)}/fefo-batches`,
+      payload,
+    );
+    return data;
+  } catch (error) {
+    throw extractPharmacyApiError(error, 'Không thể lưu phân bổ lô FEFO lên máy chủ.');
   }
 }
 
