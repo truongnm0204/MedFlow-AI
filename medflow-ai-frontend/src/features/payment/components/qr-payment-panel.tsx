@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { Spinner } from '@/shared/ui/spinner';
 import { toast } from '@/shared/ui/toast';
 
-import { formatVnd, paymentLabel } from '../lib/payment-format';
+import { formatVnd, paymentLabel } from '../utils/payment-format';
 
 interface QrPaymentPanelProps {
   paymentCode: string;

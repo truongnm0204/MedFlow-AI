@@ -1,15 +1,6 @@
-import axios from 'axios';
-
 import { apiClient } from '@/shared/lib/axios';
 
 import { mapRoleItemDto, mapRoleMetricsDto } from './role.api';
-import {
-  createMockRole,
-  getMockRolesCatalog,
-  SYSTEM_PERMISSION_LIST,
-  updateMockRolePermissions,
-  updateMockRole,
-} from '../data/role-mock-data';
 import type {
   AssignRolePermissionsResponseDto,
   CreateRoleRequest,
@@ -18,94 +9,94 @@ import type {
   RoleListItemDto,
   RoleListResponseDto,
   RoleMetricsDto,
+  RolePermissionItem,
   RolePermissionsCatalogResponseDto,
   RolesPermissionsCatalogDto,
   UpdateRolePermissionsRequest,
   UpdateRoleRequest,
 } from '../types/role.types';
 
-function shouldFallbackToMock(error: unknown): boolean {
-  if (!axios.isAxiosError(error)) return false;
-  return !error.response || error.response.status === 404;
-}
-
-function shouldUseHttpApi(): boolean {
-  if ('mock' in apiClient.get || 'mock' in apiClient.put || 'mock' in apiClient.post) return true;
-  if (import.meta.env.MODE === 'test') return false;
-  return (
-    typeof window !== 'undefined' && Boolean(window.localStorage?.getItem('medflow.access_token'))
-  );
+function derivePermissionsFromRoles(roles: RoleItem[]): RolePermissionItem[] {
+  const seen = new Map<RolePermissionItem['code'], RolePermissionItem>();
+  for (const role of roles) {
+    for (const perm of role.permissions ?? []) {
+      if (!seen.has(perm.code)) {
+        seen.set(perm.code, { ...perm });
+      }
+    }
+  }
+  return [...seen.values()];
 }
 
 export async function fetchRolesPermissionsCatalogApi(
   params?: GetRoleListParams,
 ): Promise<RolesPermissionsCatalogDto> {
-  if (shouldUseHttpApi()) {
-    try {
-      const { data } = params
-        ? await apiClient.get<
-            | RolesPermissionsCatalogDto
-            | RolePermissionsCatalogResponseDto
-            | RoleListResponseDto
-            | RoleItem[]
-          >('/admin/roles', { params })
-        : await apiClient.get<
-            | RolesPermissionsCatalogDto
-            | RolePermissionsCatalogResponseDto
-            | RoleListResponseDto
-            | RoleItem[]
-          >('/admin/roles');
-      const permissions = SYSTEM_PERMISSION_LIST.map((perm) => ({ ...perm }));
-      if (Array.isArray(data)) {
-        return {
-          roles: data,
-          permissions,
-          metrics: {
-            totalRoles: data.length,
-            activeRoles: data.filter((role) => role.status === 'ACTIVE').length,
-            totalAssignedAccounts: data.reduce((sum, role) => sum + role.assignedUsersCount, 0),
-            totalPermissions: permissions.length,
-          },
-        };
-      }
-      if ('data' in data) {
-        const rawItems = data.data ?? data.items ?? [];
-        return {
-          roles: rawItems.map(mapRoleItemDto),
-          permissions,
-          metrics: mapRoleMetricsDto(data.metrics),
-        };
-      }
-      if ('roles' in data && Array.isArray(data.roles)) {
-        const needsRoleMapping = data.roles.some(
-          (role: RoleItem | RoleListItemDto) =>
-            'roleId' in role && typeof role.roleId === 'number' && !('id' in role),
-        );
-        const needsMetricsMapping =
-          Boolean(data.metrics) &&
-          'inactiveRoles' in data.metrics &&
-          typeof data.metrics.inactiveRoles === 'number';
-        if (needsRoleMapping || needsMetricsMapping) {
-          return {
-            roles: data.roles.map((role: RoleItem | RoleListItemDto) =>
-              'id' in role ? (role as RoleItem) : mapRoleItemDto(role as RoleListItemDto),
-            ),
-            permissions: data.permissions?.length ? data.permissions : permissions,
-            metrics: needsMetricsMapping
-              ? mapRoleMetricsDto(data.metrics as RoleMetricsDto)
-              : data.metrics,
-          };
-        }
-      }
-      return data as RolesPermissionsCatalogDto;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
+  const { data } = params
+    ? await apiClient.get<
+        | RolesPermissionsCatalogDto
+        | RolePermissionsCatalogResponseDto
+        | RoleListResponseDto
+        | RoleItem[]
+      >('/admin/roles', { params })
+    : await apiClient.get<
+        | RolesPermissionsCatalogDto
+        | RolePermissionsCatalogResponseDto
+        | RoleListResponseDto
+        | RoleItem[]
+      >('/admin/roles');
+
+  if (Array.isArray(data)) {
+    const permissions = derivePermissionsFromRoles(data);
+    return {
+      roles: data,
+      permissions,
+      metrics: {
+        totalRoles: data.length,
+        activeRoles: data.filter((role) => role.status === 'ACTIVE').length,
+        totalAssignedAccounts: data.reduce((sum, role) => sum + role.assignedUsersCount, 0),
+        totalPermissions: permissions.length,
+      },
+    };
+  }
+
+  if ('data' in data) {
+    const rawItems = data.data ?? data.items ?? [];
+    const roles = rawItems.map(mapRoleItemDto);
+    const permissions = derivePermissionsFromRoles(roles);
+    return {
+      roles,
+      permissions,
+      metrics: mapRoleMetricsDto(data.metrics),
+    };
+  }
+
+  if ('roles' in data && Array.isArray(data.roles)) {
+    const needsRoleMapping = data.roles.some(
+      (role: RoleItem | RoleListItemDto) =>
+        'roleId' in role && typeof role.roleId === 'number' && !('id' in role),
+    );
+    const needsMetricsMapping =
+      Boolean(data.metrics) &&
+      'inactiveRoles' in data.metrics &&
+      typeof data.metrics.inactiveRoles === 'number';
+    if (needsRoleMapping || needsMetricsMapping) {
+      const mappedRoles = data.roles.map((role: RoleItem | RoleListItemDto) =>
+        'id' in role ? (role as RoleItem) : mapRoleItemDto(role as RoleListItemDto),
+      );
+      const permissions = data.permissions?.length
+        ? data.permissions
+        : derivePermissionsFromRoles(mappedRoles);
+      return {
+        roles: mappedRoles,
+        permissions,
+        metrics: needsMetricsMapping
+          ? mapRoleMetricsDto(data.metrics as RoleMetricsDto)
+          : data.metrics,
+      };
     }
   }
 
-  return getMockRolesCatalog();
+  return data as RolesPermissionsCatalogDto;
 }
 
 export async function assignRolePermissionsApi(
@@ -118,30 +109,14 @@ export async function assignRolePermissionsApi(
     ...(trimmedNote ? { note: trimmedNote } : {}),
   };
 
-  if (shouldUseHttpApi()) {
-    try {
-      const { data } = await apiClient.put<
-        RoleItem | RoleListItemDto | AssignRolePermissionsResponseDto
-      >(`/admin/roles/${encodeURIComponent(payload.roleId)}/permissions`, body);
-      const rawRole = 'role' in data ? data.role : data;
-      const updatedRole =
-        'roleId' in rawRole && typeof rawRole.roleId === 'number'
-          ? mapRoleItemDto(rawRole as RoleListItemDto)
-          : (rawRole as RoleItem);
-      try {
-        updateMockRolePermissions(payload.roleId, payload.permissionCodes);
-      } catch {
-        // Role exists only on server; ignore mock sync error
-      }
-      return updatedRole;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
+  const { data } = await apiClient.put<
+    RoleItem | RoleListItemDto | AssignRolePermissionsResponseDto
+  >(`/admin/roles/${encodeURIComponent(payload.roleId)}/permissions`, body);
 
-  return updateMockRolePermissions(payload.roleId, payload.permissionCodes);
+  const rawRole = 'role' in data ? data.role : data;
+  return 'roleId' in rawRole && typeof rawRole.roleId === 'number'
+    ? mapRoleItemDto(rawRole as RoleListItemDto)
+    : (rawRole as RoleItem);
 }
 
 export async function createRoleApi(payload: CreateRoleRequest): Promise<RoleItem> {
@@ -160,27 +135,10 @@ export async function createRoleApi(payload: CreateRoleRequest): Promise<RoleIte
     ...(trimmedNote ? { note: trimmedNote } : {}),
   };
 
-  if (shouldUseHttpApi()) {
-    try {
-      const { data } = await apiClient.post<RoleItem | RoleListItemDto>('/admin/roles', body);
-      const createdRole =
-        'roleId' in data && typeof data.roleId === 'number'
-          ? mapRoleItemDto(data as RoleListItemDto)
-          : (data as RoleItem);
-      try {
-        createMockRole(body);
-      } catch {
-        // Role may already exist in mock catalog; ignore mock sync error
-      }
-      return createdRole;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return createMockRole(body);
+  const { data } = await apiClient.post<RoleItem | RoleListItemDto>('/admin/roles', body);
+  return 'roleId' in data && typeof data.roleId === 'number'
+    ? mapRoleItemDto(data as RoleListItemDto)
+    : (data as RoleItem);
 }
 
 export async function updateRoleApi(payload: UpdateRoleRequest): Promise<RoleItem> {
@@ -197,28 +155,11 @@ export async function updateRoleApi(payload: UpdateRoleRequest): Promise<RoleIte
     ...(trimmedNote ? { note: trimmedNote } : {}),
   };
 
-  if (shouldUseHttpApi()) {
-    try {
-      const { data } = await apiClient.put<RoleItem | RoleListItemDto>(
-        `/admin/roles/${encodeURIComponent(payload.roleId)}`,
-        body,
-      );
-      const updatedRole =
-        'roleId' in data && typeof data.roleId === 'number'
-          ? mapRoleItemDto(data as RoleListItemDto)
-          : (data as RoleItem);
-      try {
-        updateMockRole(payload);
-      } catch {
-        // Role exists only on server; ignore mock sync error
-      }
-      return updatedRole;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return updateMockRole(payload);
+  const { data } = await apiClient.put<RoleItem | RoleListItemDto>(
+    `/admin/roles/${encodeURIComponent(payload.roleId)}`,
+    body,
+  );
+  return 'roleId' in data && typeof data.roleId === 'number'
+    ? mapRoleItemDto(data as RoleListItemDto)
+    : (data as RoleItem);
 }

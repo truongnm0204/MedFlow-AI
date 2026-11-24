@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppRouter } from '@/app/router/app-router';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import { DOCTOR_ASSIGNED_QUEUE_MOCK } from '../data/doctor-assigned-queue-mock';
@@ -42,6 +43,12 @@ describe('DoctorAssignedQueuePage', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (url === '/doctor/assigned-queue') {
+        return { data: DOCTOR_ASSIGNED_QUEUE_MOCK };
+      }
+      throw new AxiosError('Unmocked endpoint', 'ERR_NETWORK');
+    });
     useAuthStore.setState({
       user: null,
       accessToken: null,
@@ -97,7 +104,7 @@ describe('DoctorAssignedQueuePage', () => {
   });
 
   it('calls GET /doctor/assigned-queue without params initially and passes queueDate when date picker changes', async () => {
-    localStorage.setItem('medflow.access_token', 'jwt-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-doctor');
     useAuthStore.setState({
       user: {
         id: 12,
@@ -133,7 +140,7 @@ describe('DoctorAssignedQueuePage', () => {
   });
 
   it('shows empty assignment state when doctor has no assigned service points on the selected date', async () => {
-    localStorage.setItem('medflow.access_token', 'jwt-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-doctor');
     vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
       data: {
         ...DOCTOR_ASSIGNED_QUEUE_MOCK,
@@ -160,7 +167,7 @@ describe('DoctorAssignedQueuePage', () => {
   });
 
   it('does not mask HTTP 404 domain errors with mock data and recovers on retry', async () => {
-    localStorage.setItem('medflow.access_token', 'jwt-doctor');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-doctor');
 
     const notFoundError = new AxiosError('nf', 'ERR_BAD_REQUEST', undefined, undefined, {
       status: 404,

@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import { CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK } from '../data/consultation-workspace-mock';
@@ -31,7 +32,7 @@ function renderPage(entry = '/doctor/consultation/VIS-2026-0212/prescription') {
 }
 
 function authenticateAsDoctor() {
-  localStorage.setItem('medflow.access_token', 'jwt-doctor');
+  localStorage.setItem(ACCESS_TOKEN_KEY, 'jwt-doctor');
   useAuthStore.setState({
     user: {
       id: 12,
@@ -188,7 +189,7 @@ describe('DoctorCreatePrescriptionPage (Issue #139 / UC37)', () => {
     expect(screen.queryByRole('button', { name: 'Lưu đơn nháp' })).not.toBeInTheDocument();
   });
 
-  it('uses the mock workspace when no access token is present and does not call the API', async () => {
+  it('calls HTTP endpoints even without localStorage token and never fabricates RX-MOCK on failure', async () => {
     useAuthStore.setState({
       user: {
         id: 12,
@@ -201,20 +202,27 @@ describe('DoctorCreatePrescriptionPage (Issue #139 / UC37)', () => {
       refreshToken: null,
       isAuthenticated: true,
     });
-    const getSpy = vi.spyOn(apiClient, 'get');
-    const putSpy = vi.spyOn(apiClient, 'put');
+    const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK,
+    });
+    const putSpy = vi
+      .spyOn(apiClient, 'put')
+      .mockRejectedValueOnce(new AxiosError('Network Error', 'ERR_NETWORK'));
 
     renderPage();
 
     expect(await screen.findByText('Nguyễn Văn An')).toBeInTheDocument();
+    expect(getSpy).toHaveBeenCalledWith('/doctor/consultation/VIS-2026-0212');
+
     fireEvent.change(screen.getByLabelText('Mã thuốc dòng 1'), { target: { value: 'PARA-500' } });
     fireEvent.change(screen.getByLabelText('Lịch dùng dòng 1'), {
       target: { value: '1 viên sau ăn sáng' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Lưu đơn nháp' }));
 
-    expect(await screen.findByText(/Đã lưu đơn nháp RX-MOCK-0001/)).toBeInTheDocument();
-    expect(getSpy).not.toHaveBeenCalled();
-    expect(putSpy).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByText(/RX-MOCK-0001/)).not.toBeInTheDocument();
   });
 });

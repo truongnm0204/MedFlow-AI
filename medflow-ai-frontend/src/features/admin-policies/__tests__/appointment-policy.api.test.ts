@@ -1,17 +1,14 @@
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import {
   fetchAppointmentPolicyApi,
   updateAppointmentPolicyApi,
 } from '../api/appointment-policy.api';
-import {
-  DEFAULT_APPOINTMENT_POLICY_VALUES,
-  INITIAL_MOCK_APPOINTMENT_POLICY,
-  resetMockAppointmentPolicy,
-} from '../data/appointment-policy-mock';
+import { DEFAULT_APPOINTMENT_POLICY_VALUES } from '../data/appointment-policy-mock';
 import type { AppointmentPolicyDto } from '../types/appointment-policy.types';
 
 function makeAxiosError(status: number, detail: string): AxiosError {
@@ -26,10 +23,9 @@ function makeAxiosError(status: number, detail: string): AxiosError {
   return new AxiosError(detail, `ERR_BAD_REQUEST_${status}`, config, {}, response);
 }
 
-describe('appointment-policy.api (UC54)', () => {
+describe('appointment-policy.api (UC54 — pure HTTP)', () => {
   beforeEach(() => {
-    resetMockAppointmentPolicy();
-    window.localStorage.setItem('medflow.access_token', 'test-jwt-token');
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, 'test-jwt-token');
   });
 
   afterEach(() => {
@@ -51,25 +47,21 @@ describe('appointment-policy.api (UC54)', () => {
     expect(result).toEqual(serverDto);
   });
 
-  it('fetchAppointmentPolicyApi falls back to mock on HTTP 404 or network error', async () => {
+  it('fetchAppointmentPolicyApi propagates HTTP 404, 403, 500 and network errors without mock fallback', async () => {
     vi.spyOn(apiClient, 'get').mockRejectedValueOnce(makeAxiosError(404, 'Not found'));
+    await expect(fetchAppointmentPolicyApi()).rejects.toThrow(AxiosError);
 
-    const result404 = await fetchAppointmentPolicyApi();
-    expect(result404).toEqual(INITIAL_MOCK_APPOINTMENT_POLICY);
-
-    const networkErr = new AxiosError('Network Error', 'ERR_NETWORK');
-    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(networkErr);
-
-    const resultNetwork = await fetchAppointmentPolicyApi();
-    expect(resultNetwork).toEqual(INITIAL_MOCK_APPOINTMENT_POLICY);
-  });
-
-  it('fetchAppointmentPolicyApi rethrows AxiosError on HTTP 403 without falling back to mock', async () => {
     vi.spyOn(apiClient, 'get').mockRejectedValueOnce(
       makeAxiosError(403, 'Tài khoản quản trị chưa được gán bệnh viện.'),
     );
-
     await expect(fetchAppointmentPolicyApi()).rejects.toThrow(AxiosError);
+
+    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(makeAxiosError(500, 'Server error'));
+    await expect(fetchAppointmentPolicyApi()).rejects.toThrow(AxiosError);
+
+    const networkErr = new AxiosError('Network Error', 'ERR_NETWORK');
+    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(networkErr);
+    await expect(fetchAppointmentPolicyApi()).rejects.toBe(networkErr);
   });
 
   it('updateAppointmentPolicyApi sends all 10 integer fields to PUT /admin/appointment-policy and returns updated DTO', async () => {
@@ -90,11 +82,10 @@ describe('appointment-policy.api (UC54)', () => {
     expect(result).toEqual(updatedDto);
   });
 
-  it('updateAppointmentPolicyApi rethrows HTTP 400 and HTTP 403 errors without falling back to mock', async () => {
+  it('updateAppointmentPolicyApi rethrows HTTP 400, 403 and network errors without fake success', async () => {
     vi.spyOn(apiClient, 'put').mockRejectedValueOnce(
       makeAxiosError(400, 'Thời gian đặt trước tối thiểu phải nhỏ hơn cửa sổ đặt lịch.'),
     );
-
     await expect(updateAppointmentPolicyApi(DEFAULT_APPOINTMENT_POLICY_VALUES)).rejects.toThrow(
       AxiosError,
     );
@@ -102,9 +93,14 @@ describe('appointment-policy.api (UC54)', () => {
     vi.spyOn(apiClient, 'put').mockRejectedValueOnce(
       makeAxiosError(403, 'Tài khoản quản trị chưa được gán bệnh viện.'),
     );
-
     await expect(updateAppointmentPolicyApi(DEFAULT_APPOINTMENT_POLICY_VALUES)).rejects.toThrow(
       AxiosError,
+    );
+
+    const networkErr = new AxiosError('Network Error', 'ERR_NETWORK');
+    vi.spyOn(apiClient, 'put').mockRejectedValueOnce(networkErr);
+    await expect(updateAppointmentPolicyApi(DEFAULT_APPOINTMENT_POLICY_VALUES)).rejects.toBe(
+      networkErr,
     );
   });
 });

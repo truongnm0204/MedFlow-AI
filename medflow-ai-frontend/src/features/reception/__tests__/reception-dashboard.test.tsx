@@ -2,11 +2,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppRouter } from '@/app/router/app-router';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { apiClient } from '@/shared/lib/axios';
 
+import { buildMockExaminationQueueResponse } from '../data/examination-queue-mock';
+import {
+  COMPATIBLE_EXAMINATION_ROOMS_MOCK,
+  COMPATIBLE_TRANSFER_ROOMS_MOCK,
+} from '../data/reception-mock-data';
 import { ReceptionDashboardPage } from '../pages/reception-dashboard-page';
 
 function LocationProbe() {
@@ -26,6 +32,63 @@ function renderPage() {
 }
 
 describe('ReceptionDashboardPage', () => {
+  beforeEach(() => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (url === '/reception/examination-queue') {
+        return { data: buildMockExaminationQueueResponse() };
+      }
+      if (url === '/reception/patients/search') {
+        return {
+          data: {
+            items: [],
+            totalCount: 0,
+            page: 1,
+            pageSize: 50,
+            counts: { all: 0, hasAppointment: 0, checkedIn: 0, noAppointment: 0 },
+          },
+        };
+      }
+      if (typeof url === 'string' && url.endsWith('/compatible-rooms')) {
+        return {
+          data: {
+            visitId: 102,
+            visitCode: 'VIS-2026-0102',
+            visitStatus: 'CALLED',
+            currentRoomId: 102,
+            currentRoomCode: 'P.102',
+            currentRoomName: 'Phòng khám Nội tổng quát 1',
+            departmentId: 1,
+            departmentCode: 'NOI',
+            departmentName: 'Khoa Nội tổng quát',
+            rooms: COMPATIBLE_TRANSFER_ROOMS_MOCK,
+          },
+        };
+      }
+      if (typeof url === 'string' && url.endsWith('/available-rooms')) {
+        return {
+          data: {
+            visitId: 106,
+            visitCode: 'VIS-2026-0106',
+            visitStatus: 'CHECKED_IN',
+            hospitalId: 1,
+            assignedDoctorId: 5,
+            assignedDoctorCode: 'DOC-05',
+            assignedDoctorName: 'BS. Lê Hoàng Nam',
+            currentExaminationRoomId: null,
+            currentExaminationRoomCode: null,
+            requiredDepartmentId: 2,
+            requiredDepartmentName: 'Khoa Tim mạch',
+            rooms: COMPATIBLE_EXAMINATION_ROOMS_MOCK,
+          },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it('render dashboard header + stat cards', () => {
     useAuthStore.setState({
       user: {

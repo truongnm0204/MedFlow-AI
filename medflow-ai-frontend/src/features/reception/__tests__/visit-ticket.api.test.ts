@@ -1,18 +1,19 @@
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import { fetchExaminationTicket, printExaminationTicket } from '../api/visit-ticket.api';
 import { buildFallbackExaminationTicket } from '../data/reception-mock-data';
 
-describe('visit-ticket.api (UC29)', () => {
+describe('visit-ticket.api (UC29 — pure HTTP)', () => {
   beforeEach(() => {
-    window.localStorage.setItem('medflow.access_token', 'test-reception-token');
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, 'test-reception-token');
   });
 
   afterEach(() => {
-    window.localStorage.removeItem('medflow.access_token');
+    window.localStorage.removeItem(ACCESS_TOKEN_KEY);
     vi.restoreAllMocks();
   });
 
@@ -25,6 +26,13 @@ describe('visit-ticket.api (UC29)', () => {
     expect(getSpy).toHaveBeenCalledWith('/reception/visits/VIS-202610-0001/ticket');
     expect(result.visitCode).toBe('VIS-202610-0001');
     expect(result.ticketNo).toBe('A012');
+  });
+
+  it('propagates 404 and network errors in fetchExaminationTicket without returning fallback ticket', async () => {
+    const networkErr = new AxiosError('Network Error', 'ERR_NETWORK');
+    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(networkErr);
+
+    await expect(fetchExaminationTicket('VIS-202610-0001')).rejects.toBe(networkErr);
   });
 
   it('calls POST /reception/visits/{idOrCode}/ticket/print with copies and reason', async () => {

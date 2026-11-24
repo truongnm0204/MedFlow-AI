@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+import { getHospitalTodayIso } from '@/shared/lib/hospital-date';
+
 import type { BookingMode } from '../types/booking-entry.types';
 
 interface BookingState {
@@ -30,7 +32,7 @@ export const useBookingStore = create<BookingState>((set) => ({
   selectedServiceId: null,
   selectedServiceName: null,
   selectedPatientId: 'pat-self',
-  selectedDateIso: '2026-10-13',
+  selectedDateIso: getHospitalTodayIso(),
   selectedSlotId: 'slot-0900',
   selectedShiftId: 'shift-morning',
   selectedHospitalId: null,
@@ -53,7 +55,7 @@ export const useBookingStore = create<BookingState>((set) => ({
       selectedServiceId: null,
       selectedServiceName: null,
       selectedPatientId: 'pat-self',
-      selectedDateIso: '2026-10-13',
+      selectedDateIso: getHospitalTodayIso(),
       selectedSlotId: 'slot-0900',
       selectedShiftId: 'shift-morning',
       selectedHospitalId: null,

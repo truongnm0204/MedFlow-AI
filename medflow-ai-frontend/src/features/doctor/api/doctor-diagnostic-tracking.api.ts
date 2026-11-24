@@ -1,17 +1,9 @@
-import axios from 'axios';
-
 import { apiClient } from '@/shared/lib/axios';
 
-import { resolveMockDoctorDiagnosticTracking } from '../data/doctor-diagnostic-tracking-mock';
 import type {
   DoctorDiagnosticTrackingQueryParams,
   DoctorDiagnosticTrackingResponseDto,
 } from '../types/doctor-diagnostic-tracking.types';
-
-function shouldFallbackToMock(error: unknown): boolean {
-  if (!axios.isAxiosError(error)) return false;
-  return !error.response;
-}
 
 function buildQueryParams(
   params?: DoctorDiagnosticTrackingQueryParams,
@@ -39,23 +31,10 @@ function buildQueryParams(
 export async function fetchDoctorDiagnosticTracking(
   params?: DoctorDiagnosticTrackingQueryParams,
 ): Promise<DoctorDiagnosticTrackingResponseDto> {
-  const hasToken =
-    typeof window !== 'undefined' && Boolean(window.localStorage?.getItem('medflow.access_token'));
-
-  if (hasToken) {
-    try {
-      const cleanedParams = buildQueryParams(params);
-      const { data } = await apiClient.get<DoctorDiagnosticTrackingResponseDto>(
-        '/doctor/diagnostic-results/tracking',
-        cleanedParams ? { params: cleanedParams } : undefined,
-      );
-      return data;
-    } catch (error) {
-      if (!shouldFallbackToMock(error)) {
-        throw error;
-      }
-    }
-  }
-
-  return resolveMockDoctorDiagnosticTracking(params);
+  const cleanedParams = buildQueryParams(params);
+  const { data } = await apiClient.get<DoctorDiagnosticTrackingResponseDto>(
+    '/doctor/diagnostic-results/tracking',
+    cleanedParams ? { params: cleanedParams } : undefined,
+  );
+  return data;
 }

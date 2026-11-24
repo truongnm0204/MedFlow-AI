@@ -483,7 +483,7 @@ export function AppointmentDetailPage() {
                       <div>
                         <p className="text-xs font-medium text-sub">Số điện thoại</p>
                         <p className="mt-1 font-mono text-sm font-extrabold text-ink">
-                          {appointment.patientPhone ?? '0912 345 678'}
+                          {appointment.patientPhone?.trim() || 'Chưa cập nhật'}
                         </p>
                       </div>
 

@@ -224,8 +224,30 @@ describe('DiagnosticServiceListPage (SCR-ADM-DSV-01)', () => {
     });
   });
 
-  it('lọc dữ liệu mock theo từ khóa khi chạy ở chế độ test không dùng spy', async () => {
-    renderDiagnosticPage();
+  it('gửi từ khóa tìm kiếm lên API và không trả dữ liệu giả khi mất kết nối mạng', async () => {
+    const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (_url, config) => {
+      const keyword = (
+        config as { params?: { keyword?: string } } | undefined
+      )?.params?.keyword?.toLowerCase();
+      if (!keyword) {
+        return { data: DIAGNOSTIC_SERVICES_MOCK };
+      }
+      const filtered = DIAGNOSTIC_SERVICES_MOCK.data.filter(
+        (item) =>
+          item.serviceCode.toLowerCase().includes(keyword) ||
+          item.name.toLowerCase().includes(keyword),
+      );
+      return {
+        data: {
+          ...DIAGNOSTIC_SERVICES_MOCK,
+          data: filtered,
+          total: filtered.length,
+          totalPages: filtered.length > 0 ? 1 : 0,
+        },
+      };
+    });
+
+    const { unmount } = renderDiagnosticPage();
 
     await waitFor(() => {
       expect(screen.getByText('DIA-CBC')).toBeInTheDocument();
@@ -240,6 +262,18 @@ describe('DiagnosticServiceListPage (SCR-ADM-DSV-01)', () => {
       expect(screen.getByText('DIA-XRAY')).toBeInTheDocument();
       expect(screen.queryByText('DIA-CBC')).not.toBeInTheDocument();
     });
+    expect(getSpy).toHaveBeenLastCalledWith(
+      '/admin/diagnostic-services',
+      expect.objectContaining({
+        params: expect.objectContaining({ keyword: 'xray', page: 1 }),
+      }),
+    );
+    unmount();
+
+    getSpy.mockRejectedValueOnce(new AxiosError('Network Error', 'ERR_NETWORK'));
+    renderDiagnosticPage();
+    expect(await screen.findByRole('button', { name: /Thử lại/i })).toBeInTheDocument();
+    expect(screen.queryByText('DIA-XRAY')).not.toBeInTheDocument();
   });
 
   it('chặn SYSTEM_ADMIN ở route /admin/diagnostic-services và ẩn tab Dịch vụ cận lâm sàng với SYSTEM_ADMIN', () => {

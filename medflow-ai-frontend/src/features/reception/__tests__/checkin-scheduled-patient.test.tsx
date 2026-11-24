@@ -9,10 +9,26 @@ import { apiClient } from '@/shared/lib/axios';
 import { CheckInAppointmentSummary } from '../components/checkin-appointment-summary';
 import { CheckInModal } from '../components/checkin-modal';
 import { CheckInVitalsSection } from '../components/checkin-vitals-section';
-import { SCHEDULED_CHECKIN_APPOINTMENTS_MOCK } from '../data/checkin-mock';
 import { ReceptionDashboardPage } from '../pages/reception-dashboard-page';
+import type { ScheduledCheckInAppointment } from '../types/checkin.types';
 
-const mockAppointment = SCHEDULED_CHECKIN_APPOINTMENTS_MOCK[0];
+const mockAppointment: ScheduledCheckInAppointment = {
+  id: 'ap-001',
+  appointmentCode: 'APT-2024-0012',
+  patientCode: 'BN-2024-0018',
+  patientName: 'Đỗ Gia Huy',
+  gender: 'MALE',
+  birthYear: 1990,
+  identityCard: '001090012345',
+  phoneNumber: '0912345678',
+  healthInsuranceNumber: 'DN4010123456789',
+  doctorName: 'BS. CKII Trần Khánh',
+  department: 'Nội tổng quát',
+  roomName: 'P.102',
+  time: '09:00',
+  date: '2026-10-30',
+  status: 'BOOKED',
+};
 
 describe('Check-in Scheduled Patient Components (Issue #71)', () => {
   describe('CheckInAppointmentSummary', () => {

@@ -2,11 +2,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { apiClient } from '@/shared/lib/axios';
 
 import * as visitTicketApi from '../api/visit-ticket.api';
+import { buildMockExaminationQueueResponse } from '../data/examination-queue-mock';
 import { buildFallbackExaminationTicket } from '../data/reception-mock-data';
 import { ReceptionDashboardPage } from '../pages/reception-dashboard-page';
 
@@ -41,6 +43,26 @@ function renderReceptionDashboard() {
 }
 
 describe('PrintExaminationTicketModal & ReceptionDashboardPage (UC29)', () => {
+  beforeEach(() => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (url === '/reception/examination-queue') {
+        return { data: buildMockExaminationQueueResponse() };
+      }
+      if (url === '/reception/patients/search') {
+        return {
+          data: {
+            items: [],
+            totalCount: 0,
+            page: 1,
+            pageSize: 50,
+            counts: { all: 0, hasAppointment: 0, checkedIn: 0, noAppointment: 0 },
+          },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });

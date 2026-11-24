@@ -9,7 +9,7 @@ import { apiClient } from '@/shared/lib/axios';
 
 import * as rolePermissionsApi from '../api/role-permissions.api';
 import { updateRoleApi } from '../api/role-permissions.api';
-import { resetMockRolesCatalog } from '../data/role-mock-data';
+import { getMockRolesCatalog, resetMockRolesCatalog, updateMockRole } from '../data/role-mock-data';
 import { RoleListPage } from '../pages/role-list-page';
 import { updateRoleSchema } from '../schemas/update-role.schema';
 
@@ -298,24 +298,34 @@ describe('updateRoleApi (SCR-ADM-ROLE-01 / UC58)', () => {
     expect(result.updatedAt).toBe('20/04/2026');
   });
 
-  it('falls back to updateMockRole when PUT /admin/roles/:roleId returns 404', async () => {
+  it('rethrows AxiosError on HTTP 404 and network errors without falling back to updateMockRole', async () => {
     vi.spyOn(apiClient, 'put').mockRejectedValueOnce(makeAxiosError(404, 'Not found'));
 
-    const updated = await updateRoleApi({
-      roleId: 'ROL-08',
-      code: 'DEPT_LEAD_DOCTOR',
-      name: 'Bác sĩ trưởng khoa',
-      description: 'Quản lý chuyên môn khoa lâm sàng.',
-      scope: 'CLINICAL',
-      status: 'INACTIVE',
-      segregationNote: 'Không kiêm nhiệm cấp phát thuốc.',
-    });
+    await expect(
+      updateRoleApi({
+        roleId: 'ROL-08',
+        code: 'DEPT_LEAD_DOCTOR',
+        name: 'Bác sĩ trưởng khoa',
+        description: 'Quản lý chuyên môn khoa lâm sàng.',
+        scope: 'CLINICAL',
+        status: 'INACTIVE',
+        segregationNote: 'Không kiêm nhiệm cấp phát thuốc.',
+      }),
+    ).rejects.toThrow(AxiosError);
 
-    expect(updated.id).toBe('ROL-08');
-    expect(updated.code).toBe('DEPT_LEAD_DOCTOR');
-    expect(updated.name).toBe('Bác sĩ trưởng khoa');
-    expect(updated.status).toBe('INACTIVE');
-    expect(updated.updatedAt).toBe('Hôm nay');
+    const networkErr = new AxiosError('Network Error', 'ERR_NETWORK');
+    vi.spyOn(apiClient, 'put').mockRejectedValueOnce(networkErr);
+    await expect(
+      updateRoleApi({
+        roleId: 'ROL-08',
+        code: 'DEPT_LEAD_DOCTOR',
+        name: 'Bác sĩ trưởng khoa',
+        description: 'Quản lý chuyên môn khoa lâm sàng.',
+        scope: 'CLINICAL',
+        status: 'INACTIVE',
+        segregationNote: 'Không kiêm nhiệm cấp phát thuốc.',
+      }),
+    ).rejects.toBe(networkErr);
   });
 
   it('rethrows AxiosError on HTTP 400, 403, and 409 without falling back to mock', async () => {
@@ -345,6 +355,12 @@ describe('Update Role UI (SCR-ADM-ROLE-01 / UC58)', () => {
   beforeEach(() => {
     resetMockRolesCatalog();
     useAuthStore.getState().clearAuth();
+    vi.spyOn(rolePermissionsApi, 'fetchRolesPermissionsCatalogApi').mockImplementation(async () =>
+      getMockRolesCatalog(),
+    );
+    vi.spyOn(rolePermissionsApi, 'updateRoleApi').mockImplementation(async (payload) =>
+      updateMockRole(payload),
+    );
   });
 
   afterEach(() => {

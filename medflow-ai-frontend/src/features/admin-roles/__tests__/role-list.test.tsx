@@ -1,21 +1,37 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { apiClient } from '@/shared/lib/axios';
 
 import { fetchRoleByIdApi, fetchRoleListApi } from '../api/role.api';
+import { getMockRolesCatalog, resetMockRolesCatalog } from '../data/role-mock-data';
 import { RoleListPage } from '../pages/role-list-page';
 import type { RoleListResponseDto } from '../types/role.types';
 
-const renderPage = () =>
-  render(
-    <MemoryRouter>
-      <RoleListPage />
-    </MemoryRouter>,
+const renderPage = () => {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <RoleListPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
+};
 
 describe('RoleListPage (SCR-ADM-ROLE-01)', () => {
+  beforeEach(() => {
+    resetMockRolesCatalog();
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: getMockRolesCatalog() });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });

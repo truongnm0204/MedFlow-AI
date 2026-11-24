@@ -1,10 +1,51 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { PATIENT_DETAILS_MOCK } from '../data/patient-detail-mock';
 import { PatientDetailModal } from '../components/patient-detail-modal';
+import type { PatientDetail } from '../types/patient-detail.types';
 
-const patient = PATIENT_DETAILS_MOCK[0]!;
+const patient: PatientDetail = {
+  id: 'p-0018',
+  patientCode: 'BN-2024-0018',
+  fullName: 'Nguyễn Văn An',
+  gender: 'MALE',
+  age: 34,
+  dateOfBirth: '14/05/1992',
+  cccd: '0010 8801 5708',
+  phone: '0912 345 678',
+  bhytNumber: 'DN4010123456789',
+  address: '25 Nguyễn Huệ, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh',
+  emergencyContact: { name: 'Nguyễn Thị Hoa', relationship: 'Vợ', phone: '0987 654 321' },
+  todayAppointment: {
+    timeRange: '09:00 - 09:30',
+    doctorName: 'BS. CKII Trần Khánh',
+    room: 'P.102',
+    status: 'ARRIVED',
+  },
+  pastVisits: [
+    {
+      id: 'v-003',
+      date: '12/03/2026',
+      department: 'Nội tổng quát',
+      doctorName: 'BS. CKII Trần Khánh',
+      diagnosis: 'Viêm dạ dày cấp, theo dõi sau điều trị',
+    },
+    {
+      id: 'v-002',
+      date: '20/11/2025',
+      department: 'Tim mạch',
+      doctorName: 'BS. Lê Hoàng Nam',
+      diagnosis: 'Tăng huyết áp độ 1',
+    },
+    {
+      id: 'v-001',
+      date: '05/06/2025',
+      department: 'Tai mũi họng',
+      doctorName: 'BS. Phạm Thu Hà',
+      diagnosis: 'Viêm họng cấp',
+    },
+  ],
+};
 
 describe('PatientDetailModal', () => {
   it('khong render khi patient = null', () => {

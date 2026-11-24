@@ -1,8 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient } from '@/shared/lib/axios';
+import { formatHospitalTodayVn } from '@/shared/lib/hospital-date';
+
+import { MOCK_DOCTORS } from '../data/doctor-search-mock';
 import { DoctorSearchPage } from '../pages/doctor-search-page';
 
 function renderDoctorSearchPage() {
@@ -26,6 +30,51 @@ function renderDoctorSearchPage() {
 describe('DoctorSearchPage (SCR-APT-01)', () => {
   beforeEach(() => {
     window.scrollTo = () => {};
+    vi.spyOn(apiClient, 'get').mockImplementation(async (_url, config) => {
+      const params = (
+        config as {
+          params?: {
+            keyword?: string;
+            specialty?: string;
+            degree?: string;
+            hasScheduleToday?: boolean;
+            hasScheduleThisWeek?: boolean;
+            page?: number;
+            pageSize?: number;
+          };
+        }
+      )?.params;
+      const keyword = params?.keyword?.trim().toLowerCase() ?? '';
+      const specialty = params?.specialty ?? 'ALL';
+      const degree = params?.degree ?? 'ALL';
+      const filtered = MOCK_DOCTORS.filter((doc) => {
+        if (specialty !== 'ALL' && doc.specialtyId !== specialty) return false;
+        if (degree !== 'ALL' && doc.title !== degree) return false;
+        if (params?.hasScheduleToday && !doc.hasScheduleToday) return false;
+        if (params?.hasScheduleThisWeek && !doc.hasScheduleThisWeek) return false;
+        if (keyword) {
+          const haystack = `${doc.name} ${doc.title} ${doc.specialty} ${doc.roleTag}`.toLowerCase();
+          if (!haystack.includes(keyword)) return false;
+        }
+        return true;
+      });
+      const page = params?.page ?? 1;
+      const pageSize = params?.pageSize ?? 6;
+      const start = (page - 1) * pageSize;
+      return {
+        data: {
+          items: filtered.slice(start, start + pageSize),
+          total: filtered.length,
+          page,
+          pageSize,
+          totalPages: Math.max(1, Math.ceil(filtered.length / pageSize)),
+        },
+      };
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('renders page header, breadcrumbs, search bar and initial 6 doctor cards', async () => {
@@ -34,6 +83,7 @@ describe('DoctorSearchPage (SCR-APT-01)', () => {
     expect(screen.getByText('Danh bạ Bác sĩ Chuyên khoa Ngoại trú')).toBeInTheDocument();
     expect(screen.getByText('Danh bạ Bác sĩ (SCR-APT-01)')).toBeInTheDocument();
     expect(screen.getByText(/Cập nhật ca trực:/)).toBeInTheDocument();
+    expect(screen.getByText(`Hôm nay, ${formatHospitalTodayVn()}`)).toBeInTheDocument();
 
     // Await async doctor cards to load
     expect(await screen.findByText('BS.CKII Trần Quốc Tuấn')).toBeInTheDocument();

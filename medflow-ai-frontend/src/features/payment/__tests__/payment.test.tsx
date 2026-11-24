@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppointmentListItem } from '@/features/appointment/types/appointment-list.types';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import { PatientPaymentDetailPage } from '../pages/patient-payment-detail-page';
@@ -139,7 +140,7 @@ afterEach(() => {
 
 describe('PatientPaymentListPage', () => {
   it('chỉ liệt kê lượt khám đã tiếp nhận', async () => {
-    window.localStorage.setItem('medflow.access_token', 'test-token');
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, 'test-token');
     vi.spyOn(apiClient, 'get').mockResolvedValue({
       data: {
         items: [
@@ -164,7 +165,7 @@ describe('PatientPaymentListPage', () => {
   });
 
   it('hiện thông báo khi chưa có lượt khám nào', async () => {
-    window.localStorage.setItem('medflow.access_token', 'test-token');
+    window.localStorage.setItem(ACCESS_TOKEN_KEY, 'test-token');
     vi.spyOn(apiClient, 'get').mockResolvedValue({
       data: {
         items: [],

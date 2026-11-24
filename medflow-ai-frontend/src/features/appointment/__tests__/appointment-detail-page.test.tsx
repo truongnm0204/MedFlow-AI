@@ -1,15 +1,20 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { AxiosError } from 'axios';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { resetMockAppointments } from '../data/appointment-list-mock';
+import { apiClient } from '@/shared/lib/axios';
+
+import { MOCK_APPOINTMENTS, resetMockAppointments } from '../data/appointment-list-mock';
+import { getMockAvailableSlotsPayload } from '../data/slot-booking-mock';
 import { AppointmentDetailPage } from '../pages/appointment-detail-page';
 
 function renderAppointmentDetailPage(initialEntry = '/appointments/apt-1013-0902') {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
+      mutations: { retry: false },
     },
   });
 
@@ -26,10 +31,112 @@ function renderAppointmentDetailPage(initialEntry = '/appointments/apt-1013-0902
   );
 }
 
-describe('AppointmentDetailPage (SCR-APT-09 — Issue #53)', () => {
+describe('AppointmentDetailPage (SCR-APT-09 — Issue #53 & #812)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     resetMockAppointments();
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
+      if (url === '/appointments/available-slots') {
+        const params = (
+          config as { params?: { doctorId?: string; serviceId?: string } } | undefined
+        )?.params;
+        return {
+          data: getMockAvailableSlotsPayload(params?.doctorId, params?.serviceId, '2026-10-16'),
+        };
+      }
+      if (typeof url === 'string' && url.startsWith('/appointments/')) {
+        const id = decodeURIComponent(url.replace('/appointments/', ''));
+        if (id === 'apt-unauthorized') {
+          throw new AxiosError(
+            'Forbidden',
+            'ERR_BAD_REQUEST',
+            undefined,
+            {},
+            {
+              status: 403,
+              statusText: 'Forbidden',
+              headers: {},
+              config: {} as never,
+              data: {
+                status: 403,
+                detail: 'Bạn không có quyền xem chi tiết lịch hẹn của tài khoản bệnh nhân khác.',
+              },
+            },
+          );
+        }
+        const found = MOCK_APPOINTMENTS.find(
+          (item) => item.id === id || item.appointmentCode === id,
+        );
+        if (!found) {
+          throw new AxiosError(
+            'Not Found',
+            'ERR_BAD_REQUEST',
+            undefined,
+            {},
+            {
+              status: 404,
+              statusText: 'Not Found',
+              headers: {},
+              config: {} as never,
+              data: { status: 404, detail: 'Không tìm thấy lịch hẹn.' },
+            },
+          );
+        }
+        return { data: found };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    vi.spyOn(apiClient, 'patch').mockImplementation(async (url, body) => {
+      const match = String(url).match(/^\/appointments\/([^/]+)\/reason$/);
+      if (match) {
+        const id = decodeURIComponent(match[1]!);
+        const found = MOCK_APPOINTMENTS.find(
+          (item) => item.id === id || item.appointmentCode === id,
+        );
+        if (!found) throw new Error('Appointment not found');
+        found.reasonForVisit = (body as { reasonForVisit: string }).reasonForVisit;
+        return { data: { ...found } };
+      }
+      throw new Error(`Unexpected PATCH ${url}`);
+    });
+
+    vi.spyOn(apiClient, 'post').mockImplementation(async (url, body) => {
+      const rescheduleMatch = String(url).match(/^\/appointments\/([^/]+)\/reschedule$/);
+      if (rescheduleMatch) {
+        const id = decodeURIComponent(rescheduleMatch[1]!);
+        const found = MOCK_APPOINTMENTS.find(
+          (item) => item.id === id || item.appointmentCode === id,
+        );
+        if (!found) throw new Error('Appointment not found');
+        found.scheduledDate = '2026-10-16';
+        found.scheduledDateBadge = '16/10/2026';
+        found.scheduledDateFullLabel = 'Thứ Sáu, 16/10/2026 (Ca Sáng)';
+        found.scheduledTimeRange = '08:00 - 08:30';
+        found.queueNumber = '005';
+        return { data: { ...found } };
+      }
+
+      const cancelMatch = String(url).match(/^\/appointments\/([^/]+)\/cancel$/);
+      if (cancelMatch) {
+        const id = decodeURIComponent(cancelMatch[1]!);
+        const found = MOCK_APPOINTMENTS.find(
+          (item) => item.id === id || item.appointmentCode === id,
+        );
+        if (!found) throw new Error('Appointment not found');
+        found.status = 'CANCELLED';
+        found.statusBannerLabel = 'ĐÃ HỦY BỞI NGƯỜI BỆNH';
+        found.cancellationReason = (body as { cancellationReason: string }).cancellationReason;
+        return { data: { ...found } };
+      }
+
+      throw new Error(`Unexpected POST ${url}`);
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('renders full SCR-APT-09 appointment detail layout matching Figma 17:1340 for upcoming confirmed appointment', async () => {
@@ -41,13 +148,11 @@ describe('AppointmentDetailPage (SCR-APT-09 — Issue #53)', () => {
     expect(screen.getByText('SCR-APT-09')).toBeInTheDocument();
     expect(screen.getByText('ĐÃ XÁC NHẬN - SẮP ĐẾN GIỜ KHÁM')).toBeInTheDocument();
 
-    // Clinic & Doctor Card (2x2 Grid)
     expect(screen.getByText('Thông Tin Buồng Khám & Bác Sĩ Chuyên Khoa')).toBeInTheDocument();
     expect(screen.getByText('BS.CKII Trần Quốc Tuấn')).toBeInTheDocument();
     expect(screen.getByText('09:00 - 09:30')).toBeInTheDocument();
     expect(screen.getByText('DV-TH-01: Khám Nội Tiêu Hóa Chuyên Sâu')).toBeInTheDocument();
 
-    // Patient Info Card (4-Column metadata + Initial symptoms)
     expect(screen.getByText('Thông Tin Bệnh Nhân Đăng Ký')).toBeInTheDocument();
     expect(screen.getByText('1986 (40 tuổi)')).toBeInTheDocument();
     expect(screen.getByText('0912 345 678')).toBeInTheDocument();
@@ -56,16 +161,27 @@ describe('AppointmentDetailPage (SCR-APT-09 — Issue #53)', () => {
       screen.getByText(/Đau tức vùng thượng vị từng cơn sau ăn, ợ chua liên tục 5 ngày gần đây/i),
     ).toBeInTheDocument();
 
-    // Right Column: Queue Number & Listed Fee Cards
     expect(screen.getByText('SỐ THỨ TỰ (STT) GIỮ TRƯỚC')).toBeInTheDocument();
     expect(screen.getByText('012')).toBeInTheDocument();
     expect(screen.getByText('Biểu Phí Niêm Yết')).toBeInTheDocument();
     expect(screen.getByText('250.000 VNĐ')).toBeInTheDocument();
 
-    // Valid actions for CONFIRMED appointment
     expect(screen.getByRole('button', { name: /In Phiếu Khám/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Đổi Lịch Khám/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Hủy lịch hẹn/i })).toBeInTheDocument();
+  });
+
+  it('displays Chưa cập nhật instead of hardcoded phone when patientPhone is missing', async () => {
+    const target = MOCK_APPOINTMENTS.find((a) => a.id === 'apt-1013-0902')!;
+    target.patientPhone = '';
+
+    renderAppointmentDetailPage('/appointments/apt-1013-0902');
+
+    expect(
+      await screen.findByRole('heading', { name: 'Chi Tiết Phiếu Hẹn Khám Ngoại Trú' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Chưa cập nhật')).toBeInTheDocument();
+    expect(screen.queryByText('0912 345 678')).not.toBeInTheDocument();
   });
 
   it('hides reschedule and cancel actions for COMPLETED appointments and shows clinical conclusion', async () => {
@@ -76,12 +192,10 @@ describe('AppointmentDetailPage (SCR-APT-09 — Issue #53)', () => {
       screen.getByText(/Viêm dạ dày trợt hang vị mức độ nhẹ, đã kê đơn thuốc 14 ngày/i),
     ).toBeInTheDocument();
 
-    // Invalid actions for COMPLETED must be hidden
     expect(screen.queryByRole('button', { name: /Đổi Lịch Khám/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Hủy lịch hẹn/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Cập nhật triệu chứng/i })).toBeNull();
 
-    // Valid actions for COMPLETED remain available
     expect(screen.getByRole('button', { name: /In Phiếu Khám/i })).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /Đặt lại Chuyên khoa Tiêu Hóa/i }),
@@ -117,7 +231,7 @@ describe('AppointmentDetailPage (SCR-APT-09 — Issue #53)', () => {
     ).toBeInTheDocument();
   });
 
-  it('opens SCR-APT-10 reschedule modal and updates schedule slot when confirmed', async () => {
+  it('opens SCR-APT-10 reschedule modal, loads real API slots, and updates schedule slot when confirmed', async () => {
     renderAppointmentDetailPage('/appointments/apt-1013-0902');
 
     const rescheduleBtn = await screen.findByRole('button', { name: /Đổi Lịch Khám/i });
@@ -126,12 +240,36 @@ describe('AppointmentDetailPage (SCR-APT-09 — Issue #53)', () => {
     expect(screen.getByText('Đổi Lịch Hẹn Khám Ngoại Trú')).toBeInTheDocument();
     expect(screen.getByText('Không phát sinh phí đổi lịch (0 VNĐ)')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Xác Nhận Đổi Sang Lịch Mới/i }));
+    expect(await screen.findByText('Trống chỗ')).toBeInTheDocument();
+
+    const confirmBtn = screen.getByRole('button', { name: /Xác Nhận Đổi Sang Lịch Mới/i });
+    expect(confirmBtn).toBeEnabled();
+    fireEvent.click(confirmBtn);
 
     await waitFor(() => {
       expect(screen.getByText(/Đổi lịch khám thành công sang khung giờ/i)).toBeInTheDocument();
     });
     expect(screen.getByText('005')).toBeInTheDocument();
+  });
+
+  it('blocks reschedule confirmation and shows empty/error states when no valid slot is available', async () => {
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (url === '/appointments/available-slots') {
+        return { data: { dates: [], morningSlots: [], afternoonSlots: [] } };
+      }
+      const found = MOCK_APPOINTMENTS.find((item) => item.id === 'apt-1013-0902')!;
+      return { data: found };
+    });
+
+    renderAppointmentDetailPage('/appointments/apt-1013-0902');
+
+    const rescheduleBtn = await screen.findByRole('button', { name: /Đổi Lịch Khám/i });
+    fireEvent.click(rescheduleBtn);
+
+    expect(
+      await screen.findByText(/Hiện chưa có khung giờ trống phù hợp của/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Xác Nhận Đổi Sang Lịch Mới/i })).toBeDisabled();
   });
 
   it('validates cancellation reason in cancel modal and transitions appointment to CANCELLED state', async () => {
@@ -142,13 +280,11 @@ describe('AppointmentDetailPage (SCR-APT-09 — Issue #53)', () => {
 
     expect(screen.getByText('Xác Nhận Hủy Lịch Hẹn Khám')).toBeInTheDocument();
 
-    // Submit empty reason -> triggers Zod validation error
     fireEvent.click(screen.getByRole('button', { name: 'Xác nhận hủy lịch hẹn' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Vui lòng nhập lý do hủy lịch tối thiểu 10 ký tự.',
     );
 
-    // Select a valid preset reason and confirm
     fireEvent.click(
       screen.getByRole('button', {
         name: /Người bệnh bận công tác đột xuất, xin chủ động dời sang kíp khám sau/i,
@@ -160,7 +296,6 @@ describe('AppointmentDetailPage (SCR-APT-09 — Issue #53)', () => {
       expect(screen.getByText('ĐÃ HỦY BỞI NGƯỜI BỆNH')).toBeInTheDocument();
     });
 
-    // After cancellation, modify and print buttons are hidden
     expect(screen.queryByRole('button', { name: /Hủy lịch hẹn/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Đổi Lịch Khám/i })).toBeNull();
   });

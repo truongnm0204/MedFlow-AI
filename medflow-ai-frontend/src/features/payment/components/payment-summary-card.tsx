@@ -1,7 +1,7 @@
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
-import { formatVnd, settlementLabel } from '../lib/payment-format';
+import { formatVnd, settlementLabel } from '../utils/payment-format';
 
 interface PaymentSummaryCardProps {
   settlementStatus: string;

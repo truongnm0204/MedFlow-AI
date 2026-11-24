@@ -11,9 +11,12 @@ import { apiClient } from '@/shared/lib/axios';
 import {
   DIAGNOSTIC_WORKLIST_ITEMS_MOCK,
   DIAGNOSTIC_WORKLIST_MOCK,
+  resolveMockDiagnosticWorklist,
+  resolveMockDiagnosticWorklistOrderDetail,
 } from '../data/diagnostic-worklist-mock';
 import { DiagnosticWorklistPage } from '../pages/diagnostic-worklist-page';
 import { diagnosticOrderIdentifierSchema } from '../schemas/diagnostic-worklist-filter.schema';
+import type { DiagnosticWorklistQueryParams } from '../types/diagnostic-worklist.types';
 
 function LocationProbe() {
   const location = useLocation();
@@ -41,6 +44,20 @@ describe('DiagnosticWorklistPage (UC39 — View Diagnostic Worklist)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
+      if (url === '/diagnostic/worklist') {
+        return {
+          data: resolveMockDiagnosticWorklist(
+            config?.params as DiagnosticWorklistQueryParams | undefined,
+          ),
+        };
+      }
+      if (typeof url === 'string' && url.startsWith('/diagnostic/worklist/')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return { data: resolveMockDiagnosticWorklistOrderDetail(code) };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
   });
 
   it('render header, 4 KPI stat cards, service points va giu nguyen thu tu uu tien tu Backend', async () => {

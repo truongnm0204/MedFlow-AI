@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppRouter } from '@/app/router/app-router';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ACCESS_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { apiClient } from '@/shared/lib/axios';
 
 import {
@@ -45,6 +46,21 @@ describe('DiagnosticOrderReviewPage (UC39)', () => {
     vi.restoreAllMocks();
     localStorage.clear();
     resetDiagnosticOrderReviewMockState();
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
+      if (url === '/diagnostic/orders/review') {
+        return {
+          data: resolveMockDiagnosticOrdersForReview(
+            config?.params as GetDiagnosticOrdersForReviewParams | undefined,
+          ),
+        };
+      }
+      if (typeof url === 'string' && url.endsWith('/review')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return { data: resolveMockDiagnosticOrderReviewDetail(code) };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
 
     useAuthStore.setState({
       user: {
@@ -167,7 +183,7 @@ describe('DiagnosticOrderReviewPage (UC39)', () => {
   });
 
   it('goi GET /diagnostic/orders/review, GET /diagnostic/orders/{code}/review va POST /diagnostic/orders/{code}/confirm khi co token', async () => {
-    localStorage.setItem('medflow.access_token', 'valid-diagnostic-jwt-token');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'valid-diagnostic-jwt-token');
 
     const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
       if (url === '/diagnostic/orders/review') {
@@ -233,7 +249,7 @@ describe('DiagnosticOrderReviewPage (UC39)', () => {
   });
 
   it('ho tro xac nhan hang loat nhieu phieu chi dinh ORDERED hop le qua POST /diagnostic/orders/confirm', async () => {
-    localStorage.setItem('medflow.access_token', 'valid-diagnostic-jwt-token');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'valid-diagnostic-jwt-token');
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
       if (url === '/diagnostic/orders/review') {
@@ -331,7 +347,7 @@ describe('DiagnosticOrderReviewPage (UC39)', () => {
   });
 
   it('hien thi thong bao loi nghiep vu 409 Conflict tu BE khi xac nhan that bai', async () => {
-    localStorage.setItem('medflow.access_token', 'valid-diagnostic-jwt-token');
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'valid-diagnostic-jwt-token');
 
     vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
       if (url === '/diagnostic/orders/review') {

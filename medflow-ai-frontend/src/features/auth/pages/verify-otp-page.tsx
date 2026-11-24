@@ -74,7 +74,7 @@ export function VerifyOtpPage() {
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
           <MedflowLogo variant="full" className="h-10 w-auto" />
           <span className="rounded-full border border-slate-200 bg-slate-100/80 px-3.5 py-1.5 text-xs text-slate-600">
-            Tiếp đón &amp; CSKH 24/7: <strong className="text-ink">1900 8899</strong>
+            Tiếp đón &amp; CSKH 24/7: <strong className="text-ink">1900 6868</strong>
           </span>
         </div>
       </header>

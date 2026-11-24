@@ -1,10 +1,8 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 
+import { ACCESS_TOKEN_KEY, REFRESH_COOLDOWN_KEY, REFRESH_TOKEN_KEY } from './auth-storage';
 import { withCrossTabLock } from './cross-tab-lock';
 
-const ACCESS_TOKEN_STORAGE_KEY = 'medflow.access_token';
-const REFRESH_TOKEN_STORAGE_KEY = 'medflow.refresh_token';
-const REFRESH_COOLDOWN_STORAGE_KEY = 'medflow.refresh_cooldown_until';
 const REFRESH_LOCK_NAME = 'medflow:auth:refresh';
 
 const MAX_REQUEST_AUTH_RETRIES = 1;
@@ -13,15 +11,25 @@ const MIN_RETRY_AFTER_MS = 1_000;
 const MAX_RETRY_AFTER_MS = 120_000;
 const DEFAULT_TRANSIENT_COOLDOWN_MS = 10_000;
 
+/** Chuẩn hóa base URL từ biến môi trường (fallback `/api/v1`) và cắt bỏ dấu `/` thừa ở cuối. */
+export function resolveApiBaseUrl(rawBaseUrl?: unknown): string {
+  if (typeof rawBaseUrl !== 'string') return '/api/v1';
+  const trimmed = rawBaseUrl.trim();
+  if (!trimmed) return '/api/v1';
+  return trimmed.replace(/\/+$/, '') || '/api/v1';
+}
+
+export const API_BASE_URL = resolveApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
+
 export const apiClient = axios.create({
-  baseURL: '/api/v1',
+  baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
   timeout: 15_000,
 });
 
 // Attach auth token when present.
 apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -130,7 +138,7 @@ export function resetRefreshCoordinatorForTests(): void {
   consecutiveTransientFailures = 0;
   trackedFailureRefreshToken = null;
   if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem(REFRESH_COOLDOWN_STORAGE_KEY);
+    localStorage.removeItem(REFRESH_COOLDOWN_KEY);
   }
 }
 
@@ -141,7 +149,7 @@ function extractBearerToken(authHeader: unknown): string | null {
 }
 
 function readCooldownUntilMs(): number {
-  const raw = localStorage.getItem(REFRESH_COOLDOWN_STORAGE_KEY);
+  const raw = localStorage.getItem(REFRESH_COOLDOWN_KEY);
   if (!raw) return 0;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -149,9 +157,9 @@ function readCooldownUntilMs(): number {
 
 function writeCooldownUntilMs(untilMs: number): void {
   if (untilMs > Date.now()) {
-    localStorage.setItem(REFRESH_COOLDOWN_STORAGE_KEY, String(untilMs));
+    localStorage.setItem(REFRESH_COOLDOWN_KEY, String(untilMs));
   } else {
-    localStorage.removeItem(REFRESH_COOLDOWN_STORAGE_KEY);
+    localStorage.removeItem(REFRESH_COOLDOWN_KEY);
   }
 }
 
@@ -179,7 +187,7 @@ function recordTransientRefreshFailure(error: unknown, refreshToken: string): vo
 function clearTransientRefreshFailures(): void {
   consecutiveTransientFailures = 0;
   trackedFailureRefreshToken = null;
-  localStorage.removeItem(REFRESH_COOLDOWN_STORAGE_KEY);
+  localStorage.removeItem(REFRESH_COOLDOWN_KEY);
 }
 
 /**
@@ -191,7 +199,7 @@ async function doRefresh(
   refreshTokenBeforeLock: string | null,
 ): Promise<string> {
   return withCrossTabLock(REFRESH_LOCK_NAME, async () => {
-    const latestRefreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+    const latestRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
     if (!latestRefreshToken) {
       throw new NoRefreshTokenError();
     }
@@ -203,7 +211,7 @@ async function doRefresh(
       throw new StaleRefreshDiscardedError('logged_out');
     }
 
-    const latestAccessToken = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+    const latestAccessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
     const rotatedByAnotherTab =
       Boolean(latestAccessToken) &&
       ((Boolean(failedAccessToken) && latestAccessToken !== failedAccessToken) ||
@@ -244,7 +252,7 @@ async function doRefresh(
     let data: RefreshResponse;
     try {
       const response = await axios.post<RefreshResponse>(
-        '/api/v1/auth/refresh',
+        `${API_BASE_URL}/auth/refresh`,
         { refreshToken: sentRefreshToken },
         { timeout: 15_000 },
       );
@@ -260,7 +268,7 @@ async function doRefresh(
 
     // Chống race condition: nếu trong lúc chờ mạng user đã logout hoặc đăng nhập tài khoản khác,
     // tuyệt đối không ghi đè token mới vào store/localStorage.
-    const currentRefreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+    const currentRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
     const storeAfter = useAuthStore.getState();
 
     if (!currentRefreshToken || storeAfter.isAuthenticated === false) {
@@ -336,7 +344,7 @@ async function handleUnauthorized(error: AxiosError): Promise<unknown> {
   }
 
   const failedAccessToken = extractBearerToken(config.headers?.Authorization);
-  const refreshTokenBeforeLock = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+  const refreshTokenBeforeLock = localStorage.getItem(REFRESH_TOKEN_KEY);
 
   if (!refreshTokenBeforeLock) {
     const useAuthStore = await loadAuthStore();
@@ -376,7 +384,7 @@ async function handleUnauthorized(error: AxiosError): Promise<unknown> {
 
     if (shouldInvalidateSessionOnRefreshError(refreshError)) {
       const latestState = useAuthStore.getState();
-      const currentRefreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+      const currentRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
       const isSameOrEmptySession =
         !currentRefreshToken ||
         currentRefreshToken === refreshTokenBeforeLock ||
