@@ -31,6 +31,7 @@ export function ServicePriceUpdateModal() {
   const setPriceHistoryService = useExaminationServiceStore(
     (state) => state.setPriceHistoryService,
   );
+  const updateService = useExaminationServiceStore((state) => state.updateService);
   const updateServicePrice = useExaminationServiceStore((state) => state.updateServicePrice);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -50,6 +51,7 @@ export function ServicePriceUpdateModal() {
       price: service?.price ?? 0,
       decisionNumber: service?.decisionNumber ?? '',
       effectiveDate: getTodayDateString(),
+      validTo: '',
       appliedBy: 'Hội đồng Giá Bệnh viện',
       note: 'Điều chỉnh định mức chi phí dịch vụ theo quyết định mới',
     },
@@ -61,7 +63,8 @@ export function ServicePriceUpdateModal() {
         price: service.price,
         decisionNumber: service.decisionNumber ?? '',
         effectiveDate: getTodayDateString(),
-        appliedBy: 'Hội đồng Giá Bệnh viện',
+        validTo: '',
+        appliedBy: service.appliedBy ?? 'Hội đồng Giá Bệnh viện',
         note: `Điều chỉnh giá dịch vụ ${service.name} theo quyết định mới`,
       });
     }
@@ -97,21 +100,27 @@ export function ServicePriceUpdateModal() {
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      await updateServicePriceApi(service.id, {
+      const updatedFromServer = await updateServicePriceApi(service.id, {
         price: values.price,
         decisionNumber: values.decisionNumber,
         effectiveDate: values.effectiveDate,
+        validTo: values.validTo,
         appliedBy: values.appliedBy,
         note: values.note,
       });
 
-      updateServicePrice(service.id, {
-        price: values.price,
-        decisionNumber: values.decisionNumber,
-        effectiveDate: values.effectiveDate,
-        appliedBy: values.appliedBy,
-        note: values.note,
-      });
+      if (updatedFromServer.priceHistory && updatedFromServer.priceHistory.length > 0) {
+        updateService(service.id, updatedFromServer);
+      } else {
+        updateServicePrice(service.id, {
+          price: values.price,
+          decisionNumber: values.decisionNumber,
+          effectiveDate: values.effectiveDate,
+          validTo: values.validTo,
+          appliedBy: values.appliedBy,
+          note: values.note,
+        });
+      }
 
       setSuccessMessage(
         `Cập nhật thành công biểu phí dịch vụ: ${formatVnd(values.price)} (QĐ: ${values.decisionNumber})`,
@@ -145,7 +154,7 @@ export function ServicePriceUpdateModal() {
     >
       <div className="relative w-full max-w-xl rounded-2xl border border-border bg-white shadow-2xl overflow-hidden flex flex-col max-h-[calc(100vh-32px)]">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border bg-slate-50/80 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-border bg-canvas px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
               <DollarSign className="h-5 w-5" aria-hidden="true" />
@@ -165,7 +174,7 @@ export function ServicePriceUpdateModal() {
           <button
             type="button"
             onClick={() => setUpdatePriceService(null)}
-            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+            className="rounded-lg p-1.5 text-sub hover:bg-canvas hover:text-ink transition-colors"
             aria-label="Đóng modal cập nhật giá"
           >
             <X className="h-5 w-5" aria-hidden="true" />
@@ -175,17 +184,18 @@ export function ServicePriceUpdateModal() {
         {/* Content & Form */}
         <form
           id="service-price-form"
+          noValidate
           onSubmit={handleSubmit(onSubmit)}
           className="flex-1 overflow-y-auto p-6 space-y-4"
         >
           {/* Current service summary card */}
-          <div className="rounded-xl border border-border bg-slate-50/70 p-4">
+          <div className="rounded-xl border border-border bg-canvas p-4">
             <div className="font-bold text-ink text-sm sm:text-base leading-snug">
               {service.name}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-sub">
               <span>
-                Khoa: <strong className="text-slate-700">{service.department}</strong>
+                Khoa: <strong className="text-navy">{service.department}</strong>
               </span>
               <span>
                 Mức giá hiện hành:{' '}
@@ -228,7 +238,7 @@ export function ServicePriceUpdateModal() {
             <FormField
               label="Mức giá niêm yết mới (VNĐ)"
               required
-              hint="Đơn giá thanh toán ngoại trú niêm yết áp dụng cho dịch vụ."
+              hint="Đơn giá thanh toán ngoại trú niêm yết áp dụng cho dịch vụ (cho phép 0 đ với dịch vụ miễn phí)."
               error={errors.price?.message}
             >
               <div className="relative mt-1">
@@ -262,7 +272,7 @@ export function ServicePriceUpdateModal() {
                     {formatVnd(diffAmount)} ({diffPercent}%)
                   </span>
                 ) : (
-                  <span className="rounded-md bg-slate-200 px-2 py-0.5 font-medium text-slate-700 text-[11px]">
+                  <span className="rounded-md bg-slate-200 px-2 py-0.5 font-medium text-ink text-[11px]">
                     Không thay đổi (0%)
                   </span>
                 )}
@@ -270,7 +280,7 @@ export function ServicePriceUpdateModal() {
 
               {/* Quick Preset Buttons */}
               <div className="flex items-center gap-1">
-                <span className="text-[10px] text-slate-400">Gợi ý:</span>
+                <span className="text-[10px] text-sub">Gợi ý:</span>
                 <button
                   type="button"
                   onClick={() =>
@@ -340,6 +350,23 @@ export function ServicePriceUpdateModal() {
             </FormField>
 
             <FormField
+              label="Cấp / Người phê duyệt biểu phí"
+              required
+              hint="Đơn vị thẩm định và ban hành quyết định giá"
+              error={errors.appliedBy?.message}
+            >
+              <input
+                id="service-applied-by-input"
+                className={formControlClass}
+                placeholder="VD: Hội đồng Giá Bệnh viện, Ban Giám đốc..."
+                {...register('appliedBy')}
+              />
+            </FormField>
+          </div>
+
+          {/* ValidFrom & ValidTo Date Range */}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField
               label="Ngày bắt đầu có hiệu lực"
               required
               hint="Ngày bắt đầu áp dụng biểu phí mới"
@@ -352,22 +379,20 @@ export function ServicePriceUpdateModal() {
                 {...register('effectiveDate')}
               />
             </FormField>
-          </div>
 
-          {/* Approved By */}
-          <FormField
-            label="Cấp / Người phê duyệt biểu phí"
-            required
-            hint="Đơn vị thẩm định và ban hành quyết định giá"
-            error={errors.appliedBy?.message}
-          >
-            <input
-              id="service-applied-by-input"
-              className={formControlClass}
-              placeholder="VD: Hội đồng Giá Bệnh viện, Ban Giám đốc..."
-              {...register('appliedBy')}
-            />
-          </FormField>
+            <FormField
+              label="Ngày kết thúc hiệu lực (Tùy chọn)"
+              hint="Để trống nếu áp dụng cho tới khi có quyết định mới"
+              error={errors.validTo?.message}
+            >
+              <input
+                id="service-valid-to-input"
+                type="date"
+                className={formControlClass}
+                {...register('validTo')}
+              />
+            </FormField>
+          </div>
 
           {/* Reason / Note */}
           <FormField
@@ -384,23 +409,20 @@ export function ServicePriceUpdateModal() {
               {...register('note')}
             />
           </FormField>
-          <div className="text-right text-[10px] text-slate-400">
-            {watchedNote.length} / 500 ký tự
-          </div>
+          <div className="text-right text-[10px] text-sub">{watchedNote.length} / 500 ký tự</div>
 
           {/* Policy compliance notice */}
           <div className="flex items-start gap-2.5 rounded-lg border border-sky-200 bg-sky-50/70 p-3 text-[11px] text-sky-900 leading-relaxed">
             <AlertCircle className="h-4 w-4 shrink-0 text-primary mt-0.5" aria-hidden="true" />
             <div>
-              <strong>Quy tắc lưu vết UC52:</strong> Mức giá mới sẽ có hiệu lực kể từ ngày đã chọn.
-              Mọi thay đổi biểu phí được ghi nhận tự động vào lịch sử giá dịch vụ và nhật ký kiểm
-              toán hệ thống (Audit Log).
+              <strong>Quy tắc lưu vết UC52:</strong> Bản ghi giá cũ đang mở sẽ được đóng hiệu lực tự
+              động và ghi nhận nhật ký kiểm toán hệ thống (<code>SERVICE_PRICE_UPDATED</code>).
             </div>
           </div>
         </form>
 
         {/* Footer actions */}
-        <div className="flex items-center justify-between border-t border-border bg-slate-50 px-6 py-3.5">
+        <div className="flex items-center justify-between border-t border-border bg-canvas px-6 py-3.5">
           <Button
             type="button"
             variant="secondary"

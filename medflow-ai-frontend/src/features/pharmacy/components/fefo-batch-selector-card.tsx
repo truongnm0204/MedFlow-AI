@@ -3,15 +3,17 @@ import { AlertTriangle, CheckCircle2, Lock, MapPin, ShieldAlert } from 'lucide-r
 import { Badge } from '@/shared/ui/badge';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
-import type {
-  BatchStatus,
-  FefoBatchRecord,
-  MedicineBatchRequirement,
+import {
+  isRequirementFefoOverride,
+  type BatchStatus,
+  type FefoBatchRecord,
+  type MedicineBatchRequirement,
 } from '../types/fefo-batch.types';
 
 interface FefoBatchSelectorCardProps {
   requirement: MedicineBatchRequirement;
   onSelectBatch: (requirementId: string, batch: FefoBatchRecord) => void;
+  onOverrideReasonChange?: (requirementId: string, reason: string) => void;
 }
 
 const STATUS_META: Record<
@@ -24,7 +26,14 @@ const STATUS_META: Record<
   BLOCKED: { label: 'Bị chặn xuất', tone: 'amber' },
 };
 
-export function FefoBatchSelectorCard({ requirement, onSelectBatch }: FefoBatchSelectorCardProps) {
+export function FefoBatchSelectorCard({
+  requirement,
+  onSelectBatch,
+  onOverrideReasonChange,
+}: FefoBatchSelectorCardProps) {
+  const requiresOverrideReason = isRequirementFefoOverride(requirement);
+  const reasonInputId = `fefo-override-reason-${requirement.id}`;
+
   return (
     <Card>
       <CardHeader className="flex flex-wrap items-center justify-between gap-2 py-3.5">
@@ -42,7 +51,10 @@ export function FefoBatchSelectorCard({ requirement, onSelectBatch }: FefoBatchS
 
       <CardContent className="space-y-2.5">
         {requirement.batches.map((batch) => {
-          const isBlocked = batch.status === 'EXPIRED' || batch.status === 'BLOCKED';
+          const isBlocked =
+            batch.status === 'EXPIRED' ||
+            batch.status === 'BLOCKED' ||
+            batch.isSelectable === false;
           const isSelected = requirement.selectedBatchId === batch.id;
           const meta = STATUS_META[batch.status];
 
@@ -113,6 +125,27 @@ export function FefoBatchSelectorCard({ requirement, onSelectBatch }: FefoBatchS
             </button>
           );
         })}
+
+        {requiresOverrideReason && (
+          <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 space-y-2">
+            <label
+              htmlFor={reasonInputId}
+              className="flex items-center gap-1.5 text-xs font-bold text-amber-900"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden="true" />
+              <span>Lý do chọn lô hạn dùng xa hơn lô ưu tiên FEFO (Bắt buộc)</span>
+            </label>
+            <input
+              id={reasonInputId}
+              type="text"
+              value={requirement.overrideReason ?? ''}
+              onChange={(e) => onOverrideReasonChange?.(requirement.id, e.target.value)}
+              maxLength={500}
+              placeholder="Nhập lý do chuyên môn (tối thiểu 5 ký tự, VD: lô hạn gần đang kiểm kê)..."
+              className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs text-ink placeholder:text-sub focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
+        )}
       </CardContent>
     </Card>
   );

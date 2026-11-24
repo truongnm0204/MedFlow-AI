@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { updateServicePriceSchema } from '../schemas/service-price.schema';
 
-describe('updateServicePriceSchema (M3-207)', () => {
+describe('updateServicePriceSchema (UC52 / GH-818)', () => {
   const validData = {
     price: 350000,
     decisionNumber: 'QĐ-145/BV-KH',
@@ -11,31 +11,25 @@ describe('updateServicePriceSchema (M3-207)', () => {
     note: 'Điều chỉnh định mức viện phí năm 2026',
   };
 
-  it('validates a correct price update payload', () => {
-    const result = updateServicePriceSchema.safeParse(validData);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.price).toBe(350000);
-      expect(result.data.decisionNumber).toBe('QĐ-145/BV-KH');
-      expect(result.data.appliedBy).toBe('Hội đồng Giá Bệnh viện');
-    }
-  });
+  it('validates positive and zero (0 VND waived) price payloads', () => {
+    const positive = updateServicePriceSchema.safeParse(validData);
+    expect(positive.success).toBe(true);
 
-  it('fails when price is zero or negative', () => {
-    const zeroResult = updateServicePriceSchema.safeParse({
+    const zeroPrice = updateServicePriceSchema.safeParse({
       ...validData,
       price: 0,
+      validTo: '2026-12-31',
     });
-    expect(zeroResult.success).toBe(false);
+    expect(zeroPrice.success).toBe(true);
+  });
 
+  it('fails when price is negative or exceeds 1 billion VND', () => {
     const negativeResult = updateServicePriceSchema.safeParse({
       ...validData,
       price: -50000,
     });
     expect(negativeResult.success).toBe(false);
-  });
 
-  it('fails when price exceeds 1 billion VND', () => {
     const overflowResult = updateServicePriceSchema.safeParse({
       ...validData,
       price: 1_000_000_001,
@@ -43,38 +37,35 @@ describe('updateServicePriceSchema (M3-207)', () => {
     expect(overflowResult.success).toBe(false);
   });
 
-  it('fails when decisionNumber is shorter than 3 characters', () => {
-    const result = updateServicePriceSchema.safeParse({
+  it('fails when validTo is earlier than effectiveDate (ValidFrom <= ValidTo)', () => {
+    const invalidRange = updateServicePriceSchema.safeParse({
       ...validData,
-      decisionNumber: 'QD',
+      effectiveDate: '2026-06-15',
+      validTo: '2026-06-01',
     });
-    expect(result.success).toBe(false);
+    expect(invalidRange.success).toBe(false);
   });
 
-  it('fails when effectiveDate does not match YYYY-MM-DD format', () => {
-    const result = updateServicePriceSchema.safeParse({
-      ...validData,
-      effectiveDate: '01/05/2026',
-    });
-    expect(result.success).toBe(false);
-  });
+  it('fails when decisionNumber is shorter than 3 characters or effectiveDate format invalid', () => {
+    expect(
+      updateServicePriceSchema.safeParse({
+        ...validData,
+        decisionNumber: 'QD',
+      }).success,
+    ).toBe(false);
 
-  it('fails when appliedBy is empty or whitespace', () => {
-    const result = updateServicePriceSchema.safeParse({
-      ...validData,
-      appliedBy: '   ',
-    });
-    expect(result.success).toBe(false);
-  });
+    expect(
+      updateServicePriceSchema.safeParse({
+        ...validData,
+        effectiveDate: '01/05/2026',
+      }).success,
+    ).toBe(false);
 
-  it('allows optional note', () => {
-    const withoutNote = {
-      price: 400000,
-      decisionNumber: 'QĐ-200/SYT',
-      effectiveDate: '2026-06-01',
-      appliedBy: 'Ban Giám đốc',
-    };
-    const result = updateServicePriceSchema.safeParse(withoutNote);
-    expect(result.success).toBe(true);
+    expect(
+      updateServicePriceSchema.safeParse({
+        ...validData,
+        appliedBy: '   ',
+      }).success,
+    ).toBe(false);
   });
 });

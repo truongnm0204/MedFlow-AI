@@ -33,6 +33,8 @@ public static class DependencyInjection
         services.AddScoped<IExaminationServiceCatalogService, ExaminationServiceCatalogService>();
         services.AddScoped<IExaminationServiceAdminService, ExaminationServiceAdminService>();
         services.AddScoped<IDiagnosticServiceAdminService, DiagnosticServiceAdminService>();
+        services.AddScoped<IServicePriceAdminService, ServicePriceAdminService>();
+        services.AddScoped<IFefoBatchSelectionService, FefoBatchSelectionService>();
         services.AddScoped<IDoctorAdminService, DoctorAdminService>();
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IDoctorCatalogService, DoctorCatalogService>();
@@ -43,6 +45,7 @@ public static class DependencyInjection
         services.AddScoped<IPatientPrescriptionService, PatientPrescriptionService>();
         services.AddScoped<IPatientIdentityClaimService, PatientIdentityClaimService>();
         services.AddScoped<IPatientVisitListService, PatientVisitListService>();
+        services.AddScoped<IPatientMedicalRecordService, PatientMedicalRecordService>();
         services.AddScoped<IAppointmentPolicyService, AppointmentPolicyService>();
         services.AddScoped<IQueuePolicyService, QueuePolicyService>();
         services.AddScoped<IDepartmentService, DepartmentService>();
