@@ -1,18 +1,9 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { BrowserRouter } from 'react-router-dom';
 
+import { queryClient } from '@/shared/lib/query-client';
 import { ToastViewport } from '@/shared/ui/toast';
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      refetchOnWindowFocus: false,
-      staleTime: 30_000,
-    },
-  },
-});
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
