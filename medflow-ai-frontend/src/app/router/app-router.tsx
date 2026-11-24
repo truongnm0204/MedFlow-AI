@@ -57,6 +57,11 @@ import { HomePage } from '@/features/home/pages/home-page';
 import { HospitalAdminDashboardPage } from '@/features/hospital-admin/pages/hospital-admin-dashboard-page';
 import { PatientDiagnosticResultPage } from '@/features/patient/pages/patient-diagnostic-result-page';
 import { PatientProfilePage } from '@/features/patient/pages/patient-profile-page';
+import { AccountSettingsPage } from '@/features/patient-records/pages/account-settings-page';
+import { MedicalRecordDetailPage } from '@/features/patient-records/pages/medical-record-detail-page';
+import { MedicalRecordListPage } from '@/features/patient-records/pages/medical-record-list-page';
+import { PatientPrescriptionDetailPage } from '@/features/patient-records/pages/patient-prescription-detail-page';
+import { PatientPrescriptionListPage } from '@/features/patient-records/pages/patient-prescription-list-page';
 import { VisitPaymentPage } from '@/features/payment/pages/visit-payment-page';
 import { MyVisitsPage } from '@/features/payment/pages/my-visits-page';
 import { PatientPaymentDetailPage } from '@/features/payment/pages/patient-payment-detail-page';
@@ -1244,6 +1249,102 @@ export function AppRouter() {
         element={
           <RequireAuth>
             <PatientDiagnosticResultPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/emr"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <MedicalRecordListPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/patient/emr"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <MedicalRecordListPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/patient/prescriptions"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientPrescriptionListPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/emr/prescriptions"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientPrescriptionListPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/emr/prescriptions/:prescriptionCode"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientPrescriptionDetailPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/patient/prescriptions/:prescriptionCode"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientPrescriptionDetailPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/emr/:recordId"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <MedicalRecordDetailPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/patient/emr/:recordId"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <MedicalRecordDetailPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <RequireAuth>
+            <AccountSettingsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/patient/settings"
+        element={
+          <RequireAuth>
+            <AccountSettingsPage />
           </RequireAuth>
         }
       />

@@ -18,6 +18,7 @@ public sealed class PatientsController : ControllerBase
     private readonly IPatientPrescriptionService _prescriptionService;
     private readonly IPatientIdentityClaimService _identityClaimService;
     private readonly IPatientVisitListService _visitListService;
+    private readonly IPatientMedicalRecordService _medicalRecordService;
 
     public PatientsController(
         IPatientProfileService profileService,
@@ -25,7 +26,8 @@ public sealed class PatientsController : ControllerBase
         IPatientDiagnosticResultService diagnosticResultService,
         IPatientIdentityClaimService identityClaimService,
         IPatientPrescriptionService prescriptionService,
-        IPatientVisitListService visitListService)
+        IPatientVisitListService visitListService,
+        IPatientMedicalRecordService medicalRecordService)
     {
         _profileService = profileService;
         _familyProfileService = familyProfileService;
@@ -33,6 +35,7 @@ public sealed class PatientsController : ControllerBase
         _identityClaimService = identityClaimService;
         _prescriptionService = prescriptionService;
         _visitListService = visitListService;
+        _medicalRecordService = medicalRecordService;
     }
 
     /// <summary>GET /api/v1/patients/me/profile — Xem thông tin hồ sơ cá nhân của bệnh nhân đang đăng nhập.</summary>
@@ -199,6 +202,30 @@ public sealed class PatientsController : ControllerBase
         string idOrCode,
         CancellationToken ct)
         => Ok(await _prescriptionService.GetMyPrescriptionAsync(GetUserId(), idOrCode, ct, GetIp()));
+
+    /// <summary>GET /api/v1/patients/me/medical-records — Xem danh sách hồ sơ bệnh án điện tử đã hoàn tất của bệnh nhân và người thân được xác minh PHI.</summary>
+    [HttpGet("me/medical-records")]
+    [ProducesResponseType<PatientMedicalRecordListResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PatientMedicalRecordListResponseDto>> GetMyMedicalRecords(
+        [FromQuery] GetPatientMedicalRecordsRequest? request,
+        CancellationToken ct)
+        => Ok(await _medicalRecordService.GetMyMedicalRecordsAsync(GetUserId(), request, ct, GetIp()));
+
+    /// <summary>GET /api/v1/patients/me/medical-records/{idOrCode} — Xem chi tiết hồ sơ bệnh án điện tử theo ID bệnh án, mã EMR hoặc mã lượt khám.</summary>
+    [HttpGet("me/medical-records/{idOrCode}")]
+    [ProducesResponseType<PatientMedicalRecordDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PatientMedicalRecordDetailDto>> GetMyMedicalRecord(
+        string idOrCode,
+        CancellationToken ct)
+        => Ok(await _medicalRecordService.GetMyMedicalRecordAsync(GetUserId(), idOrCode, ct, GetIp()));
 
     /// <summary>DELETE /api/v1/patients/me/family-members/{identifier} — Gỡ liên kết hồ sơ người thân.</summary>
     [HttpDelete("me/family-members/{identifier}")]
