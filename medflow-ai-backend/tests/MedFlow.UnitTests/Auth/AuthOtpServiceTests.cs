@@ -9,6 +9,7 @@ using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -29,13 +30,13 @@ public sealed class AuthOtpServiceTests : IDisposable
 
         public DbSet<User> Users => Set<User>();
         public DbSet<Patient> Patients => Set<Patient>();
+        public DbSet<Staff> Staff => Set<Staff>();
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => Set<AuthVerificationChallenge>();
 
         public DbSet<Role> Roles => throw NotUsed();
         public DbSet<Permission> Permissions => throw NotUsed();
         public DbSet<UserRole> UserRoles => throw NotUsed();
         public DbSet<RolePermission> RolePermissions => throw NotUsed();
-        public DbSet<Staff> Staff => throw NotUsed();
         public DbSet<Doctor> Doctors => throw NotUsed();
         public DbSet<DoctorServiceAuthorization> DoctorServiceAuthorizations => throw NotUsed();
         public DbSet<ExaminationSlot> ExaminationSlots => throw NotUsed();
@@ -63,7 +64,6 @@ public sealed class AuthOtpServiceTests : IDisposable
             modelBuilder.Ignore<Permission>();
             modelBuilder.Ignore<UserRole>();
             modelBuilder.Ignore<RolePermission>();
-            modelBuilder.Ignore<Staff>();
             modelBuilder.Ignore<Doctor>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<ExaminationSlot>();
@@ -94,6 +94,13 @@ public sealed class AuthOtpServiceTests : IDisposable
             {
                 b.HasKey(p => p.Id);
                 b.HasOne(p => p.User).WithOne(u => u.Patient).HasForeignKey<Patient>(p => p.UserId);
+            });
+
+            modelBuilder.Entity<Staff>(b =>
+            {
+                b.HasKey(s => s.Id);
+                b.Ignore(s => s.Department);
+                b.Ignore(s => s.Doctor);
             });
 
             modelBuilder.Entity<AuthVerificationChallenge>(b =>
@@ -168,6 +175,7 @@ public sealed class AuthOtpServiceTests : IDisposable
     {
         var options = new DbContextOptionsBuilder<OtpTestDbContext>()
             .UseInMemoryDatabase($"AuthOtpServiceTests_{Guid.NewGuid():N}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         _db = new OtpTestDbContext(options);
@@ -471,6 +479,149 @@ public sealed class AuthOtpServiceTests : IDisposable
 
         Assert.NotNull(response);
         Assert.Contains(_audit.Entries, e => e.Action == "OTP_RESEND" && e.Actor == user.Id);
+        Assert.Contains(_audit.Entries, e => e.Action == "EMAIL_SEND_FAILED" && e.Actor == user.Id);
+    }
+
+    [Fact]
+    public async Task SendPasswordResetOtpAsync_UniformAntiEnumeration_ReturnsIdenticalMessageAcrossAccountStates()
+    {
+        const string expectedMessage =
+            "Nếu email đã được đăng ký và đủ điều kiện, mã OTP khôi phục mật khẩu sẽ được gửi đến email của bạn.";
+
+        var activeLocal = new User
+        {
+            Email = "eligible@medflow.test",
+            AuthProvider = "LOCAL",
+            PasswordHash = "hashed-password",
+            AccountStatus = AccountStatus.ACTIVE,
+        };
+        var inactiveUser = new User
+        {
+            Email = "inactive@medflow.test",
+            AuthProvider = "LOCAL",
+            PasswordHash = "hashed-password",
+            AccountStatus = AccountStatus.INACTIVE,
+        };
+        var googleUser = new User
+        {
+            Email = "oauth@medflow.test",
+            AuthProvider = "GOOGLE",
+            PasswordHash = null,
+            AccountStatus = AccountStatus.ACTIVE,
+        };
+        _db.Users.AddRange(activeLocal, inactiveUser, googleUser);
+        await _db.SaveChangesAsync();
+
+        var resEligible = await _sut.SendPasswordResetOtpAsync("Eligible@MedFlow.Test", "10.0.0.1");
+        var resUnknown = await _sut.SendPasswordResetOtpAsync("missing@medflow.test", "10.0.0.1");
+        var resInactive = await _sut.SendPasswordResetOtpAsync("inactive@medflow.test", "10.0.0.1");
+        var resGoogle = await _sut.SendPasswordResetOtpAsync("oauth@medflow.test", "10.0.0.1");
+        var resThrottled = await _sut.SendPasswordResetOtpAsync("eligible@medflow.test", "10.0.0.1");
+
+        Assert.Equal(expectedMessage, resEligible.Message);
+        Assert.Equal(expectedMessage, resUnknown.Message);
+        Assert.Equal(expectedMessage, resInactive.Message);
+        Assert.Equal(expectedMessage, resGoogle.Message);
+        Assert.Equal(expectedMessage, resThrottled.Message);
+
+        // Only the first eligible call actually sends an email and creates a challenge.
+        var sent = Assert.Single(_emailSender.Sent);
+        Assert.Equal("eligible@medflow.test", sent.ToEmail);
+        Assert.NotNull(sent.ExtractedOtp);
+        Assert.Equal(6, sent.ExtractedOtp!.Length);
+
+        var challenges = await _db.AuthVerificationChallenges
+            .Where(c => c.Purpose == ChallengePurpose.PASSWORD_RESET)
+            .ToListAsync();
+        Assert.Single(challenges);
+        Assert.Equal(activeLocal.Id, challenges[0].UserId);
+    }
+
+    [Fact]
+    public async Task SendPasswordResetOtpAsync_CarriesOverFailedAttemptsAcrossResends_AndSilentlySuppressesAtMax()
+    {
+        var user = new User
+        {
+            Email = "carryover@medflow.test",
+            AuthProvider = "LOCAL",
+            PasswordHash = "hashed-password",
+            AccountStatus = AccountStatus.ACTIVE,
+        };
+        _db.Users.Add(user);
+        await _db.SaveChangesAsync();
+
+        _db.AuthVerificationChallenges.Add(new AuthVerificationChallenge
+        {
+            UserId = user.Id,
+            Purpose = ChallengePurpose.PASSWORD_RESET,
+            Channel = ChallengeChannel.EMAIL,
+            SecretHash = ComputeOtpHmacHex("111111"),
+            Status = ChallengeStatus.PENDING,
+            Attempts = 2,
+            MaxAttempts = 5,
+            CreatedAt = DateTime.UtcNow.AddSeconds(-180),
+            ExpiresAt = DateTime.UtcNow.AddMinutes(4),
+        });
+        await _db.SaveChangesAsync();
+
+        // Resend #1 carries over 2 failed attempts
+        await _sut.SendPasswordResetOtpAsync(user.Email, "10.0.0.2");
+
+        var challenges = await _db.AuthVerificationChallenges
+            .Where(c => c.UserId == user.Id && c.Purpose == ChallengePurpose.PASSWORD_RESET)
+            .OrderBy(c => c.Id)
+            .ToListAsync();
+        Assert.Equal(2, challenges.Count);
+        Assert.Equal(ChallengeStatus.REVOKED, challenges[0].Status);
+        Assert.Equal(ChallengeStatus.PENDING, challenges[1].Status);
+        Assert.Equal(2, challenges[1].Attempts);
+
+        // Simulate 1 more wrong guess on Challenge #2 (cumulative 3 < 5) and age past 45s throttle:
+        // Resend #2 must NOT double-count (2 + 3 = 5); it must carry over 3 and still send OTP!
+        challenges[1].CreatedAt = DateTime.UtcNow.AddSeconds(-120);
+        challenges[1].Attempts = 3;
+        await _db.SaveChangesAsync();
+
+        _emailSender.Sent.Clear();
+        await _sut.SendPasswordResetOtpAsync(user.Email, "10.0.0.2");
+        Assert.Single(_emailSender.Sent);
+
+        challenges = await _db.AuthVerificationChallenges
+            .Where(c => c.UserId == user.Id && c.Purpose == ChallengePurpose.PASSWORD_RESET)
+            .OrderBy(c => c.Id)
+            .ToListAsync();
+        Assert.Equal(3, challenges.Count);
+        Assert.Equal(3, challenges[2].Attempts);
+
+        // Once cumulative attempts reach MaxAttempts (5), next resend after 45s is silently suppressed!
+        challenges[2].CreatedAt = DateTime.UtcNow.AddSeconds(-60);
+        challenges[2].Attempts = 5;
+        await _db.SaveChangesAsync();
+
+        _emailSender.Sent.Clear();
+        var suppressed = await _sut.SendPasswordResetOtpAsync(user.Email, "10.0.0.2");
+        Assert.NotNull(suppressed.Message);
+        Assert.Empty(_emailSender.Sent);
+    }
+
+    [Fact]
+    public async Task SendPasswordResetOtpAsync_WhenEmailSenderThrows_MasksFailureAndAuditsEmailSendFailed()
+    {
+        var user = new User
+        {
+            Email = "reset-smtp-fail@medflow.test",
+            AuthProvider = "LOCAL",
+            PasswordHash = "hashed-password",
+            AccountStatus = AccountStatus.ACTIVE,
+        };
+        _db.Users.Add(user);
+        await _db.SaveChangesAsync();
+        _emailSender.ShouldThrow = true;
+
+        var res = await _sut.SendPasswordResetOtpAsync(user.Email, "10.0.0.3");
+
+        Assert.NotNull(res.Message);
+        Assert.Contains(_audit.Entries, e => e.Action == "PASSWORD_RESET_OTP_SENT" && e.Actor == user.Id);
         Assert.Contains(_audit.Entries, e => e.Action == "EMAIL_SEND_FAILED" && e.Actor == user.Id);
     }
 }

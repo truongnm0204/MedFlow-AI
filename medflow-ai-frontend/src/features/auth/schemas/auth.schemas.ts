@@ -38,6 +38,45 @@ export const verifyOtpSchema = z.object({
 });
 export type VerifyOtpFormValues = z.infer<typeof verifyOtpSchema>;
 
+export const forgotPasswordSchema = z.object({
+  email: z.string().min(1, 'Vui lòng nhập email').email('Email không hợp lệ'),
+});
+export type ForgotPasswordFormValues = z.infer<typeof forgotPasswordSchema>;
+
+export const resetPasswordSchema = z
+  .object({
+    otpCode: z.string().regex(/^\d{6}$/, 'Mã OTP gồm đúng 6 chữ số'),
+    newPassword: z
+      .string()
+      .min(8, 'Mật khẩu tối thiểu 8 ký tự')
+      .regex(PASSWORD_REGEX, 'Mật khẩu cần có chữ hoa, chữ thường và số'),
+    confirmPassword: z.string().min(1, 'Vui lòng xác nhận mật khẩu mới'),
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    path: ['confirmPassword'],
+    message: 'Mật khẩu xác nhận không khớp',
+  });
+export type ResetPasswordFormValues = z.infer<typeof resetPasswordSchema>;
+
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Vui lòng nhập mật khẩu hiện tại'),
+    newPassword: z
+      .string()
+      .min(8, 'Mật khẩu mới tối thiểu 8 ký tự')
+      .regex(PASSWORD_REGEX, 'Mật khẩu mới cần có chữ hoa, chữ thường và số'),
+    confirmPassword: z.string().min(1, 'Vui lòng xác nhận mật khẩu mới'),
+  })
+  .refine((d) => d.currentPassword !== d.newPassword, {
+    path: ['newPassword'],
+    message: 'Mật khẩu mới không được trùng với mật khẩu hiện tại',
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    path: ['confirmPassword'],
+    message: 'Mật khẩu xác nhận không khớp',
+  });
+export type ChangePasswordFormValues = z.infer<typeof changePasswordSchema>;
+
 /** Điểm mạnh mật khẩu 0-4 cho strength meter. */
 export function passwordStrength(password: string): number {
   if (!password) return 0;

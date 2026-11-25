@@ -16,5 +16,6 @@ public sealed record PatientProfileResponse(
     string Status,
     string? Address,
     string? BloodType,
-    IReadOnlyList<string> AllowedActions
+    IReadOnlyList<string> AllowedActions,
+    PatientEmergencyContactInfoDto? EmergencyContact = null
 );

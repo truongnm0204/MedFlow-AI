@@ -63,6 +63,36 @@ public class AuthController : ControllerBase
         [FromBody] ResendOtpRequest request, CancellationToken ct)
         => Ok(await _authService.ResendOtpAsync(request, ct));
 
+    /// <summary>POST /api/v1/auth/forgot-password — Yêu cầu gửi OTP khôi phục mật khẩu (chống dò tài khoản).</summary>
+    [HttpPost("forgot-password")]
+    [EnableRateLimiting("otp-resend")]
+    [ProducesResponseType<ForgotPasswordResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
+    public async Task<ActionResult<ForgotPasswordResponse>> ForgotPassword(
+        [FromBody] ForgotPasswordRequest request, CancellationToken ct)
+        => Ok(await _authService.ForgotPasswordAsync(request, GetIp(), ct));
+
+    /// <summary>POST /api/v1/auth/reset-password — Đặt lại mật khẩu bằng OTP một lần và thu hồi toàn bộ phiên.</summary>
+    [HttpPost("reset-password")]
+    [EnableRateLimiting("otp-verify")]
+    [ProducesResponseType<ResetPasswordResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
+    public async Task<ActionResult<ResetPasswordResponse>> ResetPassword(
+        [FromBody] ResetPasswordRequest request, CancellationToken ct)
+        => Ok(await _authService.ResetPasswordAsync(request, GetIp(), ct));
+
+    /// <summary>POST /api/v1/auth/change-password — Đổi mật khẩu khi đã đăng nhập, thu hồi các phiên khác.</summary>
+    [HttpPost("change-password")]
+    [Authorize]
+    [ProducesResponseType<ChangePasswordResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<ChangePasswordResponse>> ChangePassword(
+        [FromBody] ChangePasswordRequest request, CancellationToken ct)
+        => Ok(await _authService.ChangePasswordAsync(GetUserId(), request, GetSessionId(), GetIp(), ct));
+
     /// <summary>GET /api/v1/auth/me — Thông tin user hiện tại.</summary>
     [HttpGet("me")]
     [Authorize]
@@ -72,9 +102,18 @@ public class AuthController : ControllerBase
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
-            ?? User.FindFirstValue("sub")
-            ?? throw new UnauthorizedAccessException("Token không hợp lệ");
-        return long.Parse(sub);
+            ?? User.FindFirstValue("sub");
+        if (string.IsNullOrWhiteSpace(sub) || !long.TryParse(sub, out var userId) || userId <= 0)
+            throw new UnauthorizedAccessException("Token không hợp lệ");
+        return userId;
+    }
+
+    private long? GetSessionId()
+    {
+        var sid = User.FindFirstValue("sid");
+        return !string.IsNullOrWhiteSpace(sid) && long.TryParse(sid, out var sessionId) && sessionId > 0
+            ? sessionId
+            : null;
     }
 
     private string? GetIp() => HttpContext.Connection.RemoteIpAddress?.ToString();

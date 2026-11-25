@@ -1,7 +1,9 @@
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Reception;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
+using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -268,5 +270,153 @@ public sealed class ReceptionPatientSearchServiceTests : IDisposable
     {
         await Assert.ThrowsAsync<ValidationException>(() =>
             _service.SearchPatientsAsync(new SearchPatientsRequest { Tab = tab, Page = page, PageSize = pageSize }));
+    }
+
+    [Fact]
+    public async Task GetDashboardSummaryAsync_ClassifiesStatusesStrictly_ExcludesAwaitingResultsAndMissingCompletedAt()
+    {
+        var options = new DbContextOptionsBuilder<SearchTestDbContext>()
+            .UseInMemoryDatabase($"dashboard-kpi-{Guid.NewGuid():N}")
+            .Options;
+        using var db = new SearchTestDbContext(options);
+
+        db.Hospitals.Add(new Hospital { Id = 1, HospitalCode = "H1", Name = "Cơ sở 1", IsActive = true });
+        db.Departments.Add(new Department { Id = 1, HospitalId = 1, DepartmentCode = "NOI", Name = "Khoa Nội", IsActive = true });
+        db.HospitalRooms.Add(new HospitalRoom { Id = 101, HospitalId = 1, DepartmentId = 1, RoomCode = "P101", Name = "Phòng 101", Status = "ACTIVE" });
+        db.Services.Add(new Service { Id = 1, HospitalId = 1, DepartmentId = 1, ServiceCode = "SV1", Name = "Khám Nội", IsActive = true });
+
+        db.Roles.Add(new Role { Id = 1, Code = RoleNames.Reception, Name = "Tiếp đón" });
+        db.Permissions.Add(new Permission { Id = 1, Code = PermissionCodes.PatientCheckin });
+        db.RolePermissions.Add(new RolePermission { RoleId = 1, PermissionId = 1 });
+        db.Users.Add(new User { Id = 50, Email = "rec@h1.test", AccountStatus = AccountStatus.ACTIVE });
+        db.UserRoles.Add(new UserRole { UserId = 50, RoleId = 1 });
+        db.Staff.Add(new Staff { Id = 5, UserId = 50, HospitalId = 1, DepartmentId = 1, StaffCode = "ST-REC", FullName = "Lễ tân 1", Status = "ACTIVE" });
+
+        for (var i = 1; i <= 12; i++)
+        {
+            db.Patients.Add(new Patient { Id = i, PatientCode = $"PAT-{i:0000}", FullName = $"BN {i}", Status = "ACTIVE" });
+        }
+
+        db.ExaminationSlots.Add(new ExaminationSlot
+        {
+            Id = 10,
+            ServiceId = 1,
+            RoomId = 101,
+            StartsAt = Today.AddHours(8),
+            EndsAt = Today.AddHours(11),
+            Status = "OPEN",
+        });
+
+        // Appointments today:
+        // 1: BOOKED (no visit) -> WaitingCheckIn (+1)
+        // 2: CONFIRMED (no visit) -> WaitingCheckIn (+1)
+        // 3: BOOKED but already has active visit -> NOT WaitingCheckIn
+        // 4: CHECKED_IN -> NOT WaitingCheckIn
+        // 5: CANCELLED -> NOT WaitingCheckIn
+        // 6: NO_SHOW -> NOT WaitingCheckIn
+        db.Appointments.AddRange(
+            new Appointment { Id = 1, PatientId = 1, SlotId = 10, Status = "BOOKED" },
+            new Appointment { Id = 2, PatientId = 2, SlotId = 10, Status = "CONFIRMED" },
+            new Appointment { Id = 3, PatientId = 3, SlotId = 10, Status = "BOOKED" },
+            new Appointment { Id = 4, PatientId = 4, SlotId = 10, Status = "CHECKED_IN" },
+            new Appointment { Id = 5, PatientId = 5, SlotId = 10, Status = "CANCELLED" },
+            new Appointment { Id = 6, PatientId = 6, SlotId = 10, Status = "NO_SHOW" });
+
+        // Visits today (Room 101, Hospital 1):
+        // InQueue (+4): CHECKED_IN, WAITING, CALLED, RETURN_CONSULTATION (including walk-in without AppointmentId)
+        // InConsultation (+1): IN_PROGRESS
+        // Excluded from InConsultation & InQueue: AWAITING_RESULTS, CANCELLED
+        // CompletedToday (+2): COMPLETED with CompletedAt today (even if CheckedInAt was yesterday);
+        // Excluded from CompletedToday: COMPLETED with null CompletedAt, or CompletedAt yesterday!
+        db.Visits.AddRange(
+            new Visit { Id = 1, PatientId = 3, AppointmentId = 3, ExaminationRoomId = 101, Status = "CHECKED_IN", CheckedInAt = Today.AddHours(8.1) },
+            new Visit { Id = 2, PatientId = 4, AppointmentId = 4, ExaminationRoomId = 101, Status = "WAITING", CheckedInAt = Today.AddHours(8.2) },
+            new Visit { Id = 3, PatientId = 7, ExaminationRoomId = 101, Status = "CALLED", CheckedInAt = Today.AddHours(8.3) },
+            new Visit { Id = 4, PatientId = 8, ExaminationRoomId = 101, Status = "RETURN_CONSULTATION", CheckedInAt = Today.AddHours(8.4) },
+            new Visit { Id = 5, PatientId = 9, ExaminationRoomId = 101, Status = "IN_PROGRESS", CheckedInAt = Today.AddHours(8.5) },
+            new Visit { Id = 6, PatientId = 10, ExaminationRoomId = 101, Status = "AWAITING_RESULTS", CheckedInAt = Today.AddHours(8.6) },
+            new Visit { Id = 7, PatientId = 11, ExaminationRoomId = 101, Status = "COMPLETED", CheckedInAt = Today.AddHours(7.5), CompletedAt = Today.AddHours(8.9) },
+            new Visit { Id = 8, PatientId = 12, ExaminationRoomId = 101, Status = "COMPLETED", CheckedInAt = Today.AddDays(-1).AddHours(23), CompletedAt = Today.AddHours(0.5) },
+            new Visit { Id = 9, PatientId = 1, ExaminationRoomId = 101, Status = "COMPLETED", CheckedInAt = Today.AddHours(8.0), CompletedAt = null },
+            new Visit { Id = 10, PatientId = 2, ExaminationRoomId = 101, Status = "COMPLETED", CheckedInAt = Today.AddDays(-1).AddHours(9), CompletedAt = Today.AddDays(-1).AddHours(10) },
+            new Visit { Id = 11, PatientId = 5, ExaminationRoomId = 101, Status = "CANCELLED", CheckedInAt = Today.AddHours(8.0) });
+
+        await db.SaveChangesAsync();
+
+        var sut = new ReceptionPatientSearchService(db, new FixedTimeProvider(FixedUtcNow));
+        var summary = await sut.GetDashboardSummaryAsync(50);
+        var searchRes = await sut.SearchPatientsAsync(new SearchPatientsRequest(), actorUserId: 50);
+
+        Assert.Equal(2, summary.WaitingCheckIn);
+        Assert.Equal(4, summary.InQueue);
+        Assert.Equal(1, summary.InConsultation);
+        Assert.Equal(2, summary.CompletedToday);
+        Assert.Equal(summary, searchRes.DashboardSummary);
+    }
+
+    [Fact]
+    public async Task GetDashboardSummaryAsync_EnforcesHospitalIsolationAndTwoLayerAuthz()
+    {
+        var options = new DbContextOptionsBuilder<SearchTestDbContext>()
+            .UseInMemoryDatabase($"dashboard-hosp-{Guid.NewGuid():N}")
+            .Options;
+        using var db = new SearchTestDbContext(options);
+
+        db.Hospitals.AddRange(
+            new Hospital { Id = 1, HospitalCode = "H1", Name = "Cơ sở 1", IsActive = true },
+            new Hospital { Id = 2, HospitalCode = "H2", Name = "Cơ sở 2", IsActive = true });
+        db.Departments.AddRange(
+            new Department { Id = 1, HospitalId = 1, DepartmentCode = "D1", Name = "Khoa 1", IsActive = true },
+            new Department { Id = 2, HospitalId = 2, DepartmentCode = "D2", Name = "Khoa 2", IsActive = true });
+        db.HospitalRooms.AddRange(
+            new HospitalRoom { Id = 101, HospitalId = 1, DepartmentId = 1, RoomCode = "P101", Name = "Phòng 101", Status = "ACTIVE" },
+            new HospitalRoom { Id = 201, HospitalId = 2, DepartmentId = 2, RoomCode = "P201", Name = "Phòng 201", Status = "ACTIVE" });
+        db.Services.AddRange(
+            new Service { Id = 1, HospitalId = 1, DepartmentId = 1, ServiceCode = "S1", Name = "DV 1", IsActive = true },
+            new Service { Id = 2, HospitalId = 2, DepartmentId = 2, ServiceCode = "S2", Name = "DV 2", IsActive = true });
+
+        db.Roles.AddRange(
+            new Role { Id = 1, Code = RoleNames.Reception, Name = "Tiếp đón" },
+            new Role { Id = 2, Code = RoleNames.Patient, Name = "Bệnh nhân" });
+        db.Permissions.Add(new Permission { Id = 1, Code = PermissionCodes.PatientCheckin });
+        db.RolePermissions.Add(new RolePermission { RoleId = 1, PermissionId = 1 });
+
+        db.Users.AddRange(
+            new User { Id = 101, Email = "rec1@medflow.test", AccountStatus = AccountStatus.ACTIVE },
+            new User { Id = 102, Email = "rec2@medflow.test", AccountStatus = AccountStatus.ACTIVE },
+            new User { Id = 103, Email = "pat@medflow.test", AccountStatus = AccountStatus.ACTIVE });
+        db.UserRoles.AddRange(
+            new UserRole { UserId = 101, RoleId = 1 },
+            new UserRole { UserId = 102, RoleId = 1 },
+            new UserRole { UserId = 103, RoleId = 2 });
+        db.Staff.AddRange(
+            new Staff { Id = 11, UserId = 101, HospitalId = 1, DepartmentId = 1, StaffCode = "ST1", FullName = "LT H1", Status = "ACTIVE" },
+            new Staff { Id = 12, UserId = 102, HospitalId = 2, DepartmentId = 2, StaffCode = "ST2", FullName = "LT H2", Status = "ACTIVE" });
+
+        db.Patients.AddRange(
+            new Patient { Id = 1, PatientCode = "P1", FullName = "BN 1", Status = "ACTIVE" },
+            new Patient { Id = 2, PatientCode = "P2", FullName = "BN 2", Status = "ACTIVE" });
+
+        db.ExaminationSlots.AddRange(
+            new ExaminationSlot { Id = 1, ServiceId = 1, RoomId = 101, StartsAt = Today.AddHours(8), EndsAt = Today.AddHours(9), Status = "OPEN" },
+            new ExaminationSlot { Id = 2, ServiceId = 2, RoomId = 201, StartsAt = Today.AddHours(8), EndsAt = Today.AddHours(9), Status = "OPEN" });
+
+        db.Appointments.Add(new Appointment { Id = 1, PatientId = 1, SlotId = 1, Status = "BOOKED" });
+        db.Visits.AddRange(
+            new Visit { Id = 1, PatientId = 1, ExaminationRoomId = 101, Status = "IN_PROGRESS", CheckedInAt = Today.AddHours(8.2) },
+            new Visit { Id = 2, PatientId = 2, ExaminationRoomId = 201, Status = "WAITING", CheckedInAt = Today.AddHours(8.3) },
+            new Visit { Id = 3, PatientId = 2, ExaminationRoomId = 201, Status = "COMPLETED", CheckedInAt = Today.AddHours(7.5), CompletedAt = Today.AddHours(8.4) });
+
+        await db.SaveChangesAsync();
+
+        var sut = new ReceptionPatientSearchService(db, new FixedTimeProvider(FixedUtcNow));
+
+        var h1 = await sut.GetDashboardSummaryAsync(101);
+        Assert.Equal(new ReceptionDashboardSummaryDto(1, 0, 1, 0), h1);
+
+        var h2 = await sut.GetDashboardSummaryAsync(102);
+        Assert.Equal(new ReceptionDashboardSummaryDto(0, 1, 0, 1), h2);
+
+        await Assert.ThrowsAsync<ForbiddenException>(() => sut.GetDashboardSummaryAsync(103));
     }
 }

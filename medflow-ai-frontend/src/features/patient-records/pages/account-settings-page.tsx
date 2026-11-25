@@ -25,6 +25,7 @@ import {
 import { AppHeader } from '@/shared/components/layout/app-header';
 import { PatientFooter } from '@/shared/components/layout/patient-footer';
 
+import { ChangePasswordCard } from '../components/change-password-card';
 import { PatientRecordsSubnav } from '../components/patient-records-subnav';
 
 export function AccountSettingsPage() {
@@ -101,6 +102,8 @@ export function AccountSettingsPage() {
                   </div>
                 </dl>
               </div>
+
+              <ChangePasswordCard />
 
               <div className="rounded-2xl border border-border bg-white p-6 shadow-xs">
                 <div className="flex items-center gap-2.5 border-b border-border pb-4">

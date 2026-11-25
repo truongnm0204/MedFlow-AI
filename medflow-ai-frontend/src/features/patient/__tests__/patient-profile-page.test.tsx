@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { AxiosResponse } from 'axios';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -83,6 +83,75 @@ describe('PatientProfilePage', () => {
 
     fireEvent.click(screen.getByText('Chỉnh sửa thông tin liên hệ'));
     expect(screen.getByText('Cập nhật Thông tin Liên hệ Cá nhân')).toBeInTheDocument();
+  });
+
+  it('lưu cập nhật hồ sơ qua PUT /patients/me/profile và đồng bộ lại giao diện thật', async () => {
+    let currentDto: PatientProfileResponseDto = SAMPLE_PROFILE_DTO;
+    const updatedDto: PatientProfileResponseDto = {
+      ...SAMPLE_PROFILE_DTO,
+      phone: '0988112233',
+      address: '99 Nguyễn Huệ, Quận 1, TP.HCM',
+      bloodType: 'AB+',
+      emergencyContact: {
+        fullName: 'Trần Thị Mai',
+        relationship: 'Vợ',
+        phone: '0933445566',
+      },
+    };
+    vi.spyOn(apiClient, 'get').mockImplementation(
+      async () =>
+        ({
+          data: currentDto,
+        }) as AxiosResponse<PatientProfileResponseDto>,
+    );
+    const putSpy = vi.spyOn(apiClient, 'put').mockImplementation(async () => {
+      currentDto = updatedDto;
+      return { data: updatedDto } as AxiosResponse<PatientProfileResponseDto>;
+    });
+
+    renderPage();
+
+    expect(await screen.findByText('Thông tin liên hệ & cư trú')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Chỉnh sửa thông tin liên hệ'));
+
+    fireEvent.change(screen.getByLabelText(/Số điện thoại liên hệ chính/i), {
+      target: { value: '0988112233' },
+    });
+    fireEvent.change(screen.getByLabelText(/Nhóm máu \(tự khai báo\)/i), {
+      target: { value: 'AB+' },
+    });
+    fireEvent.change(screen.getByLabelText(/Địa chỉ thường trú/i), {
+      target: { value: '99 Nguyễn Huệ, Quận 1, TP.HCM' },
+    });
+    fireEvent.change(screen.getByLabelText(/Họ và tên người liên hệ/i), {
+      target: { value: 'Trần Thị Mai' },
+    });
+    fireEvent.change(screen.getByLabelText(/Mối quan hệ/i), {
+      target: { value: 'Vợ' },
+    });
+    fireEvent.change(screen.getByLabelText(/Số điện thoại khẩn cấp/i), {
+      target: { value: '0933445566' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Lưu thay đổi/i }));
+
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledWith('/patients/me/profile', {
+        phone: '0988112233',
+        address: '99 Nguyễn Huệ, Quận 1, TP.HCM',
+        bloodType: 'AB+',
+        emergencyContact: {
+          fullName: 'Trần Thị Mai',
+          relationship: 'Vợ',
+          phone: '0933445566',
+        },
+      });
+    });
+
+    expect(await screen.findByText('0988112233')).toBeInTheDocument();
+    expect(screen.getByText('99 Nguyễn Huệ, Quận 1, TP.HCM')).toBeInTheDocument();
+    expect(screen.getByText(/Tự khai báo/i)).toBeInTheDocument();
+    expect(screen.getByText(/Trần Thị Mai/i)).toBeInTheDocument();
   });
 
   it('hiển thị trạng thái lỗi minh bạch khi API thất bại thay vì trả dữ liệu giả', async () => {

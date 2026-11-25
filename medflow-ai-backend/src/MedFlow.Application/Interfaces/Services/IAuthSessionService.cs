@@ -17,10 +17,23 @@ public class RotateResult
     public User? User { get; set; }
 }
 
+public sealed record RevokeOtherSessionsOutcome(long? KeptSessionId, int RevokedCount);
+
 public interface IAuthSessionService
 {
     Task<AuthSessionResult> GenerateAsync(long userId, string? createdByIp, CancellationToken ct = default);
     Task<RotateResult> RotateAsync(string rawToken, string? ipAddress, CancellationToken ct = default);
     Task RevokeAsync(string rawToken, string? ipAddress, CancellationToken ct = default);
     Task RevokeAllForUserAsync(long userId, string? ipAddress, CancellationToken ct = default);
+
+    async Task<RevokeOtherSessionsOutcome> RevokeOtherSessionsForUserAsync(
+        long userId,
+        string? candidateKeepRawToken,
+        long? expectedJwtSessionId,
+        string? ipAddress,
+        CancellationToken ct = default)
+    {
+        await RevokeAllForUserAsync(userId, ipAddress, ct);
+        return new RevokeOtherSessionsOutcome(null, 0);
+    }
 }

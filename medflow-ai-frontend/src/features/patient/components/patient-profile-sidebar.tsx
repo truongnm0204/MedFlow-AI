@@ -76,9 +76,15 @@ export function PatientProfileSidebar({ profile, onOpenBookingModal }: PatientPr
           <div className="mt-6 grid grid-cols-3 gap-2.5">
             <div className="rounded-xl border border-slate-100 bg-canvas p-2.5 text-center">
               <span className="block text-[11px] font-medium text-sub">Nhóm máu</span>
-              <span className="mt-0.5 block text-sm font-bold text-red-600">
+              <span
+                className="mt-0.5 block text-sm font-bold text-red-600"
+                title="Thông tin nhóm máu do bệnh nhân tự khai báo"
+              >
                 {vitals.bloodType}
               </span>
+              {vitals.bloodType !== 'Chưa cập nhật' && (
+                <span className="block text-[10px] text-sub">(tự khai báo)</span>
+              )}
             </div>
 
             <div className="rounded-xl border border-slate-100 bg-canvas p-2.5 text-center">

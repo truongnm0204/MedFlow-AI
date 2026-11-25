@@ -11,6 +11,8 @@ import {
   getMyPatientProfileApi,
   mapPatientProfileDtoToModel,
   mapStaffUserToProfileModel,
+  patchMyPatientProfileApi,
+  updateMyPatientProfileApi,
   type PatientProfileResponseDto,
 } from '../api/patient-profile.api';
 import { usePatientProfileQuery } from '../hooks/use-patient-profile';
@@ -187,5 +189,69 @@ describe('patient-profile.api (PHI safety & strict HTTP)', () => {
       staffCode: 'STF-003',
     });
     expect(directMapped.identity.identityNumber).toBe('STF-003 (Nhân viên tiếp đón)');
+  });
+
+  it('calls PUT or PATCH /patients/me/profile and maps persisted emergencyContact', async () => {
+    const updatedDto: PatientProfileResponseDto = {
+      id: 1,
+      userId: 1,
+      patientCode: 'PAT-0001',
+      fullName: 'Nguyễn Văn An',
+      dateOfBirth: '1980-02-02',
+      age: 46,
+      gender: 'MALE',
+      phone: '0988776655',
+      email: 'patient01@medflow.test',
+      isEmailVerified: true,
+      isIdentityVerified: true,
+      maskedIdentification: '****** (Đã xác thực CCCD)',
+      status: 'ACTIVE',
+      address: '12 Trần Hưng Đạo, Hà Nội',
+      bloodType: 'O-',
+      allowedActions: ['UPDATE_PERSONAL_PROFILE'],
+      emergencyContact: {
+        fullName: 'Nguyễn Thị Hoa',
+        relationship: 'Vợ',
+        phone: '0911223344',
+      },
+    };
+
+    const putSpy = vi
+      .spyOn(apiClient, 'put')
+      .mockResolvedValueOnce({ data: updatedDto } as AxiosResponse<PatientProfileResponseDto>);
+    const patchSpy = vi
+      .spyOn(apiClient, 'patch')
+      .mockResolvedValueOnce({ data: updatedDto } as AxiosResponse<PatientProfileResponseDto>);
+
+    const putModel = await updateMyPatientProfileApi({
+      phone: '0988776655',
+      address: '12 Trần Hưng Đạo, Hà Nội',
+      bloodType: 'O-',
+      emergencyContact: {
+        fullName: 'Nguyễn Thị Hoa',
+        relationship: 'Vợ',
+        phone: '0911223344',
+      },
+    });
+
+    expect(putSpy).toHaveBeenCalledWith('/patients/me/profile', {
+      phone: '0988776655',
+      address: '12 Trần Hưng Đạo, Hà Nội',
+      bloodType: 'O-',
+      emergencyContact: {
+        fullName: 'Nguyễn Thị Hoa',
+        relationship: 'Vợ',
+        phone: '0911223344',
+      },
+    });
+    expect(putModel.vitals.bloodType).toBe('O-');
+    expect(putModel.contact.emergencyContact).toEqual({
+      fullName: 'Nguyễn Thị Hoa',
+      relationship: 'Vợ',
+      phone: '0911223344',
+    });
+
+    await patchMyPatientProfileApi({ address: null });
+    expect(patchSpy).toHaveBeenCalledWith('/patients/me/profile', { address: null });
   });
 });

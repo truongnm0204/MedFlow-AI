@@ -17,6 +17,9 @@ public class Patient
     public string Status { get; set; } = "ACTIVE";
     public string? Address { get; set; }
     public string? BloodType { get; set; }
+    public string? EmergencyContactName { get; set; }
+    public string? EmergencyContactRelationship { get; set; }
+    public string? EmergencyContactPhone { get; set; }
 
     public User? User { get; set; }
 }

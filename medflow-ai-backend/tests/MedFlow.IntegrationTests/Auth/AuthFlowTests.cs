@@ -2,9 +2,14 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using MedFlow.API.Realtime;
 using MedFlow.Application.DTOs.Auth;
+using MedFlow.Application.DTOs.Realtime;
+using MedFlow.Application.Options;
 using MedFlow.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace MedFlow.IntegrationTests.Auth;
 
@@ -105,5 +110,153 @@ public sealed class AuthFlowTests(TestWebAppFactory factory) : AuthTestBase(fact
     {
         var response = await Client.GetAsync("/api/v1/auth/me");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ForgotAndResetPassword_EndToEnd_CommitsFailedAttempt_EnforcesSingleUseOtp_AndRevokesSessions()
+    {
+        var (email, oldTokens) = await RegisterVerifyLoginAsync();
+
+        var forgotRes = await Client.PostAsJsonAsync(
+            "/api/v1/auth/forgot-password",
+            new ForgotPasswordRequest { Email = email });
+        Assert.Equal(HttpStatusCode.OK, forgotRes.StatusCode);
+        var forgotBody = await forgotRes.Content.ReadFromJsonAsync<ForgotPasswordResponse>();
+        Assert.NotNull(forgotBody);
+        Assert.Equal(
+            "Nếu email đã được đăng ký và đủ điều kiện, mã OTP khôi phục mật khẩu sẽ được gửi đến email của bạn.",
+            forgotBody.Message);
+
+        var otp = Factory.EmailSender.LatestOtpFor(email);
+        Assert.NotNull(otp);
+
+        // Wrong OTP returns 400 AND persists Attempts = 1 in PostgreSQL despite failed reset
+        var wrongCode = otp == "000000" ? "999999" : "000000";
+        var wrongReset = await Client.PostAsJsonAsync(
+            "/api/v1/auth/reset-password",
+            new ResetPasswordRequest
+            {
+                Email = email,
+                OtpCode = wrongCode,
+                NewPassword = "NewStrongPass456",
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, wrongReset.StatusCode);
+
+        var user = await Db.Users.AsNoTracking().SingleAsync(u => u.Email == email);
+        var pendingChallenge = await Db.AuthVerificationChallenges
+            .AsNoTracking()
+            .SingleAsync(c => c.UserId == user.Id && c.Purpose == ChallengePurpose.PASSWORD_RESET);
+        Assert.Equal(1, pendingChallenge.Attempts);
+
+        // Correct OTP resets password & revokes old refresh token
+        var okReset = await Client.PostAsJsonAsync(
+            "/api/v1/auth/reset-password",
+            new ResetPasswordRequest
+            {
+                Email = email,
+                OtpCode = otp!,
+                NewPassword = "NewStrongPass456",
+            });
+        Assert.Equal(HttpStatusCode.OK, okReset.StatusCode);
+
+        // Replaying the same OTP must be rejected (single-use)
+        var replayReset = await Client.PostAsJsonAsync(
+            "/api/v1/auth/reset-password",
+            new ResetPasswordRequest
+            {
+                Email = email,
+                OtpCode = otp!,
+                NewPassword = "AnotherPass789",
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, replayReset.StatusCode);
+
+        // Old refresh token is now revoked
+        var oldRefreshRes = await Client.PostAsJsonAsync(
+            "/api/v1/auth/refresh",
+            new RefreshRequest { RefreshToken = oldTokens.RefreshToken });
+        Assert.Equal(HttpStatusCode.Unauthorized, oldRefreshRes.StatusCode);
+
+        // Login with new password succeeds
+        var newTokens = await LoginAsync(email, "NewStrongPass456");
+        Assert.NotEmpty(newTokens.AccessToken);
+    }
+
+    [Fact]
+    public async Task ChangePassword_MultiDeviceSessions_KeepsVerifiedCurrentSessionAndRevokesOtherDevices()
+    {
+        const string initialPassword = "MedFlow@2026";
+        var email = await RegisterAndVerifyAsync();
+        var laptopTokens = await LoginAsync(email, initialPassword);
+        var phoneTokens = await LoginAsync(email, initialPassword);
+        var otherPcTokens = await LoginAsync(email, initialPassword);
+
+        // Verify JWT carries session binding ("sid")
+        var laptopJwt = new JwtSecurityTokenHandler().ReadJwtToken(laptopTokens.AccessToken);
+        Assert.Contains(laptopJwt.Claims, c => c.Type == "sid" && long.TryParse(c.Value, out var sid) && sid > 0);
+
+        using var changeReq = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/change-password")
+        {
+            Content = JsonContent.Create(new ChangePasswordRequest
+            {
+                CurrentPassword = initialPassword,
+                NewPassword = "UpdatedPass789",
+                CurrentRefreshToken = laptopTokens.RefreshToken,
+            }),
+        };
+        changeReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", laptopTokens.AccessToken);
+
+        var changeRes = await Client.SendAsync(changeReq);
+        Assert.Equal(HttpStatusCode.OK, changeRes.StatusCode);
+        var changeBody = await changeRes.Content.ReadFromJsonAsync<ChangePasswordResponse>();
+        Assert.NotNull(changeBody);
+        Assert.True(changeBody.KeptCurrentSession);
+
+        // Phone & Other PC refresh tokens are revoked -> 401
+        var phoneRefresh = await Client.PostAsJsonAsync(
+            "/api/v1/auth/refresh",
+            new RefreshRequest { RefreshToken = phoneTokens.RefreshToken });
+        Assert.Equal(HttpStatusCode.Unauthorized, phoneRefresh.StatusCode);
+
+        var otherPcRefresh = await Client.PostAsJsonAsync(
+            "/api/v1/auth/refresh",
+            new RefreshRequest { RefreshToken = otherPcTokens.RefreshToken });
+        Assert.Equal(HttpStatusCode.Unauthorized, otherPcRefresh.StatusCode);
+
+        // Laptop's refresh token remains active -> rotates 200 OK!
+        var laptopRefresh = await Client.PostAsJsonAsync(
+            "/api/v1/auth/refresh",
+            new RefreshRequest { RefreshToken = laptopTokens.RefreshToken });
+        Assert.Equal(HttpStatusCode.OK, laptopRefresh.StatusCode);
+    }
+
+    [Fact]
+    public void RealtimeConnectionRegistry_EvictUserSubscriptionsExceptSession_KeepsActiveSessionAndEvictsOtherDevices()
+    {
+        var monitor = Factory.Services.GetRequiredService<IOptionsMonitor<RealtimeOptions>>();
+        var registry = new ClinicalRealtimeConnectionRegistry(monitor);
+
+        registry.RegisterConnection("conn-laptop", userId: 77, sessionId: 501);
+        registry.RegisterConnection("conn-phone", userId: 77, sessionId: 502);
+        registry.RegisterConnection("conn-other-pc", userId: 77, sessionId: null);
+
+        var grant = new AuthorizedRealtimeSubscription(
+            ResourceKey: "visit-payment:1001",
+            PrimaryGroupNames: ["visit:1001"],
+            BucketGroupNames: [],
+            HospitalId: 1,
+            PatientId: 10,
+            AppointmentId: null,
+            VisitId: 1001);
+
+        registry.TryUpsertSubscription("conn-laptop", 77, grant);
+        registry.TryUpsertSubscription("conn-phone", 77, grant);
+        registry.TryUpsertSubscription("conn-other-pc", 77, grant);
+
+        var evicted = registry.EvictUserSubscriptionsExceptSession(userId: 77, keepSessionId: 501);
+
+        Assert.Equal(2, evicted.Count);
+        Assert.DoesNotContain(evicted, e => e.ConnectionId == "conn-laptop");
+        Assert.Contains(evicted, e => e.ConnectionId == "conn-phone");
+        Assert.Contains(evicted, e => e.ConnectionId == "conn-other-pc");
     }
 }

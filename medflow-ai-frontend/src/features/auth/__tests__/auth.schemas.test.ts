@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  changePasswordSchema,
+  forgotPasswordSchema,
   loginSchema,
   passwordStrength,
   registerSchema,
+  resetPasswordSchema,
   verifyOtpSchema,
 } from '../schemas/auth.schemas';
 
@@ -98,5 +101,56 @@ describe('passwordStrength', () => {
     expect(passwordStrength('Abcdefgh1!')).toBe(3); // số + ký tự đặc biệt
     expect(passwordStrength('Abcdefgh1234!')).toBe(4); // ≥12 + số + đặc biệt
     expect(passwordStrength('Abcdefghijkl1!')).toBe(4);
+  });
+});
+
+describe('forgotPasswordSchema & resetPasswordSchema & changePasswordSchema', () => {
+  it('xác thực email quên mật khẩu hợp lệ', () => {
+    expect(forgotPasswordSchema.safeParse({ email: 'patient@medflow.vn' }).success).toBe(true);
+    expect(forgotPasswordSchema.safeParse({ email: 'bad-email' }).success).toBe(false);
+  });
+
+  it('xác thực đặt lại mật khẩu bằng OTP 6 chữ số và mật khẩu mạnh', () => {
+    expect(
+      resetPasswordSchema.safeParse({
+        otpCode: '123456',
+        newPassword: 'NewPassword123',
+        confirmPassword: 'NewPassword123',
+      }).success,
+    ).toBe(true);
+
+    expect(
+      resetPasswordSchema.safeParse({
+        otpCode: '12ab56',
+        newPassword: 'NewPassword123',
+        confirmPassword: 'NewPassword123',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('từ chối đổi mật khẩu trùng mật khẩu hiện tại hoặc xác nhận lệch', () => {
+    expect(
+      changePasswordSchema.safeParse({
+        currentPassword: 'OldPassword123',
+        newPassword: 'NewPassword456',
+        confirmPassword: 'NewPassword456',
+      }).success,
+    ).toBe(true);
+
+    expect(
+      changePasswordSchema.safeParse({
+        currentPassword: 'SamePassword123',
+        newPassword: 'SamePassword123',
+        confirmPassword: 'SamePassword123',
+      }).success,
+    ).toBe(false);
+
+    expect(
+      changePasswordSchema.safeParse({
+        currentPassword: 'OldPassword123',
+        newPassword: 'NewPassword456',
+        confirmPassword: 'MismatchPassword456',
+      }).success,
+    ).toBe(false);
   });
 });

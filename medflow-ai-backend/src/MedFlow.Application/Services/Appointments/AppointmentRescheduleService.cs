@@ -21,6 +21,7 @@ public sealed class AppointmentRescheduleService : IAppointmentRescheduleService
     private readonly IAuditLogger _audit;
     private readonly IAppointmentDetailService _detailService;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
 
     public AppointmentRescheduleService(
         IApplicationDbContext db,
@@ -28,7 +29,8 @@ public sealed class AppointmentRescheduleService : IAppointmentRescheduleService
         IAppointmentBookingLock bookingLock,
         IAuditLogger audit,
         IAppointmentDetailService detailService,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IRealtimeNotificationPublisher? realtimePublisher = null)
     {
         _db = db;
         _policyService = policyService;
@@ -36,6 +38,7 @@ public sealed class AppointmentRescheduleService : IAppointmentRescheduleService
         _audit = audit;
         _detailService = detailService;
         _timeProvider = timeProvider;
+        _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
     }
 
     public async Task<AppointmentDetailDto> RescheduleAsync(
@@ -237,6 +240,22 @@ public sealed class AppointmentRescheduleService : IAppointmentRescheduleService
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+
+        var touchesToday =
+            (current.StartsAt.HasValue && DateOnly.FromDateTime(current.StartsAt.Value) == today) ||
+            (lockedTarget.StartsAt.HasValue && DateOnly.FromDateTime(lockedTarget.StartsAt.Value) == today);
+
+        if (touchesToday && hospitalId > 0)
+        {
+            await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+                _realtimePublisher,
+                new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                    HospitalId: hospitalId,
+                    ServicePointId: null,
+                    RoomId: lockedTarget.RoomId ?? current.RoomId,
+                    AppointmentId: newAppointment.Id),
+                ct);
+        }
 
         return await _detailService.GetMyAppointmentDetailAsync(
             userId,

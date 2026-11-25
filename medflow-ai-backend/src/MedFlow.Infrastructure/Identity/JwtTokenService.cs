@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -10,6 +11,8 @@ namespace MedFlow.Infrastructure.Identity;
 
 public class JwtTokenService : IJwtTokenService
 {
+    public const string SessionIdClaimType = "sid";
+
     private readonly IConfiguration _configuration;
     private readonly TimeProvider _timeProvider;
 
@@ -20,6 +23,9 @@ public class JwtTokenService : IJwtTokenService
     }
 
     public JwtTokenResult GenerateAccessToken(User user, IEnumerable<string> roles)
+        => GenerateAccessToken(user, roles, sessionId: null);
+
+    public JwtTokenResult GenerateAccessToken(User user, IEnumerable<string> roles, long? sessionId)
     {
         var key = _configuration["Jwt:Secret"]
             ?? throw new InvalidOperationException("Jwt:Secret not configured.");
@@ -31,10 +37,14 @@ public class JwtTokenService : IJwtTokenService
 
         var claims = new List<Claim>
         {
-            new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new(JwtRegisteredClaimNames.Sub, user.Id.ToString(CultureInfo.InvariantCulture)),
             new(JwtRegisteredClaimNames.Email, user.Email),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
+        if (sessionId is > 0)
+        {
+            claims.Add(new Claim(SessionIdClaimType, sessionId.Value.ToString(CultureInfo.InvariantCulture)));
+        }
         claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
 
         var credentials = new SigningCredentials(

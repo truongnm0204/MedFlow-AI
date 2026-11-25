@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Security.Cryptography;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Auth;
 using MedFlow.Application.Interfaces.Persistence;
@@ -13,10 +15,12 @@ using Microsoft.Extensions.Options;
 
 namespace MedFlow.Application.Services.Auth;
 
-/// <summary>OTP challenge: verify + resend — tách từ AuthService để giữ file nhỏ.</summary>
+/// <summary>OTP challenge: verify + resend + password recovery — tách từ AuthService để giữ file nhỏ.</summary>
 public class AuthOtpService
 {
     private const int DefaultMaxAttempts = 5;
+    private const int MinPasswordResetResponseFloorMs = 180;
+    private const int MaxPasswordResetResponseJitterMs = 60;
 
     private readonly IApplicationDbContext _db;
     private readonly IEmailSender _emailSender;
@@ -142,6 +146,236 @@ public class AuthOtpService
         return new ResendOtpResponse();
     }
 
+    /// <summary>Gửi OTP khôi phục mật khẩu với chống dò tài khoản (HTTP 200 đồng nhất + dummy HMAC + khóa hàng chống đua).</summary>
+    public async Task<ForgotPasswordResponse> SendPasswordResetOtpAsync(
+        string rawEmail,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        var startedTimestamp = _timeProvider.GetTimestamp();
+        var emailLower = (rawEmail ?? string.Empty).Trim().ToLowerInvariant();
+        var otpSecret = AuthCryptoHelpers.GetOtpSecret(_configuration);
+
+        // Always perform candidate OTP + HMAC generation up front so non-existent/ineligible emails execute equivalent CPU work.
+        var candidateOtp = AuthCryptoHelpers.GenerateOtp();
+        var recipientFingerprint = AuthCryptoHelpers.ComputeHmacBytes(emailLower, otpSecret);
+        var candidateSecretHash = AuthCryptoHelpers.ComputeHmacHex(candidateOtp, otpSecret);
+
+        if (string.IsNullOrEmpty(emailLower))
+        {
+            await EnforcePasswordResetResponseFloorAsync(startedTimestamp, ct);
+            return new ForgotPasswordResponse();
+        }
+
+        var user = await _db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Email == emailLower, ct);
+
+        var isEligible = user is not null &&
+                         user.AccountStatus == AccountStatus.ACTIVE &&
+                         string.Equals(user.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase) &&
+                         !string.IsNullOrWhiteSpace(user.PasswordHash);
+
+        if (!isEligible || user is null)
+        {
+            await EnforcePasswordResetResponseFloorAsync(startedTimestamp, ct);
+            return new ForgotPasswordResponse();
+        }
+
+        var shouldSendEmail = false;
+        string displayName = emailLower;
+
+        await using (var tx = await _db.BeginTransactionAsync(ct))
+        {
+            await _db.TryLockUserForUpdateAsync(user.Id, ct);
+
+            var lockedUser = await _db.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Id == user.Id, ct);
+
+            if (lockedUser is null ||
+                lockedUser.AccountStatus != AccountStatus.ACTIVE ||
+                !string.Equals(lockedUser.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(lockedUser.PasswordHash))
+            {
+                await tx.RollbackAsync(ct);
+                await EnforcePasswordResetResponseFloorAsync(startedTimestamp, ct);
+                return new ForgotPasswordResponse();
+            }
+
+            var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+            var resendThrottle = TimeSpan.FromSeconds(_options.OtpResendThrottleSeconds);
+            var lockoutWindowStart = nowUtc.AddMinutes(-_options.LockoutDurationMinutes);
+
+            var recentChallenges = await _db.AuthVerificationChallenges
+                .Where(c =>
+                    c.UserId == user.Id &&
+                    c.Purpose == ChallengePurpose.PASSWORD_RESET &&
+                    c.CreatedAt >= lockoutWindowStart)
+                .OrderByDescending(c => c.CreatedAt)
+                .ThenByDescending(c => c.Id)
+                .ToListAsync(ct);
+
+            var latestPending = recentChallenges.FirstOrDefault(c => c.Status == ChallengeStatus.PENDING);
+            if (latestPending is not null && latestPending.CreatedAt > nowUtc.Subtract(resendThrottle))
+            {
+                // Silent 45s throttle: return identical 200 OK without issuing a second OTP.
+                await tx.RollbackAsync(ct);
+                await EnforcePasswordResetResponseFloorAsync(startedTimestamp, ct);
+                return new ForgotPasswordResponse();
+            }
+
+            // Carry over failed attempts since the most recent VERIFIED challenge in the lockout window
+            // so resending OTP cannot reset brute-force guess counters (use Max since each resend already
+            // seeds its initial Attempts from the prior challenge's cumulative count).
+            var unverifiedStreak = recentChallenges
+                .TakeWhile(c => c.Status != ChallengeStatus.VERIFIED)
+                .ToList();
+            var accumulatedFailedAttempts = unverifiedStreak.Count == 0
+                ? 0
+                : unverifiedStreak.Max(c => (int)c.Attempts);
+            var hasActiveLockedChallenge = unverifiedStreak.Any(c => c.Status == ChallengeStatus.LOCKED);
+
+            if (hasActiveLockedChallenge || accumulatedFailedAttempts >= _options.OtpMaxAttempts)
+            {
+                await tx.RollbackAsync(ct);
+                await EnforcePasswordResetResponseFloorAsync(startedTimestamp, ct);
+                return new ForgotPasswordResponse();
+            }
+
+            foreach (var pending in unverifiedStreak.Where(c => c.Status == ChallengeStatus.PENDING))
+            {
+                pending.Status = ChallengeStatus.REVOKED;
+            }
+
+            _db.AuthVerificationChallenges.Add(new AuthVerificationChallenge
+            {
+                UserId = user.Id,
+                Purpose = ChallengePurpose.PASSWORD_RESET,
+                Channel = ChallengeChannel.EMAIL,
+                RecipientFingerprint = recipientFingerprint,
+                SecretHash = candidateSecretHash,
+                Status = ChallengeStatus.PENDING,
+                Attempts = (short)accumulatedFailedAttempts,
+                MaxAttempts = _options.OtpMaxAttempts,
+                CreatedAt = nowUtc,
+                ExpiresAt = nowUtc.AddMinutes(_options.OtpTtlMinutes),
+            });
+
+            _audit.Add(
+                user.Id,
+                "PASSWORD_RESET_OTP_SENT",
+                "USER",
+                user.Id.ToString(CultureInfo.InvariantCulture),
+                null,
+                ipAddress);
+
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            shouldSendEmail = true;
+
+            var patientName = await _db.Patients
+                .AsNoTracking()
+                .Where(p => p.UserId == user.Id)
+                .Select(p => p.FullName)
+                .FirstOrDefaultAsync(ct);
+            var staffName = string.IsNullOrWhiteSpace(patientName)
+                ? await _db.Staff
+                    .AsNoTracking()
+                    .Where(s => s.UserId == user.Id)
+                    .Select(s => s.FullName)
+                    .FirstOrDefaultAsync(ct)
+                : null;
+            displayName = !string.IsNullOrWhiteSpace(patientName)
+                ? patientName
+                : (!string.IsNullOrWhiteSpace(staffName) ? staffName : emailLower);
+        }
+
+        if (shouldSendEmail)
+        {
+            var sent = await OtpEmailBuilder.SendPasswordResetAsync(
+                _emailSender,
+                _logger,
+                emailLower,
+                displayName,
+                candidateOtp,
+                ct,
+                _options.OtpTtlMinutes);
+
+            if (!sent)
+            {
+                _audit.Add(
+                    user.Id,
+                    "EMAIL_SEND_FAILED",
+                    "USER",
+                    user.Id.ToString(CultureInfo.InvariantCulture),
+                    new { Purpose = nameof(ChallengePurpose.PASSWORD_RESET) },
+                    ipAddress);
+                await _db.SaveChangesAsync(ct);
+            }
+        }
+
+        await EnforcePasswordResetResponseFloorAsync(startedTimestamp, ct);
+        return new ForgotPasswordResponse();
+    }
+
+    /// <summary>
+    /// Xác minh và đánh dấu tiêu thụ 1 lần OTP <c>PASSWORD_RESET</c> bên trong transaction của caller.
+    /// Nếu OTP hết hạn / khóa / sai: cập nhật và commit ngay bộ đếm thử sai trước khi ném <see cref="ValidationException"/>.
+    /// </summary>
+    internal async Task ConsumePasswordResetOtpInTransactionAsync(
+        long userId,
+        string otpCode,
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction activeTransaction,
+        CancellationToken ct)
+    {
+        var challenge = await GetLatestPendingChallengeAsync(userId, ChallengePurpose.PASSWORD_RESET, ct)
+            ?? throw new ValidationException("Mã OTP không hợp lệ hoặc đã hết hạn.");
+
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        if (challenge.ExpiresAt <= nowUtc)
+        {
+            challenge.Status = ChallengeStatus.EXPIRED;
+            await _db.SaveChangesAsync(ct);
+            await activeTransaction.CommitAsync(ct);
+            throw new ValidationException("Mã OTP đã hết hạn, vui lòng yêu cầu mã mới.");
+        }
+
+        var maxAttempts = challenge.MaxAttempts != DefaultMaxAttempts && challenge.MaxAttempts > 0
+            ? challenge.MaxAttempts
+            : _options.OtpMaxAttempts;
+        if (challenge.Attempts >= maxAttempts)
+        {
+            challenge.Status = ChallengeStatus.LOCKED;
+            await _db.SaveChangesAsync(ct);
+            await activeTransaction.CommitAsync(ct);
+            throw new ValidationException("Mã OTP đã bị khóa do nhập sai quá nhiều lần.");
+        }
+
+        var otpSecret = AuthCryptoHelpers.GetOtpSecret(_configuration);
+        var inputHash = AuthCryptoHelpers.ComputeHmacHex(otpCode, otpSecret);
+
+        if (!AuthCryptoHelpers.FixedTimeEquals(inputHash, challenge.SecretHash))
+        {
+            challenge.Attempts++;
+            var lockedNow = challenge.Attempts >= maxAttempts;
+            if (lockedNow)
+            {
+                challenge.Status = ChallengeStatus.LOCKED;
+            }
+
+            await _db.SaveChangesAsync(ct);
+            await activeTransaction.CommitAsync(ct);
+            throw new ValidationException(
+                lockedNow
+                    ? "Mã OTP đã bị khóa do nhập sai quá nhiều lần."
+                    : "Mã OTP không đúng.");
+        }
+
+        challenge.Status = ChallengeStatus.VERIFIED;
+        challenge.VerifiedAt = nowUtc;
+    }
+
     /// <summary>Gửi OTP step-up cho thao tác liên kết hồ sơ (user đã đăng nhập).</summary>
     public async Task<DateTime> SendIdentityClaimOtpAsync(long userId, CancellationToken ct = default)
     {
@@ -243,11 +477,30 @@ public class AuthOtpService
         }
     }
 
+    private async Task EnforcePasswordResetResponseFloorAsync(long startedTimestamp, CancellationToken ct)
+    {
+        var smtpHost = _configuration["Smtp:Host"];
+        if (string.IsNullOrWhiteSpace(smtpHost) ||
+            string.Equals(smtpHost.Trim(), "localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var targetMs = MinPasswordResetResponseFloorMs + RandomNumberGenerator.GetInt32(0, MaxPasswordResetResponseJitterMs + 1);
+        var elapsedMs = _timeProvider.GetElapsedTime(startedTimestamp).TotalMilliseconds;
+        var remainingMs = (int)Math.Ceiling(targetMs - elapsedMs);
+        if (remainingMs > 0)
+        {
+            await Task.Delay(remainingMs, ct);
+        }
+    }
+
     /// <summary>Latest pending challenge for a user+purpose — user is already resolved by the caller.</summary>
     private async Task<AuthVerificationChallenge?> GetLatestPendingChallengeAsync(
         long userId, ChallengePurpose purpose, CancellationToken ct)
         => await _db.AuthVerificationChallenges
             .Where(c => c.UserId == userId && c.Purpose == purpose && c.Status == ChallengeStatus.PENDING)
             .OrderByDescending(c => c.CreatedAt)
+            .ThenByDescending(c => c.Id)
             .FirstOrDefaultAsync(ct);
 }

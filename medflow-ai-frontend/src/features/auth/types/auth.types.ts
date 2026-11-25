@@ -54,6 +54,27 @@ export interface ResendOtpRequest {
   email: string;
 }
 
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+export interface ResetPasswordRequest {
+  email: string;
+  otpCode: string;
+  newPassword: string;
+}
+
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+  currentRefreshToken?: string | null;
+}
+
+export interface ChangePasswordResponse {
+  message: string;
+  keptCurrentSession: boolean;
+}
+
 export interface MessageResponse {
   message: string;
 }

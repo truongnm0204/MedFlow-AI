@@ -75,6 +75,32 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
         return true;
     }
 
+    public async Task<bool> TryLockUserForUpdateAsync(long userId, CancellationToken ct = default)
+    {
+        if (!Database.IsRelational())
+        {
+            return false;
+        }
+
+        await Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM users WHERE id = {userId} FOR UPDATE",
+            ct);
+        return true;
+    }
+
+    public async Task<bool> TryLockPatientForUpdateAsync(long patientId, CancellationToken ct = default)
+    {
+        if (!Database.IsRelational())
+        {
+            return false;
+        }
+
+        await Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM patients WHERE id = {patientId} FOR UPDATE",
+            ct);
+        return true;
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

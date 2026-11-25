@@ -141,7 +141,8 @@ public sealed class ReceptionPatientDetailService : IReceptionPatientDetailServi
             ? patient.BloodType.Trim()
             : null;
 
-        var emergencyContact = await ResolveEmergencyContactAsync(patient.Id, nowLocal, ct);
+        var emergencyContact = ResolveDirectEmergencyContact(patient)
+            ?? await ResolveEmergencyContactAsync(patient.Id, nowLocal, ct);
         var todayAppointment = await ResolveTodayAppointmentAsync(patient.Id, nowLocal, actor, ct);
         var (totalPastVisits, pastVisits) = await ResolvePastVisitsAsync(patient.Id, actor, ct);
 
@@ -168,6 +169,23 @@ public sealed class ReceptionPatientDetailService : IReceptionPatientDetailServi
             TodayAppointment: todayAppointment,
             TotalPastVisits: totalPastVisits,
             PastVisits: pastVisits);
+    }
+
+    private static PatientEmergencyContactDto? ResolveDirectEmergencyContact(Patient patient)
+    {
+        if (string.IsNullOrWhiteSpace(patient.EmergencyContactName))
+        {
+            return null;
+        }
+
+        return new PatientEmergencyContactDto(
+            Name: patient.EmergencyContactName.Trim(),
+            Relationship: !string.IsNullOrWhiteSpace(patient.EmergencyContactRelationship)
+                ? patient.EmergencyContactRelationship.Trim()
+                : NotUpdated,
+            Phone: !string.IsNullOrWhiteSpace(patient.EmergencyContactPhone)
+                ? patient.EmergencyContactPhone.Trim()
+                : NotUpdated);
     }
 
     private async Task<PatientEmergencyContactDto?> ResolveEmergencyContactAsync(

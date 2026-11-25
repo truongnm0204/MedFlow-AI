@@ -1,11 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
+import { getValidAccessTokenForRealtime } from '@/shared/lib/axios';
 import { notifyAuthSessionInvalidated } from '@/shared/lib/navigation-guard-manager';
 
 import * as authApi from '../api/auth.api';
 import { useAuthStore } from '../store/auth.store';
-import type { LoginRequest, RegisterRequest, VerifyOtpRequest } from '../types/auth.types';
+import type {
+  ForgotPasswordRequest,
+  LoginRequest,
+  RegisterRequest,
+  ResetPasswordRequest,
+  VerifyOtpRequest,
+} from '../types/auth.types';
 import { resolvePostLoginRedirect } from '../utils/role-landing';
 
 /** Login → lưu tokens + user → điều hướng về returnUrl hoặc '/'. */
@@ -53,6 +60,36 @@ export function useVerifyOtp() {
 export function useResendOtp() {
   return useMutation({
     mutationFn: (email: string) => authApi.resendOtp({ email }),
+  });
+}
+
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: (payload: ForgotPasswordRequest) => authApi.forgotPassword(payload),
+  });
+}
+
+export function useResetPassword() {
+  const navigate = useNavigate();
+
+  return useMutation({
+    mutationFn: (payload: ResetPasswordRequest) => authApi.resetPassword(payload),
+    onSuccess: () => navigate('/login?reset=1', { replace: true }),
+  });
+}
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: async (input: { currentPassword: string; newPassword: string }) => {
+      // Ensure any imminent access-token rotation completes before reading the active session's refresh token.
+      await getValidAccessTokenForRealtime();
+      const currentRefreshToken = useAuthStore.getState().refreshToken;
+      return authApi.changePassword({
+        currentPassword: input.currentPassword,
+        newPassword: input.newPassword,
+        currentRefreshToken,
+      });
+    },
   });
 }
 

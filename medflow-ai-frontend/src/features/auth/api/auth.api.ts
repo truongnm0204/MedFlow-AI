@@ -1,6 +1,9 @@
 import { apiClient } from '@/shared/lib/axios';
 
 import type {
+  ChangePasswordRequest,
+  ChangePasswordResponse,
+  ForgotPasswordRequest,
   LoginRequest,
   LoginResponse,
   MessageResponse,
@@ -8,6 +11,7 @@ import type {
   RefreshResponse,
   RegisterRequest,
   ResendOtpRequest,
+  ResetPasswordRequest,
   UserDto,
   VerifyOtpRequest,
 } from '../types/auth.types';
@@ -29,6 +33,23 @@ export async function verifyOtp(payload: VerifyOtpRequest): Promise<MessageRespo
 
 export async function resendOtp(payload: ResendOtpRequest): Promise<MessageResponse> {
   const { data } = await apiClient.post<MessageResponse>('/auth/resend-otp', payload);
+  return data;
+}
+
+export async function forgotPassword(payload: ForgotPasswordRequest): Promise<MessageResponse> {
+  const { data } = await apiClient.post<MessageResponse>('/auth/forgot-password', payload);
+  return data;
+}
+
+export async function resetPassword(payload: ResetPasswordRequest): Promise<MessageResponse> {
+  const { data } = await apiClient.post<MessageResponse>('/auth/reset-password', payload);
+  return data;
+}
+
+export async function changePassword(
+  payload: ChangePasswordRequest,
+): Promise<ChangePasswordResponse> {
+  const { data } = await apiClient.post<ChangePasswordResponse>('/auth/change-password', payload);
   return data;
 }
 
