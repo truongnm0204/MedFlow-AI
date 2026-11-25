@@ -121,12 +121,13 @@ describe('DispenseConfirmPage (real API)', () => {
     renderDispensePage();
 
     expect((await screen.findAllByText('NGUYỄN VĂN AN')).length).toBeGreaterThan(0);
+    expect(await screen.findByText('Đã đối chiếu tên thuốc và hàm lượng')).toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole('button', { name: /Xác nhận Hoàn tất Bàn giao & Trừ tồn kho/i }),
     );
     expect(
-      screen.getByText(/Còn 2 mục kiểm tra bắt buộc của Dược sĩ chưa được xác nhận\./i),
+      await screen.findByText(/Còn 2 mục kiểm tra bắt buộc của Dược sĩ chưa được xác nhận\./i),
     ).toBeInTheDocument();
 
     for (const cb of screen.getAllByRole('checkbox')) {
