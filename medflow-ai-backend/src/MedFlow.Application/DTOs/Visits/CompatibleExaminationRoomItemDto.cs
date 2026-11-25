@@ -17,4 +17,8 @@ public sealed record CompatibleExaminationRoomItemDto(
     bool IsCurrentRoom,
     bool IsCompatible,
     bool IsAvailable,
-    string? UnavailableReason);
+    string? UnavailableReason,
+    long? DefaultDoctorId = null,
+    string? DefaultDoctorCode = null,
+    string? DefaultDoctorName = null,
+    int ActiveDoctorCount = 0);

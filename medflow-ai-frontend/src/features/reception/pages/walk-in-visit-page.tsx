@@ -38,7 +38,8 @@ export function WalkInVisitPage() {
   const patientsQuery = useReceptionPatientSearch(patientCode, 'ALL');
   const createWalkIn = useCreateWalkInMutation();
 
-  const [priority, setPriority] = useState<ClinicalPriority>('STANDARD');
+  const [priority, setPriority] = useState<ClinicalPriority>('NORMAL');
+  const [priorityVerificationConfirmed, setPriorityVerificationConfirmed] = useState(false);
   const [departmentId, setDepartmentId] = useState('');
   const [serviceId, setServiceId] = useState('');
   const [reasonForVisit, setReasonForVisit] = useState('');
@@ -89,6 +90,7 @@ export function WalkInVisitPage() {
     const parseResult = walkInVisitSchema.safeParse({
       patientId: patient.id,
       clinicalPriority: priority,
+      priorityVerificationConfirmed,
       departmentId: selectedDept?.id ?? '',
       serviceId: currentService?.id ?? '',
       reasonForVisit,
@@ -117,6 +119,7 @@ export function WalkInVisitPage() {
         reasonForVisit,
         symptoms,
         clinicalPriority: priority,
+        priorityVerificationConfirmed,
         paymentMethod,
         serviceName: currentService?.name ?? '',
         priceFormatted: currentService?.priceFormatted ?? '',
@@ -221,7 +224,24 @@ export function WalkInVisitPage() {
             <>
               <WalkInClinicalSection
                 priority={priority}
-                onPriorityChange={setPriority}
+                onPriorityChange={(next) => {
+                  setPriority(next);
+                  setErrors((prev) => {
+                    const rest = { ...prev };
+                    delete rest.clinicalPriority;
+                    delete rest.priorityVerificationConfirmed;
+                    return rest;
+                  });
+                }}
+                priorityVerificationConfirmed={priorityVerificationConfirmed}
+                onPriorityVerificationChange={(confirmed) => {
+                  setPriorityVerificationConfirmed(confirmed);
+                  setErrors((prev) => {
+                    const rest = { ...prev };
+                    delete rest.priorityVerificationConfirmed;
+                    return rest;
+                  });
+                }}
                 departments={departments}
                 selectedDepartmentId={selectedDept?.id ?? ''}
                 onDepartmentChange={handleDepartmentChange}

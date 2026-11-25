@@ -61,6 +61,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
         public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
+        public DbSet<VisitCharge> VisitCharges => Set<VisitCharge>();
         public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
         public DbSet<Payment> Payments => Set<Payment>();
         public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
@@ -127,6 +128,7 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
                 b.HasOne(a => a.Slot).WithMany(s => s.Appointments).HasForeignKey(a => a.SlotId);
             });
             modelBuilder.Entity<Visit>().HasKey(v => v.Id);
+            modelBuilder.Entity<VisitCharge>().HasKey(c => c.Id);
             modelBuilder.Entity<QueueEntry>().HasKey(q => q.Id);
             modelBuilder.Entity<Payment>().HasKey(p => p.Id);
             modelBuilder.Entity<QueueServicePoint>().HasKey(sp => sp.Id);
@@ -558,6 +560,14 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
         Assert.NotNull(savedPayment);
         Assert.Equal(250_000m, savedPayment!.Amount);
         Assert.Equal("PENDING", savedPayment.Status);
+        Assert.Equal("CHARGE", savedPayment.PaymentScope);
+
+        var savedCharge = await _db.VisitCharges.SingleAsync(c => c.VisitId == result.VisitId);
+        Assert.Equal(savedCharge.Id, savedPayment.VisitChargeId);
+        Assert.Equal("EXAMINATION", savedCharge.ChargeType);
+        Assert.Equal("REQUIRED", savedCharge.PaymentRequirement);
+        Assert.Null(savedQueue.ServicePointId);
+        Assert.Null(savedQueue.CurrentServicePointId);
 
         var savedAudit = await _db.AuditLogs.FirstOrDefaultAsync(
             a => a.Action == CreateWalkInVisitService.WalkInVisitCreatedAction &&
@@ -593,6 +603,10 @@ public sealed class CreateWalkInVisitServiceTests : IDisposable
         Assert.Equal(1L, result.RoomId);
         Assert.Equal("RM-001", result.RoomCode);
         Assert.Equal("CASHIER", result.PaymentMethod);
+        Assert.Equal(0, await _db.Payments.CountAsync(p => p.VisitId == result.VisitId));
+        var cashierCharge = await _db.VisitCharges.SingleAsync(c => c.VisitId == result.VisitId);
+        Assert.Equal(250_000m, cashierCharge.UnitPrice);
+        Assert.Equal("REQUIRED", cashierCharge.PaymentRequirement);
     }
 
     [Fact]

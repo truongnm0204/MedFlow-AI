@@ -182,6 +182,37 @@ describe('CancelQueueEntryModal (UC28 - Issue #103)', () => {
       reason: REASON,
       expectedStateVersion: 7,
       notes: null,
+      disposition: 'PATIENT_ABANDONED',
+    });
+  });
+
+  it('submits REASSIGN_REQUEUE disposition when operational rerouting is selected', async () => {
+    mockStatusDetail([7]);
+    const response = {
+      queueEntryId: 6,
+      ticketNo: 'B006',
+      queueNumber: 6,
+      currentStatus: 'CANCELLED',
+      allowedTargetStatuses: [],
+      previousStateVersion: 7,
+      stateVersion: 8,
+    } as unknown as CancelQueueEntryResponseDto;
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({ data: response });
+    const { onCancelled } = renderModal();
+    await waitForSubmitEnabled();
+
+    fireEvent.click(screen.getByRole('radio', { name: /Điều phối lại sang phòng khác/i }));
+    typeReason('Chuyển sang phân buồng khác theo điều phối');
+    fireEvent.click(screen.getByRole('button', { name: 'Xác nhận hủy lượt' }));
+
+    await waitFor(() => {
+      expect(onCancelled).toHaveBeenCalledWith(response);
+    });
+    expect(postSpy).toHaveBeenCalledWith(CANCEL_URL, {
+      reason: 'Chuyển sang phân buồng khác theo điều phối',
+      expectedStateVersion: 7,
+      notes: null,
+      disposition: 'REASSIGN_REQUEUE',
     });
   });
 
@@ -216,6 +247,7 @@ describe('CancelQueueEntryModal (UC28 - Issue #103)', () => {
       reason: REASON,
       expectedStateVersion: 9,
       notes: null,
+      disposition: 'PATIENT_ABANDONED',
     });
   });
 

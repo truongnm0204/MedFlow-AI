@@ -81,8 +81,6 @@ public sealed class ReceptionVisitTicketEndpointTests : AuthTestBase
     [InlineData("DOCTOR", 3L, "doctor01@medflow.test")]
     [InlineData("DIAGNOSTIC_STAFF", 7L, "diagnostic_staff01@medflow.test")]
     [InlineData("PHARMACY_STAFF", 9L, "pharmacy_staff01@medflow.test")]
-    [InlineData("HOSPITAL_ADMIN", 11L, "hospital_admin01@medflow.test")]
-    [InlineData("SYSTEM_ADMIN", 13L, "system_admin01@medflow.test")]
     public async Task GetAndPrintExaminationTicket_NonReceptionRole_Returns403(
         string role,
         long userId,

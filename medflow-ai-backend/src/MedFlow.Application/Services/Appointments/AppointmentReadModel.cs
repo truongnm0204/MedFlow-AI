@@ -74,18 +74,33 @@ internal static class AppointmentReadModel
                 .GroupBy(v => v.AppointmentId!.Value)
                 .ToDictionary(g => g.Key, g => g.OrderByDescending(v => v.Id).First());
 
+            var visitIdsForQueue = visitsByApptId.Values.Select(v => v.Id).ToHashSet();
+            var visitApptLookup = visitsByApptId.ToDictionary(kvp => kvp.Value.Id, kvp => kvp.Key);
+
             var queueEntries = await db.QueueEntries
                 .AsNoTracking()
                 .Where(q =>
-                    q.AppointmentId != null &&
-                    appointmentIds.Contains(q.AppointmentId.Value) &&
-                    q.QueueType != null &&
-                    q.QueueType.ToUpper() == "EXAMINATION")
+                    ((q.AppointmentId != null && appointmentIds.Contains(q.AppointmentId.Value)) ||
+                     (q.VisitId != null && visitIdsForQueue.Contains(q.VisitId.Value))) &&
+                    (q.QueueType == null ||
+                     q.QueueType.ToUpper() == "EXAMINATION" ||
+                     q.QueueType.ToUpper() == "RETURN_CONSULTATION"))
                 .ToListAsync(ct);
 
             queueByApptId = queueEntries
-                .GroupBy(q => q.AppointmentId!.Value)
-                .ToDictionary(g => g.Key, g => g.OrderByDescending(q => q.Id).First());
+                .Select(q => new
+                {
+                    Entry = q,
+                    ApptId = q.AppointmentId ?? (q.VisitId.HasValue && visitApptLookup.TryGetValue(q.VisitId.Value, out var mappedApptId) ? mappedApptId : (long?)null),
+                })
+                .Where(x => x.ApptId.HasValue)
+                .GroupBy(x => x.ApptId!.Value)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g
+                        .OrderByDescending(x => !string.Equals(x.Entry.Status?.Trim(), "CANCELLED", StringComparison.OrdinalIgnoreCase))
+                        .ThenByDescending(x => x.Entry.Id)
+                        .First().Entry);
 
             if (visitsByApptId.Count > 0)
             {
@@ -404,8 +419,20 @@ internal static class AppointmentReadModel
             return raw;
 
         var visitStatus = visit?.Status?.Trim().ToUpperInvariant();
-        if (visitStatus == "COMPLETED" || raw == "COMPLETED")
+        if (visitStatus == "CANCELLED")
+            return "CANCELLED";
+
+        if (visitStatus == "NO_SHOW")
+            return "NO_SHOW";
+
+        if (visitStatus == "COMPLETED")
             return "COMPLETED";
+
+        if (visit is null && raw == "COMPLETED")
+            return "COMPLETED";
+
+        if (visitStatus is "CHECKED_IN" or "WAITING" or "CALLED" or "IN_PROGRESS" or "IN_CONSULTATION" or "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" or "RETURN_CONSULTATION")
+            return "CHECKED_IN";
 
         if (raw is "CONFIRMED" or "BOOKED" or "PENDING" or "CHECKED_IN")
             return raw;

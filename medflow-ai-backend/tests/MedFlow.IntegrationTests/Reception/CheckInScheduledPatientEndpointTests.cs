@@ -270,6 +270,15 @@ public sealed class CheckInScheduledPatientEndpointTests : AuthTestBase
 
                     if (orphanVisits.Count > 0)
                     {
+                        var orphanCharges = await db.VisitCharges
+                            .Where(c => orphanVisitIds.Contains(c.VisitId))
+                            .ToListAsync();
+                        if (orphanCharges.Count > 0)
+                        {
+                            db.VisitCharges.RemoveRange(orphanCharges);
+                            await db.SaveChangesAsync();
+                        }
+
                         db.Visits.RemoveRange(orphanVisits);
                         await db.SaveChangesAsync();
                     }
@@ -482,6 +491,15 @@ public sealed class CheckInScheduledPatientEndpointTests : AuthTestBase
 
             if (createdVisitId.HasValue)
             {
+                var charges = await db.VisitCharges
+                    .Where(c => c.VisitId == createdVisitId.Value)
+                    .ToListAsync();
+                if (charges.Count > 0)
+                {
+                    db.VisitCharges.RemoveRange(charges);
+                    await db.SaveChangesAsync();
+                }
+
                 var v = await db.Visits.FirstOrDefaultAsync(x => x.Id == createdVisitId.Value);
                 if (v is not null)
                 {

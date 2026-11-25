@@ -1,4 +1,4 @@
-export type ClinicalPriority = 'STANDARD' | 'PRIORITY' | 'EMERGENCY';
+export type ClinicalPriority = 'NORMAL' | 'ELDERLY' | 'PREGNANT';
 
 export type PaymentMethod = 'VIETQR' | 'CASHIER';
 
@@ -32,6 +32,7 @@ export interface WalkInDepartment {
 export interface CreateWalkInVisitPayload {
   patientId: string;
   clinicalPriority: ClinicalPriority;
+  priorityVerificationConfirmed?: boolean;
   departmentId: string;
   serviceId: string;
   reasonForVisit: string;

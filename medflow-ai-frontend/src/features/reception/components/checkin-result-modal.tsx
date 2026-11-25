@@ -18,12 +18,11 @@ import type { CheckInPriority, CheckInSuccessResult } from '../types/checkin.typ
 
 const PRIORITY_BADGE_CONFIG: Record<
   CheckInPriority,
-  { label: string; tone: 'emerald' | 'amber' | 'rose' | 'sky' }
+  { label: string; tone: 'emerald' | 'amber' | 'sky' }
 > = {
   NORMAL: { label: 'Khám thường', tone: 'sky' },
-  URGENT: { label: 'Cấp cứu / Khẩn cấp', tone: 'rose' },
   ELDERLY: { label: 'Ưu tiên người cao tuổi', tone: 'amber' },
-  PREGNANT: { label: 'Ưu tiên thai phụ / trẻ nhỏ', tone: 'emerald' },
+  PREGNANT: { label: 'Ưu tiên thai phụ', tone: 'emerald' },
 };
 
 interface CheckInResultContentProps {

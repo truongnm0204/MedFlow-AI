@@ -213,6 +213,47 @@ public sealed class ReceptionPatientSearchServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Search_NineDigitCmndAndHmacMode_MatchesConfiguredIdentityHashStrategy()
+    {
+        const string hmacKey = "medflow-test-identity-hmac-secret-key-32b";
+        var hmacOptions = Microsoft.Extensions.Options.Options.Create(
+            new MedFlow.Application.Options.IdentityHashOptions
+            {
+                HashKey = hmacKey,
+                Mode = "hmac",
+            });
+
+        var cmndHash = MedFlow.Application.Services.Patients.IdentificationNumber
+            .ComputeHmac("123456789", hmacKey);
+
+        _db.Patients.Add(new Patient
+        {
+            Id = 99,
+            PatientCode = "PAT-0099",
+            FullName = "Đặng CMND Chín Số",
+            Phone = "0909111222",
+            IdentificationHashHmac = cmndHash,
+            Gender = "FEMALE",
+            Status = "ACTIVE",
+        });
+        await _db.SaveChangesAsync();
+
+        var hmacService = new ReceptionPatientSearchService(
+            _db,
+            new FixedTimeProvider(FixedUtcNow),
+            hmacOptions);
+
+        // 9-digit CMND matches under HMAC mode
+        var cmndResult = await hmacService.SearchPatientsAsync(new SearchPatientsRequest { Query = "123456789" });
+        var matched = Assert.Single(cmndResult.Items);
+        Assert.Equal(99L, matched.Id);
+
+        // In strict "hmac" mode, raw SHA-256 fallback is NOT queried so PAT-0001 (raw SHA-256) does not match
+        var shaOnlyResult = await hmacService.SearchPatientsAsync(new SearchPatientsRequest { Query = "012345678901" });
+        Assert.Empty(shaOnlyResult.Items);
+    }
+
+    [Fact]
     public async Task Search_IncludesTodayAppointmentAndPastVisitCount()
     {
         var result = await _service.SearchPatientsAsync(new SearchPatientsRequest { Query = "PAT-0001" });

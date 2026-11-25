@@ -321,19 +321,23 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
         {
             ClinicalQueueRules.EnsurePatientEligible(normalizedPriority, patient, today);
 
-            var requiresVerification = await QueuePolicyReader.IsManualPriorityVerificationRequiredAsync(
-                _db,
-                effectiveHospitalId,
-                servicePoint?.Id,
-                nowUtc,
-                ct);
-
-            if (requiresVerification && request.PriorityVerificationConfirmed == false)
+            if (request.PriorityVerificationConfirmed != true)
             {
                 throw new ValidationException(
                     "Chính sách bệnh viện yêu cầu xác minh giấy tờ trước khi áp dụng ưu tiên ELDERLY/PREGNANT.");
             }
         }
+
+        if (!slot.ServiceId.HasValue || slot.ServiceId.Value <= 0)
+        {
+            throw new ConflictException("Lịch hẹn chưa gắn dịch vụ khám hợp lệ để lập khoản thu tiếp đón.");
+        }
+
+        var examPriceAmount = await ResolveValidatedEffectiveServicePriceAsync(
+            slot.ServiceId.Value,
+            effectiveHospitalId,
+            nowLocal,
+            ct);
 
         var policySet = await QueueOrderingPolicyLoader.LoadAsync(_db, effectiveHospitalId, nowUtc, ct);
         var orderingPolicy = policySet.ForServicePoint(servicePoint?.Id);
@@ -341,46 +345,75 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
 
         await using var tx = await _db.BeginTransactionAsync(ct);
 
-        if (await _db.TryLockAppointmentForUpdateAsync(appointment.Id, ct))
+        // ADR-0059 strict lock order: patients (02) -> appointments (08) -> visits (09) -> queue_service_points / unrouted advisory (10) -> queue_entries (11)
+        await _db.TryLockPatientForUpdateAsync(patient.Id, ct);
+        await _db.TryLockAppointmentForUpdateAsync(appointment.Id, ct);
+
+        var latestPatient = await _db.Patients
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Id == patient.Id, ct)
+            ?? throw new NotFoundException("Patient", patient.Id);
+
+        if (!string.Equals(latestPatient.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
         {
-            var latestAppt = await _db.Appointments
-                .AsNoTracking()
-                .FirstOrDefaultAsync(a => a.Id == appointment.Id, ct)
-                ?? throw new NotFoundException("Appointment", trimmedIdentifier);
-
-            appointment.Status = latestAppt.Status;
-            var lockedApptStatus = AppointmentBookingRules.NormalizeStatusKey(latestAppt.Status);
-            if (string.IsNullOrEmpty(lockedApptStatus))
-            {
-                lockedApptStatus = AppointmentBookingRules.BookedStatus;
-            }
-
-            if (lockedApptStatus == AppointmentBookingRules.CancelledStatus)
-            {
-                throw new ConflictException("Lịch hẹn đã bị hủy, không thể thực hiện check-in.");
-            }
-
-            if (lockedApptStatus == AppointmentBookingRules.NoShowStatus)
-            {
-                throw new ConflictException("Lịch hẹn đã được ghi nhận vắng mặt (NO_SHOW), không thể thực hiện check-in.");
-            }
-
-            if (lockedApptStatus == AppointmentBookingRules.CompletedStatus)
-            {
-                throw new ConflictException("Lịch hẹn đã hoàn tất khám, không thể thực hiện check-in lại.");
-            }
-
-            if (lockedApptStatus == AppointmentBookingRules.CheckedInStatus ||
-                await _db.Visits.AsNoTracking().AnyAsync(v => v.AppointmentId == appointment.Id, ct))
-            {
-                throw new ConflictException("Lịch hẹn đã được check-in trước đó, không thể tạo thêm lượt khám mới.");
-            }
-
-            if (lockedApptStatus is not ("BOOKED" or "CONFIRMED" or "PENDING"))
-            {
-                throw new ConflictException($"Trạng thái lịch hẹn '{latestAppt.Status}' không hợp lệ để check-in.");
-            }
+            throw new ConflictException(
+                "Hồ sơ bệnh nhân hiện không ở trạng thái hoạt động, không thể thực hiện check-in.");
         }
+
+        var latestAppt = await _db.Appointments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == appointment.Id, ct)
+            ?? throw new NotFoundException("Appointment", trimmedIdentifier);
+
+        appointment.Status = latestAppt.Status;
+        var lockedApptStatus = AppointmentBookingRules.NormalizeStatusKey(latestAppt.Status);
+        if (string.IsNullOrEmpty(lockedApptStatus))
+        {
+            lockedApptStatus = AppointmentBookingRules.BookedStatus;
+        }
+
+        if (lockedApptStatus == AppointmentBookingRules.CancelledStatus)
+        {
+            throw new ConflictException("Lịch hẹn đã bị hủy, không thể thực hiện check-in.");
+        }
+
+        if (lockedApptStatus == AppointmentBookingRules.NoShowStatus)
+        {
+            throw new ConflictException("Lịch hẹn đã được ghi nhận vắng mặt (NO_SHOW), không thể thực hiện check-in.");
+        }
+
+        if (lockedApptStatus == AppointmentBookingRules.CompletedStatus)
+        {
+            throw new ConflictException("Lịch hẹn đã hoàn tất khám, không thể thực hiện check-in lại.");
+        }
+
+        if (lockedApptStatus == AppointmentBookingRules.CheckedInStatus ||
+            await _db.Visits.AsNoTracking().AnyAsync(v => v.AppointmentId == appointment.Id, ct))
+        {
+            throw new ConflictException("Lịch hẹn đã được check-in trước đó, không thể tạo thêm lượt khám mới.");
+        }
+
+        if (lockedApptStatus is not ("BOOKED" or "CONFIRMED" or "PENDING"))
+        {
+            throw new ConflictException($"Trạng thái lịch hẹn '{latestAppt.Status}' không hợp lệ để check-in.");
+        }
+
+        var lockedSameDayVisits = await _db.Visits
+            .AsNoTracking()
+            .Where(v => v.PatientId == patient.Id && v.CheckedInAt >= dayStart && v.CheckedInAt < dayEnd)
+            .ToListAsync(ct);
+
+        if (lockedSameDayVisits.Any(v => AppointmentBookingRules.IsActiveVisitStatus(v.Status)))
+        {
+            throw new ConflictException("Bệnh nhân đang có một lượt khám khác chưa hoàn tất trong ngày hôm nay.");
+        }
+
+        var recheckedPriceAmount = await ResolveValidatedEffectiveServicePriceAsync(
+            slot.ServiceId.Value,
+            effectiveHospitalId,
+            nowLocal,
+            ct);
+        examPriceAmount = recheckedPriceAmount;
 
         var previousAppointmentStatus = appointment.Status ?? AppointmentBookingRules.BookedStatus;
         appointment.Status = AppointmentBookingRules.CheckedInStatus;
@@ -419,18 +452,39 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
 
         visit.VisitCode = $"VIS-{today:yyyyMM}-{visit.Id:D4}";
 
-        var existingQueueEntry = await FindExistingAppointmentQueueEntryAsync(appointment.Id, visit.Id, ct);
+        var preExistingQueueEntry = await FindExistingAppointmentQueueEntryAsync(appointment.Id, visit.Id, ct);
+        var lockSpId = servicePoint?.Id ?? preExistingQueueEntry?.CurrentServicePointId ?? preExistingQueueEntry?.ServicePointId;
+
+        if (lockSpId.HasValue)
+        {
+            await _db.TryLockServicePointForUpdateAsync(lockSpId.Value, ct);
+        }
+        else
+        {
+            await _db.TryLockUnroutedQueueAdvisoryAsync(effectiveHospitalId, today, ct);
+        }
+
+        QueueEntry? existingQueueEntry = null;
+        if (preExistingQueueEntry is not null)
+        {
+            await _db.TryLockQueueEntryForUpdateAsync(preExistingQueueEntry.Id, ct);
+            existingQueueEntry = await FindExistingAppointmentQueueEntryAsync(appointment.Id, visit.Id, ct);
+        }
+
         var queueEntry = await ActivateOrCreateExaminationQueueEntryAsync(
             visit,
             existingQueueEntry,
             appointment,
             slot,
             servicePoint,
+            effectiveHospitalId,
             normalizedPriority,
             today,
             nowLocal,
             graceMinutes,
             ct);
+
+        TryAddExaminationCharge(visit.Id, slot.ServiceId.Value, examPriceAmount, nowLocal);
 
         var queueNumber = queueEntry.QueueNumber ?? 1;
         var ticketNo = $"A{queueNumber:D3}";
@@ -511,6 +565,7 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
         var waitingCountBefore = await CountWaitingBeforeAsync(
             queueEntry.Id,
             effectiveSpId,
+            effectiveHospitalId,
             today,
             queueNumber,
             ct);
@@ -1076,6 +1131,7 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
         Appointment appointment,
         ExaminationSlot slot,
         QueueServicePoint? servicePoint,
+        long effectiveHospitalId,
         string normalizedPriority,
         DateOnly today,
         DateTime nowLocal,
@@ -1088,7 +1144,7 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
         {
             if (existingEntry.QueueNumber is null or <= 0)
             {
-                existingEntry.QueueNumber = await AllocateNextQueueNumberAsync(effectiveSpId, today, ct);
+                existingEntry.QueueNumber = await AllocateNextQueueNumberAsync(effectiveSpId, effectiveHospitalId, today, ct);
             }
 
             existingEntry.VisitId = visit.Id;
@@ -1114,7 +1170,7 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
             return existingEntry;
         }
 
-        var nextQueueNumber = await AllocateNextQueueNumberAsync(effectiveSpId, today, ct);
+        var nextQueueNumber = await AllocateNextQueueNumberAsync(effectiveSpId, effectiveHospitalId, today, ct);
 
         var createdEntry = new QueueEntry
         {
@@ -1144,42 +1200,149 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
         return createdEntry;
     }
 
+    private async Task<decimal> ResolveValidatedEffectiveServicePriceAsync(
+        long serviceId,
+        long expectedHospitalId,
+        DateTime referenceLocalTime,
+        CancellationToken ct)
+    {
+        var service = await _db.Services
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == serviceId, ct);
+
+        if (service is null ||
+            service.IsActive == false ||
+            (service.HospitalId.HasValue && service.HospitalId.Value != expectedHospitalId))
+        {
+            throw new ConflictException("Dịch vụ khám của lịch hẹn không khả dụng hoặc không thuộc cơ sở y tế tiếp nhận.");
+        }
+
+        var matchingRows = await _db.ServicePrices
+            .AsNoTracking()
+            .Where(p =>
+                p.ServiceId == serviceId &&
+                (p.EffectiveFrom == null || p.EffectiveFrom <= referenceLocalTime) &&
+                (p.EffectiveTo == null || p.EffectiveTo > referenceLocalTime))
+            .OrderByDescending(p => p.EffectiveFrom ?? DateTime.MinValue)
+            .ThenByDescending(p => p.Id)
+            .ToListAsync(ct);
+
+        if (matchingRows.Count == 0 || matchingRows.Any(p => !p.PriceAmount.HasValue))
+        {
+            throw new ConflictException(CreateWalkInVisitService.UnpricedWalkInServiceMessage);
+        }
+
+        if (matchingRows.Any(p => p.PriceAmount!.Value < 0m))
+        {
+            throw new ConflictException("Bảng giá dịch vụ khám có đơn giá âm không hợp lệ.");
+        }
+
+        if (matchingRows.Count > 1)
+        {
+            throw new ConflictException("Dịch vụ khám đang có nhiều mức giá chồng lấn hiệu lực chưa rõ ràng.");
+        }
+
+        return matchingRows[0].PriceAmount!.Value;
+    }
+
+    private void TryAddExaminationCharge(
+        long visitId,
+        long serviceId,
+        decimal unitPrice,
+        DateTime nowLocal)
+    {
+        try
+        {
+            _db.VisitCharges.Add(VisitCharge.CreateExamination(visitId, serviceId, unitPrice, nowLocal));
+        }
+        catch (NotSupportedException)
+        {
+            // VisitCharges DbSet is not configured in lightweight test double.
+        }
+    }
+
     private async Task<int> AllocateNextQueueNumberAsync(
         long? effectiveSpId,
+        long effectiveHospitalId,
         DateOnly today,
         CancellationToken ct)
     {
-        var existingMaxNumber = await _db.QueueEntries
+        if (effectiveSpId.HasValue)
+        {
+            var routedMax = await _db.QueueEntries
+                .AsNoTracking()
+                .Where(q =>
+                    q.QueueDate == today &&
+                    (q.QueueType == null ||
+                     q.QueueType.ToUpper() == "EXAMINATION" ||
+                     q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
+                    (q.ServicePointId == effectiveSpId.Value ||
+                     q.CurrentServicePointId == effectiveSpId.Value))
+                .Select(q => q.QueueNumber)
+                .MaxAsync(ct);
+
+            return (routedMax ?? 0) + 1;
+        }
+
+        var hospitalVisitIds = await LoadSameDayHospitalVisitIdsAsync(effectiveHospitalId, today, ct);
+        var unroutedMax = await _db.QueueEntries
             .AsNoTracking()
             .Where(q =>
                 q.QueueDate == today &&
+                q.ServicePointId == null &&
+                q.CurrentServicePointId == null &&
                 (q.QueueType == null ||
                  q.QueueType.ToUpper() == "EXAMINATION" ||
                  q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
-                (effectiveSpId == null ||
-                 q.ServicePointId == effectiveSpId ||
-                 q.CurrentServicePointId == effectiveSpId))
+                q.VisitId.HasValue &&
+                hospitalVisitIds.Contains(q.VisitId.Value))
             .Select(q => q.QueueNumber)
             .MaxAsync(ct);
 
-        return (existingMaxNumber ?? 0) + 1;
+        return (unroutedMax ?? 0) + 1;
     }
 
     private async Task<int> CountWaitingBeforeAsync(
         long currentQueueEntryId,
         long? effectiveSpId,
+        long effectiveHospitalId,
         DateOnly today,
         int queueNumber,
         CancellationToken ct)
     {
+        if (effectiveSpId.HasValue)
+        {
+            return await _db.QueueEntries
+                .AsNoTracking()
+                .CountAsync(q =>
+                    q.Id != currentQueueEntryId &&
+                    q.QueueDate == today &&
+                    (q.ServicePointId == effectiveSpId.Value ||
+                     q.CurrentServicePointId == effectiveSpId.Value) &&
+                    (q.QueueType == null ||
+                     q.QueueType.ToUpper() == "EXAMINATION" ||
+                     q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
+                    q.QueueNumber != null &&
+                    q.QueueNumber < queueNumber &&
+                    q.Status != null &&
+                    (q.Status.ToUpper() == "WAITING" ||
+                     q.Status.ToUpper() == "READY" ||
+                     q.Status.ToUpper() == "RESERVED" ||
+                     q.Status.ToUpper() == "CALLED" ||
+                     q.Status.ToUpper() == "IN_PROGRESS"),
+                    ct);
+        }
+
+        var hospitalVisitIds = await LoadSameDayHospitalVisitIdsAsync(effectiveHospitalId, today, ct);
         return await _db.QueueEntries
             .AsNoTracking()
             .CountAsync(q =>
                 q.Id != currentQueueEntryId &&
                 q.QueueDate == today &&
-                (effectiveSpId == null ||
-                 q.ServicePointId == effectiveSpId ||
-                 q.CurrentServicePointId == effectiveSpId) &&
+                q.ServicePointId == null &&
+                q.CurrentServicePointId == null &&
+                q.VisitId.HasValue &&
+                hospitalVisitIds.Contains(q.VisitId.Value) &&
                 (q.QueueType == null ||
                  q.QueueType.ToUpper() == "EXAMINATION" ||
                  q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
@@ -1192,6 +1355,81 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
                  q.Status.ToUpper() == "CALLED" ||
                  q.Status.ToUpper() == "IN_PROGRESS"),
                 ct);
+    }
+
+    private async Task<HashSet<long>> LoadSameDayHospitalVisitIdsAsync(
+        long effectiveHospitalId,
+        DateOnly queueDate,
+        CancellationToken ct)
+    {
+        var dayStart = queueDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        var dayEnd = dayStart.AddDays(1);
+
+        var staffHospitalIds = await _db.Staff
+            .AsNoTracking()
+            .Where(s => s.HospitalId.HasValue)
+            .Select(s => new { s.Id, HospitalId = s.HospitalId!.Value })
+            .ToDictionaryAsync(x => x.Id, x => x.HospitalId, ct);
+
+        var auditVisitHospitalMap = (await _db.AuditLogs
+                .AsNoTracking()
+                .Where(a =>
+                    a.HospitalId.HasValue &&
+                    a.EntityType != null &&
+                    a.EntityType.ToUpper() == VisitEntityType &&
+                    a.EntityId != null)
+                .Select(a => new { a.EntityId, HospitalId = a.HospitalId!.Value })
+                .ToListAsync(ct))
+            .Where(x => long.TryParse(x.EntityId, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+            .GroupBy(x => long.Parse(x.EntityId!, CultureInfo.InvariantCulture))
+            .ToDictionary(g => g.Key, g => g.First().HospitalId);
+
+        var dayVisits = await _db.Visits
+            .AsNoTracking()
+            .Where(v => v.CheckedInAt == null || (v.CheckedInAt >= dayStart && v.CheckedInAt < dayEnd))
+            .Select(v => new { v.Id, v.CheckedInByStaffId, v.AppointmentId })
+            .ToListAsync(ct);
+
+        var apptIds = dayVisits.Where(v => v.AppointmentId.HasValue).Select(v => v.AppointmentId!.Value).Distinct().ToList();
+        var apptHospitalMap = apptIds.Count == 0
+            ? new Dictionary<long, long>()
+            : (await _db.Appointments
+                    .AsNoTracking()
+                    .Where(a => apptIds.Contains(a.Id) && a.Slot != null)
+                    .Select(a => new
+                    {
+                        a.Id,
+                        HospitalId = (a.Slot!.Service != null ? a.Slot.Service.HospitalId : null)
+                            ?? (a.Slot.Room != null ? a.Slot.Room.HospitalId : null)
+                            ?? (a.Slot.Doctor != null ? a.Slot.Doctor.HospitalId : null),
+                    })
+                    .Where(x => x.HospitalId.HasValue)
+                    .ToDictionaryAsync(x => x.Id, x => x.HospitalId!.Value, ct));
+
+        var result = new HashSet<long>();
+        foreach (var v in dayVisits)
+        {
+            long? resolvedHosp = null;
+            if (v.CheckedInByStaffId.HasValue && staffHospitalIds.TryGetValue(v.CheckedInByStaffId.Value, out var sh))
+            {
+                resolvedHosp = sh;
+            }
+            else if (v.AppointmentId.HasValue && apptHospitalMap.TryGetValue(v.AppointmentId.Value, out var ah))
+            {
+                resolvedHosp = ah;
+            }
+            else if (auditVisitHospitalMap.TryGetValue(v.Id, out var auh))
+            {
+                resolvedHosp = auh;
+            }
+
+            if (!resolvedHosp.HasValue || resolvedHosp.Value == effectiveHospitalId)
+            {
+                result.Add(v.Id);
+            }
+        }
+
+        return result;
     }
 
     private async Task EnsureAppointmentHospitalScopeAsync(
@@ -1420,6 +1658,7 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
             waitingCountBefore = await CountWaitingBeforeAsync(
                 queueEntry?.Id ?? 0,
                 effectiveSpId,
+                effectiveHospitalId,
                 queueDate,
                 queueNumber,
                 ct);

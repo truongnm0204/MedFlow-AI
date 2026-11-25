@@ -59,15 +59,20 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
     private readonly IRealtimeNotificationPublisher _realtimePublisher;
+    private readonly IVisitChargeSettlementReader _settlementReader;
+
+    public const string UnpaidExaminationFeeReason = "UNPAID_EXAMINATION_FEE";
 
     public ExaminationQueueService(
         IApplicationDbContext db,
         TimeProvider timeProvider,
-        IRealtimeNotificationPublisher? realtimePublisher = null)
+        IRealtimeNotificationPublisher? realtimePublisher = null,
+        IVisitChargeSettlementReader? settlementReader = null)
     {
         _db = db;
         _timeProvider = timeProvider;
         _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
+        _settlementReader = settlementReader ?? new MedFlow.Application.Services.Payments.VisitChargeSettlementReader(_db, _timeProvider);
     }
 
     private Task PublishExaminationQueueChangedAsync(
@@ -174,18 +179,20 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             var completedCount = entriesForMetrics.Count(e => e.Status == "COMPLETED");
             var skippedCount = entriesForMetrics.Count(e => e.Status == "SKIPPED");
 
-            // Update bucket doctor name if bucket had placeholder and an entry resolved a real doctor
+            // Update bucket doctor name only when all doctor-assigned entries in the bucket share a single unambiguous doctor
             var effectiveDoctorName = bucket.DoctorName;
             if (string.Equals(effectiveDoctorName, "Chưa phân công bác sĩ", StringComparison.OrdinalIgnoreCase))
             {
-                var firstEntryDoctor = sortedFullBucket
+                var distinctEntryDoctors = sortedFullBucket
                     .Select(e => e.DoctorName)
-                    .FirstOrDefault(d =>
+                    .Where(d =>
                         !string.IsNullOrWhiteSpace(d) &&
-                        !string.Equals(d, "Chưa phân công bác sĩ", StringComparison.OrdinalIgnoreCase));
-                if (!string.IsNullOrWhiteSpace(firstEntryDoctor))
+                        !string.Equals(d, "Chưa phân công bác sĩ", StringComparison.OrdinalIgnoreCase))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (distinctEntryDoctors.Count == 1)
                 {
-                    effectiveDoctorName = firstEntryDoctor;
+                    effectiveDoctorName = distinctEntryDoctors[0];
                 }
             }
 
@@ -244,8 +251,8 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         DateOnly? explicitQueueDate,
         CancellationToken ct)
     {
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
 
         var departments = await _db.Departments
@@ -261,6 +268,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             .OrderBy(r => r.Id)
             .ToListAsync(ct);
         var roomsById = rooms.ToDictionary(r => r.Id);
+        var hospitalRoomIds = roomsById.Keys.ToHashSet();
 
         var doctors = await _db.Doctors
             .AsNoTracking()
@@ -272,6 +280,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             .OrderBy(d => d.Id)
             .ToListAsync(ct);
         var doctorsById = doctors.ToDictionary(d => d.Id);
+        var hospitalDoctorIds = doctorsById.Keys.ToHashSet();
 
         var hospitalServiceIds = (await _db.Services
                 .AsNoTracking()
@@ -287,23 +296,34 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                 .ToListAsync(ct))
             .ToHashSet();
 
-        var allSlots = await _db.ExaminationSlots
-            .AsNoTracking()
-            .ToListAsync(ct);
-
-        var hospitalSlots = allSlots
-            .Where(s =>
-                (s.RoomId.HasValue && roomsById.ContainsKey(s.RoomId.Value)) ||
-                (s.DoctorId.HasValue && doctorsById.ContainsKey(s.DoctorId.Value)) ||
-                (s.ServiceId.HasValue && hospitalServiceIds.Contains(s.ServiceId.Value)))
-            .ToList();
-        var hospitalSlotsById = hospitalSlots.ToDictionary(s => s.Id);
-
         var servicePoints = await LoadHospitalExaminationServicePointsAsync(
             hospital.Id,
             roomsById,
             doctorsById,
             ct);
+
+        var targetDate = explicitQueueDate ?? await ResolveInitialTargetQueueDateAsync(
+            today,
+            hospitalRoomIds,
+            hospitalDoctorIds,
+            hospitalServiceIds,
+            hospitalStaffIds,
+            servicePoints.Select(sp => sp.Id).ToHashSet(),
+            ct);
+
+        var dayStart = targetDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        var dayEnd = dayStart.AddDays(1);
+
+        var hospitalSlots = await _db.ExaminationSlots
+            .AsNoTracking()
+            .Where(s =>
+                ((s.RoomId.HasValue && hospitalRoomIds.Contains(s.RoomId.Value)) ||
+                 (s.DoctorId.HasValue && hospitalDoctorIds.Contains(s.DoctorId.Value)) ||
+                 (s.ServiceId.HasValue && hospitalServiceIds.Contains(s.ServiceId.Value))) &&
+                (!s.StartsAt.HasValue || (s.StartsAt.Value >= dayStart && s.StartsAt.Value < dayEnd)))
+            .ToListAsync(ct);
+        var hospitalSlotsById = hospitalSlots.ToDictionary(s => s.Id);
+        var hospitalSlotIds = hospitalSlotsById.Keys.ToHashSet();
 
         var buckets = BuildServicePointBuckets(
             servicePoints,
@@ -311,11 +331,13 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             roomsById,
             departmentsById,
             doctorsById,
-            hospitalSlots);
+            hospitalSlots,
+            targetDate,
+            nowLocal);
 
         if (buckets.Count == 0)
         {
-            return new QueueBoard(hospital, nowUtc, nowLocal, explicitQueueDate ?? today, []);
+            return new QueueBoard(hospital, nowUtc, nowLocal, targetDate, []);
         }
 
         var allRoomHospitalMap = await _db.HospitalRooms
@@ -341,21 +363,69 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             .Select(s => new { s.Id, HospitalId = s.HospitalId!.Value })
             .ToDictionaryAsync(x => x.Id, x => x.HospitalId, ct);
 
-        var allAppointments = await _db.Appointments
+        var dateQueueEntries = await _db.QueueEntries
             .AsNoTracking()
-            .Where(a => a.SlotId.HasValue)
+            .Where(q => q.QueueDate == null || q.QueueDate == targetDate)
+            .OrderBy(q => q.Id)
             .ToListAsync(ct);
 
-        var hospitalAppointmentsById = allAppointments
-            .Where(a => a.SlotId.HasValue && hospitalSlotsById.ContainsKey(a.SlotId.Value))
-            .ToDictionary(a => a.Id);
+        var referencedVisitIds = dateQueueEntries
+            .Where(q => q.VisitId.HasValue)
+            .Select(q => q.VisitId!.Value)
+            .ToHashSet();
 
-        var allVisits = await _db.Visits
+        var candidateVisits = await _db.Visits
             .AsNoTracking()
+            .Where(v =>
+                (v.CheckedInAt.HasValue && v.CheckedInAt.Value >= dayStart && v.CheckedInAt.Value < dayEnd) ||
+                referencedVisitIds.Contains(v.Id) ||
+                !v.CheckedInAt.HasValue)
             .OrderBy(v => v.Id)
             .ToListAsync(ct);
 
-        var hospitalVisits = allVisits
+        var referencedApptIds = dateQueueEntries
+            .Where(q => q.AppointmentId.HasValue)
+            .Select(q => q.AppointmentId!.Value)
+            .Concat(candidateVisits.Where(v => v.AppointmentId.HasValue).Select(v => v.AppointmentId!.Value))
+            .ToHashSet();
+
+        var candidateAppointments = (hospitalSlotIds.Count == 0 && referencedApptIds.Count == 0)
+            ? []
+            : await _db.Appointments
+                .AsNoTracking()
+                .Where(a =>
+                    (a.SlotId.HasValue && hospitalSlotIds.Contains(a.SlotId.Value)) ||
+                    referencedApptIds.Contains(a.Id))
+                .ToListAsync(ct);
+
+        var missingSlotIds = candidateAppointments
+            .Where(a => a.SlotId.HasValue && !hospitalSlotsById.ContainsKey(a.SlotId.Value))
+            .Select(a => a.SlotId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (missingSlotIds.Count > 0)
+        {
+            var extraSlots = await _db.ExaminationSlots
+                .AsNoTracking()
+                .Where(s =>
+                    missingSlotIds.Contains(s.Id) &&
+                    ((s.RoomId.HasValue && hospitalRoomIds.Contains(s.RoomId.Value)) ||
+                     (s.DoctorId.HasValue && hospitalDoctorIds.Contains(s.DoctorId.Value)) ||
+                     (s.ServiceId.HasValue && hospitalServiceIds.Contains(s.ServiceId.Value))))
+                .ToListAsync(ct);
+
+            foreach (var extraSlot in extraSlots)
+            {
+                hospitalSlotsById[extraSlot.Id] = extraSlot;
+            }
+        }
+
+        var hospitalAppointmentsById = candidateAppointments
+            .Where(a => a.SlotId.HasValue && hospitalSlotsById.ContainsKey(a.SlotId.Value))
+            .ToDictionary(a => a.Id);
+
+        var hospitalVisits = candidateVisits
             .Where(v => IsVisitInHospital(
                 v,
                 hospital.Id,
@@ -374,21 +444,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             .Select(b => b.RawServicePointId!.Value)
             .ToHashSet();
 
-        var allQueueEntries = await _db.QueueEntries
-            .AsNoTracking()
-            .OrderBy(q => q.Id)
-            .ToListAsync(ct);
-
-        // diagnostic_orders is not mapped in EF (ADR 0008): an open DIAGNOSTIC queue entry marks pending results.
-        var visitsWithOpenDiagnostics = allQueueEntries
-            .Where(q => q.VisitId.HasValue
-                && AppointmentBookingRules.NormalizeStatusKey(q.QueueType) == "DIAGNOSTIC"
-                && !q.CompletedAt.HasValue
-                && AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("COMPLETED" or "CANCELLED"))
-            .Select(q => q.VisitId!.Value)
-            .ToHashSet();
-
-        var hospitalQueueEntries = allQueueEntries
+        var hospitalQueueEntries = dateQueueEntries
             .Where(q => IsExaminationQueueEntryInHospital(
                 q,
                 hospitalVisitsById,
@@ -404,11 +460,39 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             hospitalSlotsById,
             today);
 
-        var effectiveQueueDate = ResolveEffectiveQueueDate(explicitQueueDate, today, candidates);
+        var effectiveQueueDate = explicitQueueDate ?? targetDate;
 
         var dateCandidates = candidates
             .Where(c => c.CandidateDate == effectiveQueueDate)
             .ToList();
+
+        var candidateVisitIds = dateCandidates
+            .Where(c => c.Visit is not null)
+            .Select(c => c.Visit!.Id)
+            .Distinct()
+            .ToHashSet();
+
+        var visitsWithOpenDiagnostics = await LoadVisitsWithPendingDiagnosticsAsync(
+            candidateVisitIds,
+            ct);
+
+        var unpaidExaminationVisitIds = await LoadUnpaidExaminationVisitIdsAsync(
+            dateCandidates,
+            ct);
+
+        var firstTransferFromRoomByVisitId = await LoadFirstTransferOriginRoomByVisitIdAsync(
+            candidateVisitIds,
+            ct);
+
+        var bucketsByRawSpId = buckets
+            .Where(b => b.RawServicePointId.HasValue)
+            .GroupBy(b => b.RawServicePointId!.Value)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var bucketsByRoomId = buckets
+            .Where(b => b.RoomId.HasValue)
+            .GroupBy(b => b.RoomId!.Value)
+            .ToDictionary(g => g.Key, g => g.First());
 
         var patientIds = dateCandidates
             .Select(c => c.Visit?.PatientId ?? c.Appointment?.PatientId)
@@ -485,7 +569,14 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                     ? q.QueueNumber.Value
                     : nextFallbackNumber++;
 
-                var ticketNo = $"{bucket.TicketPrefix}{queueNumber:D3}";
+                var ticketPrefix = ResolveTicketPrefixForEntry(
+                    q,
+                    v,
+                    bucket,
+                    bucketsByRawSpId,
+                    bucketsByRoomId,
+                    firstTransferFromRoomByVisitId);
+                var ticketNo = $"{ticketPrefix}{queueNumber:D3}";
                 var visitCode = ResolveVisitCode(v, appt, q, effectiveQueueDate);
                 var patientName = !string.IsNullOrWhiteSpace(patient?.FullName)
                     ? patient.FullName.Trim()
@@ -525,9 +616,13 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                 var checkedInAt = checkedInDateTime?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? "08:00";
                 var calledAt = q?.CalledAt?.ToString("HH:mm", CultureInfo.InvariantCulture);
                 var startedAt = q?.StartedAt?.ToString("HH:mm", CultureInfo.InvariantCulture);
-                var blockedReason = string.IsNullOrWhiteSpace(q?.BlockedReason)
-                    ? null
-                    : q.BlockedReason.Trim();
+                var pendingPaymentSettlement = v is not null
+                    && queueType == ClinicalQueueRules.QueueTypeExamination
+                    && status is "WAITING" or "READY"
+                    && unpaidExaminationVisitIds.Contains(v.Id);
+                var blockedReason = !string.IsNullOrWhiteSpace(q?.BlockedReason)
+                    ? q.BlockedReason.Trim()
+                    : (pendingPaymentSettlement ? UnpaidExaminationFeeReason : null);
                 var pendingRequiredResults = v is not null
                     && (visitsWithOpenDiagnostics.Contains(v.Id)
                         || AppointmentBookingRules.NormalizeStatusKey(v.Status) is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS");
@@ -578,7 +673,8 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                     QueueNumber: queueNumber,
                     QueueType: queueType,
                     BlockedReason: blockedReason,
-                    PendingRequiredResults: pendingRequiredResults));
+                    PendingRequiredResults: pendingRequiredResults,
+                    PendingPaymentSettlement: pendingPaymentSettlement));
             }
 
             var bucketPolicy = policySet.ForServicePoint(bucket.RawServicePointId);
@@ -970,10 +1066,13 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         IReadOnlyDictionary<long, HospitalRoom> roomsById,
         IReadOnlyDictionary<long, Department> departmentsById,
         IReadOnlyDictionary<long, Doctor> doctorsById,
-        IReadOnlyList<ExaminationSlot> hospitalSlots)
+        IReadOnlyList<ExaminationSlot> hospitalSlots,
+        DateOnly effectiveQueueDate,
+        DateTime nowLocal)
     {
         var buckets = new List<ServicePointBucket>();
         var coveredRoomIds = new HashSet<long>();
+        var currentShift = HospitalShiftRules.ResolveShift(nowLocal);
 
         foreach (var sp in servicePoints)
         {
@@ -991,30 +1090,36 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
 
             if (room is null && doctor is not null)
             {
-                var slotRoomId = hospitalSlots
-                    .Where(s => s.DoctorId == doctor.Id && s.RoomId.HasValue && roomsById.ContainsKey(s.RoomId.Value))
-                    .OrderByDescending(s => s.StartsAt)
-                    .Select(s => s.RoomId)
-                    .FirstOrDefault();
+                var doctorDateSlots = hospitalSlots
+                    .Where(s =>
+                        s.DoctorId == doctor.Id &&
+                        s.RoomId.HasValue &&
+                        roomsById.ContainsKey(s.RoomId.Value) &&
+                        s.StartsAt.HasValue &&
+                        DateOnly.FromDateTime(s.StartsAt.Value) == effectiveQueueDate &&
+                        !string.Equals(s.Status, "CANCELLED", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
 
-                if (slotRoomId.HasValue)
+                var shiftSlots = doctorDateSlots
+                    .Where(s => HospitalShiftRules.ResolveShift(s.StartsAt!.Value) == currentShift)
+                    .ToList();
+                var candidateSlots = shiftSlots.Count > 0 ? shiftSlots : doctorDateSlots;
+                var distinctRoomIds = candidateSlots.Select(s => s.RoomId!.Value).Distinct().ToList();
+
+                if (distinctRoomIds.Count == 1)
                 {
-                    roomsById.TryGetValue(slotRoomId.Value, out room);
+                    roomsById.TryGetValue(distinctRoomIds[0], out room);
                 }
             }
 
             if (doctor is null && room is not null)
             {
-                var slotDoctorId = hospitalSlots
-                    .Where(s => s.RoomId == room.Id && s.DoctorId.HasValue && doctorsById.ContainsKey(s.DoctorId.Value))
-                    .OrderByDescending(s => s.StartsAt)
-                    .Select(s => s.DoctorId)
-                    .FirstOrDefault();
-
-                if (slotDoctorId.HasValue)
-                {
-                    doctorsById.TryGetValue(slotDoctorId.Value, out doctor);
-                }
+                doctor = ResolveUnambiguousSlotDoctorForRoom(
+                    room.Id,
+                    hospitalSlots,
+                    doctorsById,
+                    effectiveQueueDate,
+                    currentShift);
             }
 
             if (room is not null)
@@ -1083,17 +1188,12 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                 departmentsById.TryGetValue(room.DepartmentId.Value, out department);
             }
 
-            Doctor? doctor = null;
-            var slotDoctorId = hospitalSlots
-                .Where(s => s.RoomId == room.Id && s.DoctorId.HasValue && doctorsById.ContainsKey(s.DoctorId.Value))
-                .OrderByDescending(s => s.StartsAt)
-                .Select(s => s.DoctorId)
-                .FirstOrDefault();
-
-            if (slotDoctorId.HasValue)
-            {
-                doctorsById.TryGetValue(slotDoctorId.Value, out doctor);
-            }
+            var doctor = ResolveUnambiguousSlotDoctorForRoom(
+                room.Id,
+                hospitalSlots,
+                doctorsById,
+                effectiveQueueDate,
+                currentShift);
 
             var prefix = (char)('A' + (buckets.Count % 26));
             var servicePointId = servicePoints.Count == 0
@@ -1127,6 +1227,333 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         }
 
         return buckets;
+    }
+
+    private static Doctor? ResolveUnambiguousSlotDoctorForRoom(
+        long roomId,
+        IReadOnlyList<ExaminationSlot> hospitalSlots,
+        IReadOnlyDictionary<long, Doctor> doctorsById,
+        DateOnly effectiveQueueDate,
+        HospitalShift currentShift)
+    {
+        var roomDateSlots = hospitalSlots
+            .Where(s =>
+                s.RoomId == roomId &&
+                s.DoctorId.HasValue &&
+                doctorsById.ContainsKey(s.DoctorId.Value) &&
+                s.StartsAt.HasValue &&
+                DateOnly.FromDateTime(s.StartsAt.Value) == effectiveQueueDate &&
+                !string.Equals(s.Status, "CANCELLED", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (roomDateSlots.Count == 0)
+        {
+            return null;
+        }
+
+        var shiftSlots = roomDateSlots
+            .Where(s => HospitalShiftRules.ResolveShift(s.StartsAt!.Value) == currentShift)
+            .ToList();
+
+        var candidateSlots = shiftSlots.Count > 0 ? shiftSlots : roomDateSlots;
+        var distinctDoctorIds = candidateSlots
+            .Select(s => s.DoctorId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (distinctDoctorIds.Count != 1)
+        {
+            return null;
+        }
+
+        doctorsById.TryGetValue(distinctDoctorIds[0], out var resolvedDoctor);
+        return resolvedDoctor;
+    }
+
+    private async Task<DateOnly> ResolveInitialTargetQueueDateAsync(
+        DateOnly today,
+        IReadOnlySet<long> hospitalRoomIds,
+        IReadOnlySet<long> hospitalDoctorIds,
+        IReadOnlySet<long> hospitalServiceIds,
+        IReadOnlySet<long> hospitalStaffIds,
+        IReadOnlySet<long> hospitalSpIds,
+        CancellationToken ct)
+    {
+        var todayStart = today.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        var todayEnd = todayStart.AddDays(1);
+
+        var hasTodayVisit = await _db.Visits
+            .AsNoTracking()
+            .AnyAsync(v =>
+                v.CheckedInAt.HasValue &&
+                v.CheckedInAt.Value >= todayStart &&
+                v.CheckedInAt.Value < todayEnd &&
+                v.Status != "CANCELLED" &&
+                ((v.ExaminationRoomId.HasValue && hospitalRoomIds.Contains(v.ExaminationRoomId.Value)) ||
+                 (v.AssignedDoctorId.HasValue && hospitalDoctorIds.Contains(v.AssignedDoctorId.Value)) ||
+                 (v.CheckedInByStaffId.HasValue && hospitalStaffIds.Contains(v.CheckedInByStaffId.Value))),
+                ct);
+
+        if (hasTodayVisit)
+        {
+            return today;
+        }
+
+        var hasTodayQueue = await _db.QueueEntries
+            .AsNoTracking()
+            .AnyAsync(q =>
+                q.QueueDate == today &&
+                q.Status != "CANCELLED" &&
+                (q.QueueType == null ||
+                 q.QueueType.ToUpper() == "EXAMINATION" ||
+                 q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
+                ((q.ServicePointId.HasValue && hospitalSpIds.Contains(q.ServicePointId.Value)) ||
+                 (q.CurrentServicePointId.HasValue && hospitalSpIds.Contains(q.CurrentServicePointId.Value)) ||
+                 q.VisitId.HasValue ||
+                 q.AppointmentId.HasValue),
+                ct);
+
+        if (hasTodayQueue)
+        {
+            return today;
+        }
+
+        var latestSpQueueDate = hospitalSpIds.Count == 0
+            ? null
+            : await _db.QueueEntries
+                .AsNoTracking()
+                .Where(q =>
+                    q.QueueDate.HasValue &&
+                    q.Status != "CANCELLED" &&
+                    (q.QueueType == null ||
+                     q.QueueType.ToUpper() == "EXAMINATION" ||
+                     q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
+                    ((q.ServicePointId.HasValue && hospitalSpIds.Contains(q.ServicePointId.Value)) ||
+                     (q.CurrentServicePointId.HasValue && hospitalSpIds.Contains(q.CurrentServicePointId.Value))))
+                .Select(q => q.QueueDate)
+                .MaxAsync(ct);
+
+        if (latestSpQueueDate.HasValue)
+        {
+            return latestSpQueueDate.Value;
+        }
+
+        var latestVisitCheckIn = await _db.Visits
+            .AsNoTracking()
+            .Where(v =>
+                v.CheckedInAt.HasValue &&
+                v.Status != "CANCELLED" &&
+                ((v.ExaminationRoomId.HasValue && hospitalRoomIds.Contains(v.ExaminationRoomId.Value)) ||
+                 (v.AssignedDoctorId.HasValue && hospitalDoctorIds.Contains(v.AssignedDoctorId.Value)) ||
+                 (v.CheckedInByStaffId.HasValue && hospitalStaffIds.Contains(v.CheckedInByStaffId.Value))))
+            .Select(v => v.CheckedInAt)
+            .MaxAsync(ct);
+
+        if (latestVisitCheckIn.HasValue)
+        {
+            return DateOnly.FromDateTime(latestVisitCheckIn.Value);
+        }
+
+        return today;
+    }
+
+    private async Task<HashSet<long>> LoadVisitsWithPendingDiagnosticsAsync(
+        IReadOnlySet<long> visitIds,
+        CancellationToken ct)
+    {
+        var pending = new HashSet<long>();
+        if (visitIds.Count == 0)
+        {
+            return pending;
+        }
+
+        var openDiagQueues = await _db.QueueEntries
+            .AsNoTracking()
+            .Where(q =>
+                q.VisitId.HasValue &&
+                visitIds.Contains(q.VisitId.Value) &&
+                q.QueueType != null &&
+                q.QueueType.ToUpper() == "DIAGNOSTIC" &&
+                q.CompletedAt == null &&
+                (q.Status == null ||
+                 (q.Status.ToUpper() != "COMPLETED" && q.Status.ToUpper() != "CANCELLED")))
+            .Select(q => q.VisitId!.Value)
+            .ToListAsync(ct);
+
+        foreach (var vid in openDiagQueues)
+        {
+            pending.Add(vid);
+        }
+
+        try
+        {
+            var activeRequiredOrders = await _db.DiagnosticOrders
+                .AsNoTracking()
+                .Where(o =>
+                    o.VisitId.HasValue &&
+                    visitIds.Contains(o.VisitId.Value) &&
+                    o.RequiredForConclusion != false &&
+                    (o.Status == null || o.Status.ToUpper() != "CANCELLED"))
+                .Select(o => new { o.Id, VisitId = o.VisitId!.Value })
+                .ToListAsync(ct);
+
+            if (activeRequiredOrders.Count > 0)
+            {
+                var orderIds = activeRequiredOrders.Select(o => o.Id).ToHashSet();
+                var results = await _db.DiagnosticResults
+                    .AsNoTracking()
+                    .Where(r => r.DiagnosticOrderId.HasValue && orderIds.Contains(r.DiagnosticOrderId.Value))
+                    .Select(r => new { OrderId = r.DiagnosticOrderId!.Value, r.Status, r.FinalizedAt })
+                    .ToListAsync(ct);
+
+                var finalizedOrderIds = results
+                    .Where(r => IsDiagnosticResultFinalized(r.Status, r.FinalizedAt))
+                    .Select(r => r.OrderId)
+                    .ToHashSet();
+
+                foreach (var order in activeRequiredOrders)
+                {
+                    if (!finalizedOrderIds.Contains(order.Id))
+                    {
+                        pending.Add(order.VisitId);
+                    }
+                }
+            }
+        }
+        catch (NotSupportedException)
+        {
+            // DiagnosticOrders / DiagnosticResults DbSet is not configured in lightweight test double.
+        }
+
+        return pending;
+    }
+
+    internal static bool IsDiagnosticResultFinalized(string? status, DateTime? finalizedAt)
+    {
+        if (finalizedAt.HasValue)
+        {
+            return true;
+        }
+
+        var normalized = AppointmentBookingRules.NormalizeStatusKey(status);
+        return normalized is "FINAL" or "FINALIZED" or "COMPLETED" or "VERIFIED";
+    }
+
+    private async Task<HashSet<long>> LoadUnpaidExaminationVisitIdsAsync(
+        IReadOnlyList<QueueCandidate> dateCandidates,
+        CancellationToken ct)
+    {
+        var unpaid = new HashSet<long>();
+        var candidateVisitIds = dateCandidates
+            .Where(c => c.Visit is not null)
+            .Where(c =>
+            {
+                var status = NormalizeEntryStatus(c.QueueEntry, c.Visit);
+                var queueType = ClinicalQueueRules.ResolveQueueType(c.QueueEntry?.QueueType, c.Visit?.Status);
+                return queueType == ClinicalQueueRules.QueueTypeExamination && status is "WAITING" or "READY";
+            })
+            .Select(c => c.Visit!.Id)
+            .Distinct()
+            .ToList();
+
+        foreach (var visitId in candidateVisitIds)
+        {
+            var gate = await TryCheckExaminationEligibilitySafeAsync(visitId, ct);
+            if (gate is { IsUnlocked: false })
+            {
+                unpaid.Add(visitId);
+            }
+        }
+
+        return unpaid;
+    }
+
+    private async Task<MedFlow.Application.Interfaces.Services.VisitChargeGateResult?> TryCheckExaminationEligibilitySafeAsync(
+        long visitId,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _settlementReader.CheckExaminationEligibilityAsync(visitId, ct);
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<Dictionary<long, long>> LoadFirstTransferOriginRoomByVisitIdAsync(
+        IReadOnlySet<long> visitIds,
+        CancellationToken ct)
+    {
+        var result = new Dictionary<long, long>();
+        if (visitIds.Count == 0)
+        {
+            return result;
+        }
+
+        var visitIdStrings = visitIds.Select(id => id.ToString(CultureInfo.InvariantCulture)).ToHashSet();
+        var logs = await _db.AuditLogs
+            .AsNoTracking()
+            .Where(a =>
+                a.Action == VisitRoomTransferService.VisitRoomTransferAction &&
+                a.EntityId != null &&
+                visitIdStrings.Contains(a.EntityId))
+            .OrderBy(a => a.OccurredAt)
+            .ThenBy(a => a.Id)
+            .ToListAsync(ct);
+
+        foreach (var log in logs)
+        {
+            if (!long.TryParse(log.EntityId, NumberStyles.None, CultureInfo.InvariantCulture, out var visitId) ||
+                result.ContainsKey(visitId) ||
+                string.IsNullOrWhiteSpace(log.ChangeData))
+            {
+                continue;
+            }
+
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(log.ChangeData);
+                if (doc.RootElement.TryGetProperty("fromRoomId", out var fromEl) &&
+                    fromEl.ValueKind == System.Text.Json.JsonValueKind.Number &&
+                    fromEl.TryGetInt64(out var fromRoomId) &&
+                    fromRoomId > 0)
+                {
+                    result[visitId] = fromRoomId;
+                }
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // Ignore malformed audit JSON.
+            }
+        }
+
+        return result;
+    }
+
+    private static char ResolveTicketPrefixForEntry(
+        QueueEntry? queueEntry,
+        Visit? visit,
+        ServicePointBucket currentBucket,
+        IReadOnlyDictionary<long, ServicePointBucket> bucketsByRawSpId,
+        IReadOnlyDictionary<long, ServicePointBucket> bucketsByRoomId,
+        IReadOnlyDictionary<long, long> firstTransferFromRoomByVisitId)
+    {
+        if (queueEntry?.ServicePointId is long originSpId &&
+            bucketsByRawSpId.TryGetValue(originSpId, out var originSpBucket))
+        {
+            return originSpBucket.TicketPrefix;
+        }
+
+        if (visit is not null &&
+            firstTransferFromRoomByVisitId.TryGetValue(visit.Id, out var originRoomId) &&
+            bucketsByRoomId.TryGetValue(originRoomId, out var originRoomBucket))
+        {
+            return originRoomBucket.TicketPrefix;
+        }
+
+        return currentBucket.TicketPrefix;
     }
 
     private static bool IsVisitInHospital(
@@ -1445,7 +1872,8 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             }
         }
 
-        return buckets.FirstOrDefault();
+        // Unrouted candidates (no ServicePoint, no Room, no Doctor, no Slot) MUST NOT fall into Room 1's bucket.
+        return null;
     }
 
     private static Doctor? ResolveEntryDoctor(
@@ -1552,18 +1980,32 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         var queueStatus = AppointmentBookingRules.NormalizeStatusKey(queueEntry?.Status);
         var visitStatus = AppointmentBookingRules.NormalizeStatusKey(visit?.Status);
 
-        if (visit?.CompletedAt.HasValue == true ||
-            queueEntry?.CompletedAt.HasValue == true ||
-            visitStatus == "COMPLETED" ||
-            queueStatus == "COMPLETED")
-        {
-            return "COMPLETED";
-        }
-
         if (queueStatus is "SKIPPED" or "MISSED" or "NO_SHOW" or "PASSED" ||
             visitStatus == "NO_SHOW")
         {
             return "SKIPPED";
+        }
+
+        if (visitStatus == "CANCELLED" || queueStatus == "CANCELLED")
+        {
+            return "SKIPPED";
+        }
+
+        var visitAwaitingOrReturning = visitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" or "RETURN_CONSULTATION";
+
+        if (!visitAwaitingOrReturning &&
+            (visitStatus == "COMPLETED" ||
+             visit?.CompletedAt.HasValue == true ||
+             queueStatus == "COMPLETED" ||
+             queueEntry?.CompletedAt.HasValue == true))
+        {
+            return "COMPLETED";
+        }
+
+        if (visitAwaitingOrReturning &&
+            (queueStatus == "COMPLETED" || queueEntry?.CompletedAt.HasValue == true))
+        {
+            return "COMPLETED";
         }
 
         if (visitStatus is "IN_PROGRESS" or "IN_CONSULTATION" or "SERVING" ||

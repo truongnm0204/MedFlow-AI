@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, Building2, FileText, Stethoscope } from 'lucide-react';
+import { Activity, AlertTriangle, Building2, FileText, Stethoscope } from 'lucide-react';
 
 import { Badge } from '@/shared/ui/badge';
 
@@ -12,6 +12,8 @@ import type {
 interface WalkInClinicalSectionProps {
   priority: ClinicalPriority;
   onPriorityChange: (priority: ClinicalPriority) => void;
+  priorityVerificationConfirmed?: boolean;
+  onPriorityVerificationChange?: (confirmed: boolean) => void;
   departments: WalkInDepartment[];
   selectedDepartmentId: string;
   onDepartmentChange: (departmentId: string) => void;
@@ -29,6 +31,8 @@ interface WalkInClinicalSectionProps {
 export function WalkInClinicalSection({
   priority,
   onPriorityChange,
+  priorityVerificationConfirmed = false,
+  onPriorityVerificationChange,
   departments,
   selectedDepartmentId,
   onDepartmentChange,
@@ -54,24 +58,26 @@ export function WalkInClinicalSection({
     tone: string;
   }> = [
     {
-      id: 'STANDARD',
+      id: 'NORMAL',
       label: 'Khám thông thường (Standard Outpatient)',
       desc: 'Xếp slot tiêu chuẩn theo hàng đợi',
       tone: 'border-sky-300 bg-sky-50/60 text-sky-900',
     },
     {
-      id: 'PRIORITY',
-      label: 'Ưu tiên người cao tuổi / Thai sản / Trẻ nhỏ',
-      desc: 'Cấp số ưu tiên xen kẽ hàng đợi',
+      id: 'ELDERLY',
+      label: 'Ưu tiên người cao tuổi (≥ 75 tuổi)',
+      desc: 'Cấp số ưu tiên xen kẽ hàng đợi khi đủ 75 tuổi',
       tone: 'border-amber-300 bg-amber-50/60 text-amber-900',
     },
     {
-      id: 'EMERGENCY',
-      label: 'Cấp cứu / Chuyển khoa khẩn',
-      desc: 'Chuyển thẳng buồng cấp cứu xử trí ngay',
-      tone: 'border-rose-300 bg-rose-50/60 text-rose-900',
+      id: 'PREGNANT',
+      label: 'Ưu tiên phụ nữ mang thai',
+      desc: 'Cấp số ưu tiên xen kẽ hàng đợi cho thai phụ',
+      tone: 'border-emerald-300 bg-emerald-50/60 text-emerald-900',
     },
   ];
+
+  const isElevatedPriority = priority === 'ELDERLY' || priority === 'PREGNANT';
 
   const selectedDepartment = departments.find((d) => d.id === selectedDepartmentId);
   const availableServices = selectedDepartment ? selectedDepartment.services : [];
@@ -114,11 +120,16 @@ export function WalkInClinicalSection({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => onPriorityChange(item.id)}
+                onClick={() => {
+                  onPriorityChange(item.id);
+                  if (item.id === 'NORMAL') {
+                    onPriorityVerificationChange?.(false);
+                  }
+                }}
                 className={`p-3.5 rounded-xl border text-left transition-all ${
                   isSelected
                     ? `${item.tone} ring-2 ring-primary shadow-xs font-semibold`
-                    : 'border-slate-200 bg-white hover:border-slate-300 text-slate-700'
+                    : 'border-border bg-white hover:border-primary/40 text-ink'
                 }`}
               >
                 <div className="text-xs font-bold">{item.label}</div>
@@ -127,6 +138,34 @@ export function WalkInClinicalSection({
             );
           })}
         </div>
+
+        {isElevatedPriority && (
+          <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3.5">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={priorityVerificationConfirmed}
+                onChange={(e) => onPriorityVerificationChange?.(e.target.checked)}
+                className="w-4 h-4 rounded text-primary border-border focus:ring-primary mt-0.5"
+              />
+              <div className="text-xs">
+                <span className="font-bold text-navy">
+                  Đã đối chiếu giấy tờ xác nhận đối tượng ưu tiên (ELDERLY / PREGNANT){' '}
+                  <span className="text-rose-500">*</span>
+                </span>
+                <p className="text-[11px] text-sub">
+                  Bắt buộc xác minh CCCD (đủ 75 tuổi) hoặc sổ khám thai trước khi cấp số ưu tiên.
+                </p>
+              </div>
+            </label>
+            {errors.priorityVerificationConfirmed && (
+              <p className="text-[11px] text-rose-600 font-semibold pl-6 mt-1 flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                {errors.priorityVerificationConfirmed}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Department & Service Selection */}

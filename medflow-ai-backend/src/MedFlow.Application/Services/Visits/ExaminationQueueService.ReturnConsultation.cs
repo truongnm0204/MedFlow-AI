@@ -48,6 +48,37 @@ public sealed partial class ExaminationQueueService
 
         await using var tx = await _db.BeginTransactionAsync(ct);
 
+        var (preVisit, preExistingReturn, preExistingExam) = await ResolveVisitAndQueueEntriesForReturnAsync(
+            numericId,
+            code,
+            idOrCode,
+            ct);
+
+        await _db.TryLockVisitForUpdateAsync(preVisit.Id, ct);
+
+        var preSpId = (preExistingReturn ?? preExistingExam)?.CurrentServicePointId
+            ?? (preExistingReturn ?? preExistingExam)?.ServicePointId;
+        if (preSpId.HasValue)
+        {
+            await _db.TryLockServicePointForUpdateAsync(preSpId.Value, ct);
+        }
+
+        var preQueueIds = new[] { preExistingReturn?.Id, preExistingExam?.Id }
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToArray();
+        if (preQueueIds.Length > 0)
+        {
+            await _db.TryLockQueueEntriesForUpdateAsync(preQueueIds, ct);
+        }
+
+        if (_db is DbContext dbCtx && dbCtx.Database.ProviderName != "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            dbCtx.ChangeTracker.Clear();
+        }
+
         var (visit, existingReturnEntry, existingExamEntry) = await ResolveVisitAndQueueEntriesForReturnAsync(
             numericId,
             code,
@@ -130,16 +161,7 @@ public sealed partial class ExaminationQueueService
                 "Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
         }
 
-        var openDiagnosticCount = await _db.QueueEntries
-            .AsNoTracking()
-            .CountAsync(q =>
-                q.VisitId == visit.Id &&
-                q.QueueType != null &&
-                q.QueueType.ToUpper() == "DIAGNOSTIC" &&
-                q.CompletedAt == null &&
-                (q.Status == null ||
-                 (q.Status.ToUpper() != "COMPLETED" && q.Status.ToUpper() != "CANCELLED")),
-                ct);
+        var openDiagnosticCount = await CountPendingDiagnosticItemsAsync(visit.Id, ct);
 
         var allDiagnosticResultsReady = openDiagnosticCount == 0 && request.DiagnosticResultsReady != false;
         var finalResultRequired = targetBucket.Policy.FinalResultRequired;
@@ -488,5 +510,55 @@ public sealed partial class ExaminationQueueService
         }
 
         return false;
+    }
+
+    private async Task<int> CountPendingDiagnosticItemsAsync(long visitId, CancellationToken ct)
+    {
+        var openDiagnosticQueueCount = await _db.QueueEntries
+            .AsNoTracking()
+            .CountAsync(q =>
+                q.VisitId == visitId &&
+                q.QueueType != null &&
+                q.QueueType.ToUpper() == "DIAGNOSTIC" &&
+                q.CompletedAt == null &&
+                (q.Status == null ||
+                 (q.Status.ToUpper() != "COMPLETED" && q.Status.ToUpper() != "CANCELLED")),
+                ct);
+
+        try
+        {
+            var activeRequiredOrders = await _db.DiagnosticOrders
+                .AsNoTracking()
+                .Where(o =>
+                    o.VisitId == visitId &&
+                    o.RequiredForConclusion != false &&
+                    (o.Status == null || o.Status.ToUpper() != "CANCELLED"))
+                .Select(o => o.Id)
+                .ToListAsync(ct);
+
+            if (activeRequiredOrders.Count == 0)
+            {
+                return openDiagnosticQueueCount;
+            }
+
+            var orderIdSet = activeRequiredOrders.ToHashSet();
+            var results = await _db.DiagnosticResults
+                .AsNoTracking()
+                .Where(r => r.DiagnosticOrderId.HasValue && orderIdSet.Contains(r.DiagnosticOrderId.Value))
+                .Select(r => new { OrderId = r.DiagnosticOrderId!.Value, r.Status, r.FinalizedAt })
+                .ToListAsync(ct);
+
+            var finalizedOrderIds = results
+                .Where(r => IsDiagnosticResultFinalized(r.Status, r.FinalizedAt))
+                .Select(r => r.OrderId)
+                .ToHashSet();
+
+            var unfinalizedOrderCount = activeRequiredOrders.Count(id => !finalizedOrderIds.Contains(id));
+            return Math.Max(openDiagnosticQueueCount, unfinalizedOrderCount);
+        }
+        catch (NotSupportedException)
+        {
+            return openDiagnosticQueueCount;
+        }
     }
 }
