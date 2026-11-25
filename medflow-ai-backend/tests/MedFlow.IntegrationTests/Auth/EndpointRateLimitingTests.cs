@@ -437,7 +437,7 @@ public sealed class EndpointRateLimitingTests
             });
 
         using var client = factory.CreateClient();
-        var patientToken = MintToken(factory, userId: 501, RoleNames.Patient);
+        var patientToken = MintToken(factory, userId: 1, RoleNames.Patient);
 
         using (var first = BuildRequest(HttpMethod.Post, "/api/v1/visits/99999999/payments/qr", patientToken))
         {
