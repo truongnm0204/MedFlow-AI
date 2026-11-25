@@ -7,7 +7,7 @@ import {
   RefreshCw,
   ShieldAlert,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
@@ -26,6 +26,18 @@ import {
 } from '../hooks/use-pharmacy-workbench';
 import type { GppCheckItem, PrepareMedicineItem } from '../types/prepare-medicine.types';
 
+interface PrepareItemDraftEdit {
+  pickedQty?: number;
+  selectedBatchCode?: string;
+  isPrepared?: boolean;
+  basePrescribedQty: number;
+}
+
+interface PrepareRxDraft {
+  items: Record<string, PrepareItemDraftEdit>;
+  checks: Record<string, boolean>;
+}
+
 export function PrepareMedicinesPage() {
   const params = useParams<{ prescriptionCode?: string }>();
   const [searchParams] = useSearchParams();
@@ -38,60 +50,169 @@ export function PrepareMedicinesPage() {
   const contextQuery = usePreparePrescriptionContext(activeRxCode);
   const submitMutation = useSubmitPreparePrescription(activeRxCode);
 
-  const [items, setItems] = useState<PrepareMedicineItem[]>([]);
-  const [gppChecks, setGppChecks] = useState<GppCheckItem[]>([]);
-  const [notice, setNotice] = useState<{
+  const [draftsByRx, setDraftsByRx] = useState<Record<string, PrepareRxDraft>>({});
+  const [confirmedStatusAtByRx, setConfirmedStatusAtByRx] = useState<Record<string, string>>({});
+  const [noticeState, setNoticeState] = useState<{
+    rxCode: string;
     tone: 'error' | 'info' | 'success';
     message: string;
   } | null>(null);
-  const [isReadyForDispense, setIsReadyForDispense] = useState(false);
 
-  useEffect(() => {
-    if (contextQuery.data) {
-      setItems(contextQuery.data.items);
-      setGppChecks(contextQuery.data.gppChecks);
-      setIsReadyForDispense(
-        contextQuery.data.status === 'PREPARED' ||
-          contextQuery.data.status === 'READY_FOR_DISPENSE',
-      );
+  const ctx = contextQuery.data;
+  const serverItems = ctx?.items;
+  const serverGppChecks = ctx?.gppChecks;
+  const serverStatus = ctx?.status;
+  const isLockedStatus = serverStatus === 'DISPENSED' || serverStatus === 'CANCELLED';
+  const activeDraft = activeRxCode ? draftsByRx[activeRxCode] : undefined;
+  const notice = noticeState?.rxCode === activeRxCode ? noticeState : null;
+
+  const items = useMemo<PrepareMedicineItem[]>(() => {
+    if (!serverItems) return [];
+    if (isLockedStatus || !activeDraft) {
+      return serverItems;
     }
-  }, [contextQuery.data]);
+
+    return serverItems.map((serverItem) => {
+      const edit = activeDraft.items[String(serverItem.id)];
+      if (!edit || edit.basePrescribedQty !== serverItem.prescribedQty) {
+        return serverItem;
+      }
+
+      const nextPickedQty = edit.pickedQty ?? serverItem.pickedQty;
+      const targetBatchCode = edit.selectedBatchCode ?? serverItem.selectedBatchCode;
+      const matchedBatch = targetBatchCode
+        ? serverItem.availableBatches.find((b) => b.batchCode === targetBatchCode)
+        : undefined;
+
+      if (!matchedBatch || matchedBatch.availableStock < nextPickedQty) {
+        return {
+          ...serverItem,
+          pickedQty: nextPickedQty,
+          isPrepared: false,
+        };
+      }
+
+      return {
+        ...serverItem,
+        pickedQty: nextPickedQty,
+        selectedBatchCode: targetBatchCode,
+        selectedBatchId:
+          edit.selectedBatchCode !== undefined
+            ? (matchedBatch.batchId ?? null)
+            : serverItem.selectedBatchId,
+        isPrepared: edit.isPrepared ?? serverItem.isPrepared,
+      };
+    });
+  }, [activeDraft, isLockedStatus, serverItems]);
+
+  const gppChecks = useMemo<GppCheckItem[]>(() => {
+    if (!serverGppChecks) return [];
+    if (isLockedStatus || !activeDraft) {
+      return serverGppChecks;
+    }
+    return serverGppChecks.map((check) => {
+      const editedChecked = activeDraft.checks[check.id];
+      return editedChecked === undefined ? check : { ...check, checked: editedChecked };
+    });
+  }, [activeDraft, isLockedStatus, serverGppChecks]);
+
+  const isReadyForDispense =
+    serverStatus === 'PREPARED' ||
+    serverStatus === 'READY_FOR_DISPENSE' ||
+    (!isLockedStatus &&
+      Boolean(activeRxCode) &&
+      confirmedStatusAtByRx[activeRxCode] !== undefined &&
+      confirmedStatusAtByRx[activeRxCode] === (serverStatus ?? ''));
+
+  const updateItemDraft = (
+    itemId: string,
+    updater: (
+      current: PrepareMedicineItem,
+      prevEdit?: PrepareItemDraftEdit,
+    ) => PrepareItemDraftEdit,
+  ) => {
+    if (!activeRxCode || isLockedStatus) return;
+    const currentItem = items.find((it) => String(it.id) === String(itemId));
+    if (!currentItem) return;
+    const key = String(currentItem.id);
+
+    setDraftsByRx((prev) => {
+      const rxDraft = prev[activeRxCode] ?? { items: {}, checks: {} };
+      return {
+        ...prev,
+        [activeRxCode]: {
+          ...rxDraft,
+          items: {
+            ...rxDraft.items,
+            [key]: updater(currentItem, rxDraft.items[key]),
+          },
+        },
+      };
+    });
+  };
 
   const handlePickedQtyChange = (itemId: string, qty: number) => {
-    setItems((prev) => prev.map((it) => (it.id === itemId ? { ...it, pickedQty: qty } : it)));
+    updateItemDraft(itemId, (current, prevEdit) => ({
+      ...prevEdit,
+      pickedQty: qty,
+      basePrescribedQty: current.prescribedQty,
+    }));
   };
 
   const handleBatchChange = (itemId: string, batchCode: string) => {
-    setItems((prev) =>
-      prev.map((it) => {
-        if (it.id !== itemId) return it;
-        const matched = it.availableBatches.find((b) => b.batchCode === batchCode);
-        return {
-          ...it,
-          selectedBatchCode: batchCode,
-          selectedBatchId: matched?.batchId ?? null,
-        };
-      }),
-    );
+    updateItemDraft(itemId, (current, prevEdit) => ({
+      ...prevEdit,
+      selectedBatchCode: batchCode,
+      basePrescribedQty: current.prescribedQty,
+    }));
   };
 
   const handleTogglePrepared = (itemId: string) => {
-    setItems((prev) =>
-      prev.map((it) => (it.id === itemId ? { ...it, isPrepared: !it.isPrepared } : it)),
-    );
+    updateItemDraft(itemId, (current, prevEdit) => ({
+      ...prevEdit,
+      selectedBatchCode: current.selectedBatchCode,
+      isPrepared: !current.isPrepared,
+      basePrescribedQty: current.prescribedQty,
+    }));
   };
 
   const handleToggleCheck = (checkId: string) => {
-    setGppChecks((prev) => prev.map((c) => (c.id === checkId ? { ...c, checked: !c.checked } : c)));
+    if (!activeRxCode || isLockedStatus) return;
+    const currentCheck = gppChecks.find((c) => c.id === checkId);
+    if (!currentCheck) return;
+
+    setDraftsByRx((prev) => {
+      const rxDraft = prev[activeRxCode] ?? { items: {}, checks: {} };
+      return {
+        ...prev,
+        [activeRxCode]: {
+          ...rxDraft,
+          checks: {
+            ...rxDraft.checks,
+            [checkId]: !currentCheck.checked,
+          },
+        },
+      };
+    });
   };
 
   const handleConfirmPreparation = async () => {
+    if (isLockedStatus) {
+      setNoticeState({
+        rxCode: activeRxCode,
+        tone: 'error',
+        message: 'Đơn thuốc này đã đóng hoặc đã cấp phát, không thể cập nhật soạn thuốc.',
+      });
+      return;
+    }
+
     const unprepared = items.filter((i) => !i.isPrepared);
     const uncheckedGpp = gppChecks.filter((c) => !c.checked);
     const mismatchedQty = items.filter((i) => i.pickedQty !== i.prescribedQty);
 
     if (mismatchedQty.length > 0) {
-      setNotice({
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'error',
         message: `Số lượng thực soạn chưa khớp y lệnh tại ${mismatchedQty.length} khoản thuốc. Vui lòng kiểm tra lại.`,
       });
@@ -99,7 +220,8 @@ export function PrepareMedicinesPage() {
     }
 
     if (unprepared.length > 0) {
-      setNotice({
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'error',
         message: `Còn ${unprepared.length} khoản thuốc chưa được đánh dấu "Đã soạn đủ".`,
       });
@@ -107,7 +229,8 @@ export function PrepareMedicinesPage() {
     }
 
     if (uncheckedGpp.length > 0) {
-      setNotice({
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'error',
         message: `Vui lòng hoàn tất toàn bộ ${uncheckedGpp.length} tiêu chuẩn kiểm soát GPP còn lại trước khi xác nhận.`,
       });
@@ -124,15 +247,25 @@ export function PrepareMedicinesPage() {
         })),
       });
 
-      setIsReadyForDispense(true);
-      setNotice({
+      setDraftsByRx((prev) => {
+        const next = { ...prev };
+        delete next[activeRxCode];
+        return next;
+      });
+      setConfirmedStatusAtByRx((prev) => ({
+        ...prev,
+        [activeRxCode]: serverStatus ?? '',
+      }));
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'success',
         message:
           response.message ||
           `Đã hoàn tất soạn đơn ${activeRxCode} theo nguyên tắc FEFO/GPP và chuyển sang quầy phát thuốc!`,
       });
     } catch (error) {
-      setNotice({
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'error',
         message:
           error instanceof Error ? error.message : 'Không thể lưu kết quả soạn thuốc lên máy chủ.',
@@ -140,7 +273,6 @@ export function PrepareMedicinesPage() {
     }
   };
 
-  const ctx = contextQuery.data;
   const totalPickedUnits = items.reduce((sum, i) => sum + i.pickedQty, 0);
   const preparedCount = items.filter((i) => i.isPrepared).length;
 
@@ -369,7 +501,7 @@ export function PrepareMedicinesPage() {
                 type="button"
                 variant="primary"
                 size="sm"
-                disabled={submitMutation.isPending}
+                disabled={isLockedStatus || submitMutation.isPending}
                 onClick={() => void handleConfirmPreparation()}
                 className="gap-1.5 shadow-xs"
               >

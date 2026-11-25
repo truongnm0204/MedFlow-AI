@@ -146,4 +146,46 @@ describe('AppErrorBoundary & RouteAwareErrorBoundary (#254)', () => {
 
     expect(screen.getByTestId('app-error-boundary-fallback')).toBeInTheDocument();
   });
+
+  it('detects stale lazy chunk load failures and triggers full page reload only on explicit user retry (never auto-reloading)', () => {
+    const reloadSpy = vi.fn();
+    function StaleChunkRoute(): ReactNode {
+      throw new TypeError(
+        'Failed to fetch dynamically imported module: https://medflow.vn/assets/pharmacy-OLD.js',
+      );
+    }
+
+    const { unmount } = render(
+      <AppErrorBoundary onReloadPage={reloadSpy}>
+        <StaleChunkRoute />
+      </AppErrorBoundary>,
+    );
+
+    // Must NOT auto-reload on catch (prevents infinite reload loop & protects unsaved state)
+    expect(reloadSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId('app-error-boundary-fallback')).toBeInTheDocument();
+    expect(document.body.textContent ?? '').not.toContain('pharmacy-OLD.js');
+
+    // Reloads application ONLY when user clicks "Thử tải lại"
+    fireEvent.click(screen.getByRole('button', { name: 'Thử tải lại' }));
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+    unmount();
+
+    // Normal render errors do NOT trigger full page reload on retry
+    let shouldCrash = true;
+    function NormalCrash(): ReactNode {
+      if (shouldCrash) throw new Error('Normal validation error');
+      return <div>Khôi phục bình thường</div>;
+    }
+
+    render(
+      <AppErrorBoundary onReloadPage={reloadSpy}>
+        <NormalCrash />
+      </AppErrorBoundary>,
+    );
+    shouldCrash = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Thử tải lại' }));
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Khôi phục bình thường')).toBeInTheDocument();
+  });
 });

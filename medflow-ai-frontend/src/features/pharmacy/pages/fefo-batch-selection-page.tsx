@@ -1,5 +1,5 @@
 import { ArrowLeft, CheckCircle2, Layers, RefreshCw } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
@@ -20,6 +20,11 @@ import {
   type MedicineBatchRequirement,
 } from '../types/fefo-batch.types';
 
+interface RequirementDraftEdit {
+  selectedBatchId?: string;
+  overrideReason?: string;
+}
+
 export function FefoBatchSelectionPage() {
   const params = useParams<{ prescriptionCode?: string }>();
   const [searchParams] = useSearchParams();
@@ -32,46 +37,122 @@ export function FefoBatchSelectionPage() {
   const contextQuery = useFefoBatchSelectionContext(activeRxCode);
   const submitMutation = useSubmitFefoBatchSelection(activeRxCode);
 
-  const [requirements, setRequirements] = useState<MedicineBatchRequirement[]>([]);
-  const [notice, setNotice] = useState<{
+  const [editsByRx, setEditsByRx] = useState<Record<string, Record<string, RequirementDraftEdit>>>(
+    {},
+  );
+  const [noticeState, setNoticeState] = useState<{
+    rxCode: string;
     tone: 'info' | 'success' | 'error';
     message: string;
   } | null>(null);
 
-  useEffect(() => {
-    if (contextQuery.data) {
-      setRequirements(contextQuery.data.items);
+  const serverRequirements = contextQuery.data?.items;
+  const serverStatus = contextQuery.data?.status;
+  const isLockedStatus = serverStatus === 'DISPENSED' || serverStatus === 'CANCELLED';
+  const activeEdits = activeRxCode ? editsByRx[activeRxCode] : undefined;
+  const notice = noticeState?.rxCode === activeRxCode ? noticeState : null;
+
+  const requirements = useMemo<MedicineBatchRequirement[]>(() => {
+    if (!serverRequirements) return [];
+    if (isLockedStatus || !activeEdits) {
+      return serverRequirements;
     }
-  }, [contextQuery.data]);
+
+    return serverRequirements.map((req) => {
+      const edit = activeEdits[String(req.id)];
+      if (!edit) return req;
+
+      if (edit.selectedBatchId !== undefined) {
+        const chosenBatch = req.batches.find((b) => b.id === edit.selectedBatchId);
+        const isBatchStillValid =
+          chosenBatch !== undefined &&
+          chosenBatch.status !== 'EXPIRED' &&
+          chosenBatch.status !== 'BLOCKED' &&
+          chosenBatch.isSelectable !== false &&
+          chosenBatch.availableQty >= req.requiredQty;
+
+        if (!isBatchStillValid) {
+          return req;
+        }
+
+        return {
+          ...req,
+          selectedBatchId: edit.selectedBatchId,
+          overrideReason: edit.overrideReason ?? req.overrideReason,
+        };
+      }
+
+      return edit.overrideReason !== undefined
+        ? { ...req, overrideReason: edit.overrideReason }
+        : req;
+    });
+  }, [activeEdits, isLockedStatus, serverRequirements]);
 
   const handleSelectBatch = (requirementId: string, batch: FefoBatchRecord) => {
+    if (isLockedStatus || !activeRxCode) return;
+
     if (batch.status === 'EXPIRED' || batch.status === 'BLOCKED' || batch.isSelectable === false) {
-      setNotice({
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'error',
         message: `Không thể chọn lô ${batch.batchCode}: ${batch.blockReason ?? 'Lô bị khóa'}.`,
       });
       return;
     }
 
-    setRequirements((prev) =>
-      prev.map((req) => (req.id === requirementId ? { ...req, selectedBatchId: batch.id } : req)),
-    );
-    setNotice({
+    const reqKey = String(requirementId);
+    setEditsByRx((prev) => {
+      const rxEdits = prev[activeRxCode] ?? {};
+      return {
+        ...prev,
+        [activeRxCode]: {
+          ...rxEdits,
+          [reqKey]: {
+            ...rxEdits[reqKey],
+            selectedBatchId: batch.id,
+          },
+        },
+      };
+    });
+    setNoticeState({
+      rxCode: activeRxCode,
       tone: 'info',
       message: `Đã chọn lô ${batch.batchCode} (HSD ${batch.expiryDate}) cho ${batch.drugName}.`,
     });
   };
 
   const handleOverrideReasonChange = (requirementId: string, reason: string) => {
-    setRequirements((prev) =>
-      prev.map((req) => (req.id === requirementId ? { ...req, overrideReason: reason } : req)),
-    );
+    if (isLockedStatus || !activeRxCode) return;
+    const reqKey = String(requirementId);
+    setEditsByRx((prev) => {
+      const rxEdits = prev[activeRxCode] ?? {};
+      return {
+        ...prev,
+        [activeRxCode]: {
+          ...rxEdits,
+          [reqKey]: {
+            ...rxEdits[reqKey],
+            overrideReason: reason,
+          },
+        },
+      };
+    });
   };
 
   const handleSaveBatches = async () => {
+    if (isLockedStatus) {
+      setNoticeState({
+        rxCode: activeRxCode,
+        tone: 'error',
+        message: 'Đơn thuốc đã đóng hoặc đã cấp phát, không thể đổi lô FEFO.',
+      });
+      return;
+    }
+
     const missing = requirements.filter((r) => !r.selectedBatchId);
     if (missing.length > 0) {
-      setNotice({
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'error',
         message: `Còn ${missing.length} loại thuốc chưa chọn lô xuất kho hợp lệ.`,
       });
@@ -82,7 +163,8 @@ export function FefoBatchSelectionPage() {
       (req) => isRequirementFefoOverride(req) && (req.overrideReason?.trim().length ?? 0) < 5,
     );
     if (missingOverrideReason) {
-      setNotice({
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'error',
         message: `Vui lòng nhập lý do hợp lệ (tối thiểu 5 ký tự) cho ${missingOverrideReason.drugName} khi chọn lô có hạn dùng xa hơn lô ưu tiên FEFO.`,
       });
@@ -104,14 +186,21 @@ export function FefoBatchSelectionPage() {
           };
         }),
       });
-      setNotice({
+      setEditsByRx((prev) => {
+        const next = { ...prev };
+        delete next[activeRxCode];
+        return next;
+      });
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'success',
         message:
           response.message ||
           'Đã xác nhận phân bổ lô thuốc theo nguyên tắc FEFO cho toàn bộ đơn thuốc.',
       });
     } catch (error) {
-      setNotice({
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'error',
         message:
           error instanceof Error ? error.message : 'Không thể lưu phân bổ lô FEFO lên máy chủ.',
@@ -248,7 +337,7 @@ export function FefoBatchSelectionPage() {
             <Button
               variant="primary"
               size="sm"
-              disabled={submitMutation.isPending}
+              disabled={isLockedStatus || submitMutation.isPending}
               onClick={() => void handleSaveBatches()}
               className="gap-1.5"
             >

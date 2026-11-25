@@ -6,7 +6,7 @@ import {
   Printer,
   RefreshCw,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
@@ -37,31 +37,79 @@ export function DispenseConfirmPage() {
   const contextQuery = useDispenseConfirmContext(activeRxCode);
   const confirmMutation = useConfirmMedicineDispense(activeRxCode);
 
-  const [isIdentityVerified, setIsIdentityVerified] = useState(false);
-  const [checks, setChecks] = useState<PharmacistHandoverCheck[]>([]);
-  const [notice, setNotice] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
-  const [dispensedCode, setDispensedCode] = useState<string | null>(null);
+  const [identityOverrides, setIdentityOverrides] = useState<Record<string, boolean>>({});
+  const [checkOverridesByRx, setCheckOverridesByRx] = useState<
+    Record<string, Record<string, boolean>>
+  >({});
+  const [dispensedCodeByRx, setDispensedCodeByRx] = useState<Record<string, string>>({});
+  const [noticeState, setNoticeState] = useState<{
+    rxCode: string;
+    tone: 'error' | 'success';
+    message: string;
+  } | null>(null);
 
-  useEffect(() => {
-    if (contextQuery.data) {
-      setIsIdentityVerified(contextQuery.data.receiver.isIdentityVerified);
-      setChecks(contextQuery.data.checks);
-      if (contextQuery.data.dispenseStatus === 'DISPENSED') {
-        setDispensedCode(contextQuery.data.rxCode);
-      }
+  const ctx = contextQuery.data;
+  const isServerDispensed = ctx?.dispenseStatus === 'DISPENSED';
+  const isServerCancelled = ctx?.dispenseStatus === 'CANCELLED';
+  const isServerBlocked = isServerDispensed || isServerCancelled || ctx?.canDispense === false;
+  const receiverIdentityKey = ctx
+    ? `${activeRxCode}:${ctx.receiver.identityCard}:${ctx.receiver.receiverName}`
+    : '';
+  const serverChecks = ctx?.checks;
+  const activeCheckEdits = activeRxCode ? checkOverridesByRx[activeRxCode] : undefined;
+  const notice = noticeState?.rxCode === activeRxCode ? noticeState : null;
+
+  const isIdentityVerified = isServerBlocked
+    ? Boolean(ctx?.receiver.isIdentityVerified)
+    : receiverIdentityKey && identityOverrides[receiverIdentityKey] !== undefined
+      ? identityOverrides[receiverIdentityKey]
+      : Boolean(ctx?.receiver.isIdentityVerified);
+
+  const checks = useMemo<PharmacistHandoverCheck[]>(() => {
+    if (!serverChecks) return [];
+    if (isServerBlocked || !activeCheckEdits) {
+      return serverChecks;
     }
-  }, [contextQuery.data]);
+    return serverChecks.map((check) => {
+      const edited = activeCheckEdits[check.id];
+      return edited === undefined ? check : { ...check, checked: edited };
+    });
+  }, [activeCheckEdits, isServerBlocked, serverChecks]);
+
+  const localDispensedCode = activeRxCode ? dispensedCodeByRx[activeRxCode] : undefined;
+  const dispensedCode = localDispensedCode ?? (isServerDispensed ? (ctx?.rxCode ?? null) : null);
+  const isDispensed = isServerDispensed || Boolean(localDispensedCode);
+
+  const handleToggleIdentityVerified = () => {
+    if (isServerBlocked || !receiverIdentityKey) return;
+    setIdentityOverrides((prev) => ({
+      ...prev,
+      [receiverIdentityKey]: !isIdentityVerified,
+    }));
+  };
 
   const handleToggleCheck = (checkId: string) => {
-    setChecks((prev) => prev.map((c) => (c.id === checkId ? { ...c, checked: !c.checked } : c)));
+    if (isServerBlocked || !activeRxCode) return;
+    const currentCheck = checks.find((c) => c.id === checkId);
+    if (!currentCheck) return;
+    setCheckOverridesByRx((prev) => {
+      const rxChecks = prev[activeRxCode] ?? {};
+      return {
+        ...prev,
+        [activeRxCode]: {
+          ...rxChecks,
+          [checkId]: !currentCheck.checked,
+        },
+      };
+    });
   };
 
   const handleConfirmDispense = async () => {
-    const ctx = contextQuery.data;
-    if (!ctx) return;
+    if (!ctx || isServerBlocked) return;
 
     if (!isIdentityVerified) {
-      setNotice({
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'error',
         message:
           'Bắt buộc xác nhận đối chiếu định danh CCCD của người nhận thuốc trước khi cấp phát.',
@@ -71,7 +119,8 @@ export function DispenseConfirmPage() {
 
     const unchecked = checks.filter((c) => !c.checked);
     if (unchecked.length > 0) {
-      setNotice({
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'error',
         message: `Còn ${unchecked.length} mục kiểm tra bắt buộc của Dược sĩ chưa được xác nhận.`,
       });
@@ -96,22 +145,36 @@ export function DispenseConfirmPage() {
           })),
       });
 
-      setDispensedCode(result.dispenseCode);
-      setNotice({
+      setCheckOverridesByRx((prev) => {
+        const next = { ...prev };
+        delete next[activeRxCode];
+        return next;
+      });
+      if (receiverIdentityKey) {
+        setIdentityOverrides((prev) => {
+          const next = { ...prev };
+          delete next[receiverIdentityKey];
+          return next;
+        });
+      }
+      setDispensedCodeByRx((prev) => ({
+        ...prev,
+        [activeRxCode]: result.dispenseCode,
+      }));
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'success',
         message: `Đã hoàn tất bàn giao đơn thuốc ${ctx.rxCode} cho bệnh nhân ${ctx.receiver.fullName}, trừ tồn kho FEFO và phát hành biên nhận ${result.dispenseCode}.`,
       });
     } catch (error) {
-      setNotice({
+      setNoticeState({
+        rxCode: activeRxCode,
         tone: 'error',
         message:
           error instanceof Error ? error.message : 'Không thể xác nhận bàn giao thuốc lúc này.',
       });
     }
   };
-
-  const ctx = contextQuery.data;
-  const isDispensed = Boolean(dispensedCode) || ctx?.dispenseStatus === 'DISPENSED';
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">
@@ -238,7 +301,7 @@ export function DispenseConfirmPage() {
                 <DispenseIdentityVerificationCard
                   context={ctx}
                   isIdentityVerified={isIdentityVerified}
-                  onToggleIdentityVerified={() => setIsIdentityVerified((prev) => !prev)}
+                  onToggleIdentityVerified={handleToggleIdentityVerified}
                 />
               </div>
 
@@ -292,7 +355,7 @@ export function DispenseConfirmPage() {
               variant="primary"
               size="sm"
               onClick={() => void handleConfirmDispense()}
-              disabled={isDispensed || confirmMutation.isPending || ctx.canDispense === false}
+              disabled={isDispensed || isServerBlocked || confirmMutation.isPending}
               className="gap-1.5 shadow-xs"
             >
               <CheckCircle2 className="h-4 w-4" aria-hidden="true" />

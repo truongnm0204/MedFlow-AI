@@ -29,19 +29,22 @@ const CAPACITIES = [1, 2, 3, 4] as const;
 const inputClass =
   'w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink outline-none focus:border-primary';
 
+const EMPTY_DEPARTMENTS: NonNullable<ReturnType<typeof useAdminDepartments>['data']> = [];
+
 function RoomEditForm({ room }: { room: RoomRecord }) {
   const navigate = useNavigate();
-  const { data: apiDepartments = [] } = useAdminDepartments();
+  const { data: apiDepartments = EMPTY_DEPARTMENTS } = useAdminDepartments();
   const updateRoomMutation = useUpdateRoomMutation();
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const roomDepartment = room.department;
 
   const departmentOptions = useMemo(() => {
     const names = new Set<string>();
-    if (room.department) names.add(room.department);
+    if (roomDepartment) names.add(roomDepartment);
     for (const dept of apiDepartments) names.add(dept.name);
     for (const fallback of ROOM_DEPARTMENTS) names.add(fallback);
     return Array.from(names);
-  }, [apiDepartments, room.department]);
+  }, [apiDepartments, roomDepartment]);
 
   const {
     register,
@@ -324,16 +327,17 @@ function RoomEditForm({ room }: { room: RoomRecord }) {
 export function RoomEditPage() {
   const { id } = useParams<{ id: string }>();
   const { data, isLoading, isError, error } = useAdminRooms();
+  const records = data?.records;
 
   const room = useMemo(() => {
-    if (!id || !data?.records) return null;
+    if (!id || !records) return null;
     const normalized = id.trim().toLowerCase();
     return (
-      data.records.find(
+      records.find(
         (item) => item.id.toLowerCase() === normalized || item.code.toLowerCase() === normalized,
       ) ?? null
     );
-  }, [data?.records, id]);
+  }, [id, records]);
 
   if (isLoading) {
     return (

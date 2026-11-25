@@ -153,4 +153,53 @@ describe('DispenseConfirmPage (real API)', () => {
       expect(screen.queryByText(/DISP-2026-0415-0042/i)).not.toBeInTheDocument();
     });
   });
+
+  it('enforces server DISPENSED status over local edits and disables confirmation button', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+      data: {
+        ...SAMPLE_DISPENSE_CONTEXT,
+        dispenseStatus: 'DISPENSED',
+        canDispense: false,
+      },
+    } as AxiosResponse);
+
+    renderDispensePage();
+
+    expect((await screen.findAllByText('NGUYỄN VĂN AN')).length).toBeGreaterThan(0);
+    expect(screen.getByText('ĐÃ BÀN GIAO & ĐÓNG CA')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Đã hoàn tất bàn giao & Đóng lượt \(DISPENSED\)/i }),
+    ).toBeDisabled();
+  });
+
+  it('blocks confirmation when dispenseStatus is CANCELLED even if canDispense is omitted and isolates rxCode state', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+      data: {
+        ...SAMPLE_DISPENSE_CONTEXT,
+        canDispense: undefined,
+        dispenseStatus: 'CANCELLED',
+      },
+    } as AxiosResponse);
+
+    const { unmount } = renderDispensePage();
+    expect((await screen.findAllByText('NGUYỄN VĂN AN')).length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole('button', { name: /Xác nhận Hoàn tất Bàn giao & Trừ tồn kho/i }),
+    ).toBeDisabled();
+    unmount();
+
+    vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+      data: {
+        ...SAMPLE_DISPENSE_CONTEXT,
+        rxCode: 'RX-OTHER-0099',
+        dispenseStatus: 'PENDING',
+        canDispense: true,
+      },
+    } as AxiosResponse);
+    renderDispensePage('/pharmacy/prescriptions/RX-OTHER-0099/dispense');
+    expect((await screen.findAllByText('NGUYỄN VĂN AN')).length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole('button', { name: /Xác nhận Hoàn tất Bàn giao & Trừ tồn kho/i }),
+    ).not.toBeDisabled();
+  });
 });

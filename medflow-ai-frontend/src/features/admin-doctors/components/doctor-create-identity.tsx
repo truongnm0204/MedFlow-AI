@@ -1,9 +1,11 @@
 import { Camera } from 'lucide-react';
 import type { FieldErrors, UseFormRegister } from 'react-hook-form';
 
+import { formControlClass as doctorControlClass } from '@/shared/components/form/form-primitives';
+
 import { DEPARTMENTS } from '../data/doctor-demo-data';
 import type { DoctorFormValues } from '../schemas/doctor.schema';
-import { DoctorCard, DoctorField, doctorControlClass } from './doctor-form-primitives';
+import { DoctorCard, DoctorField } from './doctor-form-primitives';
 
 interface Props {
   register: UseFormRegister<DoctorFormValues>;
