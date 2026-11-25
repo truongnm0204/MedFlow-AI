@@ -64,7 +64,10 @@ logout  -> revoke token (idempotent)
 ### Brute force + rate limit
 
 - `failed_login_attempts` + `locked_until`: 5 lan sai -> khoa 15 phut.
-- Rate limit tach rieng theo endpoint va phan vung theo IP client (`RemoteIpAddress` sau `UseForwardedHeaders` voi `KnownProxies`/`KnownIPNetworks` tuong minh): `auth-login` (10/min/IP), `auth-register` (5/min/IP), `auth-refresh` (30/min/IP), `otp-verify` (10/min/IP), `otp-resend` (5/min/IP), tra `429 ProblemDetails` + `Retry-After`; resend throttle 45s/email.
+- Rate limit tach rieng theo endpoint:
+  - Nhom Auth (phan vung theo IP client `RemoteIpAddress` sau `UseForwardedHeaders` voi `KnownProxies`/`KnownIPNetworks` tuong minh): `auth-login` (10/min/IP), `auth-register` (5/min/IP), `auth-refresh` (30/min/IP), `otp-verify` (10/min/IP), `otp-resend` (5/min/IP); resend throttle 45s/email.
+  - Nhom nghiep vu nhay cam (chay sau `UseAuthentication` + `UseAuthorization`, phan vung theo `UserId` tu JWT `sub` khi da xac thuc hoac fallback IP client khi an danh, `QueueLimit = 0`, ADR-0057): `appointment-write` (10/min/UserId — dung chung giua dat/doi/huy/cap nhat ly do lich hen), `payment-qr-generate` (10/min/UserId), `ai-recommend` (15/min/UserId hoac IP).
+  - Khi vuot han ngach tra `429 ProblemDetails` + header `Retry-After` (duoc expose qua CORS `WithExposedHeaders("Retry-After")`).
 - HTTPS redirection tat trong `Development` va `Test` de giu nguyen `Authorization` header qua Vite HTTP proxy; bat buoc `UseHsts()` + `UseHttpsRedirection()` trong `Production`.
 - Audit log cho moi su kien: `REGISTER`, `LOGIN_SUCCESS`, `LOGIN_FAILED`, `OTP_VERIFY`, `OTP_RESEND`, `LOGOUT`, `REFRESH_REUSE_DETECTED`, `EMAIL_SEND_FAILED`.
 

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Threading.RateLimiting;
@@ -129,6 +130,24 @@ static string ResolveClientIpPartitionKey(HttpContext httpContext, string policy
     return $"{policyName}:{normalizedIp}";
 }
 
+static string ResolveUserOrClientIpPartitionKey(HttpContext httpContext, string policyName)
+{
+    if (httpContext.User.Identity?.IsAuthenticated == true)
+    {
+        var rawUserId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? httpContext.User.FindFirstValue("sub");
+
+        if (!string.IsNullOrWhiteSpace(rawUserId) &&
+            long.TryParse(rawUserId, NumberStyles.None, CultureInfo.InvariantCulture, out var userId) &&
+            userId > 0)
+        {
+            return $"{policyName}:user:{userId}";
+        }
+    }
+
+    return ResolveClientIpPartitionKey(httpContext, policyName);
+}
+
 static FixedWindowRateLimiterOptions BuildFixedWindowOptions(
     HttpContext httpContext,
     string limitKey,
@@ -173,7 +192,7 @@ builder.Services.AddRateLimiter(options =>
         {
             Status = StatusCodes.Status429TooManyRequests,
             Title = "Quá giới hạn truy cập",
-            Detail = "Bạn thao tác quá nhanh. Vui lòng thử lại sau.",
+            Detail = $"Bạn đã thực hiện quá nhiều yêu cầu. Vui lòng thử lại sau {retryAfterSeconds} giây.",
         };
 
         await response.WriteAsync(JsonSerializer.Serialize(problem), cancellationToken);
@@ -203,6 +222,21 @@ builder.Services.AddRateLimiter(options =>
         RateLimitPartition.GetFixedWindowLimiter(
             ResolveClientIpPartitionKey(httpContext, "otp-resend"),
             _ => BuildFixedWindowOptions(httpContext, "OtpResendPermitLimit", 5)));
+
+    options.AddPolicy("appointment-write", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ResolveUserOrClientIpPartitionKey(httpContext, "appointment-write"),
+            _ => BuildFixedWindowOptions(httpContext, "AppointmentWritePermitLimit", 10)));
+
+    options.AddPolicy("payment-qr-generate", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ResolveUserOrClientIpPartitionKey(httpContext, "payment-qr-generate"),
+            _ => BuildFixedWindowOptions(httpContext, "PaymentQrGeneratePermitLimit", 10)));
+
+    options.AddPolicy("ai-recommend", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ResolveUserOrClientIpPartitionKey(httpContext, "ai-recommend"),
+            _ => BuildFixedWindowOptions(httpContext, "AiRecommendPermitLimit", 15)));
 });
 
 var configuredCorsOrigins = builder.Configuration
@@ -227,6 +261,7 @@ builder.Services.AddCors(options =>
             policy.WithOrigins(configuredCorsOrigins)
                 .AllowAnyHeader()
                 .AllowAnyMethod()
+                .WithExposedHeaders("Retry-After")
                 .AllowCredentials();
         }
     });
@@ -257,6 +292,9 @@ if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))
 
 app.UseCors("Frontend");
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 // Bỏ rate limit trong môi trường Test mặc định để integration tests không bị 429,
 // trừ khi test chủ động bật RateLimiting:EnabledInTest = true.
 if (!app.Environment.IsEnvironment("Test") ||
@@ -265,8 +303,6 @@ if (!app.Environment.IsEnvironment("Test") ||
     app.UseRateLimiter();
 }
 
-app.UseAuthentication();
-app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
