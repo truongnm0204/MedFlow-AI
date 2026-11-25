@@ -3,6 +3,7 @@ import {
   FileSearch,
   Filter,
   LogOut,
+  Plug,
   RefreshCw,
   RotateCcw,
   Search,
@@ -176,6 +177,20 @@ export function SystemAdminDashboardPage() {
             >
               <ShieldCheck aria-hidden="true" className="h-4 w-4 text-primary" />
               Vai trò &amp; Phân quyền
+            </Link>
+            <Link
+              to="/system-admin/integrations"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3.5 py-2 text-xs font-semibold text-ink transition-colors hover:bg-slate-50"
+            >
+              <Plug aria-hidden="true" className="h-4 w-4 text-primary" />
+              Tích hợp dịch vụ
+            </Link>
+            <Link
+              to="/system-admin/audit-logs"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3.5 py-2 text-xs font-semibold text-ink transition-colors hover:bg-slate-50"
+            >
+              <FileSearch aria-hidden="true" className="h-4 w-4 text-primary" />
+              Tra cứu Nhật ký
             </Link>
             <button
               type="button"

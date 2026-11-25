@@ -63,6 +63,8 @@ public static class DependencyInjection
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<ISystemAdminDashboardService, SystemAdminDashboardService>();
         services.AddScoped<IStaffAccountListService, StaffAccountListService>();
+        services.AddScoped<IAuditLogQueryService, AuditLogQueryService>();
+        services.AddScoped<IIntegrationConfigService, IntegrationConfigService>();
         services.AddScoped<IHospitalAdminDashboardService, HospitalAdminDashboardService>();
         services.AddScoped<IOperationalReportService, OperationalReportService>();
         services.AddScoped<IDoctorDashboardService, DoctorDashboardService>();
