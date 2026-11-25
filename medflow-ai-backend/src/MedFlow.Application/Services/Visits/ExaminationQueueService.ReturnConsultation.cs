@@ -346,6 +346,13 @@ public sealed partial class ExaminationQueueService
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
+        await PublishExaminationQueueChangedAsync(
+            hospitalId: afterBoard.Hospital.Id,
+            servicePointId: after.Bucket.Bucket.RawServicePointId,
+            roomId: after.Bucket.Bucket.RoomId ?? visit.ExaminationRoomId,
+            appointmentId: targetEntry.AppointmentId ?? visit.AppointmentId,
+            ct: ct);
+
         return new CreateReturnToDoctorQueueEntryResponseDto(
             QueueEntryId: after.Entry.Dto.Id,
             TicketNo: after.Entry.Dto.TicketNo,

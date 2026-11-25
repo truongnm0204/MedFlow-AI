@@ -180,6 +180,21 @@ public sealed partial class ExaminationQueueService
 
         await tx.CommitAsync(ct);
 
+        var linkedApptId = target.AppointmentId
+            ?? (target.VisitId.HasValue
+                ? await _db.Visits.AsNoTracking()
+                    .Where(v => v.Id == target.VisitId.Value)
+                    .Select(v => v.AppointmentId)
+                    .FirstOrDefaultAsync(ct)
+                : null);
+
+        await PublishExaminationQueueChangedAsync(
+            hospitalId: board.Hospital.Id,
+            servicePointId: after.Bucket.Bucket.RawServicePointId,
+            roomId: after.Bucket.Bucket.RoomId,
+            appointmentId: linkedApptId,
+            ct: ct);
+
         return new EarlyArrivalBackfillResponseDto(
             QueueEntryId: afterEntry.Dto.Id,
             TicketNo: afterEntry.Dto.TicketNo,

@@ -104,13 +104,16 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
 
     public DiagnosticResultEntryService(
         IApplicationDbContext dbContext,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IRealtimeNotificationPublisher? realtimePublisher = null)
     {
         _db = dbContext;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
     }
 
     public async Task<DiagnosticResultEntryListResponseDto> GetOrdersForResultEntryAsync(
@@ -717,6 +720,13 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             }
         }
 
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: staffAccess.Hospital.Id,
+                ServicePointId: trackedQueueEntry?.CurrentServicePointId ?? trackedQueueEntry?.ServicePointId),
+            ct);
+
         lookupBundle.StaffById[staffAccess.Staff.Id] = staffAccess.Staff;
         lookupBundle.ResultsByOrderId[trackedOrder.Id] = trackedResult;
         var updatedVersions = new List<DiagnosticResultVersion>(existingVersions.Count + 1)
@@ -1037,6 +1047,13 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                 await tx.DisposeAsync();
             }
         }
+
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: staffAccess.Hospital.Id,
+                ServicePointId: trackedQueueEntry?.CurrentServicePointId ?? trackedQueueEntry?.ServicePointId),
+            ct);
 
         lookupBundle.StaffById[staffAccess.Staff.Id] = staffAccess.Staff;
         lookupBundle.ResultsByOrderId[trackedOrder.Id] = trackedResult;

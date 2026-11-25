@@ -40,11 +40,16 @@ public sealed class StaffAccountAdminService : IStaffAccountAdminService
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeAccessRevoker _accessRevoker;
 
-    public StaffAccountAdminService(IApplicationDbContext db, TimeProvider? timeProvider = null)
+    public StaffAccountAdminService(
+        IApplicationDbContext db,
+        TimeProvider? timeProvider = null,
+        IRealtimeAccessRevoker? accessRevoker = null)
     {
         _db = db;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _accessRevoker = accessRevoker ?? MedFlow.Application.Services.Realtime.NullRealtimeAccessRevoker.Instance;
     }
 
     public async Task<DeactivateStaffAccountResponseDto> DeactivateAsync(
@@ -170,6 +175,12 @@ public sealed class StaffAccountAdminService : IStaffAccountAdminService
         });
 
         await _db.SaveChangesAsync(ct);
+
+        await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
+            _accessRevoker,
+            target.UserId.Value,
+            "STAFF_DEACTIVATED",
+            ct);
 
         return new DeactivateStaffAccountResponseDto(
             target.Id,

@@ -53,13 +53,19 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
+    private readonly IRealtimeAccessRevoker _accessRevoker;
 
     public CheckInScheduledPatientService(
         IApplicationDbContext db,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IRealtimeNotificationPublisher? realtimePublisher = null,
+        IRealtimeAccessRevoker? accessRevoker = null)
     {
         _db = db;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
+        _accessRevoker = accessRevoker ?? MedFlow.Application.Services.Realtime.NullRealtimeAccessRevoker.Instance;
     }
 
     public async Task<CheckInScheduledPatientResponseDto> CheckInScheduledPatientAsync(
@@ -488,6 +494,20 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
         await tx.CommitAsync(ct);
 
         var effectiveSpId = queueEntry.ServicePointId ?? servicePoint?.Id;
+        await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryMigrateAppointmentBucketSafeAsync(
+            _accessRevoker,
+            appointment.Id,
+            effectiveSpId,
+            visit.ExaminationRoomId ?? room?.Id,
+            ct);
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: effectiveHospitalId,
+                ServicePointId: effectiveSpId,
+                RoomId: visit.ExaminationRoomId ?? room?.Id,
+                AppointmentId: appointment.Id),
+            ct);
         var waitingCountBefore = await CountWaitingBeforeAsync(
             queueEntry.Id,
             effectiveSpId,

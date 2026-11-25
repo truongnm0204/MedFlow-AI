@@ -3,8 +3,10 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Payments;
+using MedFlow.Application.DTOs.Realtime;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Realtime;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
@@ -29,15 +31,18 @@ public sealed class SePayWebhookService : ISePayWebhookService
     private readonly IApplicationDbContext _db;
     private readonly IPaymentGatewayEventStore _store;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
 
     public SePayWebhookService(
         IApplicationDbContext db,
         IPaymentGatewayEventStore store,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IRealtimeNotificationPublisher? realtimePublisher = null)
     {
         _db = db;
         _store = store;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
     }
 
     public async Task<SePayWebhookResult> HandleAsync(
@@ -128,6 +133,14 @@ public sealed class SePayWebhookService : ISePayWebhookService
             if (_db is DbContext context)
                 context.ChangeTracker.Clear();
             return new SePayWebhookResult(true, PaymentGatewayOutcomes.Ignored);
+        }
+
+        if (outcome is PaymentGatewayOutcomes.Paid or PaymentGatewayOutcomes.Overpaid &&
+            payment?.VisitId is long paidVisitId)
+        {
+            await _realtimePublisher.TryPublishVisitPaymentChangedSafeAsync(
+                new VisitPaymentChangedNotification(paidVisitId),
+                ct);
         }
 
         return new SePayWebhookResult(true, outcome);

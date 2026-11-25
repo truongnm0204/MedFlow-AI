@@ -80,13 +80,16 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
 
     public DiagnosticPatientReceiveService(
         IApplicationDbContext dbContext,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IRealtimeNotificationPublisher? realtimePublisher = null)
     {
         _db = dbContext;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
     }
 
     public async Task<DiagnosticPatientReceiveListResponseDto> GetOrdersForReceiveAsync(
@@ -618,6 +621,12 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
                 await tx.DisposeAsync();
             }
         }
+
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: staffAccess.Hospital.Id),
+            ct);
 
         var receivedDtos = new List<DiagnosticPatientReceiveItemDto>(executionPlans.Count);
         foreach (var plan in executionPlans)

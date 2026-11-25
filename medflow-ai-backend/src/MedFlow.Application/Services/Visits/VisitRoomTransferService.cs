@@ -42,13 +42,19 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
+    private readonly IRealtimeAccessRevoker _accessRevoker;
 
     public VisitRoomTransferService(
         IApplicationDbContext db,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IRealtimeNotificationPublisher? realtimePublisher = null,
+        IRealtimeAccessRevoker? accessRevoker = null)
     {
         _db = db;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
+        _accessRevoker = accessRevoker ?? MedFlow.Application.Services.Realtime.NullRealtimeAccessRevoker.Instance;
     }
 
     public async Task<VisitCompatibleRoomsResponseDto> GetCompatibleRoomsAsync(
@@ -444,6 +450,49 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
         });
 
         await _db.SaveChangesAsync(ct);
+
+        long? previousSpId = context.ActiveQueueEntry?.CurrentServicePointId ?? context.ActiveQueueEntry?.ServicePointId;
+        long? targetSpId = null;
+        try
+        {
+            targetSpId = await _db.QueueServicePoints.AsNoTracking()
+                .Where(sp => sp.RoomId == targetRoom.Id && sp.IsActive != false)
+                .OrderBy(sp => sp.Id)
+                .Select(sp => (long?)sp.Id)
+                .FirstOrDefaultAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            targetSpId = null;
+        }
+
+        if (visit.AppointmentId is long transferredApptId)
+        {
+            await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryMigrateAppointmentBucketSafeAsync(
+                _accessRevoker,
+                transferredApptId,
+                targetSpId,
+                targetRoom.Id,
+                ct);
+        }
+
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: context.VisitHospitalId,
+                ServicePointId: previousSpId,
+                RoomId: previousRoomId,
+                AppointmentId: visit.AppointmentId),
+            ct);
+
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: context.VisitHospitalId,
+                ServicePointId: targetSpId,
+                RoomId: targetRoom.Id,
+                AppointmentId: visit.AppointmentId),
+            ct);
 
         var transferHistory = await LoadTransferHistoryAsync(visit.Id, ct);
 

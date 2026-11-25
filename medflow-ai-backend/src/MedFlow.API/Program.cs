@@ -4,13 +4,18 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Threading.RateLimiting;
+using MedFlow.API.Hubs;
 using MedFlow.API.Middleware;
+using MedFlow.API.Realtime;
 using MedFlow.Application;
+using MedFlow.Application.Interfaces.Services;
 using MedFlow.Infrastructure;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 
@@ -63,7 +68,29 @@ builder.Services.AddOptions<MedFlow.Application.Options.QrPaymentOptions>()
         o => o.PendingExpiryMinutes > 0,
         "QrPayment:PendingExpiryMinutes must be greater than zero.")
     .ValidateOnStart();
+builder.Services.AddOptions<MedFlow.Application.Options.RealtimeOptions>()
+    .Bind(builder.Configuration.GetSection(MedFlow.Application.Options.RealtimeOptions.SectionName))
+    .Validate(
+        o => o.MaxGroupsPerConnection > 0 &&
+             o.MaxInvocationsPerMinute > 0 &&
+             o.MaxReceiveMessageSizeBytes >= 1024 &&
+             o.MembershipTtlMinutes > 0 &&
+             o.PublishTimeoutSeconds > 0,
+        "Realtime options must specify positive bounds and MaxReceiveMessageSizeBytes >= 1024.")
+    .ValidateOnStart();
 builder.Services.AddInfrastructure(builder.Configuration);
+
+var realtimeReceiveSize = Math.Max(
+    1024L,
+    builder.Configuration.GetValue<long>("Realtime:MaxReceiveMessageSizeBytes", 8 * 1024));
+builder.Services.AddSignalR(options =>
+{
+    options.EnableDetailedErrors = false;
+    options.MaximumReceiveMessageSize = realtimeReceiveSize;
+});
+builder.Services.AddSingleton<ClinicalRealtimeConnectionRegistry>();
+builder.Services.AddScoped<IRealtimeNotificationPublisher, SignalRRealtimeNotificationPublisher>();
+builder.Services.AddScoped<IRealtimeAccessRevoker, SignalRRealtimeAccessRevoker>();
 
 builder.Services.AddOptions<ForwardedHeadersOptions>()
     .Configure<IConfiguration>((options, configuration) =>
@@ -117,6 +144,27 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             ValidAudience = configuration["Jwt:Audience"] ?? "MedFlow",
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
             ClockSkew = TimeSpan.Zero,
+        };
+
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                // Scoped strictly to /hubs/clinical WebSocket/SSE handshake when Authorization header is absent.
+                if (string.IsNullOrEmpty(context.Token) &&
+                    string.IsNullOrWhiteSpace(context.Request.Headers.Authorization) &&
+                    context.HttpContext.Request.Path.StartsWithSegments("/hubs/clinical") &&
+                    context.Request.Query.TryGetValue("access_token", out var accessToken))
+                {
+                    var rawToken = accessToken.ToString().Trim();
+                    if (!string.IsNullOrEmpty(rawToken))
+                    {
+                        context.Token = rawToken;
+                    }
+                }
+
+                return Task.CompletedTask;
+            },
         };
     })
     .ValidateOnStart();
@@ -304,6 +352,13 @@ if (!app.Environment.IsEnvironment("Test") ||
 }
 
 app.MapControllers();
+app.MapHub<ClinicalRealtimeHub>(
+        "/hubs/clinical",
+        options =>
+        {
+            options.CloseOnAuthenticationExpiration = true;
+        })
+    .RequireAuthorization();
 
 app.Run();
 

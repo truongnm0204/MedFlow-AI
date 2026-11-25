@@ -25,6 +25,12 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           ...(isHttpsTarget ? { secure: env.VITE_API_PROXY_INSECURE !== 'true' } : {}),
         },
+        '/hubs': {
+          target: proxyTarget,
+          changeOrigin: true,
+          ws: true,
+          ...(isHttpsTarget ? { secure: env.VITE_API_PROXY_INSECURE !== 'true' } : {}),
+        },
       },
     },
     test: {

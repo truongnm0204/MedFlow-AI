@@ -24,6 +24,7 @@ public class AuthService : IAuthService
     private readonly IAuditLogger _audit;
     private readonly AuthSecurityOptions _options;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeAccessRevoker _accessRevoker;
     private readonly PasswordHasher<User> _passwordHasher = new();
 
     public AuthService(
@@ -34,7 +35,8 @@ public class AuthService : IAuthService
         AuthOtpService otpService,
         IAuditLogger audit,
         IOptions<AuthSecurityOptions>? authOptions = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IRealtimeAccessRevoker? accessRevoker = null)
     {
         _db = db;
         _jwtService = jwtService;
@@ -44,6 +46,7 @@ public class AuthService : IAuthService
         _audit = audit;
         _options = authOptions?.Value ?? new AuthSecurityOptions();
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _accessRevoker = accessRevoker ?? MedFlow.Application.Services.Realtime.NullRealtimeAccessRevoker.Instance;
     }
 
     // ── Register ──────────────────────────────────────────────────────────
@@ -199,14 +202,25 @@ public class AuthService : IAuthService
 
     private async Task RecordFailedLoginAsync(User user, string? ipAddress, CancellationToken ct)
     {
+        var lockedNow = false;
         user.FailedLoginAttempts++;
         if (user.FailedLoginAttempts >= _options.MaxLoginAttempts)
         {
             user.LockedUntil = HospitalClock.GetUtcNow(_timeProvider).AddMinutes(_options.LockoutDurationMinutes);
             user.FailedLoginAttempts = 0;
+            lockedNow = true;
         }
         _audit.Add(user.Id, "LOGIN_FAILED", "USER", user.Id.ToString(), null, ipAddress);
         await _db.SaveChangesAsync(ct);
+
+        if (lockedNow)
+        {
+            await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
+                _accessRevoker,
+                user.Id,
+                "ACCOUNT_LOCKED",
+                ct);
+        }
     }
 
     private async Task<(string AccessToken, int ExpiresInSeconds, string RawRefreshToken, string[] Roles)>
@@ -240,6 +254,14 @@ public class AuthService : IAuthService
             _audit.Add(result.User?.Id, "REFRESH_REUSE_DETECTED", "USER",
                 result.User?.Id.ToString(), null, ipAddress);
             await _db.SaveChangesAsync(ct);
+            if (result.User?.Id is long reuseUserId)
+            {
+                await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
+                    _accessRevoker,
+                    reuseUserId,
+                    "REFRESH_REUSE_DETECTED",
+                    ct);
+            }
             throw new UnauthorizedAccessException("Refresh token không hợp lệ");
         }
 
@@ -251,6 +273,11 @@ public class AuthService : IAuthService
             (result.User.LockedUntil.HasValue && result.User.LockedUntil.Value > nowUtc))
         {
             await _sessionService.RevokeAllForUserAsync(result.User.Id, ipAddress, ct);
+            await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
+                _accessRevoker,
+                result.User.Id,
+                "ACCOUNT_INACTIVE",
+                ct);
             throw new UnauthorizedAccessException("Refresh token không hợp lệ");
         }
 
@@ -274,6 +301,11 @@ public class AuthService : IAuthService
         await _sessionService.RevokeAsync(refreshToken, ipAddress, ct);
         _audit.Add(userId, "LOGOUT", "USER", userId.ToString(), null, ipAddress);
         await _db.SaveChangesAsync(ct);
+        await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
+            _accessRevoker,
+            userId,
+            "LOGOUT",
+            ct);
     }
 
     // ── OTP (delegate) ────────────────────────────────────────────────────

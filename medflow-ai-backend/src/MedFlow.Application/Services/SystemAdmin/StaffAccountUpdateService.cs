@@ -36,16 +36,19 @@ public sealed class StaffAccountUpdateService : IStaffAccountUpdateService
     private readonly IApplicationDbContext _db;
     private readonly IAuditLogger _audit;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeAccessRevoker _accessRevoker;
     private readonly PasswordHasher<User> _passwordHasher = new();
 
     public StaffAccountUpdateService(
         IApplicationDbContext db,
         IAuditLogger audit,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IRealtimeAccessRevoker? accessRevoker = null)
     {
         _db = db;
         _audit = audit;
         _timeProvider = timeProvider;
+        _accessRevoker = accessRevoker ?? MedFlow.Application.Services.Realtime.NullRealtimeAccessRevoker.Instance;
     }
 
     public async Task<UpdateStaffAccountResponse> UpdateAsync(
@@ -239,6 +242,17 @@ public sealed class StaffAccountUpdateService : IStaffAccountUpdateService
         {
             await transaction.RollbackAsync(ct);
             throw;
+        }
+
+        if (!string.Equals(previousRoleCode, role.Code, StringComparison.OrdinalIgnoreCase) ||
+            previousHospitalId != staff.HospitalId ||
+            !string.Equals(previousStatus, GetEffectiveStatus(user, staff, nowUtc), StringComparison.OrdinalIgnoreCase))
+        {
+            await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
+                _accessRevoker,
+                user.Id,
+                "STAFF_SCOPE_CHANGED",
+                ct);
         }
 
         return new UpdateStaffAccountResponse(

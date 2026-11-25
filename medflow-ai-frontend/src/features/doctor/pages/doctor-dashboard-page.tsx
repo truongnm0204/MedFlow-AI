@@ -1,5 +1,5 @@
 import { RefreshCw } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -64,6 +64,17 @@ export function DoctorDashboardPage() {
   const [callNextError, setCallNextError] = useState<string | null>(null);
   const [calledEntryOverride, setCalledEntryOverride] =
     useState<DoctorAssignedQueueEntryDto | null>(null);
+
+  const previousAssignedQueueRef = useRef(data?.assignedQueue);
+  useEffect(() => {
+    if (
+      previousAssignedQueueRef.current !== undefined &&
+      previousAssignedQueueRef.current !== data?.assignedQueue
+    ) {
+      setCalledEntryOverride(null);
+    }
+    previousAssignedQueueRef.current = data?.assignedQueue;
+  }, [data?.assignedQueue]);
   const doctorDisplayName =
     user?.fullName?.trim() ||
     data?.doctorProfile?.displayName?.trim() ||

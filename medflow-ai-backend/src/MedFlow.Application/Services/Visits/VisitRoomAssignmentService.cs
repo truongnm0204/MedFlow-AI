@@ -39,13 +39,19 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
+    private readonly IRealtimeAccessRevoker _accessRevoker;
 
     public VisitRoomAssignmentService(
         IApplicationDbContext db,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IRealtimeNotificationPublisher? realtimePublisher = null,
+        IRealtimeAccessRevoker? accessRevoker = null)
     {
         _db = db;
         _timeProvider = timeProvider;
+        _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
+        _accessRevoker = accessRevoker ?? MedFlow.Application.Services.Realtime.NullRealtimeAccessRevoker.Instance;
     }
 
     public Task<AssignExaminationRoomResponseDto> AssignExaminationRoomAsync(
@@ -363,11 +369,42 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
 
         await _db.SaveChangesAsync(ct);
 
+        var effectiveServicePointId = queueEntry.CurrentServicePointId ?? queueEntry.ServicePointId;
+        if (visit.AppointmentId is long assignedApptId)
+        {
+            await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryMigrateAppointmentBucketSafeAsync(
+                _accessRevoker,
+                assignedApptId,
+                effectiveServicePointId,
+                room.Id,
+                ct);
+        }
+
+        if (previousRoomId.HasValue && previousRoomId.Value != room.Id)
+        {
+            await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+                _realtimePublisher,
+                new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                    HospitalId: effectiveHospitalForAudit ?? 0L,
+                    ServicePointId: null,
+                    RoomId: previousRoomId.Value,
+                    AppointmentId: visit.AppointmentId),
+                ct);
+        }
+
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: effectiveHospitalForAudit ?? 0L,
+                ServicePointId: effectiveServicePointId,
+                RoomId: room.Id,
+                AppointmentId: visit.AppointmentId),
+            ct);
+
         var visitCode = !string.IsNullOrWhiteSpace(visit.VisitCode)
             ? visit.VisitCode
             : $"VIS-{visit.Id:D4}";
 
-        var effectiveServicePointId = queueEntry.CurrentServicePointId ?? queueEntry.ServicePointId;
         var servicePointName = servicePoint?.Name;
         if (servicePointName is null && effectiveServicePointId.HasValue)
         {

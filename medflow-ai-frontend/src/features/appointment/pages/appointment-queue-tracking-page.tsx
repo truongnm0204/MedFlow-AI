@@ -15,7 +15,7 @@ import { useAppointmentQueueStatusQuery } from '../hooks/use-appointment-queue';
 
 export function AppointmentQueueTrackingPage() {
   const { appointmentId = '' } = useParams<{ appointmentId: string }>();
-  const { data, isLoading, isError, error, isFetching, refetch } =
+  const { data, isLoading, isError, error, isFetching, refetch, isRealtimeLive } =
     useAppointmentQueueStatusQuery(appointmentId);
 
   return (
@@ -43,10 +43,15 @@ export function AppointmentQueueTrackingPage() {
                 <span className="h-2 w-2 rounded-full bg-amber-500" aria-hidden="true" />
                 <span>MẤT KẾT NỐI – ĐANG THỬ LẠI</span>
               </span>
+            ) : isRealtimeLive ? (
+              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3.5 py-1.5 text-xs font-bold text-emerald-700">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
+                <span>ĐANG KẾT NỐI TRỰC TIẾP (Thời gian thực SignalR)</span>
+              </span>
             ) : (
               <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3.5 py-1.5 text-xs font-bold text-emerald-700">
                 <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
-                <span>ĐANG KẾT NỐI TRỰC TIẾP (Cập nhật tự động 10s)</span>
+                <span>ĐANG KẾT NỐI TRỰC TIẾP (Cập nhật tự động 5s)</span>
               </span>
             )}
           </div>

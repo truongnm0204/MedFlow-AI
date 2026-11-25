@@ -2,11 +2,13 @@ using System.Globalization;
 using System.Text.Json;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Diagnostic;
+using MedFlow.Application.DTOs.Realtime;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Doctors;
+using MedFlow.Application.Services.Realtime;
 using MedFlow.Application.Services.Visits;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
@@ -119,11 +121,16 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
 
-    public DiagnosticQueueService(IApplicationDbContext db, TimeProvider timeProvider)
+    public DiagnosticQueueService(
+        IApplicationDbContext db,
+        TimeProvider timeProvider,
+        IRealtimeNotificationPublisher? realtimePublisher = null)
     {
         _db = db;
         _timeProvider = timeProvider;
+        _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
     }
 
     public async Task<DiagnosticQueueBoardResponseDto> GetDiagnosticQueueAsync(
@@ -1187,6 +1194,13 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                 await tx.DisposeAsync();
             }
         }
+
+        await _realtimePublisher.TryPublishQueueChangedSafeAsync(
+            new QueueChangedNotification(
+                HospitalId: staffAccess.Hospital.Id,
+                ServicePointId: effectiveSpId,
+                RoomId: effectiveRoomId),
+            ct);
 
         var refreshedDataset = await LoadHospitalDiagnosticQueueDatasetAsync(
             staffAccess,

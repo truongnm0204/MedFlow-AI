@@ -21,15 +21,18 @@ public sealed class FamilyProfileService : IFamilyProfileService
     private readonly IApplicationDbContext _db;
     private readonly IOptions<IdentityHashOptions>? _hashOptions;
     private readonly TimeProvider _timeProvider;
+    private readonly MedFlow.Application.Interfaces.Services.IRealtimeAccessRevoker _accessRevoker;
 
     public FamilyProfileService(
         IApplicationDbContext db,
         IOptions<IdentityHashOptions>? hashOptions = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        MedFlow.Application.Interfaces.Services.IRealtimeAccessRevoker? accessRevoker = null)
     {
         _db = db;
         _hashOptions = hashOptions;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _accessRevoker = accessRevoker ?? MedFlow.Application.Services.Realtime.NullRealtimeAccessRevoker.Instance;
     }
 
     public async Task<IReadOnlyList<FamilyMemberResponse>> GetFamilyMembersAsync(
@@ -570,6 +573,12 @@ public sealed class FamilyProfileService : IFamilyProfileService
         link.RevokedAt = HospitalClock.GetUtcNowUnspecified(_timeProvider);
 
         await _db.SaveChangesAsync(ct);
+
+        await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeFamilyMemberAccessSafeAsync(
+            _accessRevoker,
+            userId,
+            member.Id,
+            ct);
     }
 
     private async Task<Patient> LoadActiveSelfAsync(long userId, CancellationToken ct)

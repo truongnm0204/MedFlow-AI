@@ -14,6 +14,7 @@ using MedFlow.Application.Services.Notifications;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Application.Services.Pharmacy;
 using MedFlow.Application.Services.Policies;
+using MedFlow.Application.Services.Realtime;
 using MedFlow.Application.Services.Reception;
 using MedFlow.Application.Services.Reports;
 using MedFlow.Application.Services.Services;
@@ -21,6 +22,7 @@ using MedFlow.Application.Services.SystemAdmin;
 using MedFlow.Application.Services.Payments;
 using MedFlow.Application.Services.Visits;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace MedFlow.Application;
 
@@ -101,6 +103,9 @@ public static class DependencyInjection
         services.AddScoped<ISePayWebhookService, SePayWebhookService>();
         services.AddScoped<IConsultationWorkspaceService, ConsultationWorkspaceService>();
         services.AddScoped<IMedicalHistoryService, MedicalHistoryService>();
+        services.AddScoped<IClinicalRealtimeAccessService, ClinicalRealtimeAccessService>();
+        services.TryAddScoped<IRealtimeNotificationPublisher, NullRealtimeNotificationPublisher>();
+        services.TryAddScoped<IRealtimeAccessRevoker, NullRealtimeAccessRevoker>();
         return services;
     }
 }

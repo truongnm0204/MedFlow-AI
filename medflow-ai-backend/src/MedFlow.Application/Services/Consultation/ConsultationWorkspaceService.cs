@@ -44,13 +44,19 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
+    private readonly IRealtimeAccessRevoker _accessRevoker;
 
     public ConsultationWorkspaceService(
         IApplicationDbContext db,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IRealtimeNotificationPublisher? realtimePublisher = null,
+        IRealtimeAccessRevoker? accessRevoker = null)
     {
         _db = db;
         _timeProvider = timeProvider;
+        _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
+        _accessRevoker = accessRevoker ?? MedFlow.Application.Services.Realtime.NullRealtimeAccessRevoker.Instance;
     }
 
     public async Task<ConsultationWorkspaceResponseDto> GetWorkspaceAsync(
@@ -288,6 +294,15 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             {
                 await tx.CommitAsync(ct);
             }
+
+            await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+                _realtimePublisher,
+                new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                    HospitalId: doctorAccess.Hospital.Id,
+                    ServicePointId: activeEntry.CurrentServicePointId ?? activeEntry.ServicePointId,
+                    RoomId: visit.ExaminationRoomId ?? context.Room?.Id,
+                    AppointmentId: activeEntry.AppointmentId ?? visit.AppointmentId),
+                ct);
 
             actionOutcome = "OPENED";
         }
@@ -1446,6 +1461,28 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         if (tx is not null)
         {
             await tx.CommitAsync(ct);
+        }
+
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: doctorAccess.Hospital.Id,
+                ServicePointId: activeEntry.CurrentServicePointId ?? activeEntry.ServicePointId,
+                RoomId: visit.ExaminationRoomId ?? context.Room?.Id,
+                AppointmentId: activeEntry.AppointmentId ?? visit.AppointmentId),
+            ct);
+
+        foreach (var diagEntry in createdQueueEntries)
+        {
+            if (diagEntry.ServicePointId is long diagSpId)
+            {
+                await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+                    _realtimePublisher,
+                    new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                        HospitalId: doctorAccess.Hospital.Id,
+                        ServicePointId: diagSpId),
+                    ct);
+            }
         }
 
         var updatedVisitQueueEntries = createdQueueEntries
@@ -2772,6 +2809,26 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         if (tx is not null)
         {
             await tx.CommitAsync(ct);
+        }
+
+        var completedApptId = activeEntry.AppointmentId ?? visit.AppointmentId;
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: doctorAccess.Hospital.Id,
+                ServicePointId: activeEntry.CurrentServicePointId ?? activeEntry.ServicePointId,
+                RoomId: visit.ExaminationRoomId ?? context.Room?.Id,
+                AppointmentId: completedApptId),
+            ct);
+
+        if (completedApptId is long finalizedApptId)
+        {
+            await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryMigrateAppointmentBucketSafeAsync(
+                _accessRevoker,
+                finalizedApptId,
+                null,
+                null,
+                ct);
         }
 
         return await BuildWorkspaceResponseAsync(

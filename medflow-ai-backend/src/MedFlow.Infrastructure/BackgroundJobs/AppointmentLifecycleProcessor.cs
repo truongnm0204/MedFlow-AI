@@ -590,6 +590,32 @@ public sealed class AppointmentLifecycleProcessor : BackgroundService
             await itemDb.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
 
+            var publisher = itemScope.ServiceProvider.GetService<MedFlow.Application.Interfaces.Services.IRealtimeNotificationPublisher>();
+            var revoker = itemScope.ServiceProvider.GetService<MedFlow.Application.Interfaces.Services.IRealtimeAccessRevoker>();
+            var noShowServicePointId = cancelledQueues
+                .Select(q => q.CurrentServicePointId ?? q.ServicePointId)
+                .FirstOrDefault(id => id.HasValue);
+
+            if (publisher is not null)
+            {
+                await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+                    publisher,
+                    new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                        HospitalId: hospitalId,
+                        ServicePointId: noShowServicePointId,
+                        RoomId: slot.RoomId,
+                        AppointmentId: lockedAppt.Id),
+                    ct);
+            }
+
+            if (revoker is not null)
+            {
+                await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeAppointmentTrackingSafeAsync(
+                    revoker,
+                    lockedAppt.Id,
+                    ct);
+            }
+
             autoNoShowCount++;
             cancelledQueueCount += cancelledQueues.Count;
         }
