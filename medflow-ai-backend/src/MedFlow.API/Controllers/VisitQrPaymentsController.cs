@@ -4,6 +4,7 @@ using MedFlow.Application.Interfaces.Services;
 using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace MedFlow.API.Controllers;
 
@@ -21,6 +22,7 @@ public sealed class VisitQrPaymentsController : ControllerBase
     /// <summary>POST /api/v1/visits/{idOrCode}/payments/qr — Phát hành QR thanh toán cho bệnh nhân (UC18 / #162).</summary>
     [HttpPost("/api/v1/visits/{idOrCode}/payments/qr")]
     [HttpPost("/api/v1/patients/visits/{idOrCode}/payments/qr")]
+    [EnableRateLimiting("payment-qr-generate")]
     [ProducesResponseType<GenerateQrPaymentResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<GenerateQrPaymentResponseDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
@@ -28,6 +30,7 @@ public sealed class VisitQrPaymentsController : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<GenerateQrPaymentResponseDto>> Create(
         [FromRoute] string idOrCode,
         CancellationToken ct)

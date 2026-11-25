@@ -927,3 +927,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS "uq_examination_slots_doctor_service_start"
 CREATE UNIQUE INDEX IF NOT EXISTS "uq_examination_slots_unassigned_service_room_start"
   ON "examination_slots" ("service_id", "room_id", "starts_at")
   WHERE "doctor_id" IS NULL AND "service_id" IS NOT NULL AND "room_id" IS NOT NULL;
+
+-- 021_hot_query_composite_indexes
+CREATE INDEX IF NOT EXISTS "ix_queue_entries_sp_status_created"
+  ON "queue_entries" ("service_point_id", "status", "arrived_at");
+
+CREATE INDEX IF NOT EXISTS "ix_visits_hospital_created_status"
+  ON "visits" ("checked_in_at" DESC, "status");
+
+CREATE INDEX IF NOT EXISTS "ix_audit_logs_hospital_occurred_desc"
+  ON "audit_logs" ("hospital_id", "occurred_at" DESC);
+
+CREATE INDEX IF NOT EXISTS "ix_audit_logs_action_occurred_desc"
+  ON "audit_logs" ("action", "occurred_at" DESC);
+
+CREATE INDEX IF NOT EXISTS "ix_medicine_batches_fefo_lookup"
+  ON "medicine_batches" ("medicine_id", "is_blocked", "expiry_date" ASC);
+
+CREATE INDEX IF NOT EXISTS "ix_service_prices_effective_lookup"
+  ON "service_prices" ("service_id", "effective_from" DESC);

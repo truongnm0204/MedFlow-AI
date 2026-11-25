@@ -22,4 +22,8 @@
     <ProjectReference Include="..\MedFlow.Infrastructure\MedFlow.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Update="appsettings.Test.json" CopyToPublishDirectory="Never" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

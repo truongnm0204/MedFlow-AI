@@ -12,6 +12,8 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="MailKit" Version="4.18.1" />
+    <!-- MailKit/MimeKit kéo System.Security.Cryptography.Pkcs 10.0.0 (GHSA-846f-f764-76mx, GHSA-2fmv-rv2c-59x7) — pin bản vá 10.0.15 -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
     <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="10.0.12" />
     <!-- Npgsql 10.0.3 kéo EF.Relational 10.0.4 — pin explicit 10.0.12 để khớp EF.Core -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
