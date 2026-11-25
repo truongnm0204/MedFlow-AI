@@ -5,7 +5,10 @@ import { useForm, useWatch } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { useAdminDepartments } from '@/features/admin-departments/hooks/use-departments';
+import { useAuthStore } from '@/features/auth/store/auth.store';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
+import { loadAdminDraft, removeAdminDraft, saveAdminDraft } from '@/shared/lib/admin-draft-storage';
 
 import { useCreateRoomMutation } from '../hooks/use-rooms';
 import {
@@ -35,21 +38,21 @@ const inputClass =
 const labelClass = 'block text-sm font-semibold text-navy';
 const errorClass = 'mt-1 text-xs text-red-600';
 
-function loadDraft(): RoomCreateFormValues {
-  try {
-    const raw = window.sessionStorage.getItem(DRAFT_KEY);
-    if (raw) {
-      const parsed = roomCreateSchema.partial().safeParse(JSON.parse(raw));
-      if (parsed.success) return { ...DEFAULT_ROOM_FORM_VALUES, ...parsed.data };
-    }
-  } catch {
-    // ignore corrupt draft
+function loadDraft(userId: number | null): RoomCreateFormValues {
+  const stored = loadAdminDraft<Partial<RoomCreateFormValues>>('room-create', {
+    userId,
+    legacyUnauthenticatedKey: DRAFT_KEY,
+  });
+  if (stored) {
+    const parsed = roomCreateSchema.partial().safeParse(stored);
+    if (parsed.success) return { ...DEFAULT_ROOM_FORM_VALUES, ...parsed.data };
   }
   return { ...DEFAULT_ROOM_FORM_VALUES };
 }
 
 export function RoomCreatePage() {
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
   const [message, setMessage] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -62,22 +65,29 @@ export function RoomCreatePage() {
     return Array.from(names);
   }, [apiDepartments]);
 
+  const [initialValues] = useState<RoomCreateFormValues>(() => loadDraft(user?.id ?? null));
+
   const {
     register,
     handleSubmit,
     setValue,
     getValues,
+    reset,
     control,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<RoomCreateFormValues>({
     resolver: zodResolver(roomCreateSchema),
-    defaultValues: loadDraft(),
+    defaultValues: initialValues,
   });
+
+  const { isBlocked, confirmNavigation, cancelNavigation, allowNavigation, guardAction } =
+    useUnsavedChanges(isDirty);
 
   const values = useWatch({ control });
 
   const handleCreate = async (data: RoomCreateFormValues) => {
     setSubmitError(null);
+    const rawSnapshot = structuredClone(getValues());
     const matchedDepartment = apiDepartments.find((d) => d.name === data.department);
     const parsedDepartmentId = matchedDepartment ? Number(matchedDepartment.id) : null;
 
@@ -92,16 +102,37 @@ export function RoomCreatePage() {
         capacity: data.capacity,
         status: data.status,
       });
-      window.sessionStorage.removeItem(DRAFT_KEY);
+      const editedDuringSubmit = JSON.stringify(getValues()) !== JSON.stringify(rawSnapshot);
+      removeAdminDraft('room-create', {
+        userId: user?.id ?? null,
+        legacyUnauthenticatedKey: DRAFT_KEY,
+      });
+      reset(rawSnapshot, { keepValues: true });
       setMessage(`Đã khai báo buồng khám ${data.code} - ${data.name}.`);
-      navigate('/admin/rooms');
+      if (!editedDuringSubmit) {
+        allowNavigation();
+        navigate('/admin/rooms');
+      } else {
+        guardAction(() => navigate('/admin/rooms'));
+      }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Không thể khai báo buồng khám.');
     }
   };
 
   const handleSaveDraft = () => {
-    window.sessionStorage.setItem(DRAFT_KEY, JSON.stringify(getValues()));
+    const snapshot: RoomCreateFormValues = { ...getValues() };
+    const result = saveAdminDraft('room-create', snapshot, {
+      userId: user?.id ?? null,
+      legacyUnauthenticatedKey: DRAFT_KEY,
+    });
+    if (!result.ok) {
+      setMessage(null);
+      setSubmitError(result.error);
+      return;
+    }
+    setSubmitError(null);
+    reset(snapshot, { keepValues: true });
     setMessage('Đã lưu bản nháp buồng khám.');
   };
 
@@ -307,7 +338,7 @@ export function RoomCreatePage() {
           <button
             type="button"
             aria-label="Hủy bỏ"
-            onClick={() => navigate('/admin/rooms')}
+            onClick={() => guardAction(() => navigate('/admin/rooms'))}
             className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-ink"
           >
             Hủy bỏ
@@ -331,6 +362,8 @@ export function RoomCreatePage() {
           </button>
         </div>
       </form>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </AdminPortalShell>
   );
 }

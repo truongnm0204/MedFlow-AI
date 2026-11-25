@@ -4,6 +4,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
 
+import { useAuthStore } from '@/features/auth/store/auth.store';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
+import { loadAdminDraft, removeAdminDraft, saveAdminDraft } from '@/shared/lib/admin-draft-storage';
 import { Button } from '@/shared/ui/button';
 
 import { AdminDoctorShell } from '../components/admin-doctor-shell';
@@ -35,28 +38,40 @@ const EMPTY_DOCTOR_FORM: DoctorFormValues = {
   active: true,
 };
 
-function loadDoctorDraft(): Doctor | null {
-  try {
-    const raw = window.sessionStorage.getItem(DOCTOR_CREATE_DRAFT_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<Doctor>;
-    return {
-      ...EMPTY_DOCTOR_FORM,
-      ...parsed,
-      history: Array.isArray(parsed.history) ? parsed.history : [],
-    };
-  } catch {
-    return null;
+function loadDoctorDraft(userId: number | null): Doctor | null {
+  const parsed = loadAdminDraft<Partial<Doctor>>('doctor-create', {
+    userId,
+    legacyUnauthenticatedKey: DOCTOR_CREATE_DRAFT_STORAGE_KEY,
+  });
+  if (!parsed) return null;
+  return {
+    ...EMPTY_DOCTOR_FORM,
+    ...parsed,
+    history: Array.isArray(parsed.history) ? parsed.history : [],
+  };
+}
+
+function areHistoriesEqual(left: WorkHistoryEntry[], right: WorkHistoryEntry[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i].year !== right[i].year || left[i].description !== right[i].description) {
+      return false;
+    }
   }
+  return true;
 }
 
 /** SCR-ADM-DOC-02 — create doctor profile via POST /api/v1/admin/doctors. */
 export function DoctorCreatePage() {
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
   const createDoctorMutation = useCreateAdminDoctorMutation();
 
-  const [initialDraft] = useState<Doctor | null>(() => loadDoctorDraft());
+  const [initialDraft] = useState<Doctor | null>(() => loadDoctorDraft(user?.id ?? null));
   const [history, setHistory] = useState<WorkHistoryEntry[]>(initialDraft?.history ?? []);
+  const [baselineHistory, setBaselineHistory] = useState<WorkHistoryEntry[]>(
+    initialDraft?.history ?? [],
+  );
   const [portrait, setPortrait] = useState<string | null>(initialDraft?.portrait ?? null);
   const [portraitError, setPortraitError] = useState('');
   const [message, setMessage] = useState('');
@@ -65,6 +80,7 @@ export function DoctorCreatePage() {
     register,
     handleSubmit,
     getValues,
+    reset,
     control,
     formState: { errors, isDirty },
   } = useForm<DoctorFormValues>({
@@ -72,29 +88,41 @@ export function DoctorCreatePage() {
     defaultValues: initialDraft ?? EMPTY_DOCTOR_FORM,
   });
 
+  // Portrait images are intentionally excluded from sessionStorage drafts,
+  // so an unsubmitted portrait keeps the form dirty until final submit.
+  const isFormDirty = isDirty || !areHistoriesEqual(history, baselineHistory) || portrait !== null;
+  const { isBlocked, confirmNavigation, cancelNavigation, allowNavigation, guardAction } =
+    useUnsavedChanges(isFormDirty);
+
   const biography = useWatch({ control, name: 'biography' }) ?? '';
 
   const persistDraft = useCallback(
-    (values: DoctorFormValues, nextHistory: WorkHistoryEntry[], nextPortrait: string | null) => {
+    (values: DoctorFormValues, nextHistory: WorkHistoryEntry[]) => {
       const payload: Doctor = {
         ...values,
-        history: nextHistory,
-        portrait: nextPortrait ?? undefined,
+        history: nextHistory.map((entry) => ({ ...entry })),
       };
-      window.sessionStorage.setItem(DOCTOR_CREATE_DRAFT_STORAGE_KEY, JSON.stringify(payload));
+      return saveAdminDraft('doctor-create', payload, {
+        userId: user?.id ?? null,
+        legacyUnauthenticatedKey: DOCTOR_CREATE_DRAFT_STORAGE_KEY,
+      });
     },
-    [],
+    [user?.id],
   );
 
   useEffect(() => {
-    if (!isDirty) return;
-    const timer = window.setInterval(() => persistDraft(getValues(), history, portrait), 30_000);
+    if (!isFormDirty) return;
+    const timer = window.setInterval(() => {
+      persistDraft(getValues(), history);
+    }, 30_000);
     return () => window.clearInterval(timer);
-  }, [getValues, history, isDirty, persistDraft, portrait]);
+  }, [getValues, history, isFormDirty, persistDraft]);
 
   useEffect(() => {
     const handleKeys = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') navigate('/admin/doctors');
+      if (event.key === 'Escape') {
+        guardAction(() => navigate('/admin/doctors'));
+      }
       if (event.ctrlKey && event.key.toLowerCase() === 's') {
         event.preventDefault();
         document.getElementById('doctor-create-submit')?.click();
@@ -102,7 +130,7 @@ export function DoctorCreatePage() {
     };
     window.addEventListener('keydown', handleKeys);
     return () => window.removeEventListener('keydown', handleKeys);
-  }, [navigate]);
+  }, [guardAction, navigate]);
 
   const handlePortrait = (file: File | null) => {
     if (!file) return;
@@ -122,20 +150,45 @@ export function DoctorCreatePage() {
   };
 
   const handleDraft = () => {
-    persistDraft(getValues(), history, portrait);
+    const snapshotValues: DoctorFormValues = { ...getValues() };
+    const snapshotHistory = history.map((entry) => ({ ...entry }));
+    const saved = persistDraft(snapshotValues, snapshotHistory);
+    if (!saved.ok) {
+      setMessage(saved.error);
+      return;
+    }
+    reset(snapshotValues, { keepValues: true });
+    setBaselineHistory(snapshotHistory);
     setMessage('Đã lưu bản nháp trong phiên hiện tại.');
   };
 
   const handleCreate = async (values: DoctorFormValues) => {
     setMessage('');
+    const rawSnapshot = structuredClone(getValues());
+    const submittedHistory = history.map((entry) => ({ ...entry }));
+    const submittedPortrait = portrait;
     try {
       await createDoctorMutation.mutateAsync({
         ...values,
-        history,
-        portrait: portrait ?? undefined,
+        history: submittedHistory,
+        portrait: submittedPortrait ?? undefined,
       });
-      window.sessionStorage.removeItem(DOCTOR_CREATE_DRAFT_STORAGE_KEY);
-      navigate('/admin/doctors');
+      const editedDuringSubmit =
+        JSON.stringify(getValues()) !== JSON.stringify(rawSnapshot) ||
+        !areHistoriesEqual(history, submittedHistory) ||
+        portrait !== submittedPortrait;
+      removeAdminDraft('doctor-create', {
+        userId: user?.id ?? null,
+        legacyUnauthenticatedKey: DOCTOR_CREATE_DRAFT_STORAGE_KEY,
+      });
+      reset(rawSnapshot, { keepValues: true });
+      setBaselineHistory(submittedHistory);
+      if (!editedDuringSubmit) {
+        allowNavigation();
+        navigate('/admin/doctors');
+      } else {
+        guardAction(() => navigate('/admin/doctors'));
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Không thể tạo hồ sơ bác sĩ.');
     }
@@ -212,7 +265,7 @@ export function DoctorCreatePage() {
                 type="button"
                 variant="secondary"
                 size="sm"
-                onClick={() => navigate('/admin/doctors')}
+                onClick={() => guardAction(() => navigate('/admin/doctors'))}
               >
                 Hủy bỏ [Esc]
               </Button>
@@ -232,6 +285,8 @@ export function DoctorCreatePage() {
           </div>
         </div>
       </form>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </AdminDoctorShell>
   );
 }

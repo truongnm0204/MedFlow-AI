@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { AlertTriangle, Info, Loader2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -8,6 +8,7 @@ import { useAdminDoctors } from '@/features/admin-doctors/hooks/use-admin-doctor
 import { useAdminRooms } from '@/features/admin-rooms/hooks/use-rooms';
 import { useAdminExaminationServices } from '@/features/admin-services/hooks/use-examination-services';
 import { FormField, formControlClass } from '@/shared/components/form/form-primitives';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
 import { Button } from '@/shared/ui/button';
 
 import { SlotEditFooter, SlotEditHeader } from '../components/slot-edit-chrome';
@@ -109,9 +110,10 @@ export function SlotEditModal() {
     register,
     handleSubmit,
     setValue,
+    getValues,
     control,
     reset,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<ExaminationSlotFormValues>({
     resolver: zodResolver(examinationSlotSchema),
     defaultValues: slot
@@ -135,8 +137,14 @@ export function SlotEditModal() {
       : undefined,
   });
 
+  const { isBlocked, confirmNavigation, cancelNavigation, allowNavigation, guardAction } =
+    useUnsavedChanges(isDirty);
+
+  const syncedSlotIdRef = useRef<string | null>(slot?.id ?? null);
   useEffect(() => {
-    if (slot) {
+    if (!slot) return;
+    if (syncedSlotIdRef.current !== slot.id || !isDirty) {
+      syncedSlotIdRef.current = slot.id;
       reset({
         code: slot.code,
         serviceType: slot.serviceType,
@@ -155,7 +163,7 @@ export function SlotEditModal() {
         status: slot.status,
       });
     }
-  }, [slot, reset]);
+  }, [isDirty, slot, reset]);
 
   const status = useWatch({ control, name: 'status' }) ?? 'OPEN';
   const serviceType = useWatch({ control, name: 'serviceType' }) ?? 'OUTPATIENT';
@@ -165,9 +173,15 @@ export function SlotEditModal() {
 
   const filteredServices = serviceOptions.filter((s) => s.type === serviceType);
 
+  const requestClose = () => {
+    guardAction(() => navigate('/admin/slots'));
+  };
+
   useEffect(() => {
     const handleKeys = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') navigate('/admin/slots');
+      if (event.key === 'Escape') {
+        guardAction(() => navigate('/admin/slots'));
+      }
       if (event.ctrlKey && event.key.toLowerCase() === 's') {
         event.preventDefault();
         document.getElementById('slot-edit-submit')?.click();
@@ -175,7 +189,7 @@ export function SlotEditModal() {
     };
     window.addEventListener('keydown', handleKeys);
     return () => window.removeEventListener('keydown', handleKeys);
-  }, [navigate]);
+  }, [guardAction, navigate]);
 
   if (isLoading && !slot) {
     return (
@@ -203,13 +217,21 @@ export function SlotEditModal() {
 
   const save = async (values: ExaminationSlotFormValues) => {
     setMessage('');
+    const rawSnapshot = structuredClone(getValues());
     try {
       const updated = await updateSlotMutation.mutateAsync({
         slotId: slot.id,
         values,
       });
+      const editedDuringSubmit = JSON.stringify(getValues()) !== JSON.stringify(rawSnapshot);
       updateSlotInStore(slot.id, updated);
-      navigate('/admin/slots');
+      reset(rawSnapshot, { keepValues: true });
+      if (!editedDuringSubmit) {
+        allowNavigation();
+        navigate('/admin/slots');
+      } else {
+        guardAction(() => navigate('/admin/slots'));
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Không thể cập nhật khung giờ khám.');
     }
@@ -220,7 +242,7 @@ export function SlotEditModal() {
       className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/60 p-3 backdrop-blur-[2px]"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) navigate('/admin/slots');
+        if (event.target === event.currentTarget) requestClose();
       }}
     >
       <form
@@ -231,7 +253,7 @@ export function SlotEditModal() {
         noValidate
         className="my-auto flex max-h-[calc(100vh-24px)] w-full max-w-[896px] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl"
       >
-        <SlotEditHeader slot={slot} status={status} onClose={() => navigate('/admin/slots')} />
+        <SlotEditHeader slot={slot} status={status} onClose={requestClose} />
 
         <div className="overflow-y-auto">
           <div className="mx-6 mt-5 flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-[11px] leading-relaxed text-sky-900">
@@ -470,7 +492,7 @@ export function SlotEditModal() {
 
         <SlotEditFooter
           isOpen={status === 'OPEN'}
-          onClose={() => navigate('/admin/slots')}
+          onClose={requestClose}
           onToggleStatus={() => {
             const next: SlotStatus = status === 'OPEN' ? 'CLOSED' : 'OPEN';
             setValue('status', next, { shouldDirty: true });
@@ -482,6 +504,7 @@ export function SlotEditModal() {
           }}
         />
       </form>
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </div>
   );
 }

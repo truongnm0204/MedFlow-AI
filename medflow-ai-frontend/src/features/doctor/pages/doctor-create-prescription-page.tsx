@@ -5,6 +5,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useRoleAccess } from '@/features/auth/hooks/use-role-access';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
@@ -29,6 +30,44 @@ const FULFILLMENT_OPTIONS: { value: PrescriptionFulfillmentChoice; label: string
   { value: 'EXTERNAL_PHARMACY', label: 'Nhà thuốc ngoài' },
 ];
 
+interface PrescriptionFormSnapshot {
+  fulfillmentChoice: PrescriptionFulfillmentChoice;
+  items: PrescriptionLineFormValues[];
+}
+
+function clonePrescriptionSnapshot(snapshot: PrescriptionFormSnapshot): PrescriptionFormSnapshot {
+  return {
+    fulfillmentChoice: snapshot.fulfillmentChoice,
+    items: snapshot.items.map((line) => ({ ...line })),
+  };
+}
+
+function arePrescriptionSnapshotsEqual(
+  left: PrescriptionFormSnapshot,
+  right: PrescriptionFormSnapshot,
+): boolean {
+  if (
+    left.fulfillmentChoice !== right.fulfillmentChoice ||
+    left.items.length !== right.items.length
+  ) {
+    return false;
+  }
+  for (let i = 0; i < left.items.length; i += 1) {
+    const a = left.items[i];
+    const b = right.items[i];
+    if (
+      a.medicineCode !== b.medicineCode ||
+      a.medicineId !== b.medicineId ||
+      a.prescribedQuantity !== b.prescribedQuantity ||
+      a.doseScheduleText !== b.doseScheduleText ||
+      a.instructions !== b.instructions
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function DoctorCreatePrescriptionPage({
   explicitPermissions,
 }: { explicitPermissions?: readonly string[] | null } = {}) {
@@ -48,25 +87,66 @@ export function DoctorCreatePrescriptionPage({
   const [syncedVisitId, setSyncedVisitId] = useState<number | null>(null);
   const [fulfillmentChoice, setFulfillmentChoice] =
     useState<PrescriptionFulfillmentChoice>('HOSPITAL');
-  const [items, setItems] = useState<PrescriptionLineFormValues[]>([blankPrescriptionLine()]);
+  const [items, setItems] = useState<PrescriptionLineFormValues[]>(() => [blankPrescriptionLine()]);
+  const [baselineSnapshot, setBaselineSnapshot] = useState<PrescriptionFormSnapshot>(() => ({
+    fulfillmentChoice: 'HOSPITAL',
+    items: [blankPrescriptionLine()],
+  }));
+  const [syncedRevisionKey, setSyncedRevisionKey] = useState<string>('');
+  const [hasBackgroundConflict, setHasBackgroundConflict] = useState(false);
+  const [pendingOwnSync, setPendingOwnSync] = useState(false);
   const [notice, setNotice] = useState<{
     tone: 'error' | 'info' | 'success';
     message: string;
   } | null>(null);
 
-  if (data && data.visit.visitId !== syncedVisitId) {
-    setSyncedVisitId(data.visit.visitId);
-    setItems([blankPrescriptionLine()]);
-    setFulfillmentChoice('HOSPITAL');
-    setNotice(null);
-  }
-
-  const doctorName = user?.fullName?.trim() || DOCTOR_WORKBENCH_META.defaultDoctorName;
-  const roomLabel = `${DOCTOR_WORKBENCH_META.roomCode} • ${DOCTOR_WORKBENCH_META.departmentName}`;
   const prescriptionAction = data?.allowedActions.find(
     (action) => action.id === 'create-prescription' || action.ucCode === 'UC37',
   );
   const canSave = Boolean(data) && canIssuePrescription && Boolean(prescriptionAction?.enabled);
+
+  if (data && data.visit.visitId !== syncedVisitId) {
+    const initialLine = blankPrescriptionLine();
+    setSyncedVisitId(data.visit.visitId);
+    setItems([initialLine]);
+    setFulfillmentChoice('HOSPITAL');
+    setBaselineSnapshot({
+      fulfillmentChoice: 'HOSPITAL',
+      items: [{ ...initialLine }],
+    });
+    setSyncedRevisionKey(
+      `${data.clinicalContext.currentRevisionNo ?? 0}:${data.queue?.stateVersion ?? 0}`,
+    );
+    setHasBackgroundConflict(false);
+    setNotice(null);
+  } else if (data && data.visit.visitId === syncedVisitId) {
+    const nextRevisionKey = `${data.clinicalContext.currentRevisionNo ?? 0}:${data.queue?.stateVersion ?? 0}`;
+    if (nextRevisionKey !== syncedRevisionKey) {
+      setSyncedRevisionKey(nextRevisionKey);
+      if (pendingOwnSync) {
+        setPendingOwnSync(false);
+      } else if (
+        canSave &&
+        !arePrescriptionSnapshotsEqual({ fulfillmentChoice, items }, baselineSnapshot)
+      ) {
+        setHasBackgroundConflict(true);
+      }
+    }
+  }
+
+  const isDirty =
+    canSave && !arePrescriptionSnapshotsEqual({ fulfillmentChoice, items }, baselineSnapshot);
+  const { isBlocked, confirmNavigation, cancelNavigation, guardAction } =
+    useUnsavedChanges(isDirty);
+
+  const navigateWithGuard = (target: string) => {
+    guardAction(() => {
+      navigate(target);
+    });
+  };
+
+  const doctorName = user?.fullName?.trim() || DOCTOR_WORKBENCH_META.defaultDoctorName;
+  const roomLabel = `${DOCTOR_WORKBENCH_META.roomCode} • ${DOCTOR_WORKBENCH_META.departmentName}`;
   const readOnlyReason = !data
     ? null
     : !canIssuePrescription
@@ -97,7 +177,8 @@ export function DoctorCreatePrescriptionPage({
   };
 
   const handleSave = async () => {
-    const parsed = createPrescriptionFormSchema.safeParse({ fulfillmentChoice, items });
+    const submittedSnapshot = clonePrescriptionSnapshot({ fulfillmentChoice, items });
+    const parsed = createPrescriptionFormSchema.safeParse(submittedSnapshot);
     if (!parsed.success) {
       setNotice({
         tone: 'error',
@@ -107,6 +188,7 @@ export function DoctorCreatePrescriptionPage({
     }
 
     try {
+      setPendingOwnSync(true);
       const saved = await save.mutateAsync({
         idOrCode: visitIdOrCode,
         payload: toCreatePrescriptionRequest(parsed.data, {
@@ -114,12 +196,15 @@ export function DoctorCreatePrescriptionPage({
           expectedRevisionNo: data?.clinicalContext.currentRevisionNo ?? null,
         }),
       });
+      setBaselineSnapshot(submittedSnapshot);
+      setHasBackgroundConflict(false);
       const savedSummary = saved.clinicalContext.prescriptionSummary;
       setNotice({
         tone: 'success',
         message: `Đã lưu đơn nháp ${savedSummary.latestPrescriptionCode ?? ''} (${savedSummary.itemCount} khoản thuốc). Đơn được phát hành khi hoàn tất lượt khám (UC38).`,
       });
     } catch (err) {
+      setPendingOwnSync(false);
       setNotice({
         tone: 'error',
         message: getErrorMessage(err, 'Không thể lưu đơn thuốc. Vui lòng thử lại.'),
@@ -134,8 +219,8 @@ export function DoctorCreatePrescriptionPage({
         doctorName={doctorName}
         roomLabel={roomLabel}
         onItemSelect={(id) => {
-          if (id === 'dashboard') navigate('/doctor');
-          else if (id === 'consultation') navigate('/doctor/consultation');
+          if (id === 'dashboard') navigateWithGuard('/doctor');
+          else if (id === 'consultation') navigateWithGuard('/doctor/consultation');
         }}
       />
 
@@ -144,7 +229,7 @@ export function DoctorCreatePrescriptionPage({
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
-              onClick={() => navigate(backTarget)}
+              onClick={() => navigateWithGuard(backTarget)}
               aria-label="Quay lại bàn khám lâm sàng"
               className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-navy transition-colors hover:bg-canvas"
             >
@@ -263,6 +348,12 @@ export function DoctorCreatePrescriptionPage({
                 )}
               </section>
 
+              {hasBackgroundConflict ? (
+                <Alert tone="warning">
+                  Hồ sơ lượt khám vừa được cập nhật trên máy chủ. Nội dung đơn thuốc bạn đang nhập
+                  vẫn được giữ nguyên; vui lòng kiểm tra lại trước khi lưu.
+                </Alert>
+              ) : null}
               {readOnlyReason ? <Alert tone="info">{readOnlyReason}</Alert> : null}
               {notice ? <Alert tone={notice.tone}>{notice.message}</Alert> : null}
 
@@ -390,6 +481,8 @@ export function DoctorCreatePrescriptionPage({
           ) : null}
         </main>
       </div>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </div>
   );
 }

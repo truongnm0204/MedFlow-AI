@@ -1,10 +1,11 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { DollarSign, Info, Loader2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { FormField, formControlClass } from '@/shared/components/form/form-primitives';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
 import { Button } from '@/shared/ui/button';
 
 import { ServiceEditFooter, ServiceEditHeader } from '../components/service-edit-chrome';
@@ -57,27 +58,40 @@ export function ServiceEditModal() {
     register,
     handleSubmit,
     setValue,
+    getValues,
     control,
     reset,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<ExaminationServiceFormValues>({
     resolver: zodResolver(examinationServiceSchema),
     defaultValues: service,
   });
 
+  const { isBlocked, confirmNavigation, cancelNavigation, allowNavigation, guardAction } =
+    useUnsavedChanges(isDirty);
+
+  const syncedServiceIdRef = useRef<string | null>(service?.id ?? null);
   useEffect(() => {
-    if (service) {
+    if (!service) return;
+    if (syncedServiceIdRef.current !== service.id || !isDirty) {
+      syncedServiceIdRef.current = service.id;
       reset(service);
     }
-  }, [service, reset]);
+  }, [isDirty, service, reset]);
 
   const status = useWatch({ control, name: 'status' });
   const onlineBooking = useWatch({ control, name: 'onlineBooking' }) ?? true;
   const description = useWatch({ control, name: 'description' }) ?? '';
 
+  const requestClose = () => {
+    guardAction(() => navigate('/admin/services'));
+  };
+
   useEffect(() => {
     const handleKeys = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') navigate('/admin/services');
+      if (event.key === 'Escape') {
+        guardAction(() => navigate('/admin/services'));
+      }
       if (event.ctrlKey && event.key.toLowerCase() === 's') {
         event.preventDefault();
         document.getElementById('service-edit-submit')?.click();
@@ -85,7 +99,7 @@ export function ServiceEditModal() {
     };
     window.addEventListener('keydown', handleKeys);
     return () => window.removeEventListener('keydown', handleKeys);
-  }, [navigate]);
+  }, [guardAction, navigate]);
 
   if (isLoading && !service) {
     return (
@@ -113,11 +127,13 @@ export function ServiceEditModal() {
 
   const save = async (values: ExaminationServiceFormValues) => {
     setMessage('');
+    const rawSnapshot = structuredClone(getValues());
     try {
       await updateMutation.mutateAsync({
         serviceId: service.id,
         values,
       });
+      const editedDuringSubmit = JSON.stringify(getValues()) !== JSON.stringify(rawSnapshot);
       updateServiceInStore(service.id, {
         name: values.name,
         category: values.category,
@@ -126,7 +142,13 @@ export function ServiceEditModal() {
         onlineBooking: values.onlineBooking,
         status: values.status,
       });
-      navigate('/admin/services');
+      reset(rawSnapshot, { keepValues: true });
+      if (!editedDuringSubmit) {
+        allowNavigation();
+        navigate('/admin/services');
+      } else {
+        guardAction(() => navigate('/admin/services'));
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Không thể cập nhật dịch vụ khám.');
     }
@@ -137,7 +159,7 @@ export function ServiceEditModal() {
       className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/60 p-3 backdrop-blur-[2px]"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) navigate('/admin/services');
+        if (event.target === event.currentTarget) requestClose();
       }}
     >
       <form
@@ -151,7 +173,7 @@ export function ServiceEditModal() {
         <ServiceEditHeader
           service={service}
           isActive={status === 'ACTIVE'}
-          onClose={() => navigate('/admin/services')}
+          onClose={requestClose}
         />
 
         <div className="overflow-y-auto">
@@ -320,7 +342,7 @@ export function ServiceEditModal() {
 
         <ServiceEditFooter
           isActive={status === 'ACTIVE'}
-          onClose={() => navigate('/admin/services')}
+          onClose={requestClose}
           onToggleStatus={() => {
             const next = status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
             setValue('status', next, { shouldDirty: true });
@@ -334,6 +356,7 @@ export function ServiceEditModal() {
       </form>
       <ServicePriceHistoryModal />
       <ServicePriceUpdateModal />
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </div>
   );
 }

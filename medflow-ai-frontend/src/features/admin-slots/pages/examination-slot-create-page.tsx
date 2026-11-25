@@ -4,7 +4,10 @@ import { useEffect, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
 
+import { useAuthStore } from '@/features/auth/store/auth.store';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
+import { loadAdminDraft, removeAdminDraft, saveAdminDraft } from '@/shared/lib/admin-draft-storage';
 
 import { SlotCreateActionBar } from '../components/slot-create-action-bar';
 import { SlotCreateForm } from '../components/slot-create-form';
@@ -23,6 +26,7 @@ import type { ServiceType } from '../types/examination-slot.types';
 
 export function ExaminationSlotCreatePage() {
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
   useAdminExaminationSlots();
   const createSlotMutation = useCreateExaminationSlotMutation();
   const slots = useExaminationSlotStore((state) => state.slots);
@@ -39,34 +43,47 @@ export function ExaminationSlotCreatePage() {
     message: string;
   } | null>(null);
 
+  const [initialDefaults] = useState<ExaminationSlotFormValues>(() => {
+    const persisted =
+      draft ??
+      loadAdminDraft<Partial<ExaminationSlotFormValues>>('examination-slot-create', {
+        userId: user?.id ?? null,
+      });
+    return {
+      code: persisted?.code ?? DEFAULT_SLOT_FORM_VALUES.code,
+      serviceType: persisted?.serviceType ?? DEFAULT_SLOT_FORM_VALUES.serviceType,
+      serviceId: persisted?.serviceId ?? DEFAULT_SLOT_FORM_VALUES.serviceId,
+      serviceName: persisted?.serviceName ?? DEFAULT_SLOT_FORM_VALUES.serviceName,
+      serviceCode: persisted?.serviceCode ?? DEFAULT_SLOT_FORM_VALUES.serviceCode,
+      specialty: persisted?.specialty ?? DEFAULT_SLOT_FORM_VALUES.specialty,
+      date: persisted?.date ?? DEFAULT_SLOT_FORM_VALUES.date,
+      startTime: persisted?.startTime ?? DEFAULT_SLOT_FORM_VALUES.startTime,
+      endTime: persisted?.endTime ?? DEFAULT_SLOT_FORM_VALUES.endTime,
+      facility: persisted?.facility ?? DEFAULT_SLOT_FORM_VALUES.facility,
+      capacityMax: persisted?.capacityMax ?? DEFAULT_SLOT_FORM_VALUES.capacityMax,
+      room: persisted?.room ?? DEFAULT_SLOT_FORM_VALUES.room,
+      doctorId: persisted?.doctorId ?? DEFAULT_SLOT_FORM_VALUES.doctorId,
+      doctorName: persisted?.doctorName ?? DEFAULT_SLOT_FORM_VALUES.doctorName,
+      status: persisted?.status ?? DEFAULT_SLOT_FORM_VALUES.status,
+    };
+  });
+
   const form = useForm<ExaminationSlotFormValues>({
     resolver: zodResolver(examinationSlotSchema),
-    defaultValues: {
-      code: draft?.code ?? DEFAULT_SLOT_FORM_VALUES.code,
-      serviceType: draft?.serviceType ?? DEFAULT_SLOT_FORM_VALUES.serviceType,
-      serviceId: draft?.serviceId ?? DEFAULT_SLOT_FORM_VALUES.serviceId,
-      serviceName: draft?.serviceName ?? DEFAULT_SLOT_FORM_VALUES.serviceName,
-      serviceCode: draft?.serviceCode ?? DEFAULT_SLOT_FORM_VALUES.serviceCode,
-      specialty: draft?.specialty ?? DEFAULT_SLOT_FORM_VALUES.specialty,
-      date: draft?.date ?? DEFAULT_SLOT_FORM_VALUES.date,
-      startTime: draft?.startTime ?? DEFAULT_SLOT_FORM_VALUES.startTime,
-      endTime: draft?.endTime ?? DEFAULT_SLOT_FORM_VALUES.endTime,
-      facility: draft?.facility ?? DEFAULT_SLOT_FORM_VALUES.facility,
-      capacityMax: draft?.capacityMax ?? DEFAULT_SLOT_FORM_VALUES.capacityMax,
-      room: draft?.room ?? DEFAULT_SLOT_FORM_VALUES.room,
-      doctorId: draft?.doctorId ?? DEFAULT_SLOT_FORM_VALUES.doctorId,
-      doctorName: draft?.doctorName ?? DEFAULT_SLOT_FORM_VALUES.doctorName,
-      status: draft?.status ?? DEFAULT_SLOT_FORM_VALUES.status,
-    },
+    defaultValues: initialDefaults,
   });
 
   const {
     handleSubmit,
     setValue,
     getValues,
+    reset,
     control,
     formState: { isDirty, isSubmitting },
   } = form;
+
+  const { isBlocked, confirmNavigation, cancelNavigation, allowNavigation, guardAction } =
+    useUnsavedChanges(isDirty);
 
   const currentServiceType = useWatch({ control, name: 'serviceType' }) ?? 'OUTPATIENT';
   const currentRoom = useWatch({ control, name: 'room' }) ?? '';
@@ -76,17 +93,23 @@ export function ExaminationSlotCreatePage() {
   useEffect(() => {
     if (!isDirty) return;
     const timer = window.setInterval(() => {
-      saveDraft(getValues());
-      setIsDraftSaved(true);
+      const snapshot: ExaminationSlotFormValues = { ...getValues() };
+      const saved = saveAdminDraft('examination-slot-create', snapshot, {
+        userId: user?.id ?? null,
+      });
+      if (saved.ok) {
+        saveDraft(snapshot);
+        setIsDraftSaved(true);
+      }
     }, 30_000);
     return () => window.clearInterval(timer);
-  }, [getValues, isDirty, saveDraft]);
+  }, [getValues, isDirty, saveDraft, user?.id]);
 
   // Global hotkeys (Esc to cancel, Ctrl+S to save)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        navigate('/admin/slots');
+        guardAction(() => navigate('/admin/slots'));
       }
       if (e.ctrlKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
@@ -95,10 +118,19 @@ export function ExaminationSlotCreatePage() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [navigate]);
+  }, [guardAction, navigate]);
 
   const handleManualDraftSave = () => {
-    saveDraft(getValues());
+    const snapshot: ExaminationSlotFormValues = { ...getValues() };
+    const saved = saveAdminDraft('examination-slot-create', snapshot, {
+      userId: user?.id ?? null,
+    });
+    if (!saved.ok) {
+      setMessage(saved.error);
+      return;
+    }
+    saveDraft(snapshot);
+    reset(snapshot, { keepValues: true });
     setIsDraftSaved(true);
     setMessage('Đã lưu bản nháp khung giờ khám vào bộ nhớ phiên làm việc.');
     setTimeout(() => setMessage(null), 3000);
@@ -165,6 +197,7 @@ export function ExaminationSlotCreatePage() {
 
   const handleCreate = async (values: ExaminationSlotFormValues) => {
     setMessage(null);
+    const rawSnapshot = structuredClone(getValues());
     if (slots.some((s) => s.code.toLowerCase() === values.code.trim().toLowerCase())) {
       setMessage(`Mã slot "${values.code}" đã tồn tại trên hệ thống.`);
       return;
@@ -172,9 +205,17 @@ export function ExaminationSlotCreatePage() {
 
     try {
       const created = await createSlotMutation.mutateAsync(values);
+      const editedDuringSubmit = JSON.stringify(getValues()) !== JSON.stringify(rawSnapshot);
       addSlot(created);
       clearDraft();
-      navigate('/admin/slots');
+      removeAdminDraft('examination-slot-create', { userId: user?.id ?? null });
+      reset(rawSnapshot, { keepValues: true });
+      if (!editedDuringSubmit) {
+        allowNavigation();
+        navigate('/admin/slots');
+      } else {
+        guardAction(() => navigate('/admin/slots'));
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Không thể tạo mới khung giờ khám.');
     }
@@ -253,7 +294,7 @@ export function ExaminationSlotCreatePage() {
                 onServiceTypeChange={(type) => {
                   setValue('serviceType', type, { shouldValidate: true, shouldDirty: true });
                   // Reset service when type changes
-                  setValue('serviceId', '', { shouldValidate: true });
+                  setValue('serviceId', '', { shouldValidate: true, shouldDirty: true });
                 }}
                 selectedRoom={currentRoom}
                 onRoomSelect={(roomCode) =>
@@ -282,11 +323,13 @@ export function ExaminationSlotCreatePage() {
 
         {/* Bottom Fixed Action Bar */}
         <SlotCreateActionBar
-          onCancel={() => navigate('/admin/slots')}
+          onCancel={() => guardAction(() => navigate('/admin/slots'))}
           onSaveDraft={handleManualDraftSave}
           isSubmitting={isSubmitting}
         />
       </form>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </AdminPortalShell>
   );
 }

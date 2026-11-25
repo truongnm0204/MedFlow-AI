@@ -12,7 +12,7 @@ import {
   Thermometer,
   Weight,
 } from 'lucide-react';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
@@ -39,8 +39,11 @@ export interface ConsultationVitalsAndClinicalCardProps {
   submitError?: string | null;
   isFormOpen?: boolean;
   onToggleForm?: (open: boolean) => void;
-  onSubmitExamination?: (payload: RecordClinicalExaminationRequest) => Promise<void> | void;
+  onSubmitExamination?: (
+    payload: RecordClinicalExaminationRequest,
+  ) => Promise<boolean | void> | boolean | void;
   onClearSubmitError?: () => void;
+  onDirtyChange?: (isDirty: boolean) => void;
 }
 
 const RECORD_STATUS_META: Record<
@@ -68,6 +71,62 @@ function toInputString(val: number | null | undefined): string {
   return val !== null && val !== undefined ? String(val) : '';
 }
 
+interface ClinicalFormSnapshot {
+  bpSystolic: string;
+  bpDiastolic: string;
+  pulse: string;
+  temperature: string;
+  spo2: string;
+  height: string;
+  weight: string;
+  presentingComplaint: string;
+  symptomHistory: string;
+  relevantHistoryAllergies: string;
+  clinicalFindings: string;
+  clinicalConclusion: string;
+  amendmentReason: string;
+  isConfirmed: boolean;
+}
+
+function buildSnapshotFromContext(ctx: ConsultationClinicalContextDto): ClinicalFormSnapshot {
+  const { vitalSigns } = ctx;
+  return {
+    bpSystolic: toInputString(vitalSigns.bpSystolicMmhg),
+    bpDiastolic: toInputString(vitalSigns.bpDiastolicMmhg),
+    pulse: toInputString(vitalSigns.pulseBpm),
+    temperature: toInputString(vitalSigns.temperatureC),
+    spo2: toInputString(vitalSigns.spo2Percent),
+    height: toInputString(vitalSigns.heightCm),
+    weight: toInputString(vitalSigns.weightKg),
+    presentingComplaint: ctx.presentingComplaint ?? '',
+    symptomHistory: ctx.symptomHistory ?? '',
+    relevantHistoryAllergies: ctx.relevantHistoryAllergies ?? '',
+    clinicalFindings: ctx.clinicalFindings ?? '',
+    clinicalConclusion: ctx.clinicalConclusion ?? '',
+    amendmentReason: '',
+    isConfirmed: true,
+  };
+}
+
+function areClinicalSnapshotsEqual(a: ClinicalFormSnapshot, b: ClinicalFormSnapshot): boolean {
+  return (
+    a.bpSystolic === b.bpSystolic &&
+    a.bpDiastolic === b.bpDiastolic &&
+    a.pulse === b.pulse &&
+    a.temperature === b.temperature &&
+    a.spo2 === b.spo2 &&
+    a.height === b.height &&
+    a.weight === b.weight &&
+    a.presentingComplaint === b.presentingComplaint &&
+    a.symptomHistory === b.symptomHistory &&
+    a.relevantHistoryAllergies === b.relevantHistoryAllergies &&
+    a.clinicalFindings === b.clinicalFindings &&
+    a.clinicalConclusion === b.clinicalConclusion &&
+    a.amendmentReason === b.amendmentReason &&
+    a.isConfirmed === b.isConfirmed
+  );
+}
+
 export function ConsultationVitalsAndClinicalCard({
   clinicalContext,
   canEditClinical,
@@ -80,6 +139,7 @@ export function ConsultationVitalsAndClinicalCard({
   onToggleForm,
   onSubmitExamination,
   onClearSubmitError,
+  onDirtyChange,
 }: ConsultationVitalsAndClinicalCardProps) {
   const { vitalSigns } = clinicalContext;
   const isEditable = canEditClinical && hasWritePermission;
@@ -95,8 +155,10 @@ export function ConsultationVitalsAndClinicalCard({
     }
   };
 
-  const contextSyncKey = `${clinicalContext.medicalRecordId ?? 'none'}:${clinicalContext.currentRevisionNo ?? 0}:${clinicalContext.lastRecordedAt ?? ''}`;
+  const visitRecordScopeKey = `${clinicalContext.medicalRecordId ?? 'none'}`;
+  const contextSyncKey = `${visitRecordScopeKey}:${clinicalContext.currentRevisionNo ?? 0}:${clinicalContext.lastRecordedAt ?? ''}`;
   const [lastSyncedKey, setLastSyncedKey] = useState(contextSyncKey);
+  const [lastRecordScopeKey, setLastRecordScopeKey] = useState(visitRecordScopeKey);
 
   const [bpSystolicInput, setBpSystolicInput] = useState(() =>
     toInputString(vitalSigns.bpSystolicMmhg),
@@ -127,36 +189,80 @@ export function ConsultationVitalsAndClinicalCard({
   const [clinicalConclusionInput, setClinicalConclusionInput] = useState(
     () => clinicalContext.clinicalConclusion ?? '',
   );
-  const [amendmentReasonInput, setAmendmentReasonInput] = useState(
-    () => clinicalContext.amendmentReason ?? '',
-  );
-  const [isConfirmedInput, setIsConfirmedInput] = useState<boolean>(
-    () => clinicalContext.isConfirmed || true,
+  const [amendmentReasonInput, setAmendmentReasonInput] = useState('');
+  const [isConfirmedInput, setIsConfirmedInput] = useState<boolean>(true);
+  const [baselineSnapshot, setBaselineSnapshot] = useState<ClinicalFormSnapshot>(() =>
+    buildSnapshotFromContext(clinicalContext),
   );
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [hasBackgroundConflict, setHasBackgroundConflict] = useState(false);
+  const [pendingOwnSync, setPendingOwnSync] = useState(false);
+
+  const currentSnapshot: ClinicalFormSnapshot = {
+    bpSystolic: bpSystolicInput,
+    bpDiastolic: bpDiastolicInput,
+    pulse: pulseInput,
+    temperature: temperatureInput,
+    spo2: spo2Input,
+    height: heightInput,
+    weight: weightInput,
+    presentingComplaint: presentingComplaintInput,
+    symptomHistory: symptomHistoryInput,
+    relevantHistoryAllergies: relevantHistoryAllergiesInput,
+    clinicalFindings: clinicalFindingsInput,
+    clinicalConclusion: clinicalConclusionInput,
+    amendmentReason: amendmentReasonInput,
+    isConfirmed: isConfirmedInput,
+  };
+
+  const hasUnsavedChanges = !areClinicalSnapshotsEqual(currentSnapshot, baselineSnapshot);
+  const isDirty = isEditable && isFormOpen && hasUnsavedChanges;
 
   const syncDraftFromClinicalContext = () => {
-    setBpSystolicInput(toInputString(vitalSigns.bpSystolicMmhg));
-    setBpDiastolicInput(toInputString(vitalSigns.bpDiastolicMmhg));
-    setPulseInput(toInputString(vitalSigns.pulseBpm));
-    setTemperatureInput(toInputString(vitalSigns.temperatureC));
-    setSpo2Input(toInputString(vitalSigns.spo2Percent));
-    setHeightInput(toInputString(vitalSigns.heightCm));
-    setWeightInput(toInputString(vitalSigns.weightKg));
-    setPresentingComplaintInput(clinicalContext.presentingComplaint ?? '');
-    setSymptomHistoryInput(clinicalContext.symptomHistory ?? '');
-    setRelevantHistoryAllergiesInput(clinicalContext.relevantHistoryAllergies ?? '');
-    setClinicalFindingsInput(clinicalContext.clinicalFindings ?? '');
-    setClinicalConclusionInput(clinicalContext.clinicalConclusion ?? '');
-    setAmendmentReasonInput('');
-    setIsConfirmedInput(true);
+    const fresh = buildSnapshotFromContext(clinicalContext);
+    setBpSystolicInput(fresh.bpSystolic);
+    setBpDiastolicInput(fresh.bpDiastolic);
+    setPulseInput(fresh.pulse);
+    setTemperatureInput(fresh.temperature);
+    setSpo2Input(fresh.spo2);
+    setHeightInput(fresh.height);
+    setWeightInput(fresh.weight);
+    setPresentingComplaintInput(fresh.presentingComplaint);
+    setSymptomHistoryInput(fresh.symptomHistory);
+    setRelevantHistoryAllergiesInput(fresh.relevantHistoryAllergies);
+    setClinicalFindingsInput(fresh.clinicalFindings);
+    setClinicalConclusionInput(fresh.clinicalConclusion);
+    setAmendmentReasonInput(fresh.amendmentReason);
+    setIsConfirmedInput(fresh.isConfirmed);
+    setBaselineSnapshot(fresh);
+    setHasBackgroundConflict(false);
     setValidationError(null);
   };
 
   if (contextSyncKey !== lastSyncedKey) {
     setLastSyncedKey(contextSyncKey);
-    syncDraftFromClinicalContext();
+    const switchedDifferentRecord =
+      visitRecordScopeKey !== lastRecordScopeKey && lastRecordScopeKey !== 'none';
+    setLastRecordScopeKey(visitRecordScopeKey);
+
+    if (pendingOwnSync) {
+      setPendingOwnSync(false);
+      if (!hasUnsavedChanges) {
+        syncDraftFromClinicalContext();
+      }
+    } else if (switchedDifferentRecord || !hasUnsavedChanges) {
+      syncDraftFromClinicalContext();
+    } else {
+      setHasBackgroundConflict(true);
+    }
   }
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+    return () => {
+      onDirtyChange?.(false);
+    };
+  }, [isDirty, onDirtyChange]);
 
   const recordStatusMeta = RECORD_STATUS_META[clinicalContext.medicalRecordStatus] ?? {
     label: clinicalContext.medicalRecordStatus,
@@ -250,7 +356,15 @@ export function ConsultationVitalsAndClinicalCard({
       return;
     }
 
-    await onSubmitExamination?.(candidatePayload);
+    const submittedSnapshot: ClinicalFormSnapshot = { ...currentSnapshot };
+    setPendingOwnSync(true);
+    const outcome = await onSubmitExamination?.(candidatePayload);
+    if (outcome !== false) {
+      setBaselineSnapshot(submittedSnapshot);
+      setHasBackgroundConflict(false);
+    } else {
+      setPendingOwnSync(false);
+    }
   };
 
   return (
@@ -455,6 +569,14 @@ export function ConsultationVitalsAndClinicalCard({
                 )}
               </div>
             </div>
+
+            {hasBackgroundConflict && (
+              <Alert tone="warning">
+                Dữ liệu bệnh án vừa có phiên bản mới trên máy chủ. Nội dung bạn đang nhập chưa lưu
+                vẫn được giữ nguyên; bấm &quot;Khôi phục dữ liệu hiện tại&quot; nếu muốn nạp phiên
+                bản mới nhất.
+              </Alert>
+            )}
 
             {(validationError || submitError) && (
               <div role="alert">

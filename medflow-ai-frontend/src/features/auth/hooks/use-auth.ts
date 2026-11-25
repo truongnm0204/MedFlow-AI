@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
+import { notifyAuthSessionInvalidated } from '@/shared/lib/navigation-guard-manager';
+
 import * as authApi from '../api/auth.api';
 import { useAuthStore } from '../store/auth.store';
 import type { LoginRequest, RegisterRequest, VerifyOtpRequest } from '../types/auth.types';
@@ -62,6 +64,7 @@ export function useLogout() {
 
   return useMutation({
     mutationFn: async () => {
+      notifyAuthSessionInvalidated();
       // Đọc token tại thời điểm mutate — tránh token cũ sau silent refresh rotate.
       const refreshToken = useAuthStore.getState().refreshToken;
       if (refreshToken) {

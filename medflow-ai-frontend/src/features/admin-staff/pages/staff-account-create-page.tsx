@@ -5,6 +5,7 @@ import { useForm, useWatch } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
 import { Button } from '@/shared/ui/button';
 
 import { useCreateStaffAccountMutation } from '../hooks/use-staff-accounts';
@@ -60,11 +61,16 @@ export function StaffAccountCreatePage() {
     handleSubmit,
     control,
     setValue,
-    formState: { errors, isSubmitting },
+    getValues,
+    reset,
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<StaffCreateFormValues>({
     resolver: zodResolver(staffCreateSchema),
     defaultValues: DEFAULT_VALUES,
   });
+
+  const { isBlocked, confirmNavigation, cancelNavigation, allowNavigation, guardAction } =
+    useUnsavedChanges(isDirty);
 
   const values = useWatch({ control });
   const roleLabel = STAFF_ROLE_OPTIONS.find((r) => r.value === values.role)?.label ?? '';
@@ -72,9 +78,17 @@ export function StaffAccountCreatePage() {
 
   const onSubmit = async (formValues: StaffCreateFormValues) => {
     setSubmitError(null);
+    const rawSnapshot = structuredClone(getValues());
     try {
       await createStaffMutation.mutateAsync(formValues);
-      navigate(LIST_PATH);
+      const editedDuringSubmit = JSON.stringify(getValues()) !== JSON.stringify(rawSnapshot);
+      reset(rawSnapshot, { keepValues: true });
+      if (!editedDuringSubmit) {
+        allowNavigation();
+        navigate(LIST_PATH);
+      } else {
+        guardAction(() => navigate(LIST_PATH));
+      }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Không thể tạo tài khoản nhân sự.');
     }
@@ -254,7 +268,12 @@ export function StaffAccountCreatePage() {
                             type="button"
                             aria-pressed={selected}
                             aria-label={`Vai trò ${r.label}`}
-                            onClick={() => setValue('role', r.value, { shouldValidate: true })}
+                            onClick={() =>
+                              setValue('role', r.value, {
+                                shouldValidate: true,
+                                shouldDirty: true,
+                              })
+                            }
                             className={`rounded-full border px-4 py-1.5 text-sm font-semibold ${
                               selected
                                 ? 'border-primary bg-primary text-white'
@@ -297,7 +316,7 @@ export function StaffAccountCreatePage() {
             variant="secondary"
             size="sm"
             aria-label="Hủy bỏ"
-            onClick={() => navigate(LIST_PATH)}
+            onClick={() => guardAction(() => navigate(LIST_PATH))}
           >
             Hủy bỏ
           </Button>
@@ -313,6 +332,8 @@ export function StaffAccountCreatePage() {
           </Button>
         </div>
       </form>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </AdminPortalShell>
   );
 }

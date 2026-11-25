@@ -8,12 +8,13 @@ import {
   Save,
   ShieldAlert,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useRoleAccess } from '@/features/auth/hooks/use-role-access';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
@@ -68,6 +69,43 @@ interface DiagnosisConclusionContentProps {
   isSaving: boolean;
   onReload: () => void;
   onSave: (variables: RecordDiagnosisVariables) => Promise<ConsultationWorkspaceResponseDto>;
+  onDirtyChange?: (isDirty: boolean) => void;
+  onGuardNavigate: (target: string) => void;
+}
+
+function cloneDiagnosisValues(
+  source: DiagnosisConclusionFormValues,
+): DiagnosisConclusionFormValues {
+  return {
+    primaryIcd10Code: source.primaryIcd10Code,
+    secondaryIcd10Codes: [...source.secondaryIcd10Codes],
+    differentialNotes: source.differentialNotes,
+    clinicalConclusion: source.clinicalConclusion,
+    lifestyleInstructions: source.lifestyleInstructions,
+    warningSigns: source.warningSigns,
+  };
+}
+
+function areDiagnosisValuesEqual(
+  left: DiagnosisConclusionFormValues,
+  right: DiagnosisConclusionFormValues,
+): boolean {
+  if (
+    left.primaryIcd10Code !== right.primaryIcd10Code ||
+    left.differentialNotes !== right.differentialNotes ||
+    left.clinicalConclusion !== right.clinicalConclusion ||
+    left.lifestyleInstructions !== right.lifestyleInstructions ||
+    left.warningSigns !== right.warningSigns ||
+    left.secondaryIcd10Codes.length !== right.secondaryIcd10Codes.length
+  ) {
+    return false;
+  }
+  for (let i = 0; i < left.secondaryIcd10Codes.length; i += 1) {
+    if (left.secondaryIcd10Codes[i] !== right.secondaryIcd10Codes[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function DiagnosisConclusionContent({
@@ -75,11 +113,15 @@ function DiagnosisConclusionContent({
   isSaving,
   onReload,
   onSave,
+  onDirtyChange,
+  onGuardNavigate,
 }: DiagnosisConclusionContentProps) {
-  const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const { hasPermission } = useRoleAccess();
   const [values, setValues] = useState<DiagnosisConclusionFormValues>(() =>
+    toDiagnosisFormValues(workspace),
+  );
+  const [baselineValues, setBaselineValues] = useState<DiagnosisConclusionFormValues>(() =>
     toDiagnosisFormValues(workspace),
   );
   const [optionsByCode, setOptionsByCode] = useState<Record<string, Icd10Option>>(() =>
@@ -87,12 +129,48 @@ function DiagnosisConclusionContent({
   );
   const [errors, setErrors] = useState<DiagnosisConclusionFieldErrors>({});
   const [notice, setNotice] = useState<SaveNotice | null>(null);
+  const [hasBackgroundConflict, setHasBackgroundConflict] = useState(false);
+  const justSavedRef = useRef(false);
 
   const canWrite = user === null ? true : hasPermission('MEDICAL_RECORD_WRITE');
   const recordAction = workspace.allowedActions.find(
     (action) => action.id === 'record-diagnosis' || action.ucCode === 'UC36',
   );
   const isEditable = canWrite && workspace.canEditClinical && recordAction?.enabled === true;
+  const isDirty = isEditable && !areDiagnosisValuesEqual(values, baselineValues);
+
+  const serverVersionKey = `${workspace.clinicalContext.currentRevisionNo ?? 0}:${workspace.queue?.stateVersion ?? 0}:${JSON.stringify(workspace.clinicalContext.diagnoses ?? [])}`;
+  const syncedVersionKeyRef = useRef(serverVersionKey);
+  const isDirtyRef = useRef(isDirty);
+  useLayoutEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
+  useEffect(() => {
+    if (serverVersionKey === syncedVersionKeyRef.current) return;
+    syncedVersionKeyRef.current = serverVersionKey;
+    if (justSavedRef.current) {
+      justSavedRef.current = false;
+      return;
+    }
+    if (!isDirtyRef.current) {
+      const fresh = toDiagnosisFormValues(workspace);
+      setValues(fresh);
+      setBaselineValues(cloneDiagnosisValues(fresh));
+      setOptionsByCode((prev) => ({ ...prev, ...toDiagnosisOptionMap(workspace) }));
+      setHasBackgroundConflict(false);
+    } else {
+      // Never overwrite in-progress clinical edits during background refetch
+      setHasBackgroundConflict(true);
+    }
+  }, [serverVersionKey, workspace]);
+
+  useLayoutEffect(() => {
+    onDirtyChange?.(isDirty);
+    return () => {
+      onDirtyChange?.(false);
+    };
+  }, [isDirty, onDirtyChange]);
   const readOnlyReason = !canWrite
     ? WRITE_PERMISSION_REASON
     : (recordAction?.disabledReason ?? workspace.readOnlyReason ?? READ_ONLY_FALLBACK);
@@ -137,7 +215,8 @@ function DiagnosisConclusionContent({
   };
 
   const handleSave = async (mode: DiagnosisSaveMode) => {
-    const validationErrors = validateDiagnosisConclusion(values, mode);
+    const submittedSnapshot = cloneDiagnosisValues(values);
+    const validationErrors = validateDiagnosisConclusion(submittedSnapshot, mode);
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
       setNotice(null);
@@ -146,11 +225,14 @@ function DiagnosisConclusionContent({
 
     setErrors({});
     try {
+      justSavedRef.current = true;
       await onSave({
         idOrCode: visitCode,
-        payload: toRecordDiagnosisRequest(values, workspace, mode),
+        payload: toRecordDiagnosisRequest(submittedSnapshot, workspace, mode),
       });
-      const primaryCode = values.primaryIcd10Code.trim().toUpperCase();
+      setBaselineValues(submittedSnapshot);
+      setHasBackgroundConflict(false);
+      const primaryCode = submittedSnapshot.primaryIcd10Code.trim().toUpperCase();
       setNotice(
         mode === 'draft'
           ? {
@@ -165,6 +247,7 @@ function DiagnosisConclusionContent({
             },
       );
     } catch (error) {
+      justSavedRef.current = false;
       setNotice({
         tone: 'error',
         conflict: axios.isAxiosError(error) && error.response?.status === 409,
@@ -214,6 +297,31 @@ function DiagnosisConclusionContent({
               </Button>
             )}
           </div>
+        )}
+
+        {hasBackgroundConflict && (
+          <Alert tone="warning">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                Hồ sơ lượt khám vừa có phiên bản mới trên máy chủ. Nội dung bạn đang nhập chưa lưu
+                vẫn được giữ nguyên để tránh mất dữ liệu.
+              </span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  const fresh = toDiagnosisFormValues(workspace);
+                  setValues(fresh);
+                  setBaselineValues(cloneDiagnosisValues(fresh));
+                  setOptionsByCode((prev) => ({ ...prev, ...toDiagnosisOptionMap(workspace) }));
+                  setHasBackgroundConflict(false);
+                }}
+              >
+                Nạp dữ liệu mới nhất
+              </Button>
+            </div>
+          </Alert>
         )}
 
         {!isEditable && <Alert tone="warning">{readOnlyReason}</Alert>}
@@ -295,7 +403,7 @@ function DiagnosisConclusionContent({
             variant="secondary"
             size="sm"
             onClick={() =>
-              navigate(`/doctor/consultation/${encodeURIComponent(visitCode)}/prescription`)
+              onGuardNavigate(`/doctor/consultation/${encodeURIComponent(visitCode)}/prescription`)
             }
             className="gap-1.5"
           >
@@ -309,7 +417,7 @@ function DiagnosisConclusionContent({
               variant="secondary"
               size="sm"
               onClick={() =>
-                navigate(`/doctor/consultation/${encodeURIComponent(visitCode)}/complete`)
+                onGuardNavigate(`/doctor/consultation/${encodeURIComponent(visitCode)}/complete`)
               }
               className="gap-1.5"
             >
@@ -373,6 +481,15 @@ export function DoctorDiagnosisPage() {
   const visitIdOrCode = params.visitIdOrCode?.trim() ?? '';
   const workspaceQuery = useConsultationWorkspace(visitIdOrCode);
   const recordDiagnosis = useRecordDiagnosis();
+  const [isDiagnosisDirty, setIsDiagnosisDirty] = useState(false);
+  const { isBlocked, confirmNavigation, cancelNavigation, guardAction } =
+    useUnsavedChanges(isDiagnosisDirty);
+
+  const navigateWithGuard = (target: string) => {
+    guardAction(() => {
+      navigate(target);
+    });
+  };
 
   const doctorName = user?.fullName?.trim() || DOCTOR_WORKBENCH_META.defaultDoctorName;
   const roomLabel = `${DOCTOR_WORKBENCH_META.roomCode} • ${DOCTOR_WORKBENCH_META.departmentName}`;
@@ -391,10 +508,10 @@ export function DoctorDiagnosisPage() {
         doctorName={doctorName}
         roomLabel={roomLabel}
         onItemSelect={(item) => {
-          if (item === 'dashboard') navigate('/doctor');
-          else if (item === 'assigned-queue') navigate('/doctor/assigned-queue');
-          else if (item === 'consultation') navigate('/doctor/consultation');
-          else if (item === 'medical-history') navigate('/doctor/medical-history');
+          if (item === 'dashboard') navigateWithGuard('/doctor');
+          else if (item === 'assigned-queue') navigateWithGuard('/doctor/assigned-queue');
+          else if (item === 'consultation') navigateWithGuard('/doctor/consultation');
+          else if (item === 'medical-history') navigateWithGuard('/doctor/medical-history');
         }}
       />
 
@@ -403,7 +520,7 @@ export function DoctorDiagnosisPage() {
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
-              onClick={() => navigate(backTarget)}
+              onClick={() => navigateWithGuard(backTarget)}
               aria-label="Quay lại phiên khám"
               className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-navy transition-colors hover:bg-canvas"
             >
@@ -476,9 +593,13 @@ export function DoctorDiagnosisPage() {
             isSaving={recordDiagnosis.isPending}
             onReload={() => void workspaceQuery.refetch()}
             onSave={recordDiagnosis.mutateAsync}
+            onDirtyChange={setIsDiagnosisDirty}
+            onGuardNavigate={navigateWithGuard}
           />
         )}
       </div>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </div>
   );
 }

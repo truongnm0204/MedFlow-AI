@@ -1,5 +1,5 @@
 import { Loader2, Save } from 'lucide-react';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import {
@@ -10,6 +10,7 @@ import {
   formControlClass,
 } from '@/shared/components/form/form-primitives';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
 import { Button } from '@/shared/ui/button';
 
 import {
@@ -88,13 +89,33 @@ export function StaffAccountEditPage() {
   );
 }
 
+function areStaffInputsEqual(a: UpdateStaffAccountInput, b: UpdateStaffAccountInput): boolean {
+  return (
+    a.fullName === b.fullName &&
+    a.authMethod === b.authMethod &&
+    a.facility === b.facility &&
+    a.email === b.email &&
+    a.status === b.status &&
+    a.department === b.department &&
+    a.role === b.role
+  );
+}
+
 function StaffAccountEditForm({ record }: { record: StaffAccountRecord }) {
   const navigate = useNavigate();
   const updateMutation = useUpdateStaffAccountMutation();
   const { staffCode, ...initial } = record;
-  const [values, setValues] = useState<UpdateStaffAccountInput>(initial);
+  const [values, setValues] = useState<UpdateStaffAccountInput>(() => ({ ...initial }));
+  const [baselineValues, setBaselineValues] = useState<UpdateStaffAccountInput>(() => ({
+    ...initial,
+  }));
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const isDirty = !areStaffInputsEqual(values, baselineValues);
+  const { isBlocked, confirmNavigation, cancelNavigation, allowNavigation, guardAction } =
+    useUnsavedChanges(isDirty);
+  const latestValuesRef = useRef<UpdateStaffAccountInput>(values);
 
   const facilityOptions = useMemo(() => {
     const set = new Set<string>(STAFF_FACILITIES);
@@ -111,12 +132,18 @@ function StaffAccountEditForm({ record }: { record: StaffAccountRecord }) {
   const update = <K extends keyof UpdateStaffAccountInput>(
     key: K,
     value: UpdateStaffAccountInput[K],
-  ) => setValues((prev) => ({ ...prev, [key]: value }));
+  ) =>
+    setValues((prev) => {
+      const next = { ...prev, [key]: value };
+      latestValuesRef.current = next;
+      return next;
+    });
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setSubmitError(null);
-    const result = staffUpdateSchema.safeParse(values);
+    const submittedSnapshot: UpdateStaffAccountInput = { ...values };
+    const result = staffUpdateSchema.safeParse(submittedSnapshot);
     if (!result.success) {
       const next: FieldErrors = {};
       for (const issue of result.error.issues) {
@@ -129,7 +156,14 @@ function StaffAccountEditForm({ record }: { record: StaffAccountRecord }) {
     setErrors({});
     try {
       await updateMutation.mutateAsync({ staffIdentifier: staffCode, values: result.data });
-      navigate(LIST_PATH);
+      setBaselineValues(submittedSnapshot);
+      const editedDuringSubmit = !areStaffInputsEqual(latestValuesRef.current, submittedSnapshot);
+      if (!editedDuringSubmit) {
+        allowNavigation();
+        navigate(LIST_PATH);
+      } else {
+        guardAction(() => navigate(LIST_PATH));
+      }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Không thể cập nhật tài khoản nhân sự.');
     }
@@ -298,7 +332,7 @@ function StaffAccountEditForm({ record }: { record: StaffAccountRecord }) {
           type="button"
           variant="secondary"
           aria-label="Hủy bỏ"
-          onClick={() => navigate(LIST_PATH)}
+          onClick={() => guardAction(() => navigate(LIST_PATH))}
         >
           Hủy bỏ
         </Button>
@@ -307,6 +341,8 @@ function StaffAccountEditForm({ record }: { record: StaffAccountRecord }) {
           Lưu thay đổi
         </Button>
       </div>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </form>
   );
 }

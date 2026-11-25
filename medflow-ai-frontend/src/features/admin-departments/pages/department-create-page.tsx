@@ -4,7 +4,10 @@ import { useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
 
+import { useAuthStore } from '@/features/auth/store/auth.store';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
+import { loadAdminDraft, removeAdminDraft, saveAdminDraft } from '@/shared/lib/admin-draft-storage';
 
 import { useAdminHospitalOptions, useCreateDepartmentMutation } from '../hooks/use-departments';
 import {
@@ -25,6 +28,7 @@ const inputClass =
 
 export function DepartmentCreatePage() {
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
   const [message, setMessage] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -32,16 +36,33 @@ export function DepartmentCreatePage() {
   const createMutation = useCreateDepartmentMutation();
   const facilities = hospitalsQuery.data ?? [];
 
+  const [initialDraft] = useState<DepartmentCreateFormValues>(() => {
+    const stored = loadAdminDraft<Partial<DepartmentCreateFormValues>>('department-create', {
+      userId: user?.id ?? null,
+    });
+    const parsed = stored ? departmentCreateSchema.partial().safeParse(stored) : null;
+    return {
+      code: parsed?.success && parsed.data.code ? parsed.data.code : '',
+      name: parsed?.success && parsed.data.name ? parsed.data.name : '',
+      facilityId: parsed?.success && parsed.data.facilityId ? parsed.data.facilityId : '',
+      status: parsed?.success && parsed.data.status ? parsed.data.status : 'ACTIVE',
+    };
+  });
+
   const {
     register,
     handleSubmit,
     getValues,
+    reset,
     control,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<DepartmentCreateFormValues>({
     resolver: zodResolver(departmentCreateSchema),
-    defaultValues: { code: '', name: '', facilityId: '', status: 'ACTIVE' },
+    defaultValues: initialDraft,
   });
+
+  const { isBlocked, confirmNavigation, cancelNavigation, allowNavigation, guardAction } =
+    useUnsavedChanges(isDirty);
 
   const code = useWatch({ control, name: 'code' });
   const name = useWatch({ control, name: 'name' });
@@ -52,6 +73,7 @@ export function DepartmentCreatePage() {
 
   const handleCreate = async (values: DepartmentCreateFormValues) => {
     setErrorMsg(null);
+    const rawSnapshot = structuredClone(getValues());
     try {
       const parsedHospitalId = /^\d+$/.test(values.facilityId) ? Number(values.facilityId) : null;
       await createMutation.mutateAsync({
@@ -60,15 +82,33 @@ export function DepartmentCreatePage() {
         hospitalId: parsedHospitalId,
         isActive: values.status === 'ACTIVE',
       });
-      navigate(LIST_PATH);
+      const editedDuringSubmit = JSON.stringify(getValues()) !== JSON.stringify(rawSnapshot);
+      removeAdminDraft('department-create', { userId: user?.id ?? null });
+      reset(rawSnapshot, { keepValues: true });
+      if (!editedDuringSubmit) {
+        allowNavigation();
+        navigate(LIST_PATH);
+      } else {
+        guardAction(() => navigate(LIST_PATH));
+      }
     } catch (error) {
       setErrorMsg(error instanceof Error ? error.message : 'Không thể khai báo khoa phòng mới.');
     }
   };
 
   const handleSaveDraft = () => {
-    const { code: draftCode } = getValues();
-    setMessage(`Đã lưu bản nháp khoa phòng${draftCode ? ` ${draftCode}` : ''}.`);
+    const snapshot: DepartmentCreateFormValues = { ...getValues() };
+    const result = saveAdminDraft('department-create', snapshot, {
+      userId: user?.id ?? null,
+    });
+    if (!result.ok) {
+      setMessage(null);
+      setErrorMsg(result.error);
+      return;
+    }
+    setErrorMsg(null);
+    reset(snapshot, { keepValues: true });
+    setMessage(`Đã lưu bản nháp khoa phòng${snapshot.code ? ` ${snapshot.code}` : ''}.`);
   };
 
   return (
@@ -234,7 +274,7 @@ export function DepartmentCreatePage() {
             <button
               type="button"
               aria-label="Hủy bỏ"
-              onClick={() => navigate(LIST_PATH)}
+              onClick={() => guardAction(() => navigate(LIST_PATH))}
               className="rounded-lg border border-border px-4 py-2 text-sm text-sub hover:text-ink"
             >
               Hủy bỏ
@@ -258,6 +298,8 @@ export function DepartmentCreatePage() {
           </div>
         </div>
       </form>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </AdminPortalShell>
   );
 }

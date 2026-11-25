@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
@@ -55,6 +56,10 @@ export function DiagnosticResultEntryPage() {
   const [lastEntryResult, setLastEntryResult] = useState<EnterDiagnosticResultResponseDto | null>(
     null,
   );
+  const [isResultFormDirty, setIsResultFormDirty] = useState(false);
+
+  const { isBlocked, confirmNavigation, cancelNavigation, guardAction } =
+    useUnsavedChanges(isResultFormDirty);
 
   const queryParams = useMemo(
     () => ({
@@ -170,11 +175,21 @@ export function DiagnosticResultEntryPage() {
   }, [user?.permissions, listQuery.data?.staffProfile?.permissions]);
 
   const handleSelectOrder = (order: DiagnosticResultEntryItemDto) => {
-    setSelectedOrderCode(order.orderCode);
-    setActionError(null);
+    const currentCode = activeOrder?.orderCode ?? resolvedOrderCode;
+    if (currentCode && order.orderCode.toUpperCase() === currentCode.toUpperCase()) {
+      return;
+    }
+    guardAction(() => {
+      setIsResultFormDirty(false);
+      setSelectedOrderCode(order.orderCode);
+      setActionError(null);
+    });
   };
 
-  const handleEnterResult = async (orderCode: string, payload: EnterDiagnosticResultRequest) => {
+  const handleEnterResult = async (
+    orderCode: string,
+    payload: EnterDiagnosticResultRequest,
+  ): Promise<boolean> => {
     setActionError(null);
     try {
       const response = await enterMutation.mutateAsync({
@@ -183,14 +198,19 @@ export function DiagnosticResultEntryPage() {
       });
       setLastEntryResult(response);
       setSelectedOrderCode(response.order.orderCode);
+      return true;
     } catch (error) {
       setActionError(
         getErrorMessage(error, 'Không thể lưu kết quả cận lâm sàng. Vui lòng kiểm tra lại.'),
       );
+      return false;
     }
   };
 
-  const handleUpdateResult = async (orderCode: string, payload: UpdateDiagnosticResultRequest) => {
+  const handleUpdateResult = async (
+    orderCode: string,
+    payload: UpdateDiagnosticResultRequest,
+  ): Promise<boolean> => {
     setActionError(null);
     try {
       const response = await updateMutation.mutateAsync({
@@ -199,6 +219,7 @@ export function DiagnosticResultEntryPage() {
       });
       setLastEntryResult(response);
       setSelectedOrderCode(response.order.orderCode);
+      return true;
     } catch (error) {
       setActionError(
         getErrorMessage(
@@ -206,18 +227,20 @@ export function DiagnosticResultEntryPage() {
           'Không thể sửa kết quả cận lâm sàng đã khóa. Vui lòng kiểm tra lại.',
         ),
       );
+      return false;
     }
   };
 
   const handleSidebarNavigation = (navItem: string) => {
+    const navigateGuarded = (target: string) => guardAction(() => navigate(target));
     if (navItem === 'dashboard') {
-      navigate('/diagnostic');
+      navigateGuarded('/diagnostic');
     } else if (navItem === 'orders') {
-      navigate('/diagnostic/orders');
+      navigateGuarded('/diagnostic/orders');
     } else if (navItem === 'queue') {
-      navigate('/diagnostic/queue');
+      navigateGuarded('/diagnostic/queue');
     } else if (navItem === 'results') {
-      navigate('/diagnostic/results');
+      navigateGuarded('/diagnostic/results');
     }
   };
 
@@ -502,13 +525,16 @@ export function DiagnosticResultEntryPage() {
                 statusHistory={detailQuery.data?.statusHistory}
                 hasResultWritePermission={hasResultWritePermission}
                 isSubmitting={enterMutation.isPending || updateMutation.isPending}
-                onEnterResult={(orderCode, payload) => void handleEnterResult(orderCode, payload)}
-                onUpdateResult={(orderCode, payload) => void handleUpdateResult(orderCode, payload)}
+                onEnterResult={handleEnterResult}
+                onUpdateResult={handleUpdateResult}
+                onDirtyChange={setIsResultFormDirty}
               />
             </div>
           </div>
         </main>
       </div>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </div>
   );
 }
