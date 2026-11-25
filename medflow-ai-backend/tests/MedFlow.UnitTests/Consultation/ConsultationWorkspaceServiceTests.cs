@@ -50,8 +50,9 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
+        public DbSet<VisitCharge> VisitCharges => Set<VisitCharge>();
         public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
-        public DbSet<Payment> Payments => throw NotUsed();
+        public DbSet<Payment> Payments => Set<Payment>();
         public DbSet<Medicine> Medicines => Set<Medicine>();
         public DbSet<Prescription> Prescriptions => Set<Prescription>();
         public DbSet<PrescriptionItem> PrescriptionItems => Set<PrescriptionItem>();
@@ -75,7 +76,8 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
             modelBuilder.Entity<ServicePrice>().HasKey(sp => sp.Id);
             modelBuilder.Entity<DoctorServiceAuthorization>().HasKey(a => new { a.DoctorId, a.ServiceId });
             modelBuilder.Ignore<PatientFamilyLink>();
-            modelBuilder.Ignore<Payment>();
+            modelBuilder.Entity<VisitCharge>().HasKey(vc => vc.Id);
+            modelBuilder.Entity<Payment>().HasKey(p => p.Id);
             modelBuilder.Ignore<MedicineBatch>();
             modelBuilder.Ignore<MedicationDispense>();
             modelBuilder.Ignore<DispenseItem>();
@@ -843,6 +845,19 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
                 Name = "Vitamin C",
                 IsActive = true,
             });
+
+        var seededNowLocal = new DateTime(2026, 10, 22, 8, 30, 0);
+        foreach (var v in _db.Visits.Local.ToList())
+        {
+            _db.VisitCharges.Add(VisitCharge.CreateExamination(v.Id, 1, 0m, v.CheckedInAt ?? seededNowLocal));
+        }
+        foreach (var o in _db.DiagnosticOrders.Local.ToList())
+        {
+            if (o.VisitId.HasValue && o.ServiceId.HasValue)
+            {
+                _db.VisitCharges.Add(VisitCharge.CreateDiagnostic(o.VisitId.Value, o.Id, o.ServiceId.Value, 0m, o.OrderedAt ?? seededNowLocal));
+            }
+        }
 
         _db.SaveChanges();
     }
@@ -1630,8 +1645,8 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         Assert.Single(result.ClinicalContext.DiagnosticOrders!);
 
         Assert.True(result.AllowedActions.Single(a => a.Id == "create-diagnostic-order").Enabled);
-        Assert.False(result.AllowedActions.Single(a => a.Id == "record-diagnosis").Enabled);
-        Assert.False(result.AllowedActions.Single(a => a.Id == "create-prescription").Enabled);
+        Assert.True(result.AllowedActions.Single(a => a.Id == "record-diagnosis").Enabled);
+        Assert.True(result.AllowedActions.Single(a => a.Id == "create-prescription").Enabled);
         Assert.False(result.AllowedActions.Single(a => a.Id == "complete-visit").Enabled);
 
         var dbOrder = await _db.DiagnosticOrders.SingleAsync(o => o.VisitId == 11);
@@ -1678,7 +1693,7 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
                 TransitionToAwaitingResults: true));
 
         Assert.Equal("DIAGNOSTIC_ORDER_CREATED", result.ActionOutcome);
-        Assert.Equal("COMPLETED", result.WorkspaceState);
+        Assert.Equal("AWAITING_RESULTS", result.WorkspaceState);
         Assert.NotNull(result.CreatedDiagnosticOrders);
         Assert.Equal(2, result.CreatedDiagnosticOrders!.Count);
         Assert.Equal("LABORATORY", result.CreatedDiagnosticOrders[0].Category);
@@ -1718,7 +1733,7 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         Assert.True(result.ClinicalContext.DiagnosticSummary.AllMandatoryResultsReady);
         Assert.True(result.AllowedActions.Single(a => a.Id == "record-diagnosis").Enabled);
         Assert.True(result.AllowedActions.Single(a => a.Id == "create-prescription").Enabled);
-        Assert.True(result.AllowedActions.Single(a => a.Id == "complete-visit").Enabled);
+        Assert.False(result.AllowedActions.Single(a => a.Id == "complete-visit").Enabled);
     }
 
     [Fact]
@@ -2346,7 +2361,16 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
 
         var workspaceWhileOrderPending = await _service.GetWorkspaceAsync(3, "VIS-202610-0011");
         Assert.False(workspaceWhileOrderPending.ClinicalContext.DiagnosticSummary.AllMandatoryResultsReady);
-        Assert.False(workspaceWhileOrderPending.AllowedActions.Single(a => a.Id == "record-diagnosis").Enabled);
+        Assert.True(workspaceWhileOrderPending.AllowedActions.Single(a => a.Id == "record-diagnosis").Enabled);
+
+        var provisional = await _service.RecordDiagnosisAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordDiagnosisRequest(
+                PrimaryIcd10Code: "K29.5",
+                ClinicalConclusion: "Chẩn đoán sơ bộ khi chờ kết quả CLS",
+                IsConfirmed: false));
+        Assert.Equal("DIAGNOSIS_RECORDED", provisional.ActionOutcome);
 
         await Assert.ThrowsAsync<ConflictException>(
             () => _service.RecordDiagnosisAsync(
@@ -2356,8 +2380,27 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
                     PrimaryIcd10Code: "K29.5",
                     ClinicalConclusion: "Viêm dạ dày mạn tính")));
 
-        // Once the mandatory order is COMPLETED, RecordDiagnosis succeeds
+        // UC42 COMPLETED without a finalized DiagnosticResult (PERFORMED_AWAITING_RESULT) still blocks CONFIRMED diagnosis (BUG-P6-01)
         mandatoryOrder.Status = "COMPLETED";
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.RecordDiagnosisAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordDiagnosisRequest(
+                    PrimaryIcd10Code: "K29.5",
+                    ClinicalConclusion: "Viêm dạ dày mạn tính khi chưa có kết quả UC43")));
+
+        // Once UC43 DiagnosticResult is FINALIZED, CONFIRMED RecordDiagnosis succeeds
+        _db.DiagnosticResults.Add(new DiagnosticResult
+        {
+            Id = 901,
+            DiagnosticOrderId = mandatoryOrder.Id,
+            Status = "FINALIZED",
+            FinalizedAt = new DateTime(2026, 10, 22, 9, 10, 0),
+            FinalizedByStaffId = 1,
+        });
         await _db.SaveChangesAsync();
 
         var recorded = await _service.RecordDiagnosisAsync(
@@ -2617,12 +2660,26 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         await Assert.ThrowsAsync<ConflictException>(
             () => _service.CompleteVisitAsync(3, "VIS-202610-0011"));
 
-        // Complete both diagnostic queue entry and diagnostic order -> CompleteVisit succeeds
+        // UC42 COMPLETED without a finalized DiagnosticResult (PERFORMED_AWAITING_RESULT) still rejects CompleteVisit (BUG-P6-01)
         var diagOrder = await _db.DiagnosticOrders.SingleAsync(o => o.VisitId == 11);
         diagOrder.Status = "COMPLETED";
         var diagQueue = await _db.QueueEntries.SingleAsync(q => q.Id == diagOrder.QueueEntryId);
         diagQueue.Status = "COMPLETED";
         diagQueue.CompletedAt = new DateTime(2026, 10, 22, 9, 5, 0);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CompleteVisitAsync(3, "VIS-202610-0011"));
+
+        // Once the optional order has a finalized DiagnosticResult (or is explicitly cancelled), CompleteVisit succeeds
+        _db.DiagnosticResults.Add(new DiagnosticResult
+        {
+            Id = 902,
+            DiagnosticOrderId = diagOrder.Id,
+            Status = "FINALIZED",
+            FinalizedAt = new DateTime(2026, 10, 22, 9, 6, 0),
+            FinalizedByStaffId = 1,
+        });
         await _db.SaveChangesAsync();
 
         var completed = await _service.CompleteVisitAsync(3, "VIS-202610-0011");
@@ -2996,9 +3053,10 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         Assert.Equal("IN_PROGRESS", reviewed.WorkspaceState);
         Assert.Equal(stateVersionBefore + 1, reviewed.Queue!.StateVersion);
         Assert.Equal(revisionNoBefore + 1, reviewed.ClinicalContext.CurrentRevisionNo);
+        Assert.Null(reviewed.ClinicalContext.ClinicalFindings);
         Assert.Equal(
             "Công thức máu bình thường, loại trừ tình trạng nhiễm trùng cấp tính",
-            reviewed.ClinicalContext.ClinicalFindings);
+            reviewed.ClinicalContext.ClinicalInterpretation);
         Assert.Equal(
             "Theo dõi viêm dạ dày mạn tính, đáp ứng tốt",
             reviewed.ClinicalContext.ClinicalConclusion);
@@ -3327,9 +3385,10 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         Assert.Equal("IN_PROGRESS", additionalResponse.WorkspaceState);
         Assert.Equal(5, additionalResponse.Queue!.StateVersion);
         Assert.Equal(2, additionalResponse.ClinicalContext.CurrentRevisionNo);
+        Assert.Null(additionalResponse.ClinicalContext.ClinicalFindings);
         Assert.Equal(
             "Bệnh nhân còn đau tức hạ sườn phải sau khi có KQ máu",
-            additionalResponse.ClinicalContext.ClinicalFindings);
+            additionalResponse.ClinicalContext.ClinicalProgressionNote);
         Assert.Equal(
             "Cần siêu âm ổ bụng kiểm tra thêm nguyên nhân bạch cầu tăng",
             additionalResponse.ClinicalContext.AmendmentReason);
@@ -3352,8 +3411,8 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         Assert.False(summaryAfter.AllMandatoryResultsReady);
 
         Assert.True(additionalResponse.AllowedActions.Single(a => a.Id == "create-additional-diagnostic-order").Enabled);
-        Assert.False(additionalResponse.AllowedActions.Single(a => a.Id == "record-diagnosis").Enabled);
-        Assert.False(additionalResponse.AllowedActions.Single(a => a.Id == "create-prescription").Enabled);
+        Assert.True(additionalResponse.AllowedActions.Single(a => a.Id == "record-diagnosis").Enabled);
+        Assert.True(additionalResponse.AllowedActions.Single(a => a.Id == "create-prescription").Enabled);
         Assert.False(additionalResponse.AllowedActions.Single(a => a.Id == "complete-visit").Enabled);
 
         // Verify metadata reconstruction from audit logs in ClinicalContext.DiagnosticOrders
@@ -3520,7 +3579,7 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
                 ExpectedStateVersion: 2));
 
         Assert.Equal("ADDITIONAL_DIAGNOSTIC_ORDER_CREATED", response.ActionOutcome);
-        Assert.Equal("COMPLETED", response.WorkspaceState);
+        Assert.Equal("AWAITING_RESULTS", response.WorkspaceState);
         var createdOrder = Assert.Single(response.CreatedDiagnosticOrders!);
         Assert.Equal(301, createdOrder.FollowUpToOrderId);
         Assert.Equal("DIA-202610-0301", createdOrder.FollowUpToOrderCode);
@@ -3721,5 +3780,123 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
 
         await Assert.ThrowsAsync<ForbiddenException>(
             () => _service.SearchIcd10CodesAsync(3, query: "K29"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 06 Unit Regression Suite (BUG-P6-01 .. BUG-P6-07)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task Phase06_OpenWorkspace_BlocksUnpaidExaminationCharge_And_CreateOrderValidatesPriceAndSnapshotsDiagnosticVisitCharge()
+    {
+        // Replace seeded WAIVED exam charge on Visit 11 with an unpaid REQUIRED charge -> OpenWorkspace must reject 409 (BUG-P6-02)
+        var seededExamCharge = await _db.VisitCharges.SingleAsync(c => c.VisitId == 11 && c.ChargeType == "EXAMINATION");
+        _db.VisitCharges.Remove(seededExamCharge);
+        _db.VisitCharges.Add(VisitCharge.CreateExamination(11, 1, 150_000m, new DateTime(2026, 10, 22, 8, 45, 0)));
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.OpenWorkspaceAsync(3, "VIS-202610-0011"));
+
+        // Settle the examination charge -> OpenWorkspace succeeds
+        var requiredExamCharge = await _db.VisitCharges.SingleAsync(c => c.VisitId == 11 && c.ChargeType == "EXAMINATION");
+        var examPayment = Payment.CreateForCharge(11, requiredExamCharge.Id, 150_000m, new DateTime(2026, 10, 22, 8, 50, 0), "PAID");
+        examPayment.PaidAt = new DateTime(2026, 10, 22, 8, 51, 0);
+        _db.Payments.Add(examPayment);
+        await _db.SaveChangesAsync();
+
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        // Remove active ServicePrice for Service 5 -> CreateDiagnosticOrder must reject 409 (never free by default!)
+        var pricesForSvc5 = await _db.ServicePrices.Where(sp => sp.ServiceId == 5).ToListAsync();
+        _db.ServicePrices.RemoveRange(pricesForSvc5);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 5, Instruction: "Không có bảng giá hiệu lực")));
+
+        // Ordering priced Service 6 (180,000m) snapshots a REQUIRED DIAGNOSTIC VisitCharge
+        var created = await _service.CreateDiagnosticOrderAsync(
+            3,
+            "VIS-202610-0011",
+            new CreateDiagnosticOrderRequest(ServiceId: 6, Instruction: "Siêu âm ổ bụng có bảng giá"));
+        var orderDto = Assert.Single(created.CreatedDiagnosticOrders!);
+
+        var diagCharge = await _db.VisitCharges.SingleAsync(c => c.DiagnosticOrderId == orderDto.OrderId);
+        Assert.Equal(11, diagCharge.VisitId);
+        Assert.Equal(6, diagCharge.ServiceId);
+        Assert.Equal("DIAGNOSTIC", diagCharge.ChargeType);
+        Assert.Equal(180_000m, diagCharge.UnitPrice);
+        Assert.Equal("REQUIRED", diagCharge.PaymentRequirement);
+        Assert.Equal("ACTIVE", diagCharge.Status);
+    }
+
+    [Fact]
+    public async Task Phase06_PostLockAssignedDoctorOwnership_TransferredOutDoctorBlocked403_EvenWhenServicePointStillMatches()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        // Simulate visit transfer to Doctor 2 while QueueServicePoint 1 still points to Doctor 1 (actorUserId: 3)
+        var visit = await _db.Visits.FirstAsync(v => v.Id == 11);
+        visit.AssignedDoctorId = 2;
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.RecordClinicalExaminationAsync(
+                3,
+                "VIS-202610-0011",
+                new RecordClinicalExaminationRequest(ClinicalFindings: "Bác sĩ cũ cố ghi sau khi chuyển phòng")));
+
+        await Assert.ThrowsAsync<ForbiddenException>(
+            () => _service.CreateDiagnosticOrderAsync(
+                3,
+                "VIS-202610-0011",
+                new CreateDiagnosticOrderRequest(ServiceId: 5, Instruction: "Chỉ định sau chuyển bác sĩ")));
+    }
+
+    [Fact]
+    public async Task Phase06_DedicatedEmrRevisionColumns_PreservedAcrossEditsAndCompleteVisit_WithoutOverwritingClinicalFindings()
+    {
+        await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
+
+        var exam = await _service.RecordClinicalExaminationAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordClinicalExaminationRequest(
+                ClinicalFindings: "Bụng mềm, ấn tức vùng thượng vị, không phản ứng thành bụng.",
+                ClinicalProgressionNote: "Bệnh nhân giảm buồn nôn sau nghỉ ngơi 15 phút.",
+                TreatmentPlan: "Ức chế bơm proton phối hợp trung hòa acid 14 ngày."));
+
+        Assert.Equal("Bụng mềm, ấn tức vùng thượng vị, không phản ứng thành bụng.", exam.ClinicalContext.ClinicalFindings);
+        Assert.Equal("Bệnh nhân giảm buồn nôn sau nghỉ ngơi 15 phút.", exam.ClinicalContext.ClinicalProgressionNote);
+        Assert.Equal("Ức chế bơm proton phối hợp trung hòa acid 14 ngày.", exam.ClinicalContext.TreatmentPlan);
+
+        await _service.RecordDiagnosisAsync(
+            3,
+            "VIS-202610-0011",
+            new RecordDiagnosisRequest(
+                PrimaryIcd10Code: "K29.5",
+                ClinicalConclusion: "Viêm dạ dày mạn tính đợt tiến triển nhẹ"));
+
+        var completed = await _service.CompleteVisitAsync(
+            3,
+            "VIS-202610-0011",
+            new CompleteVisitRequest(
+                ConfirmNoPrescription: true,
+                DischargeInstructions: "Chia nhỏ bữa ăn, kiêng đồ chua cay và rượu bia.",
+                FollowUpInstructions: "Tái khám chuyên khoa Tiêu hóa sau 2 tuần.",
+                FollowUpDate: new DateOnly(2026, 11, 5),
+                WarningSigns: "Đau bụng dữ dội, nôn ra máu hoặc đại tiện phân đen."));
+
+        Assert.Equal("Bụng mềm, ấn tức vùng thượng vị, không phản ứng thành bụng.", completed.ClinicalContext.ClinicalFindings);
+        Assert.Equal("Bệnh nhân giảm buồn nôn sau nghỉ ngơi 15 phút.", completed.ClinicalContext.ClinicalProgressionNote);
+        Assert.Equal("Ức chế bơm proton phối hợp trung hòa acid 14 ngày.", completed.ClinicalContext.TreatmentPlan);
+        Assert.Equal("Chia nhỏ bữa ăn, kiêng đồ chua cay và rượu bia.", completed.ClinicalContext.DischargeInstructions);
+        Assert.Equal("Tái khám chuyên khoa Tiêu hóa sau 2 tuần.", completed.ClinicalContext.FollowUpInstructions);
+        Assert.Equal("2026-11-05", completed.ClinicalContext.FollowUpDate);
+        Assert.Equal("Đau bụng dữ dội, nôn ra máu hoặc đại tiện phân đen.", completed.ClinicalContext.WarningSigns);
     }
 }

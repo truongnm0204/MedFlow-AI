@@ -129,16 +129,12 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             normalizedVisitTypeFilter is not null ||
             normalizedKeyword is not null;
 
-        var servicePointDtos = new List<ServicePointQueueDto>(board.Buckets.Count);
+        var matchedBuckets = FilterBoardBuckets(board.Buckets, normalizedServicePointFilter);
+        var servicePointDtos = new List<ServicePointQueueDto>(matchedBuckets.Count);
 
-        foreach (var boardBucket in board.Buckets)
+        foreach (var boardBucket in matchedBuckets)
         {
             var bucket = boardBucket.Bucket;
-            if (normalizedServicePointFilter is not null &&
-                !MatchesServicePointFilter(bucket, normalizedServicePointFilter))
-            {
-                continue;
-            }
 
             var sortedFullBucket = boardBucket.Entries.Select(e => e.Dto).ToList();
             var filteredEntries = sortedFullBucket
@@ -2060,7 +2056,33 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
     }
 
 
-    private static bool MatchesServicePointFilter(ServicePointBucket bucket, string filter)
+    private static IReadOnlyList<QueueBoardBucket> FilterBoardBuckets(
+        IReadOnlyList<QueueBoardBucket> buckets,
+        string? normalizedFilter)
+    {
+        if (normalizedFilter is null)
+        {
+            return buckets;
+        }
+
+        var primaryMatches = buckets
+            .Where(b => MatchesPrimaryServicePointFilter(b.Bucket, normalizedFilter))
+            .ToList();
+        if (primaryMatches.Count > 0)
+        {
+            return primaryMatches;
+        }
+
+        return buckets
+            .Where(b => MatchesRoomIdFallbackFilter(b.Bucket, normalizedFilter))
+            .ToList();
+    }
+
+    private static bool MatchesServicePointFilter(ServicePointBucket bucket, string filter) =>
+        MatchesPrimaryServicePointFilter(bucket, filter) ||
+        MatchesRoomIdFallbackFilter(bucket, filter);
+
+    private static bool MatchesPrimaryServicePointFilter(ServicePointBucket bucket, string filter)
     {
         if (string.Equals(bucket.ServicePointId, filter, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(bucket.RoomCode, filter, StringComparison.OrdinalIgnoreCase))
@@ -2081,9 +2103,22 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         if (bucket.RoomId.HasValue)
         {
             var roomIdStr = bucket.RoomId.Value.ToString(CultureInfo.InvariantCulture);
+            if (string.Equals($"sp-room-{roomIdStr}", filter, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool MatchesRoomIdFallbackFilter(ServicePointBucket bucket, string filter)
+    {
+        if (bucket.RoomId.HasValue)
+        {
+            var roomIdStr = bucket.RoomId.Value.ToString(CultureInfo.InvariantCulture);
             if (string.Equals(roomIdStr, filter, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals($"sp-{roomIdStr}", filter, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals($"sp-room-{roomIdStr}", filter, StringComparison.OrdinalIgnoreCase))
+                string.Equals($"sp-{roomIdStr}", filter, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }

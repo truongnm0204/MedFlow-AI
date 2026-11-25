@@ -50,6 +50,24 @@ public sealed record UpdateDiagnosticResultRequest(
     string? AmendmentReason = null,
     int? ExpectedStateVersion = null);
 
+public sealed record VerifyDiagnosticResultRequest(
+    long? OrderId = null,
+    string? OrderCode = null,
+    string? ResultText = null,
+    string? Conclusion = null,
+    string? ReportFileUrl = null,
+    string? VerificationNote = null,
+    string? Notes = null,
+    int? ExpectedStateVersion = null);
+
+public sealed record DiagnosticReportFileDownloadDto(
+    byte[] Content,
+    string ContentType,
+    string FileName,
+    long? ResultId = null,
+    long? OrderId = null,
+    string? OrderCode = null);
+
 public sealed record DiagnosticResultEntryEligibilityDto(
     bool IsEligible,
     bool CanEnterResult,

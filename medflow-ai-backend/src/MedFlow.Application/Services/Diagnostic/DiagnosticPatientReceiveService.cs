@@ -1,12 +1,14 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MedFlow.Application.Common.Persistence;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Doctors;
+using MedFlow.Application.Services.Payments;
 using MedFlow.Application.Services.Visits;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
@@ -81,15 +83,18 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
     private readonly IRealtimeNotificationPublisher _realtimePublisher;
+    private readonly IVisitChargeSettlementReader _settlementReader;
 
     public DiagnosticPatientReceiveService(
         IApplicationDbContext dbContext,
         TimeProvider? timeProvider = null,
-        IRealtimeNotificationPublisher? realtimePublisher = null)
+        IRealtimeNotificationPublisher? realtimePublisher = null,
+        IVisitChargeSettlementReader? settlementReader = null)
     {
         _db = dbContext;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
+        _settlementReader = settlementReader ?? new VisitChargeSettlementReader(_db, _timeProvider);
     }
 
     public async Task<DiagnosticPatientReceiveListResponseDto> GetOrdersForReceiveAsync(
@@ -385,17 +390,53 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
             tx = null;
         }
 
+        var receivedOrdersPostCommit = new List<DiagnosticOrder>(executionPlans.Count);
         try
         {
+            await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
+                _db,
+                visitIds,
+                executionPlans.Where(p => p.ServicePoint is not null).Select(p => p.ServicePoint!.Id),
+                executionPlans.Where(p => p.LinkedQueueEntry is not null).Select(p => p.LinkedQueueEntry!.Id),
+                executionPlans.Select(p => p.Order.Id),
+                includeChargeAndPaymentLocks: false,
+                ct);
+
             foreach (var plan in executionPlans)
             {
-                var order = plan.Order;
-                var visit = plan.Visit;
+                var order = await _db.DiagnosticOrders.FirstOrDefaultAsync(o => o.Id == plan.Order.Id, ct)
+                    ?? throw new NotFoundException("DiagnosticOrder", plan.Order.Id);
+                var visit = await _db.Visits.FirstOrDefaultAsync(v => v.Id == plan.Visit.Id, ct)
+                    ?? throw new ConflictException("Phiếu chỉ định cận lâm sàng không gắn với lượt khám hợp lệ.");
                 var patient = plan.Patient;
                 var service = plan.Service;
                 var resolvedSp = plan.ServicePoint;
                 var resolvedRoom = plan.Room;
-                var linkedQueueEntry = plan.LinkedQueueEntry;
+                var linkedQueueEntry = plan.LinkedQueueEntry is not null
+                    ? await _db.QueueEntries.FirstOrDefaultAsync(q => q.Id == plan.LinkedQueueEntry.Id, ct)
+                    : (order.QueueEntryId.HasValue
+                        ? await _db.QueueEntries.FirstOrDefaultAsync(q => q.Id == order.QueueEntryId.Value, ct)
+                        : null);
+
+                var postLockOrderStatus = ResolveEffectiveOrderStatus(order, lookupBundle.FinalizedOrderIds);
+                if (postLockOrderStatus != "CONFIRMED")
+                {
+                    var lockedCode = FormatOrderCode(order, referenceDate);
+                    throw new ConflictException($"Phiếu chỉ định cận lâm sàng '{lockedCode}' đang ở trạng thái '{postLockOrderStatus}', không hợp lệ để tiếp nhận bệnh nhân.");
+                }
+
+                var postLockPayment = await _settlementReader.CheckDiagnosticOrderEligibilityAsync(order.Id, ct);
+                if (!postLockPayment.IsUnlocked)
+                {
+                    var lockedCode = FormatOrderCode(order, referenceDate);
+                    throw new ConflictException(
+                        postLockPayment.Message
+                        ?? $"Phiếu chỉ định cận lâm sàng '{lockedCode}' chưa hoàn tất thanh toán phí dịch vụ (UNPAID_DIAGNOSTIC_FEE).");
+                }
+
+                lookupBundle.PaymentEligibilityByOrderId[order.Id] = postLockPayment;
+                lookupBundle.VisitsById[visit.Id] = visit;
+                receivedOrdersPostCommit.Add(order);
 
                 int finalStateVersion;
                 int? queueNumber;
@@ -628,11 +669,11 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
                 HospitalId: staffAccess.Hospital.Id),
             ct);
 
-        var receivedDtos = new List<DiagnosticPatientReceiveItemDto>(executionPlans.Count);
-        foreach (var plan in executionPlans)
+        var receivedDtos = new List<DiagnosticPatientReceiveItemDto>(receivedOrdersPostCommit.Count);
+        foreach (var receivedOrder in receivedOrdersPostCommit)
         {
             var dto = BuildOrderReceiveItemDto(
-                plan.Order,
+                receivedOrder,
                 staffAccess,
                 lookupBundle,
                 referenceDate,
@@ -684,6 +725,14 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
         if (orderStatus != "CONFIRMED")
         {
             throw new ConflictException($"Phiếu chỉ định cận lâm sàng '{orderCode}' đang ở trạng thái '{orderStatus}', không hợp lệ để tiếp nhận bệnh nhân.");
+        }
+
+        var paymentEligibility = await _settlementReader.CheckDiagnosticOrderEligibilityAsync(order.Id, ct);
+        if (!paymentEligibility.IsUnlocked)
+        {
+            throw new ConflictException(
+                paymentEligibility.Message
+                ?? $"Phiếu chỉ định cận lâm sàng '{orderCode}' chưa hoàn tất thanh toán phí dịch vụ (UNPAID_DIAGNOSTIC_FEE).");
         }
 
         var visit = order.VisitId.HasValue && lookupBundle.VisitsById.TryGetValue(order.VisitId.Value, out var foundVisit)
@@ -1032,6 +1081,7 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
                 ? (queueEntry?.ReadyAt ?? queueEntry?.ArrivedAt)
                 : null);
 
+        lookupBundle.PaymentEligibilityByOrderId.TryGetValue(order.Id, out var paymentGate);
         var eligibility = EvaluateReceiveEligibility(
             order,
             orderCode,
@@ -1043,7 +1093,8 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
             sp,
             room,
             queueEntry,
-            staffAccess.HasQueueManagePermission);
+            staffAccess.HasQueueManagePermission,
+            paymentGate);
 
         return new DiagnosticPatientReceiveItemDto(
             OrderId: order.Id,
@@ -1121,7 +1172,8 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
         QueueServicePoint? servicePoint,
         HospitalRoom? room,
         QueueEntry? queueEntry,
-        bool hasQueueManagePermission)
+        bool hasQueueManagePermission,
+        VisitChargeGateResult? paymentEligibility = null)
     {
         var isOrderConfirmed = effectiveOrderStatus == "CONFIRMED";
 
@@ -1216,6 +1268,11 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
         else if (!hasQueueManagePermission)
         {
             disabledReason = "Nhân viên cận lâm sàng không có quyền tiếp nhận bệnh nhân vào hàng đợi phòng kỹ thuật (yêu cầu quyền QUEUE_MANAGE).";
+        }
+        else if (paymentEligibility is { IsUnlocked: false })
+        {
+            disabledReason = paymentEligibility.Message
+                ?? $"Phiếu chỉ định cận lâm sàng '{orderCode}' chưa hoàn tất thanh toán phí dịch vụ (UNPAID_DIAGNOSTIC_FEE).";
         }
 
         var canReceive = disabledReason is null;
@@ -2643,6 +2700,12 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
             }
         }
 
+        var paymentEligibilityByOrderId = new Dictionary<long, VisitChargeGateResult>(orders.Count);
+        foreach (var ord in orders)
+        {
+            paymentEligibilityByOrderId[ord.Id] = await _settlementReader.CheckDiagnosticOrderEligibilityAsync(ord.Id, ct);
+        }
+
         return new OrderLookupBundle(
             ServicesById: servicesById,
             ServicePricesByServiceId: servicePricesByServiceId,
@@ -2659,7 +2722,8 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
             FinalizedOrderIds: finalizedOrderIds,
             LatestRevisionByVisitId: latestRevisionByVisitId,
             SequenceByOrderId: sequenceByOrderId,
-            AuditMetadataByOrderId: auditMetadataByOrderId);
+            AuditMetadataByOrderId: auditMetadataByOrderId,
+            PaymentEligibilityByOrderId: paymentEligibilityByOrderId);
     }
 
     private async Task<List<DiagnosticOrder>> TryLoadAllDiagnosticOrdersAsync(CancellationToken ct)
@@ -3021,6 +3085,10 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
         {
             throw new ConflictException("Dữ liệu phiếu chỉ định hoặc hàng đợi cận lâm sàng vừa được cập nhật bởi thao tác khác. Vui lòng tải lại và thử lại.");
         }
+        catch (Exception ex) when (PostgresConcurrencyException.IsUniqueViolation(ex) || PostgresConcurrencyException.IsTransientConcurrencyConflict(ex))
+        {
+            throw new ConflictException("Dữ liệu phiếu chỉ định hoặc hàng đợi cận lâm sàng vừa được cập nhật đồng thời bởi thao tác khác. Vui lòng tải lại và thử lại.");
+        }
     }
 
     private static QueueServicePoint? ResolveDiagnosticServicePointForCatalog(
@@ -3305,5 +3373,6 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
         HashSet<long> FinalizedOrderIds,
         Dictionary<long, MedicalRecordRevision> LatestRevisionByVisitId,
         Dictionary<long, int> SequenceByOrderId,
-        Dictionary<long, DiagnosticOrderAuditMetadata> AuditMetadataByOrderId);
+        Dictionary<long, DiagnosticOrderAuditMetadata> AuditMetadataByOrderId,
+        Dictionary<long, VisitChargeGateResult> PaymentEligibilityByOrderId);
 }

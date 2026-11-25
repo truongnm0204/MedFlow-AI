@@ -52,6 +52,7 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
         public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
+        public DbSet<VisitCharge> VisitCharges => Set<VisitCharge>();
         public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
         public DbSet<Payment> Payments => Set<Payment>();
         public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
@@ -94,6 +95,7 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
             modelBuilder.Entity<ServicePrice>().HasKey(sp => sp.Id);
             modelBuilder.Entity<Appointment>().HasKey(a => a.Id);
             modelBuilder.Entity<Visit>().HasKey(v => v.Id);
+            modelBuilder.Entity<VisitCharge>().HasKey(vc => vc.Id);
             modelBuilder.Entity<QueueEntry>().HasKey(q => q.Id);
             modelBuilder.Entity<Payment>().HasKey(p => p.Id);
             modelBuilder.Entity<QueueServicePoint>().HasKey(sp => sp.Id);
@@ -452,6 +454,13 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
                 Email = "diag_inactive_dept@medflow.test",
                 PasswordHash = "hash",
                 AccountStatus = AccountStatus.ACTIVE,
+            },
+            new User
+            {
+                Id = 95,
+                Email = "diag_verifier@medflow.test",
+                PasswordHash = "hash",
+                AccountStatus = AccountStatus.ACTIVE,
             });
 
         db.UserRoles.AddRange(
@@ -464,7 +473,8 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
             new UserRole { UserId = 11, RoleId = 4 },
             new UserRole { UserId = 12, RoleId = 4 },
             new UserRole { UserId = 13, RoleId = 4 },
-            new UserRole { UserId = 14, RoleId = 4 });
+            new UserRole { UserId = 14, RoleId = 4 },
+            new UserRole { UserId = 95, RoleId = 4 });
 
         db.Staff.AddRange(
             new Staff
@@ -525,6 +535,16 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
                 DepartmentId = 2,
                 StaffCode = "DIA-005",
                 FullName = "KTV Khoa Ngừng Hoạt Động",
+                Status = "ACTIVE",
+            },
+            new Staff
+            {
+                Id = 95,
+                UserId = 95,
+                HospitalId = 1,
+                DepartmentId = 1,
+                StaffCode = "DIA-095",
+                FullName = "BS.CKII. Vũ Thanh Trà",
                 Status = "ACTIVE",
             });
 
@@ -927,7 +947,7 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
                 VersionNo = 1,
                 ResultText = "WBC: 8.2 G/L; RBC: 4.6 T/L; HGB: 142 g/L; PLT: 250 G/L.",
                 Conclusion = "Công thức máu trong giới hạn bình thường.",
-                ReportFileUrl = "https://cdn.medflow.vn/reports/cbc-0001.pdf",
+                ReportFileUrl = "/storage/diagnostic-reports/cbc-0001.pdf",
                 EnteredByStaffId = 5,
                 EnteredAt = new DateTime(2026, 10, 20, 8, 18, 0),
                 IsFinalized = true,
@@ -941,13 +961,26 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
                 VersionNo = 1,
                 ResultText = "Bản sơ bộ: Bóng tim không to, góc sườn hoành hai bên sáng.",
                 Conclusion = "Chờ bác sĩ CĐHA duyệt kết luận cuối.",
-                ReportFileUrl = "/reports/xray-0005-draft.pdf",
+                ReportFileUrl = "/storage/diagnostic-reports/xray-0005-draft.pdf",
                 EnteredByStaffId = 5,
                 EnteredAt = new DateTime(2026, 10, 20, 8, 35, 0),
                 IsFinalized = false,
                 VerifiedByStaffId = null,
                 VerifiedAt = null,
             });
+
+        var seededNowLocal = new DateTime(2026, 10, 20, 8, 0, 0);
+        foreach (var v in db.Visits.Local.ToList())
+        {
+            db.VisitCharges.Add(VisitCharge.CreateExamination(v.Id, 1, 0m, v.CheckedInAt ?? seededNowLocal));
+        }
+        foreach (var o in db.DiagnosticOrders.Local.ToList())
+        {
+            if (o.VisitId.HasValue && o.ServiceId.HasValue)
+            {
+                db.VisitCharges.Add(VisitCharge.CreateDiagnostic(o.VisitId.Value, o.Id, o.ServiceId.Value, 0m, o.OrderedAt ?? seededNowLocal));
+            }
+        }
 
         db.SaveChanges();
     }
@@ -1048,23 +1081,39 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
         var workspaceBefore = await _consultationService.GetDiagnosticResultsAsync(3, "VIS-202610-0100");
         Assert.False(workspaceBefore.DiagnosticSummary.AllMandatoryResultsReady);
 
-        // Finalize Order 5 (which already has v1 PENDING_VERIFY) -> creates v2 FINALIZED
+        // Self-verification by original enterer (actorUserId: 7 / StaffId: 5) on RequiresResultVerification=true Order 5 must fail 409 (BUG-P6-04)
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.EnterDiagnosticResultAsync(
+                actorUserId: 7,
+                orderIdOrCode: "DIA-202610-0005",
+                request: new EnterDiagnosticResultRequest(
+                    ResultText: "Nhu mô phổi hai bên sáng đều, không thấy tổn thương đông đặc.",
+                    Conclusion: "X-quang ngực thẳng trong giới hạn bình thường.",
+                    ReportFileUrl: "/storage/diagnostic-reports/xray-0005-final.pdf",
+                    Status: "VERIFIED",
+                    IsFinalized: true,
+                    IsVerified: true,
+                    ExpectedStateVersion: 3),
+                ipAddress: "127.0.0.1"));
+
+        // Independent second verifier (actorUserId: 95 / StaffId: 95) verifies Order 5 -> creates v2 VERIFIED & transitions Visit 100 to RETURN_CONSULTATION
         var finalizeResponse = await _service.EnterDiagnosticResultAsync(
-            actorUserId: 7,
+            actorUserId: 95,
             orderIdOrCode: "DIA-202610-0005",
             request: new EnterDiagnosticResultRequest(
                 ResultText: "Nhu mô phổi hai bên sáng đều, không thấy tổn thương đông đặc.",
                 Conclusion: "X-quang ngực thẳng trong giới hạn bình thường.",
-                ReportFileUrl: "https://cdn.medflow.vn/reports/xray-0005-final.pdf",
-                Status: "FINALIZED",
+                ReportFileUrl: "/storage/diagnostic-reports/xray-0005-final.pdf",
+                Status: "VERIFIED",
                 IsFinalized: true,
+                IsVerified: true,
                 CorrectionReason: "Bác sĩ CĐHA đã thẩm định và ký số kết quả.",
                 ExpectedStateVersion: 3),
             ipAddress: "127.0.0.1");
 
-        Assert.Equal(DiagnosticResultEntryService.DiagnosticResultFinalizedAction, finalizeResponse.ActionOutcome);
+        Assert.Equal(DiagnosticResultEntryService.DiagnosticResultVerifiedAction, finalizeResponse.ActionOutcome);
         Assert.True(finalizeResponse.IsFinalized);
-        Assert.Equal("FINALIZED", finalizeResponse.ResultStatus);
+        Assert.Equal("VERIFIED", finalizeResponse.ResultStatus);
         Assert.Equal(2, finalizeResponse.VersionNo);
         Assert.Equal("IN_PROGRESS", finalizeResponse.PreviousOrderStatus);
         Assert.Equal("COMPLETED", finalizeResponse.OrderStatus);
@@ -1076,21 +1125,23 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
         Assert.Equal(2, finalizeResponse.Versions.Count);
         Assert.Equal(2, finalizeResponse.LatestVersion.VersionNo);
         Assert.True(finalizeResponse.LatestVersion.IsFinalized);
-        Assert.Equal(5, finalizeResponse.Order.FinalizedByStaffId);
+        Assert.Equal(5, finalizeResponse.LatestVersion.EnteredByStaffId);
+        Assert.Equal(95, finalizeResponse.LatestVersion.VerifiedByStaffId);
+        Assert.Equal(95, finalizeResponse.Order.FinalizedByStaffId);
         Assert.False(finalizeResponse.Order.CanEnterResult);
 
-        // Verify Visit.Status was NOT overwritten
+        // Verify Visit.Status cleanly transitioned to RETURN_CONSULTATION since all orders on Visit 100 are now finalized (BUG-P6-02)
         var visitAfter = await _dbContext.Visits.AsNoTracking().FirstAsync(v => v.Id == 100);
-        Assert.Equal("AWAITING_RESULTS", visitAfter.Status);
+        Assert.Equal("RETURN_CONSULTATION", visitAfter.Status);
 
-        // Verify AuditLog was persisted
+        // Verify AuditLog was persisted with DIAGNOSTIC_RESULT_VERIFIED
         var auditLog = await _dbContext.AuditLogs
             .AsNoTracking()
             .FirstOrDefaultAsync(a =>
                 a.EntityType == DiagnosticResultEntryService.DiagnosticResultEntityType &&
-                a.Action == DiagnosticResultEntryService.DiagnosticResultFinalizedAction);
+                a.Action == DiagnosticResultEntryService.DiagnosticResultVerifiedAction);
         Assert.NotNull(auditLog);
-        Assert.Equal(7, auditLog.ActorUserId);
+        Assert.Equal(95, auditLog.ActorUserId);
 
         // Verify downstream ConsultationWorkspaceService now sees AllMandatoryResultsReady == true
         var workspaceAfter = await _consultationService.GetDiagnosticResultsAsync(3, "VIS-202610-0100");
@@ -1155,19 +1206,55 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
     [Fact]
     public async Task EnterDiagnosticResultAsync_OnCompletedExecutionOrderWithoutResultRow_CreatesFinalizedResult()
     {
-        // Order 6 has Status = COMPLETED and QueueEntry.Status = COMPLETED from UC42, but no DiagnosticResult row yet
-        var response = await _service.EnterDiagnosticResultAsync(
+        // Order 6 (ServiceId = 10, RequiresResultVerification = true) has Status = COMPLETED and QueueEntry.Status = COMPLETED from UC42,
+        // but no DiagnosticResult row yet (PERFORMED_AWAITING_RESULT).
+        // Under BUG-P6-04: omitting Status/IsFinalized defaults to DRAFT; direct FINALIZED is blocked; 2-person PENDING_VERIFY -> VERIFIED succeeds.
+        var draftDefault = await _service.EnterDiagnosticResultAsync(
             actorUserId: 7,
             orderIdOrCode: null,
             request: new EnterDiagnosticResultRequest(
                 OrderId: 6,
                 ResultText: "WBC: 7.4 G/L; RBC: 4.8 T/L; HGB: 145 g/L; PLT: 230 G/L.",
-                Conclusion: "Các chỉ số huyết học trong giới hạn bình thường."));
+                Conclusion: ""));
 
-        Assert.Equal(DiagnosticResultEntryService.DiagnosticResultFinalizedAction, response.ActionOutcome);
+        Assert.Equal(DiagnosticResultEntryService.DiagnosticResultEnteredAction, draftDefault.ActionOutcome);
+        Assert.False(draftDefault.IsFinalized);
+        Assert.Equal("DRAFT", draftDefault.ResultStatus);
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.EnterDiagnosticResultAsync(
+                actorUserId: 7,
+                orderIdOrCode: null,
+                request: new EnterDiagnosticResultRequest(
+                    OrderId: 6,
+                    ResultText: "WBC: 7.4 G/L; RBC: 4.8 T/L; HGB: 145 g/L; PLT: 230 G/L.",
+                    Conclusion: "Các chỉ số huyết học trong giới hạn bình thường.",
+                    Status: "FINALIZED",
+                    IsFinalized: true)));
+
+        var pendingVerify = await _service.EnterDiagnosticResultAsync(
+            actorUserId: 7,
+            orderIdOrCode: null,
+            request: new EnterDiagnosticResultRequest(
+                OrderId: 6,
+                ResultText: "WBC: 7.4 G/L; RBC: 4.8 T/L; HGB: 145 g/L; PLT: 230 G/L.",
+                Conclusion: "Các chỉ số huyết học trong giới hạn bình thường.",
+                Status: "PENDING_VERIFY",
+                IsFinalized: false,
+                CorrectionReason: "Chuyển chờ thẩm định kết quả huyết học."));
+        Assert.Equal("PENDING_VERIFY", pendingVerify.ResultStatus);
+
+        var response = await _service.VerifyDiagnosticResultAsync(
+            actorUserId: 95,
+            idOrCode: "DIA-202610-0006",
+            request: new VerifyDiagnosticResultRequest(
+                Conclusion: "Các chỉ số huyết học trong giới hạn bình thường.",
+                VerificationNote: "Đã kiểm tra và xác nhận kết quả huyết học."));
+
+        Assert.Equal(DiagnosticResultEntryService.DiagnosticResultVerifiedAction, response.ActionOutcome);
         Assert.True(response.IsFinalized);
-        Assert.Equal("FINALIZED", response.ResultStatus);
-        Assert.Equal(1, response.VersionNo);
+        Assert.Equal("VERIFIED", response.ResultStatus);
+        Assert.Equal(3, response.VersionNo);
         Assert.Equal("COMPLETED", response.OrderStatus);
         Assert.False(response.Order.CanEnterResult);
     }
@@ -1453,7 +1540,7 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
         Assert.False(response.Order.CanEnterResult);
         Assert.True(response.Order.CanAmendResult);
         Assert.Equal("Sửa số WBC do nhập nhầm đơn vị.", response.LatestVersion.CorrectionReason);
-        Assert.Equal("https://cdn.medflow.vn/reports/cbc-0001.pdf", response.LatestVersion.ReportFileUrl);
+        Assert.Equal("/storage/diagnostic-reports/cbc-0001.pdf", response.LatestVersion.ReportFileUrl);
         Assert.Equal(2, response.Versions.Count);
 
         var result = await _dbContext.DiagnosticResults.AsNoTracking().FirstAsync(r => r.Id == 1);

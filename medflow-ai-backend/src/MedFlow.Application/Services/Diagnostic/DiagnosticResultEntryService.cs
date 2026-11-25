@@ -1,6 +1,8 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MedFlow.Application.Common.Persistence;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.Interfaces.Persistence;
@@ -21,7 +23,9 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
 {
     public const string DiagnosticResultEnteredAction = "DIAGNOSTIC_RESULT_ENTERED";
     public const string DiagnosticResultFinalizedAction = "DIAGNOSTIC_RESULT_FINALIZED";
+    public const string DiagnosticResultVerifiedAction = "DIAGNOSTIC_RESULT_VERIFIED";
     public const string DiagnosticResultAmendedAction = "DIAGNOSTIC_RESULT_AMENDED";
+    public const string DiagnosticReportFileViewedAction = "DIAGNOSTIC_REPORT_FILE_VIEWED";
     public const string DiagnosticResultEntityType = "DIAGNOSTIC_RESULT";
     public const string DiagnosticOrderEntityType = "DIAGNOSTIC_ORDER";
     public const string DiagnosticResultWritePermissionCode = PermissionCodes.DiagnosticResultWrite;
@@ -57,6 +61,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
     private static readonly HashSet<string> ValidResultStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
         "PENDING",
+        "PERFORMED_AWAITING_RESULT",
         "DRAFT",
         "PRELIMINARY",
         "PENDING_VERIFY",
@@ -535,7 +540,15 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         }
 
         var requiresResultVerification = service.RequiresResultVerification ?? true;
-        var (targetResultStatus, isFinalized, _) = ResolveTargetResultStatus(validated, requiresResultVerification);
+        var (targetResultStatus, isFinalized, isVerified) = ResolveTargetResultStatus(validated, requiresResultVerification);
+
+        EnforceTwoPersonVerificationGate(
+            requiresResultVerification,
+            isFinalized,
+            targetResultStatus,
+            existingResultSnapshot,
+            latestExistingVersion,
+            staffAccess.Staff.Id);
 
         var previousOrderStatus = ResolveEffectiveOrderStatus(
             trackedOrder,
@@ -562,12 +575,76 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
 
         DiagnosticResult trackedResult;
         DiagnosticResultVersion newVersion;
+        List<DiagnosticResultVersion> postLockExistingVersions;
         int nextVersionNo;
         int finalStateVersion = previousStateVersion;
+        string actionCode;
+        long? returnConsultationServicePointId = null;
 
         try
         {
-            if (existingResultSnapshot is null)
+            await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
+                _db,
+                new[] { visit.Id },
+                resolvedSp is not null ? new[] { resolvedSp.Id } : Array.Empty<long>(),
+                trackedQueueEntry is not null ? new[] { trackedQueueEntry.Id } : Array.Empty<long>(),
+                new[] { trackedOrder.Id },
+                includeChargeAndPaymentLocks: false,
+                ct);
+
+            trackedOrder = await _db.DiagnosticOrders.FirstOrDefaultAsync(o => o.Id == trackedOrder.Id, ct)
+                ?? throw new NotFoundException("DiagnosticOrder", orderCode);
+            visit = await _db.Visits.FirstOrDefaultAsync(v => v.Id == visit.Id, ct)
+                ?? throw new ConflictException("Phiếu chỉ định cận lâm sàng không gắn với lượt khám hợp lệ.");
+            trackedQueueEntry = trackedOrder.QueueEntryId.HasValue
+                ? await _db.QueueEntries.FirstOrDefaultAsync(q => q.Id == trackedOrder.QueueEntryId.Value, ct)
+                : null;
+
+            var postLockStateVersion = trackedQueueEntry?.StateVersion is > 0
+                ? trackedQueueEntry.StateVersion.Value
+                : 1;
+            if (validated.ExpectedStateVersion.HasValue &&
+                validated.ExpectedStateVersion.Value != postLockStateVersion)
+            {
+                throw new ConflictException(
+                    "Dữ liệu phiếu chỉ định hoặc hàng đợi cận lâm sàng đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại dữ liệu.");
+            }
+            previousStateVersion = postLockStateVersion;
+
+            var postLockExistingResult = await _db.DiagnosticResults
+                .FirstOrDefaultAsync(r => r.DiagnosticOrderId == trackedOrder.Id, ct);
+            postLockExistingVersions = postLockExistingResult is not null
+                ? await _db.DiagnosticResultVersions
+                    .AsNoTracking()
+                    .Where(v => v.DiagnosticResultId == postLockExistingResult.Id)
+                    .OrderByDescending(v => v.VersionNo)
+                    .ThenByDescending(v => v.Id)
+                    .ToListAsync(ct)
+                : [];
+            var postLockLatestVersion = postLockExistingVersions.Count > 0 ? postLockExistingVersions[0] : null;
+
+            if (IsDiagnosticResultRowFinalized(postLockExistingResult, postLockLatestVersion))
+            {
+                throw new ConflictException(
+                    "Phiếu chỉ định cận lâm sàng đã có kết quả được xác nhận/khóa cuối, không thể nhập mới kết quả.");
+            }
+
+            if (NormalizeOrderStatus(trackedOrder.Status) == "CANCELLED" ||
+                (trackedQueueEntry is not null && NormalizeQueueStatus(trackedQueueEntry.Status) == "CANCELLED"))
+            {
+                throw new ConflictException(
+                    "Phiếu chỉ định cận lâm sàng đã bị hủy, không thể nhập kết quả.");
+            }
+
+            EnforceTwoPersonVerificationGate(
+                requiresResultVerification,
+                isFinalized,
+                targetResultStatus,
+                postLockExistingResult,
+                postLockLatestVersion,
+                staffAccess.Staff.Id);
+
+            if (postLockExistingResult is null)
             {
                 trackedResult = new DiagnosticResult
                 {
@@ -581,9 +658,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             }
             else
             {
-                trackedResult = await _db.DiagnosticResults
-                    .FirstOrDefaultAsync(r => r.Id == existingResultSnapshot.Id, ct)
-                    ?? existingResultSnapshot;
+                trackedResult = postLockExistingResult;
                 trackedResult.Status = targetResultStatus;
                 if (isFinalized)
                 {
@@ -592,7 +667,8 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                 }
             }
 
-            nextVersionNo = (existingVersions.Count > 0 ? existingVersions.Max(v => v.VersionNo ?? 0) : 0) + 1;
+            nextVersionNo = (postLockExistingVersions.Count > 0 ? postLockExistingVersions.Max(v => v.VersionNo ?? 0) : 0) + 1;
+            var isTwoPersonVerifyStep = isFinalized && requiresResultVerification && postLockLatestVersion is not null;
 
             newVersion = new DiagnosticResultVersion
             {
@@ -600,12 +676,16 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                 VersionNo = nextVersionNo,
                 ResultText = validated.ResultText,
                 Conclusion = validated.Conclusion,
-                ReportFileUrl = validated.ReportFileUrl,
-                EnteredByStaffId = staffAccess.Staff.Id,
-                EnteredAt = nowLocal,
+                ReportFileUrl = validated.ReportFileUrl ?? postLockLatestVersion?.ReportFileUrl,
+                EnteredByStaffId = isTwoPersonVerifyStep
+                    ? (postLockLatestVersion!.EnteredByStaffId ?? staffAccess.Staff.Id)
+                    : staffAccess.Staff.Id,
+                EnteredAt = isTwoPersonVerifyStep
+                    ? (postLockLatestVersion!.EnteredAt ?? nowLocal)
+                    : nowLocal,
                 IsFinalized = isFinalized,
-                VerifiedByStaffId = isFinalized ? staffAccess.Staff.Id : null,
-                VerifiedAt = isFinalized ? nowLocal : null,
+                VerifiedByStaffId = isFinalized && (isVerified || !requiresResultVerification) ? staffAccess.Staff.Id : null,
+                VerifiedAt = isFinalized && (isVerified || !requiresResultVerification) ? nowLocal : null,
                 CorrectionReason = validated.CorrectionReason,
             };
             _db.DiagnosticResultVersions.Add(newVersion);
@@ -657,13 +737,15 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                 }
             }
 
-            var actionCode = isFinalized
-                ? DiagnosticResultFinalizedAction
-                : DiagnosticResultEnteredAction;
+            actionCode = isTwoPersonVerifyStep
+                ? DiagnosticResultVerifiedAction
+                : (isFinalized ? DiagnosticResultFinalizedAction : DiagnosticResultEnteredAction);
             var effectiveReason = validated.CorrectionReason
-                ?? (isFinalized
-                    ? $"Nhập và xác nhận hoàn tất kết quả cận lâm sàng ({targetResultStatus}) cho phiếu {orderCode}."
-                    : $"Lưu bản kết quả cận lâm sàng tạm thời ({targetResultStatus}) cho phiếu {orderCode}.");
+                ?? (isTwoPersonVerifyStep
+                    ? $"Thẩm định độc lập và xác nhận hoàn tất kết quả cận lâm sàng ({targetResultStatus}) cho phiếu {orderCode}."
+                    : (isFinalized
+                        ? $"Nhập và xác nhận hoàn tất kết quả cận lâm sàng ({targetResultStatus}) cho phiếu {orderCode}."
+                        : $"Lưu bản kết quả cận lâm sàng tạm thời ({targetResultStatus}) cho phiếu {orderCode}."));
 
             var changePayload = new
             {
@@ -677,7 +759,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                 isFinalized,
                 resultText = validated.ResultText,
                 conclusion = validated.Conclusion,
-                reportFileUrl = validated.ReportFileUrl,
+                reportFileUrl = newVersion.ReportFileUrl,
                 correctionReason = validated.CorrectionReason,
                 previousOrderStatus,
                 orderStatus = trackedOrder.Status,
@@ -685,10 +767,11 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                 queueStatus = trackedQueueEntry?.Status,
                 previousStateVersion,
                 stateVersion = finalStateVersion,
-                enteredByStaffId = staffAccess.Staff.Id,
+                enteredByStaffId = newVersion.EnteredByStaffId,
                 enteredByStaffCode = staffAccess.Staff.StaffCode,
                 enteredByStaffName = staffAccess.Profile.FullName,
-                enteredAt = nowLocal,
+                verifiedByStaffId = newVersion.VerifiedByStaffId,
+                enteredAt = newVersion.EnteredAt,
                 finalizedAt = trackedResult.FinalizedAt,
             };
 
@@ -706,6 +789,25 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             });
 
             await SaveChangesWithConcurrencyGuardAsync(ct);
+
+            if (isFinalized)
+            {
+                var (transitioned, returnQueueEntry) = await DiagnosticOrderLifecycleHelper.TryTransitionVisitToReturnConsultationAsync(
+                    _db,
+                    visit,
+                    staffAccess.Hospital.Id,
+                    actorUserId,
+                    ipAddress,
+                    nowUtc,
+                    nowLocal,
+                    referenceDate,
+                    ct);
+                if (transitioned)
+                {
+                    await SaveChangesWithConcurrencyGuardAsync(ct);
+                    returnConsultationServicePointId = returnQueueEntry?.ServicePointId;
+                }
+            }
 
             if (tx is not null)
             {
@@ -727,13 +829,24 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                 ServicePointId: trackedQueueEntry?.CurrentServicePointId ?? trackedQueueEntry?.ServicePointId),
             ct);
 
+        if (returnConsultationServicePointId.HasValue)
+        {
+            await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+                _realtimePublisher,
+                new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                    HospitalId: staffAccess.Hospital.Id,
+                    ServicePointId: returnConsultationServicePointId.Value),
+                ct);
+        }
+
+        lookupBundle.VisitsById[visit.Id] = visit;
         lookupBundle.StaffById[staffAccess.Staff.Id] = staffAccess.Staff;
         lookupBundle.ResultsByOrderId[trackedOrder.Id] = trackedResult;
-        var updatedVersions = new List<DiagnosticResultVersion>(existingVersions.Count + 1)
+        var updatedVersions = new List<DiagnosticResultVersion>(postLockExistingVersions.Count + 1)
         {
             newVersion,
         };
-        updatedVersions.AddRange(existingVersions);
+        updatedVersions.AddRange(postLockExistingVersions);
         lookupBundle.VersionsByResultId[trackedResult.Id] = updatedVersions;
         if (trackedQueueEntry is not null)
         {
@@ -751,9 +864,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             ? updatedItemDto.Versions[0]
             : MapVersionItemDto(newVersion, trackedResult.Id, lookupBundle.StaffById);
 
-        var actionOutcome = isFinalized
-            ? DiagnosticResultFinalizedAction
-            : DiagnosticResultEnteredAction;
+        var actionOutcome = actionCode;
         var message = isFinalized
             ? $"Đã nhập và xác nhận hoàn tất kết quả cận lâm sàng cho phiếu '{orderCode}' (phiên bản v{nextVersionNo})."
             : $"Đã lưu kết quả cận lâm sàng ({targetResultStatus}) cho phiếu '{orderCode}' (phiên bản v{nextVersionNo}).";
@@ -779,6 +890,378 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             Order: updatedItemDto,
             LatestVersion: latestVersionDto,
             Versions: updatedItemDto.Versions);
+    }
+
+    public async Task<EnterDiagnosticResultResponseDto> VerifyDiagnosticResultAsync(
+        long actorUserId,
+        string? idOrCode,
+        VerifyDiagnosticResultRequest? request = null,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        var effectiveRequest = request ?? new VerifyDiagnosticResultRequest();
+        if (effectiveRequest.ExpectedStateVersion is <= 0)
+        {
+            throw new ValidationException("ExpectedStateVersion phải lớn hơn hoặc bằng 1.");
+        }
+
+        var rawNote = FirstNonEmpty(effectiveRequest.VerificationNote, effectiveRequest.Notes);
+        string? verificationNote = null;
+        if (!string.IsNullOrWhiteSpace(rawNote))
+        {
+            verificationNote = rawNote.Trim();
+            if (verificationNote.Length > 500 || verificationNote.Contains('<') || verificationNote.Contains('>'))
+            {
+                throw new ValidationException("Ghi chú thẩm định kết quả cận lâm sàng không hợp lệ (tối đa 500 ký tự, không chứa ký tự HTML).");
+            }
+        }
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var referenceDate = DateOnly.FromDateTime(nowLocal);
+
+        var staffAccess = await EnsureDiagnosticStaffAccessAsync(
+            actorUserId,
+            nowUtc,
+            requireResultWritePermission: true,
+            ct);
+        var hospitalId = staffAccess.Hospital.Id;
+
+        var parsedId = ParseResultEndpointIdentifier(idOrCode);
+        var targetOrder = await ResolveDiagnosticOrderForResultEndpointAsync(parsedId, hospitalId, referenceDate, ct);
+
+        var visitOrders = targetOrder.VisitId.HasValue
+            ? await TryLoadVisitDiagnosticOrdersAsync(targetOrder.VisitId.Value, ct)
+            : [targetOrder];
+        if (visitOrders.All(o => o.Id != targetOrder.Id))
+        {
+            visitOrders.Add(targetOrder);
+        }
+
+        var lookupBundle = await LoadOrderLookupBundleAsync(visitOrders, hospitalId, nowLocal, ct);
+        EnsureOrderHospitalOwnership(targetOrder, hospitalId, lookupBundle);
+
+        lookupBundle.ResultsByOrderId.TryGetValue(targetOrder.Id, out var preResult);
+        var preVersions = preResult is not null && lookupBundle.VersionsByResultId.TryGetValue(preResult.Id, out var loadedPreVers)
+            ? loadedPreVers
+            : [];
+        var preLatestVersion = preVersions.Count > 0 ? preVersions[0] : null;
+        var orderCode = FormatOrderCode(targetOrder, referenceDate);
+
+        if (preResult is null || preLatestVersion is null)
+        {
+            throw new ConflictException($"Phiếu chỉ định cận lâm sàng '{orderCode}' chưa có bản kết quả chờ thẩm định (PENDING_VERIFY).");
+        }
+
+        if (IsDiagnosticResultRowFinalized(preResult, preLatestVersion))
+        {
+            throw new ConflictException($"Phiếu chỉ định cận lâm sàng '{orderCode}' đã được xác nhận/khóa cuối trước đó.");
+        }
+
+        var effectiveResultText = !string.IsNullOrWhiteSpace(effectiveRequest.ResultText)
+            ? effectiveRequest.ResultText.Trim()
+            : preLatestVersion.ResultText?.Trim();
+        var effectiveConclusion = !string.IsNullOrWhiteSpace(effectiveRequest.Conclusion)
+            ? effectiveRequest.Conclusion.Trim()
+            : preLatestVersion.Conclusion?.Trim();
+
+        if (string.IsNullOrWhiteSpace(effectiveResultText) || effectiveResultText.Length < 3 || effectiveResultText.Length > 5000 ||
+            effectiveResultText.Contains('<') || effectiveResultText.Contains('>'))
+        {
+            throw new ValidationException("Nội dung kết quả cận lâm sàng (ResultText) khi thẩm định phải từ 3 đến 5000 ký tự.");
+        }
+
+        if (string.IsNullOrWhiteSpace(effectiveConclusion) || effectiveConclusion.Length < 3 || effectiveConclusion.Length > 500 ||
+            effectiveConclusion.Contains('<') || effectiveConclusion.Contains('>'))
+        {
+            throw new ValidationException("Kết luận cận lâm sàng (Conclusion) bắt buộc từ 3 đến 500 ký tự khi xác nhận duyệt kết quả.");
+        }
+
+        var effectiveReportUrl = effectiveRequest.ReportFileUrl is not null
+            ? DiagnosticOrderLifecycleHelper.ValidateInternalReportFileUrl(effectiveRequest.ReportFileUrl)
+            : DiagnosticOrderLifecycleHelper.ValidateInternalReportFileUrl(preLatestVersion.ReportFileUrl);
+
+        if (preLatestVersion.EnteredByStaffId.HasValue && preLatestVersion.EnteredByStaffId.Value == staffAccess.Staff.Id)
+        {
+            throw new ConflictException(
+                "Vi phạm quy tắc thẩm định độc lập 2 người (Two-Person Verification): người nhập kết quả không được tự thẩm định kết quả của chính mình.");
+        }
+
+        return await EnterDiagnosticResultAsync(
+            actorUserId,
+            orderCode,
+            new EnterDiagnosticResultRequest(
+                ResultText: effectiveResultText,
+                Conclusion: effectiveConclusion,
+                ReportFileUrl: effectiveReportUrl,
+                Status: "VERIFIED",
+                IsFinalized: true,
+                IsVerified: true,
+                CorrectionReason: verificationNote,
+                ExpectedStateVersion: effectiveRequest.ExpectedStateVersion),
+            ipAddress,
+            ct);
+    }
+
+    public async Task<DiagnosticReportFileDownloadDto> DownloadDiagnosticReportFileAsync(
+        long actorUserId,
+        string idOrCode,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        if (actorUserId <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var referenceDate = DateOnly.FromDateTime(nowLocal);
+
+        var actorUser = await _db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == actorUserId, ct)
+            ?? throw new NotFoundException("User", actorUserId);
+
+        if (actorUser.AccountStatus != AccountStatus.ACTIVE ||
+            (actorUser.LockedUntil.HasValue && actorUser.LockedUntil.Value > nowUtc))
+        {
+            throw new ForbiddenException("Tài khoản người dùng hiện không ở trạng thái hoạt động hợp lệ.");
+        }
+
+        var allRoles = await _db.Roles.AsNoTracking().ToListAsync(ct);
+        var actorRoleIds = (await _db.UserRoles.AsNoTracking()
+            .Where(ur => ur.UserId == actorUserId)
+            .Select(ur => ur.RoleId)
+            .ToListAsync(ct)).ToHashSet();
+        var actorRoleCodes = allRoles
+            .Where(r => actorRoleIds.Contains(r.Id))
+            .Select(r => r.Code)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var parsedId = ParseResultEndpointIdentifier(idOrCode);
+        var order = await ResolveDiagnosticOrderForResultEndpointAsync(parsedId, hospitalId: 0, referenceDate, ct);
+        var lookupBundle = await LoadOrderLookupBundleAsync([order], hospitalId: 0, nowLocal, ct);
+        var orderHospitalId = ResolveOrderHospitalId(order, lookupBundle);
+
+        var visit = order.VisitId.HasValue && lookupBundle.VisitsById.TryGetValue(order.VisitId.Value, out var foundVisit)
+            ? foundVisit
+            : null;
+
+        // Layer-2 PHI Authorization: PATIENT (own published visit only), DOCTOR (same hospital), DIAGNOSTIC_STAFF (same hospital)
+        long? auditHospitalId = orderHospitalId;
+        if (actorRoleCodes.Contains(RoleNames.Patient))
+        {
+            var patient = await _db.Patients
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.UserId == actorUserId, ct);
+            if (patient is null || !string.Equals(patient.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ForbiddenException("Hồ sơ bệnh nhân không hợp lệ hoặc đã ngừng hoạt động.");
+            }
+
+            if (visit is null || !visit.PatientId.HasValue || visit.PatientId.Value != patient.Id)
+            {
+                throw new ForbiddenException("Bệnh nhân không có quyền truy cập tệp kết quả cận lâm sàng của hồ sơ khác.");
+            }
+        }
+        else if (actorRoleCodes.Contains(RoleNames.Doctor))
+        {
+            var doctorStaff = await _db.Staff.AsNoTracking().FirstOrDefaultAsync(s => s.UserId == actorUserId, ct);
+            var doctor = doctorStaff is not null
+                ? await _db.Doctors.AsNoTracking().FirstOrDefaultAsync(d => d.StaffId == doctorStaff.Id, ct)
+                : null;
+            var doctorHospitalId = doctor?.HospitalId ?? doctorStaff?.HospitalId;
+            if (doctorStaff is null ||
+                !string.Equals(doctorStaff.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase) ||
+                doctor?.IsActive == false ||
+                !doctorHospitalId.HasValue)
+            {
+                throw new ForbiddenException("Tài khoản bác sĩ không hợp lệ hoặc chưa được gán cơ sở y tế.");
+            }
+
+            if (orderHospitalId.HasValue && orderHospitalId.Value != doctorHospitalId.Value)
+            {
+                throw new ForbiddenException("Bác sĩ không có quyền truy cập tệp kết quả cận lâm sàng thuộc cơ sở y tế khác.");
+            }
+            auditHospitalId = doctorHospitalId.Value;
+        }
+        else if (actorRoleCodes.Contains(RoleNames.DiagnosticStaff))
+        {
+            var staffAccess = await EnsureDiagnosticStaffAccessAsync(
+                actorUserId,
+                nowUtc,
+                requireResultWritePermission: false,
+                ct);
+            EnsureOrderHospitalOwnership(order, staffAccess.Hospital.Id, lookupBundle);
+            auditHospitalId = staffAccess.Hospital.Id;
+        }
+        else
+        {
+            throw new ForbiddenException("Người dùng không có quyền xem tệp báo cáo kết quả cận lâm sàng.");
+        }
+
+        lookupBundle.ResultsByOrderId.TryGetValue(order.Id, out var result);
+        var versions = result is not null && lookupBundle.VersionsByResultId.TryGetValue(result.Id, out var loadedVers)
+            ? loadedVers
+            : [];
+        var latestVersion = versions.Count > 0 ? versions[0] : null;
+
+        if (result is null || latestVersion is null)
+        {
+            throw new NotFoundException("DiagnosticResult", idOrCode);
+        }
+
+        if (actorRoleCodes.Contains(RoleNames.Patient) && !IsDiagnosticResultRowFinalized(result, latestVersion))
+        {
+            throw new ForbiddenException("Kết quả cận lâm sàng đang chờ thẩm định/hoàn tất, chưa phát hành cho bệnh nhân.");
+        }
+
+        var validatedUrl = DiagnosticOrderLifecycleHelper.ValidateInternalReportFileUrl(latestVersion.ReportFileUrl);
+        if (string.IsNullOrWhiteSpace(validatedUrl))
+        {
+            throw new NotFoundException("DiagnosticReportFile", idOrCode);
+        }
+
+        var orderCode = FormatOrderCode(order, referenceDate);
+        var visitCode = visit is not null ? FormatVisitCode(visit, referenceDate) : string.Empty;
+        var versionNo = latestVersion.VersionNo ?? 1;
+        var safeOrderToken = new string(orderCode.Where(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_').ToArray());
+        var fileName = string.IsNullOrWhiteSpace(safeOrderToken)
+            ? $"diagnostic-report-{result.Id}-v{versionNo}.pdf"
+            : $"{safeOrderToken}-v{versionNo}.pdf";
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actorUserId,
+            HospitalId = auditHospitalId,
+            Action = DiagnosticReportFileViewedAction,
+            EntityType = DiagnosticResultEntityType,
+            EntityId = result.Id.ToString(CultureInfo.InvariantCulture),
+            Reason = $"Truy xuất tệp báo cáo cận lâm sàng có xác thực cho phiếu {orderCode} (v{versionNo}).",
+            ChangeData = JsonSerializer.Serialize(new
+            {
+                orderId = order.Id,
+                orderCode,
+                visitId = visit?.Id,
+                visitCode,
+                resultId = result.Id,
+                versionNo,
+                reportFileUrl = validatedUrl,
+                fileName,
+            }, AuditJsonOptions),
+            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+            OccurredAt = nowUtc,
+        });
+        await SaveChangesWithConcurrencyGuardAsync(ct);
+
+        var pdfBytes = BuildMinimalAuthenticatedReportPdf(orderCode, visitCode, versionNo, latestVersion.Conclusion ?? latestVersion.ResultText);
+        return new DiagnosticReportFileDownloadDto(
+            Content: pdfBytes,
+            ContentType: "application/pdf",
+            FileName: fileName,
+            ResultId: result.Id,
+            OrderId: order.Id,
+            OrderCode: orderCode);
+    }
+
+    private static void EnforceTwoPersonVerificationGate(
+        bool requiresResultVerification,
+        bool isFinalized,
+        string targetResultStatus,
+        DiagnosticResult? existingResult,
+        DiagnosticResultVersion? latestExistingVersion,
+        long actorStaffId)
+    {
+        if (!isFinalized || !requiresResultVerification)
+        {
+            return;
+        }
+
+        if (!string.Equals(targetResultStatus, "VERIFIED", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException(
+                "Dịch vụ cận lâm sàng này bắt buộc thẩm định độc lập 2 bước (RequiresResultVerification = true). Không thể khóa kết quả trực tiếp sang FINALIZED; vui lòng lưu ở trạng thái Chờ thẩm định (PENDING_VERIFY) để người thứ hai xác nhận duyệt (VERIFIED).");
+        }
+
+        var existingStatus = existingResult is not null
+            ? AppointmentBookingRules.NormalizeStatusKey(existingResult.Status)
+            : string.Empty;
+
+        if (existingResult is null || latestExistingVersion is null || existingStatus != "PENDING_VERIFY")
+        {
+            throw new ConflictException(
+                "Dịch vụ cận lâm sàng này bắt buộc thẩm định độc lập 2 bước (RequiresResultVerification = true). Vui lòng lưu kết quả ở trạng thái Chờ thẩm định (PENDING_VERIFY) trước khi người thứ hai xác nhận duyệt (VERIFIED).");
+        }
+
+        if (latestExistingVersion.EnteredByStaffId.HasValue &&
+            latestExistingVersion.EnteredByStaffId.Value == actorStaffId)
+        {
+            throw new ConflictException(
+                "Vi phạm quy tắc thẩm định độc lập 2 người (Two-Person Verification): người nhập kết quả không được tự thẩm định kết quả của chính mình.");
+        }
+    }
+
+    private static ParsedOrderIdentifier ParseResultEndpointIdentifier(string? rawIdOrCode)
+    {
+        var parsed = ParseOrderIdentifier(rawIdOrCode);
+        return parsed;
+    }
+
+    private async Task<DiagnosticOrder> ResolveDiagnosticOrderForResultEndpointAsync(
+        ParsedOrderIdentifier identifier,
+        long hospitalId,
+        DateOnly referenceDate,
+        CancellationToken ct)
+    {
+        if (identifier.OrderId.HasValue && !identifier.ResultId.HasValue)
+        {
+            var directOrder = await _db.DiagnosticOrders
+                .FirstOrDefaultAsync(o => o.Id == identifier.OrderId.Value, ct);
+            if (directOrder is not null)
+            {
+                return directOrder;
+            }
+
+            try
+            {
+                var byResultId = await _db.DiagnosticResults
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(r => r.Id == identifier.OrderId.Value, ct);
+                if (byResultId?.DiagnosticOrderId.HasValue == true)
+                {
+                    var linkedOrder = await _db.DiagnosticOrders
+                        .FirstOrDefaultAsync(o => o.Id == byResultId.DiagnosticOrderId.Value, ct);
+                    if (linkedOrder is not null)
+                    {
+                        return linkedOrder;
+                    }
+                }
+            }
+            catch (NotSupportedException)
+            {
+            }
+        }
+
+        return await ResolveDiagnosticOrderAsync(identifier, hospitalId, referenceDate, asTracking: true, ct);
+    }
+
+    private static byte[] BuildMinimalAuthenticatedReportPdf(
+        string orderCode,
+        string visitCode,
+        int versionNo,
+        string? summaryText)
+    {
+        var asciiSummary = string.IsNullOrWhiteSpace(summaryText)
+            ? "Authenticated MedFlow Diagnostic Report"
+            : new string(summaryText.Where(c => c >= 32 && c <= 126 && c is not '(' and not ')' and not '\\').Take(80).ToArray());
+        if (string.IsNullOrWhiteSpace(asciiSummary))
+        {
+            asciiSummary = "Authenticated MedFlow Diagnostic Report";
+        }
+
+        var content = $"%PDF-1.4\n1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>endobj\n4 0 obj<< /Length 120 >>stream\nBT /F1 12 Tf 72 720 Td (MedFlow Diagnostic Report {orderCode} {visitCode} v{versionNo}: {asciiSummary}) Tj ET\nendstream\nendobj\ntrailer<< /Root 1 0 R >>\n%%EOF\n";
+        return Encoding.ASCII.GetBytes(content);
     }
 
     public async Task<EnterDiagnosticResultResponseDto> UpdateDiagnosticResultAsync(
@@ -909,6 +1392,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             normalizedQueueStatus,
             trackedQueueEntry,
             existingResultSnapshot,
+            latestExistingVersion,
             resultState,
             visit,
             medicalRecord,
@@ -917,7 +1401,8 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             serviceDept,
             resolvedSp,
             resolvedRoom,
-            staffAccess.HasResultWritePermission);
+            staffAccess.HasResultWritePermission,
+            staffAccess.Staff.Id);
         if (!eligibility.CanAmendResult)
         {
             throw new ConflictException(
@@ -960,17 +1445,51 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
 
         DiagnosticResult trackedResult;
         DiagnosticResultVersion newVersion;
+        List<DiagnosticResultVersion> postLockExistingVersions;
         int nextVersionNo;
         var finalStateVersion = previousStateVersion;
 
         try
         {
+            await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
+                _db,
+                visit is not null ? new[] { visit.Id } : Array.Empty<long>(),
+                resolvedSp is not null ? new[] { resolvedSp.Id } : Array.Empty<long>(),
+                trackedQueueEntry is not null ? new[] { trackedQueueEntry.Id } : Array.Empty<long>(),
+                new[] { trackedOrder.Id },
+                includeChargeAndPaymentLocks: false,
+                ct);
+
+            trackedOrder = await _db.DiagnosticOrders.FirstOrDefaultAsync(o => o.Id == trackedOrder.Id, ct)
+                ?? throw new NotFoundException("DiagnosticOrder", orderCode);
+            trackedQueueEntry = trackedOrder.QueueEntryId.HasValue
+                ? await _db.QueueEntries.FirstOrDefaultAsync(q => q.Id == trackedOrder.QueueEntryId.Value, ct)
+                : null;
+
+            var postLockStateVersion = trackedQueueEntry?.StateVersion is > 0
+                ? trackedQueueEntry.StateVersion.Value
+                : 1;
+            if (validated.ExpectedStateVersion.HasValue &&
+                validated.ExpectedStateVersion.Value != postLockStateVersion)
+            {
+                throw new ConflictException(
+                    "Dữ liệu phiếu chỉ định hoặc hàng đợi cận lâm sàng đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại dữ liệu.");
+            }
+            previousStateVersion = postLockStateVersion;
+
             trackedResult = await _db.DiagnosticResults
                 .FirstOrDefaultAsync(r => r.Id == existingResultSnapshot!.Id, ct)
                 ?? throw new ConflictException(
                     $"Phiếu chỉ định cận lâm sàng '{orderCode}' chưa có kết quả được xác nhận/khóa cuối. Vui lòng nhập kết quả trước khi sửa.");
 
-            nextVersionNo = (existingVersions.Count > 0 ? existingVersions.Max(v => v.VersionNo ?? 0) : 0) + 1;
+            postLockExistingVersions = await _db.DiagnosticResultVersions
+                .AsNoTracking()
+                .Where(v => v.DiagnosticResultId == trackedResult.Id)
+                .OrderByDescending(v => v.VersionNo)
+                .ThenByDescending(v => v.Id)
+                .ToListAsync(ct);
+
+            nextVersionNo = (postLockExistingVersions.Count > 0 ? postLockExistingVersions.Max(v => v.VersionNo ?? 0) : 0) + 1;
             newVersion = new DiagnosticResultVersion
             {
                 DiagnosticResultId = trackedResult.Id,
@@ -1057,11 +1576,11 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
 
         lookupBundle.StaffById[staffAccess.Staff.Id] = staffAccess.Staff;
         lookupBundle.ResultsByOrderId[trackedOrder.Id] = trackedResult;
-        var updatedVersions = new List<DiagnosticResultVersion>(existingVersions.Count + 1)
+        var updatedVersions = new List<DiagnosticResultVersion>(postLockExistingVersions.Count + 1)
         {
             newVersion,
         };
-        updatedVersions.AddRange(existingVersions);
+        updatedVersions.AddRange(postLockExistingVersions);
         lookupBundle.VersionsByResultId[trackedResult.Id] = updatedVersions;
         if (trackedQueueEntry is not null)
         {
@@ -1260,6 +1779,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             queueStatus,
             queueEntry,
             diagnosticResult,
+            latestVersion,
             resultState,
             visit,
             medicalRecord,
@@ -1268,7 +1788,8 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             dept,
             sp,
             room,
-            staffAccess.HasResultWritePermission);
+            staffAccess.HasResultWritePermission,
+            staffAccess.Staff.Id);
 
         return new DiagnosticResultEntryItemDto(
             OrderId: order.Id,
@@ -1394,6 +1915,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         string? normalizedQueueStatus,
         QueueEntry? queueEntry,
         DiagnosticResult? existingResult,
+        DiagnosticResultVersion? latestVersion,
         ResolvedResultState resultState,
         Visit? visit,
         MedicalRecord? medicalRecord,
@@ -1402,7 +1924,8 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         Department? serviceDept,
         QueueServicePoint? servicePoint,
         HospitalRoom? room,
-        bool hasResultWritePermission)
+        bool hasResultWritePermission,
+        long? actorStaffId = null)
     {
         var isResultAlreadyFinalized = resultState.IsResultFinalized;
         var isExecutionStartedOrCompleted = IsOrderExecutionStartedOrCompleted(
@@ -1500,6 +2023,12 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         }
 
         var canEnter = disabledReason is null;
+        var requiresVerification = service?.RequiresResultVerification ?? true;
+        var canFinalize = canEnter &&
+            (!requiresVerification ||
+             (string.Equals(resultState.ResultStatus, "PENDING_VERIFY", StringComparison.OrdinalIgnoreCase) &&
+              latestVersion is not null &&
+              (!actorStaffId.HasValue || !latestVersion.EnteredByStaffId.HasValue || latestVersion.EnteredByStaffId.Value != actorStaffId.Value)));
         var amendDisabledReason = ResolveAmendDisabledReason(
             orderCode,
             rawOrderStatus,
@@ -1519,7 +2048,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         return new DiagnosticResultEntryEligibilityDto(
             IsEligible: canEnter,
             CanEnterResult: canEnter,
-            CanFinalizeResult: canEnter,
+            CanFinalizeResult: canFinalize,
             DisabledReason: disabledReason,
             IsOrderExecutionStartedOrCompleted: isExecutionStartedOrCompleted,
             IsResultAlreadyFinalized: isResultAlreadyFinalized,
@@ -1706,11 +2235,15 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         }
 
         var isOrderOrQueueCancelled = rawOrderStatus == "CANCELLED" || normalizedQueueStatus == "CANCELLED";
+        var isExecutionCompletedWithoutResult = !isOrderOrQueueCancelled &&
+            (rawOrderStatus == "COMPLETED" || normalizedQueueStatus == "COMPLETED");
         return new ResolvedResultState(
             HasResult: false,
             IsResultReady: false,
             IsResultFinalized: false,
-            ResultStatus: isOrderOrQueueCancelled ? "CANCELLED" : "PENDING",
+            ResultStatus: isOrderOrQueueCancelled
+                ? "CANCELLED"
+                : (isExecutionCompletedWithoutResult ? "PERFORMED_AWAITING_RESULT" : "PENDING"),
             ResultFinalizedAt: null);
     }
 
@@ -1776,6 +2309,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                      a.EntityId == orderIdString &&
                      (a.Action == DiagnosticResultEnteredAction ||
                       a.Action == DiagnosticResultFinalizedAction ||
+                      a.Action == DiagnosticResultVerifiedAction ||
                       a.Action == DiagnosticResultAmendedAction)))
                 .OrderByDescending(a => a.OccurredAt)
                 .ThenByDescending(a => a.Id)
@@ -2793,9 +3327,9 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             throw new ValidationException("Kết luận cận lâm sàng (Conclusion) phải có ít nhất 3 ký tự.");
         }
 
-        if (trimmedConclusion.Length > 2000)
+        if (trimmedConclusion.Length > 500)
         {
-            throw new ValidationException("Kết luận cận lâm sàng (Conclusion) không được vượt quá 2000 ký tự.");
+            throw new ValidationException("Kết luận cận lâm sàng (Conclusion) không được vượt quá 500 ký tự.");
         }
 
         if (trimmedConclusion.Contains('<') || trimmedConclusion.Contains('>'))
@@ -2804,30 +3338,9 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         }
 
         var reportFileUrlSpecified = request.ReportFileUrl is not null;
-        string? normalizedReportFileUrl = null;
-        if (reportFileUrlSpecified && !string.IsNullOrWhiteSpace(request.ReportFileUrl))
-        {
-            normalizedReportFileUrl = request.ReportFileUrl.Trim();
-            if (normalizedReportFileUrl.Length > 500)
-            {
-                throw new ValidationException("Đường dẫn tệp báo cáo cận lâm sàng (ReportFileUrl) không được vượt quá 500 ký tự.");
-            }
-
-            if (normalizedReportFileUrl.Contains('<') ||
-                normalizedReportFileUrl.Contains('>') ||
-                normalizedReportFileUrl.Any(char.IsWhiteSpace))
-            {
-                throw new ValidationException("Đường dẫn tệp báo cáo cận lâm sàng (ReportFileUrl) chứa ký tự không hợp lệ.");
-            }
-
-            if (!normalizedReportFileUrl.StartsWith('/') &&
-                !normalizedReportFileUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
-                !normalizedReportFileUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ValidationException(
-                    "Đường dẫn tệp báo cáo cận lâm sàng (ReportFileUrl) phải bắt đầu bằng '/', 'http://' hoặc 'https://'.");
-            }
-        }
+        var normalizedReportFileUrl = reportFileUrlSpecified
+            ? DiagnosticOrderLifecycleHelper.ValidateInternalReportFileUrl(request.ReportFileUrl)
+            : null;
 
         var rawCorrectionReason = FirstNonEmpty(request.CorrectionReason, request.AmendmentReason);
         if (string.IsNullOrWhiteSpace(rawCorrectionReason))
@@ -2901,79 +3414,6 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             throw new ValidationException("Nội dung kết quả cận lâm sàng chứa ký tự không hợp lệ.");
         }
 
-        var rawConclusion = FirstNonEmpty(
-            request.Conclusion,
-            request.Impression,
-            request.DiagnosticConclusion);
-        if (string.IsNullOrWhiteSpace(rawConclusion))
-        {
-            throw new ValidationException("Kết luận cận lâm sàng (Conclusion) không được để trống.");
-        }
-
-        var trimmedConclusion = rawConclusion.Trim();
-        if (trimmedConclusion.Length < 3)
-        {
-            throw new ValidationException("Kết luận cận lâm sàng (Conclusion) phải có ít nhất 3 ký tự.");
-        }
-
-        if (trimmedConclusion.Length > 2000)
-        {
-            throw new ValidationException("Kết luận cận lâm sàng (Conclusion) không được vượt quá 2000 ký tự.");
-        }
-
-        if (trimmedConclusion.Contains('<') || trimmedConclusion.Contains('>'))
-        {
-            throw new ValidationException("Kết luận cận lâm sàng chứa ký tự không hợp lệ.");
-        }
-
-        var rawReportFileUrl = FirstNonEmpty(
-            request.ReportFileUrl,
-            request.AttachmentUrl,
-            request.FileUrl);
-        string? normalizedReportFileUrl = null;
-        if (!string.IsNullOrWhiteSpace(rawReportFileUrl))
-        {
-            normalizedReportFileUrl = rawReportFileUrl.Trim();
-            if (normalizedReportFileUrl.Length > 500)
-            {
-                throw new ValidationException("Đường dẫn tệp báo cáo cận lâm sàng (ReportFileUrl) không được vượt quá 500 ký tự.");
-            }
-
-            if (normalizedReportFileUrl.Contains('<') ||
-                normalizedReportFileUrl.Contains('>') ||
-                normalizedReportFileUrl.Any(char.IsWhiteSpace))
-            {
-                throw new ValidationException("Đường dẫn tệp báo cáo cận lâm sàng (ReportFileUrl) chứa ký tự không hợp lệ.");
-            }
-
-            if (!normalizedReportFileUrl.StartsWith('/') &&
-                !normalizedReportFileUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
-                !normalizedReportFileUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ValidationException(
-                    "Đường dẫn tệp báo cáo cận lâm sàng (ReportFileUrl) phải bắt đầu bằng '/', 'http://' hoặc 'https://'.");
-            }
-        }
-
-        var rawCorrectionReason = FirstNonEmpty(
-            request.CorrectionReason,
-            request.AmendmentReason,
-            request.Notes);
-        string? normalizedCorrectionReason = null;
-        if (!string.IsNullOrWhiteSpace(rawCorrectionReason))
-        {
-            normalizedCorrectionReason = rawCorrectionReason.Trim();
-            if (normalizedCorrectionReason.Length > 500)
-            {
-                throw new ValidationException("Ghi chú hoặc lý do hiệu chỉnh kết quả không được vượt quá 500 ký tự.");
-            }
-
-            if (normalizedCorrectionReason.Contains('<') || normalizedCorrectionReason.Contains('>'))
-            {
-                throw new ValidationException("Ghi chú hoặc lý do hiệu chỉnh kết quả chứa ký tự không hợp lệ.");
-            }
-        }
-
         var rawStatus = FirstNonEmpty(request.ResultStatus, request.Status);
         var normalizedStatusKey = string.IsNullOrWhiteSpace(rawStatus)
             ? string.Empty
@@ -3015,6 +3455,66 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                 "Trạng thái kết quả hoàn tất/đã duyệt không tương thích với cờ IsFinalized = false.");
         }
 
+        var isFinalizingRequest = normalizedStatusKey is "FINALIZED" or "VERIFIED" ||
+                                  explicitFinalize == true ||
+                                  explicitVerify == true;
+
+        var rawConclusion = FirstNonEmpty(
+            request.Conclusion,
+            request.Impression,
+            request.DiagnosticConclusion);
+        string? trimmedConclusion = null;
+        if (string.IsNullOrWhiteSpace(rawConclusion))
+        {
+            if (isFinalizingRequest)
+            {
+                throw new ValidationException("Kết luận cận lâm sàng (Conclusion) không được để trống khi xác nhận hoàn tất kết quả.");
+            }
+        }
+        else
+        {
+            trimmedConclusion = rawConclusion.Trim();
+            if (trimmedConclusion.Length < 3)
+            {
+                throw new ValidationException("Kết luận cận lâm sàng (Conclusion) phải có ít nhất 3 ký tự.");
+            }
+
+            if (trimmedConclusion.Length > 500)
+            {
+                throw new ValidationException("Kết luận cận lâm sàng (Conclusion) không được vượt quá 500 ký tự.");
+            }
+
+            if (trimmedConclusion.Contains('<') || trimmedConclusion.Contains('>'))
+            {
+                throw new ValidationException("Kết luận cận lâm sàng chứa ký tự không hợp lệ.");
+            }
+        }
+
+        var rawReportFileUrl = FirstNonEmpty(
+            request.ReportFileUrl,
+            request.AttachmentUrl,
+            request.FileUrl);
+        var normalizedReportFileUrl = DiagnosticOrderLifecycleHelper.ValidateInternalReportFileUrl(rawReportFileUrl);
+
+        var rawCorrectionReason = FirstNonEmpty(
+            request.CorrectionReason,
+            request.AmendmentReason,
+            request.Notes);
+        string? normalizedCorrectionReason = null;
+        if (!string.IsNullOrWhiteSpace(rawCorrectionReason))
+        {
+            normalizedCorrectionReason = rawCorrectionReason.Trim();
+            if (normalizedCorrectionReason.Length > 500)
+            {
+                throw new ValidationException("Ghi chú hoặc lý do hiệu chỉnh kết quả không được vượt quá 500 ký tự.");
+            }
+
+            if (normalizedCorrectionReason.Contains('<') || normalizedCorrectionReason.Contains('>'))
+            {
+                throw new ValidationException("Ghi chú hoặc lý do hiệu chỉnh kết quả chứa ký tự không hợp lệ.");
+            }
+        }
+
         return new ValidatedEnterDiagnosticResultInput(
             ResultText: trimmedResultText,
             Conclusion: trimmedConclusion,
@@ -3039,18 +3539,17 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             return (status, false, false);
         }
 
-        if (status == "VERIFIED" || (status is "" or "FINALIZED" && explicitVerify == true))
+        if (status == "VERIFIED" || explicitVerify == true)
         {
             return ("VERIFIED", true, true);
         }
 
-        if (status == "FINALIZED" || (status == "" && explicitFinalize != false))
+        if (status == "FINALIZED" || explicitFinalize == true)
         {
-            return ("FINALIZED", true, true);
+            return ("FINALIZED", true, !requiresResultVerification);
         }
 
-        var unfinalizedStatus = requiresResultVerification ? "PENDING_VERIFY" : "DRAFT";
-        return (unfinalizedStatus, false, false);
+        return ("DRAFT", false, false);
     }
 
     private static IReadOnlyList<DiagnosticResultEntryItemDto> ApplyListFilters(
@@ -3891,6 +4390,11 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             throw new ConflictException(
                 "Dữ liệu phiếu chỉ định hoặc hàng đợi cận lâm sàng vừa được cập nhật bởi thao tác khác. Vui lòng tải lại và thử lại.");
         }
+        catch (Exception ex) when (PostgresConcurrencyException.IsUniqueViolation(ex) || PostgresConcurrencyException.IsTransientConcurrencyConflict(ex))
+        {
+            throw new ConflictException(
+                "Dữ liệu phiếu chỉ định hoặc kết quả cận lâm sàng vừa được cập nhật đồng thời bởi thao tác khác. Vui lòng tải lại và thử lại.");
+        }
     }
 
     private static QueueServicePoint? ResolveDiagnosticServicePointForCatalog(
@@ -4095,6 +4599,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
 
     private static readonly HashSet<string> ValidViewResultStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
+        "PERFORMED_AWAITING_RESULT",
         "DRAFT",
         "PRELIMINARY",
         "PENDING_VERIFY",
@@ -4239,6 +4744,16 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                 fileName = Uri.UnescapeDataString(name);
             }
         }
+        else if (trimmed.StartsWith('/'))
+        {
+            var qIdx = trimmed.IndexOf('?');
+            var cleanPath = qIdx >= 0 ? trimmed[..qIdx] : trimmed;
+            var name = Path.GetFileName(cleanPath);
+            if (!string.IsNullOrEmpty(name) && !string.Equals(name, "report-file", StringComparison.OrdinalIgnoreCase))
+            {
+                fileName = Uri.UnescapeDataString(name);
+            }
+        }
 
         return new DiagnosticResultDocumentDto(trimmed, true, fileName);
     }
@@ -4379,7 +4894,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
 
     private sealed record ValidatedEnterDiagnosticResultInput(
         string ResultText,
-        string Conclusion,
+        string? Conclusion,
         string? ReportFileUrl,
         string? CorrectionReason,
         string StatusKey,

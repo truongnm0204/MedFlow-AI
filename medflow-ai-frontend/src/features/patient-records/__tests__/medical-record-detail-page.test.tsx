@@ -208,4 +208,35 @@ describe('MedicalRecordDetailPage', () => {
       'Không tìm thấy hoặc không có quyền truy cập bệnh án',
     );
   });
+
+  it('hides CLS result link when result is not published yet and renders dedicated EMR revision fields (BUG-P6-06 / BUG-P6-07)', async () => {
+    vi.mocked(recordsApi.getMyMedicalRecordDetail).mockResolvedValue({
+      ...sampleDetail,
+      clinicalProgressionNote: 'Đáp ứng tốt sau giảm tiết acid ban đầu.',
+      clinicalInterpretation: 'Nội soi đang chờ bác sĩ chuyên khoa duyệt kết luận.',
+      treatmentPlan: 'Ức chế bơm proton 14 ngày kèm chế độ ăn mềm.',
+      dischargeInstructions: 'Tránh rượu bia và thức ăn cay nóng.',
+      followUpInstructions: 'Tái khám chuyên khoa Tiêu hóa sau 14 ngày.',
+      followUpDate: '2026-11-29',
+      warningSigns: 'Nôn ra máu, đi ngoài phân đen hoặc đau bụng dữ dội.',
+      diagnosticOrders: [
+        {
+          ...sampleDetail.diagnosticOrders[0],
+          status: 'PERFORMED_AWAITING_RESULT',
+          isResultPublished: false,
+          signedAt: null,
+          conclusionSummary: null,
+        },
+      ],
+    });
+
+    renderDetailPage('/emr/EMR-501');
+
+    expect(await screen.findByText('Đáp ứng tốt sau giảm tiết acid ban đầu.')).toBeInTheDocument();
+    expect(screen.getByText('Ức chế bơm proton 14 ngày kèm chế độ ăn mềm.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Nôn ra máu, đi ngoài phân đen hoặc đau bụng dữ dội.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Xem kết quả CLS/i })).not.toBeInTheDocument();
+  });
 });

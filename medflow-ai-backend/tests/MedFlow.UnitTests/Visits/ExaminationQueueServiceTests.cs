@@ -2718,5 +2718,23 @@ public sealed class ExaminationQueueServiceTests : IDisposable
                 DiagnosticResultsReady: true,
                 Reason: "Đã có kết quả CLS hoàn tất"));
         Assert.Equal("READY", activatedReturn.CurrentStatus);
+
+        // Regression: when QueueServicePoint Id = 15 (RoomId = 34) coexists with an uncovered room whose RoomId = 15 (sp-room-15),
+        // filtering by "sp-15" or "15" MUST return ONLY sp-15 (never colliding with sp-room-15), while "sp-room-15" returns ONLY sp-room-15!
+        db.HospitalRooms.AddRange(
+            new HospitalRoom { Id = 15, HospitalId = 1, DepartmentId = 1, RoomCode = "BK-COLLIDE-15", Name = "Phòng Không SP 15", RoomType = "EXAMINATION", Capacity = 2, Status = "ACTIVE" },
+            new HospitalRoom { Id = 34, HospitalId = 1, DepartmentId = 1, RoomCode = "P-SP15-R34", Name = "Phòng Của SP 15", RoomType = "EXAMINATION", Capacity = 2, Status = "ACTIVE" });
+        db.QueueServicePoints.Add(
+            new QueueServicePoint { Id = 15, HospitalId = 1, RoomId = 34, DoctorId = 1, PointType = "ROOM", Name = "SP 15 Phòng 34", IsActive = true });
+        await db.SaveChangesAsync();
+
+        var onlySp15 = await svc.GetExaminationQueueAsync(actorUserId: 5, new GetExaminationQueueRequest(ServicePointId: "sp-15"));
+        Assert.Equal("sp-15", Assert.Single(onlySp15.ServicePoints).ServicePointId);
+
+        var onlyNumeric15 = await svc.GetExaminationQueueAsync(actorUserId: 5, new GetExaminationQueueRequest(ServicePointId: "15"));
+        Assert.Equal("sp-15", Assert.Single(onlyNumeric15.ServicePoints).ServicePointId);
+
+        var onlySpRoom15 = await svc.GetExaminationQueueAsync(actorUserId: 5, new GetExaminationQueueRequest(ServicePointId: "sp-room-15"));
+        Assert.Equal("sp-room-15", Assert.Single(onlySpRoom15.ServicePoints).ServicePointId);
     }
 }

@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Mvc.ModelBinding;
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = RoleNames.DiagnosticStaff)]
+[Authorize]
 public sealed class DiagnosticResultsController : ControllerBase
 {
     private readonly IDiagnosticResultEntryService _resultEntryService;
@@ -22,6 +22,7 @@ public sealed class DiagnosticResultsController : ControllerBase
     /// <summary>
     /// GET /api/v1/diagnostic/results — Xem danh sách phiếu chỉ định cận lâm sàng chờ nhập kết quả &amp; kết luận (UC43 / #134).
     /// </summary>
+    [Authorize(Roles = RoleNames.DiagnosticStaff)]
     [HttpGet("/api/v1/diagnostic/results")]
     [HttpGet("/api/v1/diagnostic/orders/results")]
     [HttpGet("/api/v1/diagnostic/orders/result")]
@@ -43,6 +44,7 @@ public sealed class DiagnosticResultsController : ControllerBase
     /// <summary>
     /// GET /api/v1/diagnostic/results/view — Danh sách kết quả cận lâm sàng đã có bản ghi (UC35 / #138).
     /// </summary>
+    [Authorize(Roles = RoleNames.DiagnosticStaff)]
     [HttpGet("/api/v1/diagnostic/results/view")]
     [HttpGet("/api/v1/diagnostic-results/view")]
     [ProducesResponseType<DiagnosticResultViewListResponseDto>(StatusCodes.Status200OK)]
@@ -58,6 +60,7 @@ public sealed class DiagnosticResultsController : ControllerBase
     /// <summary>
     /// GET /api/v1/diagnostic/results/{idOrCode}/view — Xem kết quả cận lâm sàng và tài liệu đã lưu (UC35 / #138).
     /// </summary>
+    [Authorize(Roles = RoleNames.DiagnosticStaff)]
     [HttpGet("/api/v1/diagnostic/results/{idOrCode}/view")]
     [HttpGet("/api/v1/diagnostic-results/{idOrCode}/view")]
     [HttpGet("/api/v1/diagnostic/orders/{idOrCode}/result/view")]
@@ -75,6 +78,7 @@ public sealed class DiagnosticResultsController : ControllerBase
     /// <summary>
     /// GET /api/v1/diagnostic/results/{idOrCode} — Xem chi tiết phiếu chỉ định, thông tin lâm sàng, lịch sử phiên bản &amp; kết quả cận lâm sàng (UC43 / #134).
     /// </summary>
+    [Authorize(Roles = RoleNames.DiagnosticStaff)]
     [HttpGet("/api/v1/diagnostic/results/{idOrCode}")]
     [HttpGet("/api/v1/diagnostic/orders/{idOrCode}/result")]
     [HttpGet("/api/v1/diagnostic/orders/{idOrCode}/results")]
@@ -97,6 +101,7 @@ public sealed class DiagnosticResultsController : ControllerBase
     /// <summary>
     /// POST/PUT/PATCH /api/v1/diagnostic/orders/{idOrCode}/result — Nhập kết quả và kết luận cận lâm sàng cho dịch vụ đã thực hiện (UC43 / #134).
     /// </summary>
+    [Authorize(Roles = RoleNames.DiagnosticStaff)]
     [HttpPost("/api/v1/diagnostic/orders/{idOrCode}/result")]
     [HttpPut("/api/v1/diagnostic/orders/{idOrCode}/result")]
     [HttpPatch("/api/v1/diagnostic/orders/{idOrCode}/result")]
@@ -144,6 +149,7 @@ public sealed class DiagnosticResultsController : ControllerBase
     /// <summary>
     /// POST/PUT /api/v1/diagnostic/results — Nhập kết quả cận lâm sàng theo OrderId / OrderCode trong payload (UC43 / #134).
     /// </summary>
+    [Authorize(Roles = RoleNames.DiagnosticStaff)]
     [HttpPost("/api/v1/diagnostic/results")]
     [HttpPut("/api/v1/diagnostic/results")]
     [HttpPost("/api/v1/diagnostic/orders/result")]
@@ -179,6 +185,7 @@ public sealed class DiagnosticResultsController : ControllerBase
     /// <summary>
     /// POST/PUT/PATCH .../result/amend — Sửa kết quả cận lâm sàng đã khóa (UC43 / #136).
     /// </summary>
+    [Authorize(Roles = RoleNames.DiagnosticStaff)]
     [HttpPost("/api/v1/diagnostic/orders/{idOrCode}/result/amend")]
     [HttpPut("/api/v1/diagnostic/orders/{idOrCode}/result/amend")]
     [HttpPatch("/api/v1/diagnostic/orders/{idOrCode}/result/amend")]
@@ -211,6 +218,7 @@ public sealed class DiagnosticResultsController : ControllerBase
     /// <summary>
     /// POST/PUT .../results/amend — Sửa kết quả đã khóa theo OrderId / OrderCode trong payload (UC43 / #136).
     /// </summary>
+    [Authorize(Roles = RoleNames.DiagnosticStaff)]
     [HttpPost("/api/v1/diagnostic/results/amend")]
     [HttpPut("/api/v1/diagnostic/results/amend")]
     [HttpPost("/api/v1/diagnostic/orders/result/amend")]
@@ -230,6 +238,60 @@ public sealed class DiagnosticResultsController : ControllerBase
             request,
             GetIp(),
             ct));
+
+    /// <summary>
+    /// POST/PUT /api/v1/diagnostic/results/{idOrCode}/verify — Thẩm định độc lập người thứ hai &amp; phát hành kết quả cận lâm sàng (BUG-P6-04).
+    /// </summary>
+    [Authorize(Roles = RoleNames.DiagnosticStaff)]
+    [HttpPost("/api/v1/diagnostic/results/{idOrCode}/verify")]
+    [HttpPut("/api/v1/diagnostic/results/{idOrCode}/verify")]
+    [HttpPost("/api/v1/diagnostic-results/{idOrCode}/verify")]
+    [HttpPut("/api/v1/diagnostic-results/{idOrCode}/verify")]
+    [HttpPost("/api/v1/diagnostic/orders/{idOrCode}/result/verify")]
+    [HttpPut("/api/v1/diagnostic/orders/{idOrCode}/result/verify")]
+    [HttpPost("/api/v1/diagnostic-orders/{idOrCode}/result/verify")]
+    [HttpPut("/api/v1/diagnostic-orders/{idOrCode}/result/verify")]
+    [ProducesResponseType<EnterDiagnosticResultResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<EnterDiagnosticResultResponseDto>> VerifyResult(
+        string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] VerifyDiagnosticResultRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _resultEntryService.VerifyDiagnosticResultAsync(
+            GetUserId(),
+            idOrCode,
+            request,
+            GetIp(),
+            ct));
+
+    /// <summary>
+    /// GET /api/v1/diagnostic/results/{idOrCode}/report-file — Tải/xem tệp báo cáo kết quả cận lâm sàng nội bộ đã xác thực quyền PHI 2 lớp (BUG-P6-06).
+    /// </summary>
+    [Authorize(Roles = $"{RoleNames.DiagnosticStaff},{RoleNames.Doctor},{RoleNames.Patient}")]
+    [HttpGet("/api/v1/diagnostic/results/{idOrCode}/report-file")]
+    [HttpGet("/api/v1/diagnostic-results/{idOrCode}/report-file")]
+    [HttpGet("/api/v1/diagnostic/orders/{idOrCode}/report-file")]
+    [HttpGet("/api/v1/diagnostic-orders/{idOrCode}/report-file")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DownloadReportFile(
+        string idOrCode,
+        CancellationToken ct = default)
+    {
+        var file = await _resultEntryService.DownloadDiagnosticReportFileAsync(
+            GetUserId(),
+            idOrCode,
+            GetIp(),
+            ct);
+        return File(file.Content, file.ContentType, file.FileName);
+    }
 
     private long GetUserId()
     {

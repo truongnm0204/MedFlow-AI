@@ -92,4 +92,13 @@ public interface IConsultationWorkspaceService
         CompleteVisitRequest? request = null,
         string? ipAddress = null,
         CancellationToken ct = default);
+
+    Task<ConsultationWorkspaceResponseDto> CancelDiagnosticOrderAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        string orderIdOrCode,
+        CancelConsultationDiagnosticOrderRequest? request = null,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+        => throw new NotSupportedException("CancelDiagnosticOrderAsync is not implemented by this test double.");
 }

@@ -2,11 +2,14 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using MedFlow.Application.Common.Persistence;
 using MedFlow.Application.DTOs.Consultation;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Application.Services.Diagnostic;
 using MedFlow.Application.Services.Doctors;
+using MedFlow.Application.Services.Payments;
 using MedFlow.Application.Services.Visits;
 using MedFlow.Application.Services.Visits.Queueing;
 using MedFlow.Domain.Constants;
@@ -46,17 +49,20 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
     private readonly TimeProvider _timeProvider;
     private readonly IRealtimeNotificationPublisher _realtimePublisher;
     private readonly IRealtimeAccessRevoker _accessRevoker;
+    private readonly IVisitChargeSettlementReader _settlementReader;
 
     public ConsultationWorkspaceService(
         IApplicationDbContext db,
         TimeProvider timeProvider,
         IRealtimeNotificationPublisher? realtimePublisher = null,
-        IRealtimeAccessRevoker? accessRevoker = null)
+        IRealtimeAccessRevoker? accessRevoker = null,
+        IVisitChargeSettlementReader? settlementReader = null)
     {
         _db = db;
         _timeProvider = timeProvider;
         _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
         _accessRevoker = accessRevoker ?? MedFlow.Application.Services.Realtime.NullRealtimeAccessRevoker.Instance;
+        _settlementReader = settlementReader ?? new VisitChargeSettlementReader(_db, _timeProvider);
     }
 
     public async Task<ConsultationWorkspaceResponseDto> GetWorkspaceAsync(
@@ -130,7 +136,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             code,
             isQueuePrefix,
             visitIdOrCode,
-            ct);
+            ct,
+            acquireWriteLocks: true);
 
         var visit = context.Visit;
         var activeEntry = context.ActiveClinicalEntry;
@@ -141,8 +148,18 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             throw new ConflictException("Không thể mở không gian khám cho lượt khám đã hủy hoặc vắng mặt (NO_SHOW).");
         }
 
-        if (visitStatus is "COMPLETED" or "DONE" ||
-            (activeEntry is not null && NormalizeQueueStatus(activeEntry.Status) == "COMPLETED"))
+        if (visitStatus is "COMPLETED" or "DONE")
+        {
+            throw new ConflictException("Lượt khám đã hoàn tất. Vui lòng sử dụng chế độ xem hồ sơ khám (GET) thay vì mở phiên khám mới.");
+        }
+
+        if (visitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS")
+        {
+            throw new ConflictException(
+                "Bệnh nhân đang chờ kết quả cận lâm sàng. Vui lòng gọi bệnh nhân vào khám lại (CALLED) sau khi có kết quả.");
+        }
+
+        if (activeEntry is not null && NormalizeQueueStatus(activeEntry.Status) == "COMPLETED")
         {
             throw new ConflictException("Lượt khám đã hoàn tất. Vui lòng sử dụng chế độ xem hồ sơ khám (GET) thay vì mở phiên khám mới.");
         }
@@ -150,6 +167,14 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         if (activeEntry is null || NormalizeQueueStatus(activeEntry.Status) == "CANCELLED")
         {
             throw new ConflictException("Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để bắt đầu khám.");
+        }
+
+        var examGate = await _settlementReader.CheckExaminationEligibilityAsync(visit.Id, ct);
+        if (!examGate.IsUnlocked)
+        {
+            throw new ConflictException(
+                examGate.Message
+                ?? "Lượt khám chưa hoàn tất thanh toán phí khám lâm sàng trước khi bắt đầu khám.");
         }
 
         var currentStateVersion = activeEntry.StateVersion is > 0 ? activeEntry.StateVersion.Value : 1;
@@ -182,11 +207,12 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         var policy = policySet.ForServicePoint(servicePointIdForPolicy);
 
         var openDiagnosticCount = CountOpenDiagnosticEntries(context.AllVisitQueueEntries);
+        var hasPendingMandatory = await HasPendingMandatoryDiagnosticOrdersAsync(visit.Id, ct);
         var resolvedQueueType = ClinicalQueueRules.ResolveQueueType(activeEntry.QueueType, visit.Status);
 
         if (resolvedQueueType == ClinicalQueueRules.QueueTypeReturnConsultation &&
             policy.FinalResultRequired &&
-            openDiagnosticCount > 0)
+            (openDiagnosticCount > 0 || hasPendingMandatory))
         {
             throw new ConflictException("Chưa thể mở phiên khám lại vì kết quả cận lâm sàng bắt buộc chưa sẵn sàng.");
         }
@@ -348,7 +374,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             code,
             isQueuePrefix,
             visitIdOrCode,
-            ct);
+            ct,
+            acquireWriteLocks: true);
 
         var visit = context.Visit;
         var activeEntry = context.ActiveClinicalEntry;
@@ -359,18 +386,12 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             throw new ConflictException("Không thể ghi nhận khám lâm sàng cho lượt khám đã hủy hoặc vắng mặt (NO_SHOW).");
         }
 
-        if (visitStatus is "COMPLETED" or "DONE" ||
-            (activeEntry is not null && NormalizeQueueStatus(activeEntry.Status) == "COMPLETED"))
+        if (visitStatus is "COMPLETED" or "DONE")
         {
             throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED), không thể chỉnh sửa khám lâm sàng trực tiếp.");
         }
 
-        if (activeEntry is null || NormalizeQueueStatus(activeEntry.Status) == "CANCELLED")
-        {
-            throw new ConflictException("Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để ghi nhận khám.");
-        }
-
-        var currentQueueStatus = NormalizeQueueStatus(activeEntry.Status);
+        var currentQueueStatus = activeEntry is not null ? NormalizeQueueStatus(activeEntry.Status) : "WAITING";
         var openDiagnosticCount = CountOpenDiagnosticEntries(context.AllVisitQueueEntries);
 
         if (visitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" ||
@@ -378,6 +399,16 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         {
             throw new ConflictException(
                 "Bệnh nhân đang chờ kết quả cận lâm sàng. Vui lòng mở lại phiên khám (IN_PROGRESS) trước khi cập nhật khám lâm sàng.");
+        }
+
+        if (activeEntry is not null && currentQueueStatus == "COMPLETED" && visitStatus != "RETURN_CONSULTATION")
+        {
+            throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED), không thể chỉnh sửa khám lâm sàng trực tiếp.");
+        }
+
+        if (activeEntry is null || currentQueueStatus == "CANCELLED")
+        {
+            throw new ConflictException("Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để ghi nhận khám.");
         }
 
         if (currentQueueStatus != "IN_PROGRESS" ||
@@ -485,6 +516,13 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             VitalSigns = vitalSignsJson,
             ClinicalFindings = clinicalFindings,
             ClinicalConclusion = clinicalConclusion,
+            ClinicalProgressionNote = validated.ClinicalProgressionNote ?? latestRevision?.ClinicalProgressionNote,
+            ClinicalInterpretation = latestRevision?.ClinicalInterpretation,
+            TreatmentPlan = validated.TreatmentPlan ?? latestRevision?.TreatmentPlan,
+            DischargeInstructions = latestRevision?.DischargeInstructions,
+            FollowUpInstructions = latestRevision?.FollowUpInstructions,
+            FollowUpDate = latestRevision?.FollowUpDate,
+            WarningSigns = latestRevision?.WarningSigns,
             EditedByDoctorId = doctorAccess.Doctor.Id,
             RecordedAt = nowLocal,
             IsConfirmed = request.IsConfirmed ?? true,
@@ -591,12 +629,14 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
 
         var visitDiagnosticOrders = await TryLoadVisitDiagnosticOrdersAsync(visit.Id, ct);
         var resultsBundle = await LoadDiagnosticResultsBundleAsync(visitDiagnosticOrders, ct);
+        var visitDiagnosesForCatalog = await TryLoadActiveVisitDiagnosesAsync(visit.Id, ct);
         var diagnosticSummary = BuildDiagnosticSummary(
             context.AllVisitQueueEntries,
             visitDiagnosticOrders,
             policy.FinalResultRequired,
             resultsBundle.FinalizedOrderIds,
-            resultsBundle.UnfinalizedResultOrderIds);
+            resultsBundle.UnfinalizedResultOrderIds,
+            visitDiagnosesForCatalog);
         var workspaceState = ResolveWorkspaceState(visit, activeEntry, diagnosticSummary.OpenQueueEntries);
         var latestMedicalRecord = await TryLoadLatestMedicalRecordAsync(visit.Id, ct);
         var isRecordFinalized = string.Equals(
@@ -868,7 +908,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             code,
             isQueuePrefix,
             visitIdOrCode,
-            ct);
+            ct,
+            acquireWriteLocks: true,
+            lockHospitalDiagnosticPoints: true);
 
         var visit = context.Visit;
         var activeEntry = context.ActiveClinicalEntry;
@@ -880,20 +922,13 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 "Không thể chỉ định cận lâm sàng cho lượt khám đã hủy hoặc vắng mặt (NO_SHOW).");
         }
 
-        if (visitStatus is "COMPLETED" or "DONE" ||
-            (activeEntry is not null && NormalizeQueueStatus(activeEntry.Status) == "COMPLETED"))
+        if (visitStatus is "COMPLETED" or "DONE")
         {
             throw new ConflictException(
                 "Lượt khám đã hoàn tất (COMPLETED), không thể tạo thêm chỉ định cận lâm sàng.");
         }
 
-        if (activeEntry is null || NormalizeQueueStatus(activeEntry.Status) == "CANCELLED")
-        {
-            throw new ConflictException(
-                "Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để chỉ định cận lâm sàng.");
-        }
-
-        var currentQueueStatus = NormalizeQueueStatus(activeEntry.Status);
+        var currentQueueStatus = activeEntry is not null ? NormalizeQueueStatus(activeEntry.Status) : "WAITING";
         var openDiagnosticCount = CountOpenDiagnosticEntries(context.AllVisitQueueEntries);
 
         if (visitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" ||
@@ -901,6 +936,18 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         {
             throw new ConflictException(
                 "Bệnh nhân đang chờ kết quả cận lâm sàng. Vui lòng mở lại phiên khám (IN_PROGRESS) trước khi chỉ định bổ sung.");
+        }
+
+        if (activeEntry is not null && currentQueueStatus == "COMPLETED" && visitStatus != "RETURN_CONSULTATION")
+        {
+            throw new ConflictException(
+                "Lượt khám đã hoàn tất (COMPLETED), không thể tạo thêm chỉ định cận lâm sàng.");
+        }
+
+        if (activeEntry is null || currentQueueStatus == "CANCELLED")
+        {
+            throw new ConflictException(
+                "Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để chỉ định cận lâm sàng.");
         }
 
         if (currentQueueStatus != "IN_PROGRESS" ||
@@ -1222,7 +1269,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 }
             }
 
-            var unitPrice = await ResolveActiveServicePriceAsync(service.Id, nowLocal, ct);
+            var unitPrice = await ResolveRequiredEffectiveServicePriceAsync(service, nowLocal, ct);
             var category = ResolveDiagnosticCategory(service, specialtiesById);
 
             resolvedItems.Add(new ResolvedDiagnosticOrderCreationItem(
@@ -1233,6 +1280,18 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 ServicePoint: diagServicePoint,
                 Room: diagRoom,
                 FollowUpOrder: followUpOrder));
+        }
+
+        var hasNewMandatoryItem = resolvedItems.Any(r => r.Item.RequiredForConclusion);
+        if (hasNewMandatoryItem)
+        {
+            await DemoteConfirmedDiagnosesForMandatoryOrderAsync(
+                visit,
+                actorUserId,
+                doctorAccess.Hospital.Id,
+                nowUtc,
+                ipAddress,
+                ct);
         }
 
         var finalRevisionNo = currentRevisionNo;
@@ -1255,17 +1314,28 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 SymptomHistory = symptomHistory,
                 RelevantHistoryAllergies = relevantHistoryAllergies,
                 VitalSigns = vitalSigns,
-                ClinicalFindings = validated.ClinicalProgressionNote,
+                ClinicalFindings = latestRevision?.ClinicalFindings,
                 ClinicalConclusion = clinicalConclusion,
+                ClinicalProgressionNote = validated.ClinicalProgressionNote,
+                ClinicalInterpretation = latestRevision?.ClinicalInterpretation,
+                TreatmentPlan = latestRevision?.TreatmentPlan,
+                DischargeInstructions = latestRevision?.DischargeInstructions,
+                FollowUpInstructions = latestRevision?.FollowUpInstructions,
+                FollowUpDate = latestRevision?.FollowUpDate,
+                WarningSigns = latestRevision?.WarningSigns,
                 EditedByDoctorId = doctorAccess.Doctor.Id,
                 RecordedAt = nowLocal,
-                IsConfirmed = latestRevision?.IsConfirmed == true,
+                IsConfirmed = hasNewMandatoryItem ? false : (latestRevision?.IsConfirmed == true),
                 AmendmentReason = validated.AdditionalOrderReason
                     ?? validated.ClinicalNote
                     ?? "Bác sĩ ghi nhận diễn biến khám và chỉ định bổ sung cận lâm sàng",
             };
 
             _db.MedicalRecordRevisions.Add(newRevision);
+        }
+        else if (hasNewMandatoryItem && latestRevision?.IsConfirmed == true)
+        {
+            latestRevision.IsConfirmed = false;
         }
 
         var doctorTitle = string.IsNullOrWhiteSpace(doctorAccess.Doctor.ProfessionalTitle)
@@ -1339,6 +1409,14 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             await SaveChangesWithConcurrencyGuardAsync(ct);
 
             diagnosticOrder.OrderCode = $"DIA-{queueDate:yyyyMM}-{diagnosticOrder.Id:D4}";
+
+            var diagnosticCharge = VisitCharge.CreateDiagnostic(
+                visitId: visit.Id,
+                diagnosticOrderId: diagnosticOrder.Id,
+                serviceId: resolved.Service.Id,
+                unitPrice: resolved.UnitPrice,
+                createdAtLocal: nowLocal);
+            _db.VisitCharges.Add(diagnosticCharge);
             var ticketNo = $"C{nextQueueNumber:D3}";
             var orderSequenceNo = existingNonCancelledCount + index + 1;
             var isOrderAdditional = validated.IsAdditionalOrder ||
@@ -1505,6 +1583,175 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             createdOrderDtos);
     }
 
+    public async Task<ConsultationWorkspaceResponseDto> CancelDiagnosticOrderAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        string orderIdOrCode,
+        CancelConsultationDiagnosticOrderRequest? request = null,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        if (actorUserId <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        var (numericId, code, isQueuePrefix) = ParseVisitOrQueueIdentifier(visitIdOrCode);
+        var (orderNumericId, orderCode) = QueueEntryRequestParsing.ParseIdentifier(orderIdOrCode);
+
+        if (request?.ExpectedStateVersion is < 1)
+        {
+            throw new ValidationException("Phiên bản trạng thái (ExpectedStateVersion) phải lớn hơn hoặc bằng 1.");
+        }
+
+        var cancelReason = ValidateClinicalTextField(
+            request?.Reason,
+            "Lý do hủy phiếu chỉ định cận lâm sàng",
+            500);
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+
+        var doctorAccess = await EnsureDoctorAccessAsync(actorUserId, nowUtc, PermissionDiagnosticOrder, ct);
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        var context = await ResolveAndAuthorizeVisitContextAsync(
+            doctorAccess,
+            numericId,
+            code,
+            isQueuePrefix,
+            visitIdOrCode,
+            ct,
+            acquireWriteLocks: true);
+
+        var visit = context.Visit;
+        var activeEntry = context.ActiveClinicalEntry;
+        var visitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
+
+        if (visitStatus is "CANCELLED" or "NO_SHOW")
+        {
+            throw new ConflictException(
+                "Không thể hủy phiếu chỉ định cận lâm sàng của lượt khám đã hủy hoặc vắng mặt (NO_SHOW).");
+        }
+
+        if (visitStatus is "COMPLETED" or "DONE")
+        {
+            throw new ConflictException(
+                "Lượt khám đã hoàn tất (COMPLETED), không thể hủy phiếu chỉ định cận lâm sàng.");
+        }
+
+        if (request?.ExpectedStateVersion.HasValue == true && activeEntry is not null)
+        {
+            var currentStateVersion = activeEntry.StateVersion is > 0 ? activeEntry.StateVersion.Value : 1;
+            if (request.ExpectedStateVersion.Value != currentStateVersion)
+            {
+                throw new ConflictException(
+                    "Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
+            }
+        }
+
+        var latestRecord = await TryLoadLatestMedicalRecordAsync(visit.Id, ct);
+        if (latestRecord is not null &&
+            string.Equals(latestRecord.Status?.Trim(), "FINALIZED", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException(
+                "Hồ sơ bệnh án đã được khóa hoàn tất (FINALIZED), không thể hủy phiếu chỉ định cận lâm sàng.");
+        }
+
+        var referenceDate = activeEntry?.QueueDate
+            ?? (visit.CheckedInAt.HasValue
+                ? DateOnly.FromDateTime(visit.CheckedInAt.Value)
+                : DateOnly.FromDateTime(nowLocal));
+
+        var visitOrders = await _db.DiagnosticOrders.AsNoTracking()
+            .Where(o => o.VisitId == visit.Id)
+            .ToListAsync(ct);
+
+        DiagnosticOrder? targetOrder = null;
+        if (orderNumericId.HasValue)
+        {
+            targetOrder = visitOrders.FirstOrDefault(o => o.Id == orderNumericId.Value);
+        }
+        else if (!string.IsNullOrEmpty(orderCode))
+        {
+            targetOrder = visitOrders.FirstOrDefault(o =>
+                string.Equals(FormatOrderCode(o, referenceDate), orderCode, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (targetOrder is null)
+        {
+            throw new NotFoundException("DiagnosticOrder", orderIdOrCode.Trim());
+        }
+
+        var cancelOutcome = await DiagnosticOrderLifecycleHelper.CancelOrderStateAwareAsync(
+            db: _db,
+            actorUserId: actorUserId,
+            hospitalId: doctorAccess.Hospital.Id,
+            diagnosticOrderId: targetOrder.Id,
+            reason: cancelReason,
+            technicalAbort: request?.TechnicalAbort == true,
+            cancelDisposition: request?.CancelDisposition,
+            nowLocal: nowLocal,
+            nowUtc: nowUtc,
+            ipAddress: QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+            ct: ct);
+
+        await SaveChangesWithConcurrencyGuardAsync(ct);
+
+        if (tx is not null)
+        {
+            await tx.CommitAsync(ct);
+        }
+
+        if (cancelOutcome.DiagnosticQueueEntry?.ServicePointId is long diagSpId)
+        {
+            await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+                _realtimePublisher,
+                new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                    HospitalId: doctorAccess.Hospital.Id,
+                    ServicePointId: diagSpId),
+                ct);
+        }
+
+        if (cancelOutcome.TransitionedToReturnConsultation)
+        {
+            var examSpId = cancelOutcome.ReturnConsultationQueueEntry?.CurrentServicePointId
+                ?? cancelOutcome.ReturnConsultationQueueEntry?.ServicePointId
+                ?? activeEntry?.CurrentServicePointId
+                ?? activeEntry?.ServicePointId;
+
+            await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+                _realtimePublisher,
+                new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                    HospitalId: doctorAccess.Hospital.Id,
+                    ServicePointId: examSpId,
+                    RoomId: visit.ExaminationRoomId ?? context.Room?.Id,
+                    AppointmentId: visit.AppointmentId),
+                ct);
+        }
+
+        var refreshedContext = await ResolveAndAuthorizeVisitContextAsync(
+            doctorAccess,
+             visit.Id,
+            null,
+            isQueuePrefix: false,
+            visitIdOrCode,
+            ct);
+
+        var outcomeCode = cancelOutcome.WasAlreadyPaid
+            ? "DIAGNOSTIC_ORDER_CANCELLED_REFUND_PENDING"
+            : "DIAGNOSTIC_ORDER_CANCELLED";
+
+        return await BuildWorkspaceResponseAsync(
+            doctorAccess,
+            refreshedContext,
+            actionOutcome: outcomeCode,
+            nowUtc,
+            nowLocal,
+            ct);
+    }
+
     public async Task<DiagnosticResultsReviewResponseDto> GetDiagnosticResultsAsync(
         long actorUserId,
         string visitIdOrCode,
@@ -1553,12 +1800,14 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
 
         var visitDiagnosticOrders = await TryLoadVisitDiagnosticOrdersAsync(visit.Id, ct);
         var resultsBundle = await LoadDiagnosticResultsBundleAsync(visitDiagnosticOrders, ct);
+        var visitDiagnosesForCatalog = await TryLoadActiveVisitDiagnosesAsync(visit.Id, ct);
         var diagnosticSummary = BuildDiagnosticSummary(
             context.AllVisitQueueEntries,
             visitDiagnosticOrders,
             policy.FinalResultRequired,
             resultsBundle.FinalizedOrderIds,
-            resultsBundle.UnfinalizedResultOrderIds);
+            resultsBundle.UnfinalizedResultOrderIds,
+            visitDiagnosesForCatalog);
 
         var workspaceState = ResolveWorkspaceState(visit, activeEntry, diagnosticSummary.OpenQueueEntries);
         var latestMedicalRecord = await TryLoadLatestMedicalRecordAsync(visit.Id, ct);
@@ -1739,7 +1988,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             code,
             isQueuePrefix,
             visitIdOrCode,
-            ct);
+            ct,
+            acquireWriteLocks: true);
 
         var visit = context.Visit;
         var activeEntry = context.ActiveClinicalEntry;
@@ -1751,25 +2001,29 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 "Không thể xem xét kết quả cận lâm sàng cho lượt khám đã hủy hoặc vắng mặt (NO_SHOW).");
         }
 
-        if (visitStatus is "COMPLETED" or "DONE" ||
-            (activeEntry is not null && NormalizeQueueStatus(activeEntry.Status) == "COMPLETED"))
+        if (visitStatus is "COMPLETED" or "DONE")
         {
             throw new ConflictException(
                 "Lượt khám đã hoàn tất (COMPLETED), không thể cập nhật đánh giá kết quả cận lâm sàng trực tiếp.");
         }
 
-        if (activeEntry is null || NormalizeQueueStatus(activeEntry.Status) == "CANCELLED")
-        {
-            throw new ConflictException(
-                "Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để đánh giá kết quả cận lâm sàng.");
-        }
-
-        var currentQueueStatus = NormalizeQueueStatus(activeEntry.Status);
-
         if (visitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS")
         {
             throw new ConflictException(
                 "Bệnh nhân đang ở trạng thái chờ kết quả cận lâm sàng. Vui lòng mở lại phiên khám (IN_PROGRESS) trước khi ghi nhận đánh giá kết quả.");
+        }
+
+        var currentQueueStatus = activeEntry is not null ? NormalizeQueueStatus(activeEntry.Status) : "WAITING";
+        if (activeEntry is not null && currentQueueStatus == "COMPLETED" && visitStatus != "RETURN_CONSULTATION")
+        {
+            throw new ConflictException(
+                "Lượt khám đã hoàn tất (COMPLETED), không thể cập nhật đánh giá kết quả cận lâm sàng trực tiếp.");
+        }
+
+        if (activeEntry is null || currentQueueStatus == "CANCELLED")
+        {
+            throw new ConflictException(
+                "Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để đánh giá kết quả cận lâm sàng.");
         }
 
         if (currentQueueStatus != "IN_PROGRESS" ||
@@ -1947,7 +2201,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             var symptomHistory = latestRevision?.SymptomHistory;
             var relevantHistoryAllergies = latestRevision?.RelevantHistoryAllergies;
             var vitalSigns = latestRevision?.VitalSigns;
-            var clinicalFindings = validated.ClinicalInterpretation ?? latestRevision?.ClinicalFindings;
+            var clinicalFindings = latestRevision?.ClinicalFindings;
             var clinicalConclusion = validated.ClinicalConclusion ?? latestRevision?.ClinicalConclusion;
 
             finalRevisionNo = currentRevisionNo + 1;
@@ -1961,6 +2215,13 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 VitalSigns = vitalSigns,
                 ClinicalFindings = clinicalFindings,
                 ClinicalConclusion = clinicalConclusion,
+                ClinicalProgressionNote = latestRevision?.ClinicalProgressionNote,
+                ClinicalInterpretation = validated.ClinicalInterpretation ?? latestRevision?.ClinicalInterpretation,
+                TreatmentPlan = latestRevision?.TreatmentPlan,
+                DischargeInstructions = latestRevision?.DischargeInstructions,
+                FollowUpInstructions = latestRevision?.FollowUpInstructions,
+                FollowUpDate = latestRevision?.FollowUpDate,
+                WarningSigns = latestRevision?.WarningSigns,
                 EditedByDoctorId = doctorAccess.Doctor.Id,
                 RecordedAt = nowLocal,
                 IsConfirmed = latestRevision?.IsConfirmed == true,
@@ -2184,7 +2445,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             code,
             isQueuePrefix,
             visitIdOrCode,
-            ct);
+            ct,
+            acquireWriteLocks: true);
 
         var visit = context.Visit;
         var activeEntry = context.ActiveClinicalEntry;
@@ -2195,18 +2457,12 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             throw new ConflictException("Không thể ghi nhận chẩn đoán cho lượt khám đã hủy hoặc vắng mặt (NO_SHOW).");
         }
 
-        if (visitStatus is "COMPLETED" or "DONE" ||
-            (activeEntry is not null && NormalizeQueueStatus(activeEntry.Status) == "COMPLETED"))
+        if (visitStatus is "COMPLETED" or "DONE")
         {
             throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED), không thể chỉnh sửa chẩn đoán và kết luận trực tiếp.");
         }
 
-        if (activeEntry is null || NormalizeQueueStatus(activeEntry.Status) == "CANCELLED")
-        {
-            throw new ConflictException("Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để ghi nhận chẩn đoán.");
-        }
-
-        var currentQueueStatus = NormalizeQueueStatus(activeEntry.Status);
+        var currentQueueStatus = activeEntry is not null ? NormalizeQueueStatus(activeEntry.Status) : "WAITING";
         var openDiagnosticCount = CountOpenDiagnosticEntries(context.AllVisitQueueEntries);
 
         if (visitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" ||
@@ -2216,17 +2472,29 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 "Bệnh nhân đang chờ kết quả cận lâm sàng. Vui lòng mở lại phiên khám (IN_PROGRESS) trước khi ghi nhận chẩn đoán.");
         }
 
+        if (activeEntry is not null && currentQueueStatus == "COMPLETED" && visitStatus != "RETURN_CONSULTATION")
+        {
+            throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED), không thể chỉnh sửa chẩn đoán và kết luận trực tiếp.");
+        }
+
+        if (activeEntry is null || currentQueueStatus == "CANCELLED")
+        {
+            throw new ConflictException("Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để ghi nhận chẩn đoán.");
+        }
+
         var policySet = await QueueOrderingPolicyLoader.LoadAsync(_db, doctorAccess.Hospital.Id, nowUtc, ct);
         var servicePointIdForPolicy = activeEntry.CurrentServicePointId
             ?? activeEntry.ServicePointId
             ?? context.ServicePoint?.Id;
         var policy = policySet.ForServicePoint(servicePointIdForPolicy);
         var hasPendingMandatoryOrders = await HasPendingMandatoryDiagnosticOrdersAsync(visit.Id, ct);
+        var wantsConfirmedDiagnosis = request.IsConfirmed == true ||
+            validated.Items.Any(i => string.Equals(i.Status, "CONFIRMED", StringComparison.OrdinalIgnoreCase));
 
-        if ((policy.FinalResultRequired && openDiagnosticCount > 0) || hasPendingMandatoryOrders)
+        if (wantsConfirmedDiagnosis && ((policy.FinalResultRequired && openDiagnosticCount > 0) || hasPendingMandatoryOrders))
         {
             throw new ConflictException(
-                "Chưa thể kết luận chẩn đoán khi kết quả cận lâm sàng bắt buộc chưa hoàn tất.");
+                "Chưa thể xác nhận chẩn đoán cuối cùng (CONFIRMED) khi kết quả cận lâm sàng bắt buộc chưa hoàn tất. Bác sĩ có thể lưu chẩn đoán sơ bộ (PROVISIONAL/PRELIMINARY).");
         }
 
         if (currentQueueStatus != "IN_PROGRESS" ||
@@ -2325,6 +2593,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         {
             var existing = existingDiagnoses.FirstOrDefault(d =>
                 !matchedExisting.Contains(d) &&
+                AppointmentBookingRules.NormalizeStatusKey(d.Status) != "SUPERSEDED" &&
                 ((resolved.Icd10CodeId.HasValue && d.Icd10CodeId == resolved.Icd10CodeId.Value) ||
                  (!string.IsNullOrWhiteSpace(d.CodeSnapshot) &&
                   string.Equals(d.CodeSnapshot.Trim(), resolved.CodeSnapshot, StringComparison.OrdinalIgnoreCase))));
@@ -2340,7 +2609,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 existing.ClinicalDiagnosis = resolved.ClinicalDiagnosis;
                 existing.Status = resolved.Status;
                 existing.ConfirmedAt = string.Equals(resolved.Status, "CONFIRMED", StringComparison.OrdinalIgnoreCase)
-                    ? (existing.ConfirmedAt ?? nowLocal)
+                    ? nowLocal
                     : null;
                 existing.RecordedByDoctorId = doctorAccess.Doctor.Id;
                 existing.RecordedAt = nowLocal;
@@ -2366,10 +2635,24 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             }
         }
 
-        var toRemove = existingDiagnoses.Where(d => !matchedExisting.Contains(d)).ToList();
-        if (toRemove.Count > 0)
+        var unmatchedExisting = existingDiagnoses.Where(d => !matchedExisting.Contains(d)).ToList();
+        foreach (var stale in unmatchedExisting)
         {
-            _db.VisitDiagnoses.RemoveRange(toRemove);
+            var staleStatus = AppointmentBookingRules.NormalizeStatusKey(stale.Status);
+            if (staleStatus == "SUPERSEDED")
+            {
+                continue;
+            }
+
+            if (stale.ConfirmedAt.HasValue || staleStatus == "CONFIRMED")
+            {
+                stale.Status = "SUPERSEDED";
+                stale.IsPrimary = false;
+            }
+            else
+            {
+                _db.VisitDiagnoses.Remove(stale);
+            }
         }
 
         var primaryDiagnosis = resolvedItems.First(i => i.IsPrimary);
@@ -2399,6 +2682,13 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             VitalSigns = vitalSignsJson,
             ClinicalFindings = clinicalFindings,
             ClinicalConclusion = clinicalConclusion,
+            ClinicalProgressionNote = latestRevision?.ClinicalProgressionNote,
+            ClinicalInterpretation = latestRevision?.ClinicalInterpretation,
+            TreatmentPlan = validated.TreatmentPlan ?? validated.LifestyleInstructions ?? latestRevision?.TreatmentPlan,
+            DischargeInstructions = latestRevision?.DischargeInstructions,
+            FollowUpInstructions = latestRevision?.FollowUpInstructions,
+            FollowUpDate = latestRevision?.FollowUpDate,
+            WarningSigns = validated.WarningSigns ?? latestRevision?.WarningSigns,
             EditedByDoctorId = doctorAccess.Doctor.Id,
             RecordedAt = nowLocal,
             IsConfirmed = isConfirmed,
@@ -2502,7 +2792,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             code,
             isQueuePrefix,
             visitIdOrCode,
-            ct);
+            ct,
+            acquireWriteLocks: true);
 
         var visit = context.Visit;
         var activeEntry = context.ActiveClinicalEntry;
@@ -2513,18 +2804,12 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             throw new ConflictException("Không thể hoàn tất lượt khám đã hủy hoặc vắng mặt (NO_SHOW).");
         }
 
-        if (visitStatus is "COMPLETED" or "DONE" ||
-            (activeEntry is not null && NormalizeQueueStatus(activeEntry.Status) == "COMPLETED"))
+        if (visitStatus is "COMPLETED" or "DONE")
         {
             throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED) trước đó.");
         }
 
-        if (activeEntry is null || NormalizeQueueStatus(activeEntry.Status) == "CANCELLED")
-        {
-            throw new ConflictException("Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để hoàn tất khám.");
-        }
-
-        var currentQueueStatus = NormalizeQueueStatus(activeEntry.Status);
+        var currentQueueStatus = activeEntry is not null ? NormalizeQueueStatus(activeEntry.Status) : "WAITING";
         var openDiagnosticCount = CountOpenDiagnosticEntries(context.AllVisitQueueEntries);
 
         if (visitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" ||
@@ -2532,6 +2817,16 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         {
             throw new ConflictException(
                 "Bệnh nhân đang chờ kết quả cận lâm sàng. Vui lòng mở lại phiên khám (IN_PROGRESS) trước khi hoàn tất lượt khám.");
+        }
+
+        if (activeEntry is not null && currentQueueStatus == "COMPLETED" && visitStatus != "RETURN_CONSULTATION")
+        {
+            throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED) trước đó.");
+        }
+
+        if (activeEntry is null || currentQueueStatus == "CANCELLED")
+        {
+            throw new ConflictException("Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để hoàn tất khám.");
         }
 
         var policySet = await QueueOrderingPolicyLoader.LoadAsync(_db, doctorAccess.Hospital.Id, nowUtc, ct);
@@ -2551,7 +2846,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         if (openDiagnosticCount > 0 || hasAnyOpenDiagnosticOrders)
         {
             throw new ConflictException(
-                "Chưa thể hoàn tất lượt khám khi còn chỉ định cận lâm sàng đang chờ thực hiện hoặc chưa trả kết quả.");
+                "Chưa thể hoàn tất lượt khám khi còn chỉ định cận lâm sàng đang chờ thực hiện, chưa trả kết quả hoàn tất hoặc chưa được hủy.");
         }
 
         if (currentQueueStatus != "IN_PROGRESS" ||
@@ -2619,11 +2914,15 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 "Hồ sơ khám lâm sàng đã có phiên bản mới hơn (revision_no mismatch). Vui lòng tải lại trước khi hoàn tất.");
         }
 
-        var existingDiagnoses = await _db.VisitDiagnoses
+        var allVisitDiagnoses = await _db.VisitDiagnoses
             .Where(d => d.VisitId == visit.Id)
             .OrderByDescending(d => d.IsPrimary == true)
             .ThenBy(d => d.Id)
             .ToListAsync(ct);
+
+        var existingDiagnoses = allVisitDiagnoses
+            .Where(d => AppointmentBookingRules.NormalizeStatusKey(d.Status) != "SUPERSEDED")
+            .ToList();
 
         var primaryDiagnosis = existingDiagnoses.FirstOrDefault(
             d => d.IsPrimary == true && !string.IsNullOrWhiteSpace(d.CodeSnapshot));
@@ -2632,6 +2931,13 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         {
             throw new ConflictException(
                 "Chưa thể hoàn tất lượt khám khi chưa ghi nhận chẩn đoán bệnh chính (ICD-10).");
+        }
+
+        var visitDiagnosticOrdersForGate = await TryLoadVisitDiagnosticOrdersAsync(visit.Id, ct);
+        if (DoesVisitRequireDiagnosisReconfirmation(visitDiagnosticOrdersForGate, existingDiagnoses))
+        {
+            throw new ConflictException(
+                "Chưa thể hoàn tất lượt khám khi chưa xác nhận lại chẩn đoán cuối cùng (CONFIRMED) sau khi có chỉ định cận lâm sàng bắt buộc mới.");
         }
 
         var effectiveClinicalConclusion = validated.ClinicalConclusion
@@ -2700,8 +3006,13 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         var finalRevisionNo = currentRevisionNo;
         var hasNewConclusion = validated.ClinicalConclusion is not null &&
             !string.Equals(validated.ClinicalConclusion, latestRevision.ClinicalConclusion?.Trim(), StringComparison.Ordinal);
+        var hasNewCompletionDedicatedFields =
+            validated.DischargeInstructions is not null ||
+            validated.FollowUpInstructions is not null ||
+            validated.FollowUpDate.HasValue ||
+            validated.WarningSigns is not null;
 
-        if (hasNewConclusion || validated.CompletionNote is not null)
+        if (hasNewConclusion || validated.CompletionNote is not null || hasNewCompletionDedicatedFields)
         {
             finalRevisionNo = currentRevisionNo + 1;
             var completionRevision = new MedicalRecordRevision
@@ -2716,6 +3027,13 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 VitalSigns = latestRevision.VitalSigns,
                 ClinicalFindings = latestRevision.ClinicalFindings,
                 ClinicalConclusion = effectiveClinicalConclusion,
+                ClinicalProgressionNote = latestRevision.ClinicalProgressionNote,
+                ClinicalInterpretation = latestRevision.ClinicalInterpretation,
+                TreatmentPlan = latestRevision.TreatmentPlan,
+                DischargeInstructions = validated.DischargeInstructions ?? latestRevision.DischargeInstructions,
+                FollowUpInstructions = validated.FollowUpInstructions ?? latestRevision.FollowUpInstructions,
+                FollowUpDate = validated.FollowUpDate ?? latestRevision.FollowUpDate,
+                WarningSigns = validated.WarningSigns ?? latestRevision.WarningSigns,
                 EditedByDoctorId = doctorAccess.Doctor.Id,
                 RecordedAt = nowLocal,
                 IsConfirmed = true,
@@ -2928,6 +3246,14 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             request.AmendmentReason,
             "Lý do cập nhật",
             500);
+        var treatmentPlan = ValidateClinicalTextField(
+            request.TreatmentPlan,
+            "Hướng xử trí / Kế hoạch điều trị",
+            2000);
+        var clinicalProgressionNote = ValidateClinicalTextField(
+            request.ClinicalProgressionNote,
+            "Diễn biến lâm sàng",
+            2000);
 
         var v = request.VitalSigns;
         var bpSystolic = v?.BpSystolicMmhg ?? request.BpSystolicMmhg;
@@ -2987,7 +3313,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             symptomHistory is not null ||
             relevantHistoryAllergies is not null ||
             clinicalFindings is not null ||
-            clinicalConclusion is not null;
+            clinicalConclusion is not null ||
+            treatmentPlan is not null ||
+            clinicalProgressionNote is not null;
 
         var hasAnyVitalSign = bpSystolic.HasValue ||
             bpDiastolic.HasValue ||
@@ -3022,7 +3350,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 : null,
             ClinicalFindings: clinicalFindings,
             ClinicalConclusion: clinicalConclusion,
-            AmendmentReason: amendmentReason);
+            AmendmentReason: amendmentReason,
+            TreatmentPlan: treatmentPlan,
+            ClinicalProgressionNote: clinicalProgressionNote);
     }
 
     private static ValidatedCreateDiagnosticOrderInput ValidateCreateDiagnosticOrderRequest(
@@ -3264,7 +3594,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             var rawStatus = request.Status.Trim().ToUpperInvariant();
             if (rawStatus != "ALL")
             {
-                if (rawStatus is not ("ORDERED" or "CONFIRMED" or "IN_PROGRESS" or "COMPLETED" or "FINALIZED" or "VERIFIED" or "READY" or "PENDING" or "CANCELLED"))
+                if (rawStatus is not ("ORDERED" or "CONFIRMED" or "IN_PROGRESS" or "COMPLETED" or "PERFORMED_AWAITING_RESULT" or "FINALIZED" or "VERIFIED" or "READY" or "PENDING" or "CANCELLED"))
                 {
                     throw new ValidationException("Trạng thái lọc kết quả cận lâm sàng không hợp lệ.");
                 }
@@ -3467,6 +3797,14 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             request.LifestyleInstructions,
             "Dặn dò sinh hoạt",
             1000);
+        var treatmentPlan = ValidateClinicalTextField(
+            request.TreatmentPlan,
+            "Hướng xử trí / Kế hoạch điều trị",
+            2000);
+        var clinicalProgressionNote = ValidateClinicalTextField(
+            request.ClinicalProgressionNote,
+            "Diễn biến lâm sàng",
+            2000);
         var warningSigns = ValidateClinicalTextField(
             request.WarningSigns,
             "Dấu hiệu cảnh báo",
@@ -3484,9 +3822,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         if (!string.IsNullOrWhiteSpace(request.DiagnosisStatus))
         {
             var normalizedReqStatus = request.DiagnosisStatus.Trim().ToUpperInvariant();
-            if (normalizedReqStatus is not ("PRELIMINARY" or "CONFIRMED"))
+            if (normalizedReqStatus is not ("PRELIMINARY" or "PROVISIONAL" or "CONFIRMED"))
             {
-                throw new ValidationException("Trạng thái chẩn đoán chỉ chấp nhận PRELIMINARY hoặc CONFIRMED.");
+                throw new ValidationException("Trạng thái chẩn đoán chỉ chấp nhận PRELIMINARY, PROVISIONAL hoặc CONFIRMED.");
             }
 
             defaultStatus = normalizedReqStatus;
@@ -3617,9 +3955,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             if (!string.IsNullOrWhiteSpace(item.Status))
             {
                 var normalizedItemStatus = item.Status.Trim().ToUpperInvariant();
-                if (normalizedItemStatus is not ("PRELIMINARY" or "CONFIRMED"))
+                if (normalizedItemStatus is not ("PRELIMINARY" or "PROVISIONAL" or "CONFIRMED"))
                 {
-                    throw new ValidationException("Trạng thái chẩn đoán chỉ chấp nhận PRELIMINARY hoặc CONFIRMED.");
+                    throw new ValidationException("Trạng thái chẩn đoán chỉ chấp nhận PRELIMINARY, PROVISIONAL hoặc CONFIRMED.");
                 }
 
                 itemStatus = normalizedItemStatus;
@@ -3646,7 +3984,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             DifferentialNotes: differentialNotes,
             LifestyleInstructions: lifestyleInstructions,
             WarningSigns: warningSigns,
-            AmendmentReason: amendmentReason);
+            AmendmentReason: amendmentReason,
+            TreatmentPlan: treatmentPlan);
     }
 
     private static ValidatedCompleteVisitInput ValidateCompleteVisitRequest(
@@ -4084,8 +4423,23 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         string? code,
         bool isQueuePrefix,
         string rawIdOrCode,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool acquireWriteLocks = false,
+        bool lockHospitalDiagnosticPoints = false,
+        bool lockVisitPrescriptions = false)
     {
+        if (acquireWriteLocks)
+        {
+            await AcquireWorkspaceWriteLocksAsync(
+                doctorAccess.Hospital.Id,
+                numericId,
+                code,
+                isQueuePrefix,
+                lockHospitalDiagnosticPoints,
+                lockVisitPrescriptions,
+                ct);
+        }
+
         Visit? visit = null;
         QueueEntry? explicitQueueEntry = null;
 
@@ -4270,9 +4624,17 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             throw new ForbiddenException("Bạn không có quyền truy cập lượt khám thuộc cơ sở y tế khác.");
         }
 
-        // Layer 2 Doctor/ServicePoint ownership check
-        var isOwnedByDoctor = (assignedDoctorId.HasValue && assignedDoctorId.Value == doctorAccess.Doctor.Id) ||
-            (servicePoint?.DoctorId.HasValue == true && servicePoint.DoctorId.Value == doctorAccess.Doctor.Id);
+        // Layer 2 Doctor/ServicePoint ownership check (post-lock AssignedDoctorId strictly wins when set)
+        bool isOwnedByDoctor;
+        if (visit.AssignedDoctorId.HasValue)
+        {
+            isOwnedByDoctor = visit.AssignedDoctorId.Value == doctorAccess.Doctor.Id;
+        }
+        else
+        {
+            isOwnedByDoctor = (assignedDoctorId.HasValue && assignedDoctorId.Value == doctorAccess.Doctor.Id) ||
+                (servicePoint?.DoctorId.HasValue == true && servicePoint.DoctorId.Value == doctorAccess.Doctor.Id);
+        }
 
         if (!isOwnedByDoctor)
         {
@@ -4527,9 +4889,294 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         }
         catch (DbUpdateConcurrencyException)
         {
+            if (_db is DbContext dbCtx)
+            {
+                dbCtx.ChangeTracker.Clear();
+            }
+
             throw new ConflictException(
                 "Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
         }
+        catch (Exception ex) when (
+            PostgresConcurrencyException.IsUniqueViolation(ex) ||
+            PostgresConcurrencyException.IsDeadlockOrSerializationFailure(ex))
+        {
+            if (_db is DbContext dbCtx)
+            {
+                dbCtx.ChangeTracker.Clear();
+            }
+
+            throw new ConflictException(
+                "Phát hiện xung đột cập nhật đồng thời trên hồ sơ lâm sàng hoặc hàng đợi. Vui lòng tải lại không gian khám và thử lại.");
+        }
+    }
+
+    private async Task AcquireWorkspaceWriteLocksAsync(
+        long hospitalId,
+        long? numericId,
+        string? code,
+        bool isQueuePrefix,
+        bool lockHospitalDiagnosticPoints,
+        bool lockVisitPrescriptions,
+        CancellationToken ct)
+    {
+        long? targetVisitId = null;
+        long? extraQueueEntryId = null;
+
+        if (numericId.HasValue && isQueuePrefix)
+        {
+            var qe = await _db.QueueEntries.AsNoTracking()
+                .FirstOrDefaultAsync(q => q.Id == numericId.Value, ct);
+            if (qe is not null)
+            {
+                extraQueueEntryId = qe.Id;
+                targetVisitId = qe.VisitId;
+                if (!targetVisitId.HasValue && qe.AppointmentId.HasValue)
+                {
+                    targetVisitId = await _db.Visits.AsNoTracking()
+                        .Where(v => v.AppointmentId == qe.AppointmentId.Value)
+                        .OrderByDescending(v => v.Id)
+                        .Select(v => (long?)v.Id)
+                        .FirstOrDefaultAsync(ct);
+                }
+            }
+        }
+        else if (numericId.HasValue)
+        {
+            targetVisitId = await _db.Visits.AsNoTracking()
+                .Where(v => v.Id == numericId.Value)
+                .Select(v => (long?)v.Id)
+                .FirstOrDefaultAsync(ct);
+
+            if (!targetVisitId.HasValue)
+            {
+                var qe = await _db.QueueEntries.AsNoTracking()
+                    .FirstOrDefaultAsync(q => q.Id == numericId.Value, ct);
+                if (qe is not null)
+                {
+                    extraQueueEntryId = qe.Id;
+                    targetVisitId = qe.VisitId;
+                    if (!targetVisitId.HasValue && qe.AppointmentId.HasValue)
+                    {
+                        targetVisitId = await _db.Visits.AsNoTracking()
+                            .Where(v => v.AppointmentId == qe.AppointmentId.Value)
+                            .OrderByDescending(v => v.Id)
+                            .Select(v => (long?)v.Id)
+                            .FirstOrDefaultAsync(ct);
+                    }
+                }
+            }
+        }
+        else if (!string.IsNullOrEmpty(code))
+        {
+            targetVisitId = await _db.Visits.AsNoTracking()
+                .Where(v => v.VisitCode != null && v.VisitCode.ToUpper() == code)
+                .Select(v => (long?)v.Id)
+                .FirstOrDefaultAsync(ct);
+
+            if (!targetVisitId.HasValue &&
+                code.StartsWith("VIS-", StringComparison.OrdinalIgnoreCase) &&
+                long.TryParse(code.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture, out var parsedVisitId) &&
+                parsedVisitId > 0)
+            {
+                targetVisitId = await _db.Visits.AsNoTracking()
+                    .Where(v => v.Id == parsedVisitId)
+                    .Select(v => (long?)v.Id)
+                    .FirstOrDefaultAsync(ct);
+            }
+        }
+
+        if (!targetVisitId.HasValue)
+        {
+            return;
+        }
+
+        List<long>? extraSpIds = null;
+        if (lockHospitalDiagnosticPoints)
+        {
+            try
+            {
+                extraSpIds = await _db.QueueServicePoints.AsNoTracking()
+                    .Where(sp => sp.HospitalId == hospitalId)
+                    .Select(sp => sp.Id)
+                    .ToListAsync(ct);
+            }
+            catch (NotSupportedException)
+            {
+                extraSpIds = null;
+            }
+        }
+
+        await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
+            _db,
+            visitId: targetVisitId.Value,
+            extraServicePointIds: extraSpIds,
+            extraQueueEntryIds: extraQueueEntryId.HasValue ? [extraQueueEntryId.Value] : null,
+            extraDiagnosticOrderIds: null,
+            includeChargeAndPaymentLocks: false,
+            ct: ct);
+
+        if (lockVisitPrescriptions)
+        {
+            try
+            {
+                var rxIds = await _db.Prescriptions.AsNoTracking()
+                    .Where(p => p.VisitId == targetVisitId.Value)
+                    .OrderBy(p => p.Id)
+                    .Select(p => p.Id)
+                    .ToListAsync(ct);
+
+                var lockedRx = false;
+                foreach (var rxId in rxIds)
+                {
+                    if (await _db.TryLockPrescriptionForUpdateAsync(rxId, ct))
+                    {
+                        lockedRx = true;
+                    }
+                }
+
+                if (lockedRx && _db is DbContext efCtx)
+                {
+                    efCtx.ChangeTracker.Clear();
+                }
+            }
+            catch (NotSupportedException)
+            {
+                // Minimal unit test DbContext without Prescriptions.
+            }
+        }
+    }
+
+    private async Task<List<VisitDiagnosis>> TryLoadActiveVisitDiagnosesAsync(
+        long visitId,
+        CancellationToken ct)
+    {
+        try
+        {
+            var rows = await _db.VisitDiagnoses.AsNoTracking()
+                .Where(d => d.VisitId == visitId)
+                .ToListAsync(ct);
+            return rows
+                .Where(d => AppointmentBookingRules.NormalizeStatusKey(d.Status) != "SUPERSEDED")
+                .ToList();
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    private async Task DemoteConfirmedDiagnosesForMandatoryOrderAsync(
+        Visit visit,
+        long actorUserId,
+        long hospitalId,
+        DateTime nowUtc,
+        string? ipAddress,
+        CancellationToken ct)
+    {
+        List<VisitDiagnosis> confirmedRows;
+        try
+        {
+            var visitDiagnoses = await _db.VisitDiagnoses
+                .Where(d => d.VisitId == visit.Id)
+                .ToListAsync(ct);
+
+            confirmedRows = visitDiagnoses
+                .Where(d => AppointmentBookingRules.NormalizeStatusKey(d.Status) == "CONFIRMED")
+                .ToList();
+        }
+        catch (NotSupportedException)
+        {
+            return;
+        }
+
+        if (confirmedRows.Count == 0)
+        {
+            return;
+        }
+
+        var priorSnapshot = confirmedRows
+            .Select(d => new
+            {
+                id = d.Id,
+                icd10CodeId = d.Icd10CodeId,
+                code = d.CodeSnapshot,
+                name = d.NameSnapshot,
+                isPrimary = d.IsPrimary == true,
+                clinicalDiagnosis = d.ClinicalDiagnosis,
+                previousStatus = d.Status,
+                priorConfirmedAt = d.ConfirmedAt,
+            })
+            .ToList();
+
+        foreach (var dx in confirmedRows)
+        {
+            dx.Status = "PROVISIONAL";
+        }
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actorUserId,
+            HospitalId = hospitalId,
+            Action = "DIAGNOSIS_RECONFIRMATION_REQUIRED",
+            EntityType = "VISIT",
+            EntityId = !string.IsNullOrWhiteSpace(visit.VisitCode)
+                ? visit.VisitCode.Trim()
+                : visit.Id.ToString(CultureInfo.InvariantCulture),
+            Reason = "Chuyển chẩn đoán đã xác nhận về trạng thái sơ bộ chờ xác nhận lại sau chỉ định cận lâm sàng bắt buộc mới",
+            ChangeData = JsonSerializer.Serialize(new
+            {
+                visitId = visit.Id,
+                visitCode = visit.VisitCode,
+                demotedCount = confirmedRows.Count,
+                priorConfirmedDiagnoses = priorSnapshot,
+                ipAddress,
+            }, AuditJsonOptions),
+            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+            OccurredAt = nowUtc,
+        });
+    }
+
+    private static bool DoesVisitRequireDiagnosisReconfirmation(
+        IReadOnlyList<DiagnosticOrder> visitDiagnosticOrders,
+        IReadOnlyList<VisitDiagnosis>? activeDiagnoses)
+    {
+        if (activeDiagnoses is null || activeDiagnoses.Count == 0)
+        {
+            return false;
+        }
+
+        var nonCancelledMandatoryOrders = visitDiagnosticOrders
+            .Where(o =>
+                o.RequiredForConclusion == true &&
+                AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED")
+            .ToList();
+
+        if (nonCancelledMandatoryOrders.Count == 0)
+        {
+            return false;
+        }
+
+        // Case 1: A previously CONFIRMED diagnosis was demoted to PROVISIONAL when a mandatory order was added.
+        if (activeDiagnoses.Any(d =>
+                d.ConfirmedAt.HasValue &&
+                AppointmentBookingRules.NormalizeStatusKey(d.Status) != "CONFIRMED"))
+        {
+            return true;
+        }
+
+        // Case 2: Active primary diagnosis is CONFIRMED, but a mandatory order was placed strictly after ConfirmedAt.
+        var primaryConfirmed = activeDiagnoses.FirstOrDefault(d =>
+            d.IsPrimary == true &&
+            AppointmentBookingRules.NormalizeStatusKey(d.Status) == "CONFIRMED" &&
+            d.ConfirmedAt.HasValue);
+
+        if (primaryConfirmed?.ConfirmedAt is DateTime confirmedAt)
+        {
+            return nonCancelledMandatoryOrders.Any(o => o.OrderedAt.HasValue && o.OrderedAt.Value > confirmedAt);
+        }
+
+        return false;
     }
 
     private async Task<ConsultationWorkspaceResponseDto> BuildWorkspaceResponseAsync(
@@ -4562,12 +5209,14 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
 
         var visitDiagnosticOrders = await TryLoadVisitDiagnosticOrdersAsync(visit.Id, ct);
         var resultsBundle = await LoadDiagnosticResultsBundleAsync(visitDiagnosticOrders, ct);
+        var visitDiagnosesForCatalog = await TryLoadActiveVisitDiagnosesAsync(visit.Id, ct);
         var diagnosticSummary = BuildDiagnosticSummary(
             context.AllVisitQueueEntries,
             visitDiagnosticOrders,
             policy.FinalResultRequired,
             resultsBundle.FinalizedOrderIds,
-            resultsBundle.UnfinalizedResultOrderIds);
+            resultsBundle.UnfinalizedResultOrderIds,
+            visitDiagnosesForCatalog);
         var clinicalContext = await BuildClinicalContextAsync(
             visit,
             appointment,
@@ -5054,7 +5703,11 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         var prescriptionSummary = await BuildPrescriptionSummaryAsync(visit.Id, ct);
         var vitalSigns = ParseVitalSigns(latestRevision?.VitalSigns);
 
-        var diagnosisDtos = diagnoses
+        var activeDiagnoses = diagnoses
+            .Where(d => AppointmentBookingRules.NormalizeStatusKey(d.Status) != "SUPERSEDED")
+            .ToList();
+
+        var diagnosisDtos = activeDiagnoses
             .Select(d => new ConsultationDiagnosisItemDto(
                 Id: d.Id,
                 Icd10CodeId: d.Icd10CodeId,
@@ -5102,7 +5755,14 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             Diagnoses: diagnosisDtos,
             DiagnosticSummary: diagnosticSummary,
             PrescriptionSummary: prescriptionSummary,
-            DiagnosticOrders: diagnosticOrderDtos);
+            DiagnosticOrders: diagnosticOrderDtos,
+            ClinicalProgressionNote: latestRevision?.ClinicalProgressionNote,
+            ClinicalInterpretation: latestRevision?.ClinicalInterpretation,
+            TreatmentPlan: latestRevision?.TreatmentPlan,
+            DischargeInstructions: latestRevision?.DischargeInstructions,
+            FollowUpInstructions: latestRevision?.FollowUpInstructions,
+            FollowUpDate: latestRevision?.FollowUpDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            WarningSigns: latestRevision?.WarningSigns);
     }
 
     private async Task<ConsultationPrescriptionSummaryDto> BuildPrescriptionSummaryAsync(
@@ -5249,7 +5909,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         IReadOnlyList<DiagnosticOrder> visitDiagnosticOrders,
         bool finalResultRequired,
         IReadOnlySet<long>? finalizedOrderIds = null,
-        IReadOnlySet<long>? unfinalizedResultOrderIds = null)
+        IReadOnlySet<long>? unfinalizedResultOrderIds = null,
+        IReadOnlyList<VisitDiagnosis>? activeDiagnoses = null)
     {
         var diagnosticEntries = allVisitQueueEntries
             .Where(q =>
@@ -5257,14 +5918,22 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 NormalizeQueueStatus(q.Status) != "CANCELLED")
             .ToList();
 
-        var ordersByQueueEntryId = visitDiagnosticOrders
-            .Where(o => o.QueueEntryId.HasValue && NormalizeQueueStatus(o.Status) != "CANCELLED")
+        var nonCancelledOrders = visitDiagnosticOrders
+            .Where(o => AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED")
+            .ToList();
+
+        var ordersByQueueEntryId = nonCancelledOrders
+            .Where(o => o.QueueEntryId.HasValue)
             .GroupBy(o => o.QueueEntryId!.Value)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.Id).First());
 
+        var queueEntriesById = diagnosticEntries
+            .GroupBy(q => q.Id)
+            .ToDictionary(g => g.Key, g => g.First());
+
         var total = diagnosticEntries.Count;
         var completed = 0;
-        var openMandatory = 0;
+        var openMandatoryQueue = 0;
 
         foreach (var q in diagnosticEntries)
         {
@@ -5283,24 +5952,50 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 var isMandatory = linkedOrder?.RequiredForConclusion ?? true;
                 if (isMandatory)
                 {
-                    openMandatory++;
+                    openMandatoryQueue++;
                 }
             }
         }
 
         var open = total - completed;
-        var hasUncompletedMandatoryOrder = visitDiagnosticOrders.Any(o =>
+
+        var mandatoryPendingCount = nonCancelledOrders.Count(o =>
             o.RequiredForConclusion == true &&
-            AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED" &&
             !IsOrderCompletedOrResultFinalized(o, finalizedOrderIds, unfinalizedResultOrderIds));
-        var allReady = (!finalResultRequired || openMandatory == 0) && !hasUncompletedMandatoryOrder;
+        var optionalPendingCount = nonCancelledOrders.Count(o =>
+            o.RequiredForConclusion != true &&
+            !IsOrderCompletedOrResultFinalized(o, finalizedOrderIds, unfinalizedResultOrderIds));
+        var performedAwaitingResultCount = nonCancelledOrders.Count(o =>
+        {
+            if (IsOrderCompletedOrResultFinalized(o, finalizedOrderIds, unfinalizedResultOrderIds))
+            {
+                return false;
+            }
+
+            var ordStatus = AppointmentBookingRules.NormalizeStatusKey(o.Status);
+            var linkedQueue = o.QueueEntryId.HasValue && queueEntriesById.TryGetValue(o.QueueEntryId.Value, out var qe)
+                ? qe
+                : null;
+            return ordStatus == "COMPLETED" ||
+                   linkedQueue?.CompletedAt.HasValue == true ||
+                   (linkedQueue is not null && NormalizeQueueStatus(linkedQueue.Status) == "COMPLETED");
+        });
+
+        var allReady = (!finalResultRequired || openMandatoryQueue == 0) && mandatoryPendingCount == 0;
+        var allOrdersResolved = open == 0 && mandatoryPendingCount == 0 && optionalPendingCount == 0;
+        var requiresDiagnosisReconfirmation = DoesVisitRequireDiagnosisReconfirmation(visitDiagnosticOrders, activeDiagnoses);
 
         return new ConsultationDiagnosticSummaryDto(
             TotalQueueEntries: total,
             OpenQueueEntries: open,
             CompletedQueueEntries: completed,
             AllMandatoryResultsReady: allReady,
-            FinalResultRequired: finalResultRequired);
+            FinalResultRequired: finalResultRequired,
+            MandatoryPendingCount: mandatoryPendingCount,
+            OptionalPendingCount: optionalPendingCount,
+            PerformedAwaitingResultCount: performedAwaitingResultCount,
+            AllOrdersResolvedForCompletion: allOrdersResolved,
+            RequiresDiagnosisReconfirmation: requiresDiagnosisReconfirmation);
     }
 
     private static bool IsOrderCompletedOrResultFinalized(
@@ -5313,14 +6008,13 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             return true;
         }
 
-        var normalizedOrderStatus = AppointmentBookingRules.NormalizeStatusKey(order.Status);
-        if (unfinalizedResultOrderIds?.Contains(order.Id) == true &&
-            normalizedOrderStatus != "COMPLETED")
+        if (unfinalizedResultOrderIds?.Contains(order.Id) == true)
         {
             return false;
         }
 
-        return normalizedOrderStatus is "COMPLETED" or "DONE" or "FINALIZED" or "VERIFIED";
+        var normalizedOrderStatus = AppointmentBookingRules.NormalizeStatusKey(order.Status);
+        return normalizedOrderStatus is "FINALIZED" or "VERIFIED";
     }
 
     private async Task<List<DiagnosticOrder>> TryLoadVisitDiagnosticOrdersAsync(
@@ -5425,22 +6119,6 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             return false;
         }
 
-        if (orderStatus == "COMPLETED")
-        {
-            return false;
-        }
-
-        if (order.QueueEntryId.HasValue)
-        {
-            var linkedEntry = allVisitQueueEntries.FirstOrDefault(q => q.Id == order.QueueEntryId.Value);
-            if (linkedEntry is not null &&
-                (linkedEntry.CompletedAt.HasValue ||
-                 NormalizeQueueStatus(linkedEntry.Status) is "COMPLETED" or "CANCELLED"))
-            {
-                return false;
-            }
-        }
-
         return true;
     }
 
@@ -5453,6 +6131,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
 
         return latestRevision.RevisionNo >= 2 ||
                !string.IsNullOrWhiteSpace(latestRevision.ClinicalFindings) ||
+               !string.IsNullOrWhiteSpace(latestRevision.ClinicalProgressionNote) ||
+               !string.IsNullOrWhiteSpace(latestRevision.ClinicalInterpretation) ||
                !string.IsNullOrWhiteSpace(latestRevision.ClinicalConclusion) ||
                !string.IsNullOrWhiteSpace(latestRevision.VitalSigns) ||
                !string.IsNullOrWhiteSpace(latestRevision.SymptomHistory);
@@ -5505,18 +6185,50 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 .Where(p =>
                     p.ServiceId == serviceId &&
                     (p.EffectiveFrom == null || p.EffectiveFrom <= nowLocal) &&
-                    (p.EffectiveTo == null || p.EffectiveTo >= nowLocal))
-                .OrderByDescending(p => p.EffectiveFrom)
+                    (p.EffectiveTo == null || p.EffectiveTo > nowLocal))
+                .OrderByDescending(p => p.EffectiveFrom ?? DateTime.MinValue)
                 .ThenByDescending(p => p.Id)
                 .Select(p => p.PriceAmount)
                 .FirstOrDefaultAsync(ct);
 
-            return price ?? 0m;
+            return price is >= 0m ? price.Value : 0m;
         }
         catch (NotSupportedException)
         {
             return 0m;
         }
+    }
+
+    private async Task<decimal> ResolveRequiredEffectiveServicePriceAsync(
+        Service service,
+        DateTime refTimeLocal,
+        CancellationToken ct)
+    {
+        List<ServicePrice> matchingPrices;
+        try
+        {
+            matchingPrices = await _db.ServicePrices
+                .AsNoTracking()
+                .Where(p =>
+                    p.ServiceId == service.Id &&
+                    (p.EffectiveFrom == null || p.EffectiveFrom <= refTimeLocal) &&
+                    (p.EffectiveTo == null || p.EffectiveTo > refTimeLocal))
+                .OrderByDescending(p => p.EffectiveFrom ?? DateTime.MinValue)
+                .ThenByDescending(p => p.Id)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            matchingPrices = [];
+        }
+
+        if (matchingPrices.Count == 0 || matchingPrices[0].PriceAmount is null or < 0m)
+        {
+            throw new ConflictException(
+                $"Dịch vụ cận lâm sàng '{service.Name}' ({service.ServiceCode}) chưa có bảng giá hiệu lực hợp lệ, không thể tạo chỉ định.");
+        }
+
+        return matchingPrices[0].PriceAmount!.Value;
     }
 
     private async Task<IReadOnlyList<ConsultationDiagnosticOrderDto>> BuildDiagnosticOrderDtosAsync(
@@ -6182,7 +6894,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 g => g
                     .OrderByDescending(r =>
                         r.FinalizedAt.HasValue ||
-                        AppointmentBookingRules.NormalizeStatusKey(r.Status) is "FINALIZED" or "VERIFIED" or "COMPLETED"
+                        AppointmentBookingRules.NormalizeStatusKey(r.Status) is "FINALIZED" or "VERIFIED"
                             ? 1
                             : 0)
                     .ThenByDescending(r => r.FinalizedAt ?? DateTime.MinValue)
@@ -6257,7 +6969,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             var latestVersion = versions is { Count: > 0 } ? versions[0] : null;
             var rawStatus = AppointmentBookingRules.NormalizeStatusKey(result.Status);
             var isFinalized = result.FinalizedAt.HasValue ||
-                rawStatus is "FINALIZED" or "VERIFIED" or "COMPLETED" ||
+                rawStatus is "FINALIZED" or "VERIFIED" ||
                 latestVersion?.IsFinalized == true ||
                 latestVersion?.VerifiedAt.HasValue == true;
 
@@ -6294,7 +7006,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         {
             var rawResultStatus = AppointmentBookingRules.NormalizeStatusKey(result.Status);
             var isResultFinalized = result.FinalizedAt.HasValue ||
-                rawResultStatus is "FINALIZED" or "VERIFIED" or "COMPLETED" ||
+                rawResultStatus is "FINALIZED" or "VERIFIED" ||
                 latestVersion?.IsFinalized == true ||
                 latestVersion?.VerifiedAt.HasValue == true;
             var isResultReady = isResultFinalized && orderStatus != "CANCELLED";
@@ -6302,7 +7014,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 ? "CANCELLED"
                 : isResultFinalized
                     ? (rawResultStatus == "VERIFIED" ? "VERIFIED" : "FINALIZED")
-                    : (string.IsNullOrEmpty(rawResultStatus) ? "PRELIMINARY" : rawResultStatus);
+                    : (string.IsNullOrEmpty(rawResultStatus) ? "DRAFT" : rawResultStatus);
             var finalizedAt = result.FinalizedAt
                 ?? latestVersion?.VerifiedAt
                 ?? (isResultFinalized ? (queueEntry?.CompletedAt ?? latestVersion?.EnteredAt) : null);
@@ -6316,23 +7028,36 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         }
         else
         {
-            var isResultFinalized = orderStatus is "COMPLETED" or "FINALIZED" or "VERIFIED" or "DONE" ||
+            if (orderStatus == "CANCELLED")
+            {
+                return new DiagnosticOrderResultState(
+                    HasResult: false,
+                    IsResultReady: false,
+                    IsResultFinalized: false,
+                    ResultStatus: "CANCELLED",
+                    ResultFinalizedAt: null);
+            }
+
+            if (orderStatus is "FINALIZED" or "VERIFIED")
+            {
+                return new DiagnosticOrderResultState(
+                    HasResult: true,
+                    IsResultReady: true,
+                    IsResultFinalized: true,
+                    ResultStatus: orderStatus,
+                    ResultFinalizedAt: queueEntry?.CompletedAt);
+            }
+
+            var isExecutionCompleted = orderStatus is "COMPLETED" or "DONE" ||
                 queueEntry?.CompletedAt.HasValue == true ||
                 queueStatus == "COMPLETED";
-            var isResultReady = isResultFinalized && orderStatus != "CANCELLED";
-            var resultStatus = orderStatus == "CANCELLED"
-                ? "CANCELLED"
-                : isResultFinalized
-                    ? "FINALIZED"
-                    : "PENDING";
-            var finalizedAt = isResultFinalized ? queueEntry?.CompletedAt : null;
 
             return new DiagnosticOrderResultState(
-                HasResult: isResultFinalized,
-                IsResultReady: isResultReady,
-                IsResultFinalized: isResultFinalized,
-                ResultStatus: resultStatus,
-                ResultFinalizedAt: finalizedAt);
+                HasResult: false,
+                IsResultReady: false,
+                IsResultFinalized: false,
+                ResultStatus: isExecutionCompleted ? "PERFORMED_AWAITING_RESULT" : "PENDING",
+                ResultFinalizedAt: null);
         }
     }
 
@@ -6498,7 +7223,22 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         var visitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
         var queueStatus = NormalizeQueueStatus(activeEntry?.Status);
 
-        if (visitStatus is "COMPLETED" or "DONE" || queueStatus == "COMPLETED")
+        if (visitStatus is "COMPLETED" or "DONE")
+        {
+            return "COMPLETED";
+        }
+
+        if (visitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS")
+        {
+            return "AWAITING_RESULTS";
+        }
+
+        if (visitStatus == "RETURN_CONSULTATION" && queueStatus is not ("IN_PROGRESS" or "CALLED"))
+        {
+            return "RETURN_CONSULTATION";
+        }
+
+        if (queueStatus == "COMPLETED")
         {
             return "COMPLETED";
         }
@@ -6508,7 +7248,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             return "IN_PROGRESS";
         }
 
-        if (openDiagnosticCount > 0 || visitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS")
+        if (openDiagnosticCount > 0)
         {
             return "AWAITING_RESULTS";
         }
@@ -6627,30 +7367,29 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 ?? (!hasDiagnosticOrders
                     ? "Lượt khám hiện chưa có phiếu chỉ định cận lâm sàng nào."
                     : "Chưa có kết quả cận lâm sàng nào sẵn sàng để bác sĩ xem xét.");
-        var canRecordDiagnosis = canEditClinical && diagnosticSummary.AllMandatoryResultsReady;
-        var diagnosisDisabledReason = canRecordDiagnosis
-            ? null
-            : !diagnosticSummary.AllMandatoryResultsReady
-                ? "Chưa thể kết luận chẩn đoán khi kết quả cận lâm sàng bắt buộc chưa hoàn tất."
-                : clinicalDisabledReason;
+        var canRecordDiagnosis = canEditClinical;
+        var diagnosisDisabledReason = canRecordDiagnosis ? null : clinicalDisabledReason;
 
-        var canCreatePrescription = canEditClinical &&
-            hasPrescriptionIssue &&
-            diagnosticSummary.AllMandatoryResultsReady;
+        var canCreatePrescription = canEditClinical && hasPrescriptionIssue;
         var prescriptionDisabledReason = canCreatePrescription
             ? null
             : !hasPrescriptionIssue
                 ? "Bác sĩ không có quyền kê đơn thuốc (PRESCRIPTION_ISSUE)."
-                : !diagnosticSummary.AllMandatoryResultsReady
-                    ? "Chưa thể kê đơn thuốc khi kết quả cận lâm sàng bắt buộc chưa hoàn tất."
-                    : clinicalDisabledReason;
+                : clinicalDisabledReason;
 
-        var canCompleteVisit = canEditClinical && diagnosticSummary.AllMandatoryResultsReady;
+        var canCompleteVisit = canEditClinical &&
+            diagnosticSummary.AllMandatoryResultsReady &&
+            diagnosticSummary.AllOrdersResolvedForCompletion &&
+            !diagnosticSummary.RequiresDiagnosisReconfirmation;
         var completeVisitDisabledReason = canCompleteVisit
             ? null
             : !diagnosticSummary.AllMandatoryResultsReady
                 ? "Chưa thể hoàn tất lượt khám khi kết quả cận lâm sàng bắt buộc chưa hoàn tất."
-                : clinicalDisabledReason;
+                : !diagnosticSummary.AllOrdersResolvedForCompletion
+                    ? "Chưa thể hoàn tất lượt khám khi còn chỉ định cận lâm sàng tùy chọn chưa có kết quả hoàn tất hoặc chưa được hủy."
+                    : diagnosticSummary.RequiresDiagnosisReconfirmation
+                        ? "Chưa thể hoàn tất lượt khám khi chưa xác nhận lại chẩn đoán cuối cùng (CONFIRMED) sau chỉ định cận lâm sàng bắt buộc mới."
+                        : clinicalDisabledReason;
 
         return
         [
@@ -6732,7 +7471,22 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         var normalizedQueue = NormalizeQueueStatus(queueStatus);
         var normalizedVisit = AppointmentBookingRules.NormalizeStatusKey(visitStatus);
 
-        if (normalizedVisit is "COMPLETED" or "DONE" || normalizedQueue == "COMPLETED")
+        if (normalizedVisit is "COMPLETED" or "DONE")
+        {
+            return "COMPLETED";
+        }
+
+        if (normalizedVisit is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS")
+        {
+            return "AWAITING_RESULTS";
+        }
+
+        if (normalizedVisit == "RETURN_CONSULTATION" && normalizedQueue is not ("IN_PROGRESS" or "CALLED"))
+        {
+            return "RETURN_CONSULTATION";
+        }
+
+        if (normalizedQueue == "COMPLETED")
         {
             return "COMPLETED";
         }
@@ -6745,16 +7499,6 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         if (normalizedQueue == "CALLED" || normalizedVisit == "CALLED")
         {
             return "CALLED";
-        }
-
-        if (normalizedVisit is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS")
-        {
-            return "AWAITING_RESULTS";
-        }
-
-        if (normalizedVisit == "RETURN_CONSULTATION")
-        {
-            return "RETURN_CONSULTATION";
         }
 
         return string.IsNullOrWhiteSpace(normalizedVisit) ? "WAITING" : normalizedVisit;
@@ -6807,7 +7551,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         decimal? WeightKg,
         string? ClinicalFindings,
         string? ClinicalConclusion,
-        string? AmendmentReason);
+        string? AmendmentReason,
+        string? TreatmentPlan = null,
+        string? ClinicalProgressionNote = null);
 
     private sealed record ValidatedCreateDiagnosticOrderInput(
         IReadOnlyList<ValidatedDiagnosticOrderItemInput> Items,
@@ -6854,7 +7600,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         string? DifferentialNotes,
         string? LifestyleInstructions,
         string? WarningSigns,
-        string? AmendmentReason);
+        string? AmendmentReason,
+        string? TreatmentPlan = null);
 
     private sealed record ValidatedDiagnosisItemInput(
         long? Icd10CodeId,

@@ -105,6 +105,28 @@ public sealed class DiagnosticOrdersController : ControllerBase
             GetIp(),
             ct));
 
+    /// <summary>
+    /// POST /api/v1/diagnostic/orders/{idOrCode}/cancel — Hủy phiếu chỉ định cận lâm sàng theo trạng thái thực hiện &amp; thanh toán (ADR-0059 / BUG-P6-02).
+    /// </summary>
+    [HttpPost("/api/v1/diagnostic/orders/{idOrCode}/cancel")]
+    [HttpPost("/api/v1/diagnostic-orders/{idOrCode}/cancel")]
+    [ProducesResponseType<CancelDiagnosticOrderResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<CancelDiagnosticOrderResponseDto>> CancelOrder(
+        string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CancelDiagnosticOrderRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _orderReviewService.CancelDiagnosticOrderAsync(
+            GetUserId(),
+            idOrCode,
+            request,
+            GetIp(),
+            ct));
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)

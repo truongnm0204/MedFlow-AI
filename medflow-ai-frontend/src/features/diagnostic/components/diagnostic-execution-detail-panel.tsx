@@ -108,10 +108,12 @@ interface PauseOrCancelFormProps {
 }
 
 function PauseOrCancelForm({ order, mode, isBusy, onSubmit, onClose }: PauseOrCancelFormProps) {
+  const isOrderInProgress = order.status.toUpperCase() === 'IN_PROGRESS';
   const [targetStatus, setTargetStatus] = useState<DiagnosticExecutionTargetStatus>(
     mode === 'cancel' ? 'CANCELLED' : 'READY',
   );
   const [reason, setReason] = useState('');
+  const [technicalAbort, setTechnicalAbort] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   const presets = mode === 'cancel' ? CANCEL_EXECUTION_REASON_PRESETS : EXECUTION_REASON_PRESETS;
@@ -123,10 +125,21 @@ function PauseOrCancelForm({ order, mode, isBusy, onSubmit, onClose }: PauseOrCa
     e.preventDefault();
     setValidationError(null);
 
+    if (mode === 'cancel' && isOrderInProgress && !technicalAbort) {
+      setValidationError(
+        'Phiếu đang thực hiện kỹ thuật (IN_PROGRESS). Vui lòng tích xác nhận hủy do sự cố kỹ thuật / mẫu lỗi trước khi gửi.',
+      );
+      return;
+    }
+
+    const expectedStateVersion = order.stateVersion;
+    const expectedVisitCode = order.visitCode;
+    const expectedPatientId = order.patient.patientId;
+
     const candidate = {
       targetStatus,
       reason: reason.trim() || null,
-      expectedStateVersion: order.stateVersion || 0,
+      expectedStateVersion: expectedStateVersion || 0,
     };
     const parsed = updateDiagnosticServiceStatusSchema.safeParse(candidate);
     if (!parsed.success) {
@@ -141,7 +154,12 @@ function PauseOrCancelForm({ order, mode, isBusy, onSubmit, onClose }: PauseOrCa
       targetStatus: parsed.data.targetStatus,
       status: parsed.data.targetStatus,
       reason: parsed.data.reason ?? null,
-      expectedStateVersion: parsed.data.expectedStateVersion ?? order.stateVersion,
+      expectedStateVersion: parsed.data.expectedStateVersion ?? expectedStateVersion,
+      expectedVisitCode,
+      expectedPatientId,
+      technicalAbort: mode === 'cancel' && isOrderInProgress ? technicalAbort : undefined,
+      cancelDisposition:
+        mode === 'cancel' && isOrderInProgress && technicalAbort ? 'TECHNICAL_ERROR' : undefined,
     });
   };
 
@@ -220,6 +238,24 @@ function PauseOrCancelForm({ order, mode, isBusy, onSubmit, onClose }: PauseOrCa
         </div>
       </div>
 
+      {mode === 'cancel' && isOrderInProgress && (
+        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-rose-200 bg-white p-2.5 text-[11px] text-navy">
+          <input
+            type="checkbox"
+            checked={technicalAbort}
+            disabled={isBusy}
+            onChange={(e) => setTechnicalAbort(e.target.checked)}
+            data-testid="execution-technical-abort-checkbox"
+            className="mt-0.5 h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary"
+          />
+          <span>
+            <strong className="text-rose-700">Xác nhận hủy sự cố kỹ thuật / mẫu lỗi:</strong> Phiếu
+            đang ở trạng thái <span className="font-mono">IN_PROGRESS</span>, chỉ được hủy khi có sự
+            cố kỹ thuật được ghi nhận kiểm toán.
+          </span>
+        </label>
+      )}
+
       <div className="flex items-center gap-2 pt-1">
         <Button type="submit" size="sm" loading={isBusy} disabled={isBusy}>
           {mode === 'cancel' ? (
@@ -293,17 +329,29 @@ export function DiagnosticExecutionDetailPanel({
   });
 
   const handleStart = () => {
-    onStart(order.orderCode, {
+    const submittedOrderCode = order.orderCode;
+    const expectedVisitCode = order.visitCode;
+    const expectedPatientId = order.patient.patientId;
+    const expectedStateVersion = order.stateVersion;
+    onStart(submittedOrderCode, {
       targetStatus: 'IN_PROGRESS',
-      expectedStateVersion: order.stateVersion,
+      expectedStateVersion,
+      expectedVisitCode,
+      expectedPatientId,
       ...buildTechnicalPayload(),
     });
   };
 
   const handleComplete = () => {
-    onComplete(order.orderCode, {
+    const submittedOrderCode = order.orderCode;
+    const expectedVisitCode = order.visitCode;
+    const expectedPatientId = order.patient.patientId;
+    const expectedStateVersion = order.stateVersion;
+    onComplete(submittedOrderCode, {
       targetStatus: 'COMPLETED',
-      expectedStateVersion: order.stateVersion,
+      expectedStateVersion,
+      expectedVisitCode,
+      expectedPatientId,
       ...buildTechnicalPayload(),
     });
   };
@@ -683,8 +731,9 @@ export function DiagnosticExecutionDetailPanel({
               isBusy={isBusy}
               onClose={() => setActiveForm(null)}
               onSubmit={(payload) => {
+                const submittedOrderCode = order.orderCode;
                 setActiveForm(null);
-                onUpdateStatus(order.orderCode, payload);
+                onUpdateStatus(submittedOrderCode, payload);
               }}
             />
           )}

@@ -73,6 +73,7 @@ const RESULT_STATUS_META: Record<
   { label: string; tone: 'amber' | 'sky' | 'emerald' | 'slate' | 'rose' }
 > = {
   NONE: { label: 'Chưa có KQ', tone: 'amber' },
+  PERFORMED_AWAITING_RESULT: { label: 'Đã lấy mẫu / Chờ KQ', tone: 'amber' },
   DRAFT: { label: 'Bản nháp', tone: 'sky' },
   PRELIMINARY: { label: 'Kết quả sơ bộ', tone: 'sky' },
   PENDING_VERIFY: { label: 'Chờ thẩm định', tone: 'amber' },

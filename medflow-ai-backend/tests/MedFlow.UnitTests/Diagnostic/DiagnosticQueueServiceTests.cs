@@ -51,8 +51,9 @@ public sealed class DiagnosticQueueServiceTests : IDisposable
         public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
+        public DbSet<VisitCharge> VisitCharges => Set<VisitCharge>();
         public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
-        public DbSet<Payment> Payments => throw NotUsed();
+        public DbSet<Payment> Payments => Set<Payment>();
         public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
         public DbSet<MedicalRecord> MedicalRecords => Set<MedicalRecord>();
         public DbSet<MedicalRecordRevision> MedicalRecordRevisions => Set<MedicalRecordRevision>();
@@ -71,7 +72,8 @@ public sealed class DiagnosticQueueServiceTests : IDisposable
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<HospitalPolicy>();
             modelBuilder.Ignore<PatientFamilyLink>();
-            modelBuilder.Ignore<Payment>();
+            modelBuilder.Entity<VisitCharge>().HasKey(vc => vc.Id);
+            modelBuilder.Entity<Payment>().HasKey(p => p.Id);
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Role>().HasKey(r => r.Id);
@@ -865,6 +867,19 @@ public sealed class DiagnosticQueueServiceTests : IDisposable
             FinalizedAt = new DateTime(2026, 10, 15, 10, 0, 0),
             FinalizedByStaffId = 7,
         });
+
+        var seededNowLocal = new DateTime(2026, 10, 20, 8, 30, 0);
+        foreach (var v in db.Visits.Local.ToList())
+        {
+            db.VisitCharges.Add(VisitCharge.CreateExamination(v.Id, 1, 0m, v.CheckedInAt ?? seededNowLocal));
+        }
+        foreach (var o in db.DiagnosticOrders.Local.ToList())
+        {
+            if (o.VisitId.HasValue && o.ServiceId.HasValue)
+            {
+                db.VisitCharges.Add(VisitCharge.CreateDiagnostic(o.VisitId.Value, o.Id, o.ServiceId.Value, 0m, o.OrderedAt ?? seededNowLocal));
+            }
+        }
 
         db.SaveChanges();
     }

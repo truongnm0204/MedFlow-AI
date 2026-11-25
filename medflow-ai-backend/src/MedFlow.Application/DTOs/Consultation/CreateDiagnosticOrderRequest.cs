@@ -127,3 +127,9 @@ public sealed record DiagnosticOrderCatalogResponseDto(
     IReadOnlyList<ConsultationDiagnosticOrderDto> ExistingOrders,
     bool CanCreateAdditionalDiagnosticOrder = false,
     int CompletedOrdersCount = 0);
+
+public sealed record CancelConsultationDiagnosticOrderRequest(
+    string? Reason = null,
+    bool? TechnicalAbort = null,
+    string? CancelDisposition = null,
+    int? ExpectedStateVersion = null);

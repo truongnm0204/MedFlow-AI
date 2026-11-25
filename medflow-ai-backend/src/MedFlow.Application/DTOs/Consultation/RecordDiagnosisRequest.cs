@@ -16,7 +16,9 @@ public sealed record RecordDiagnosisRequest(
     string? DiagnosisStatus = null,
     bool? IsConfirmed = null,
     int? ExpectedStateVersion = null,
-    int? ExpectedRevisionNo = null);
+    int? ExpectedRevisionNo = null,
+    string? TreatmentPlan = null,
+    string? ClinicalProgressionNote = null);
 
 public sealed record RecordDiagnosisItemRequest(
     long? Icd10CodeId = null,

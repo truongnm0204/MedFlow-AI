@@ -17,7 +17,9 @@ public sealed record RecordClinicalExaminationRequest(
     string? AmendmentReason = null,
     bool? IsConfirmed = null,
     int? ExpectedStateVersion = null,
-    int? ExpectedRevisionNo = null);
+    int? ExpectedRevisionNo = null,
+    string? TreatmentPlan = null,
+    string? ClinicalProgressionNote = null);
 
 public sealed record RecordClinicalVitalSignsRequest(
     int? BpSystolicMmhg = null,

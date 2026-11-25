@@ -1426,4 +1426,61 @@ describe('DoctorConsultationWorkspacePage (Issue #105 / UC31)', () => {
       await screen.findByRole('heading', { name: 'Kê đơn thuốc ngoại trú (SCR-RX-01)' }),
     ).toBeInTheDocument();
   });
+
+  it('shows PERFORMED_AWAITING_RESULT gate on UC38 CompleteVisit panel when sample completed without UC43 result (BUG-P6-01)', async () => {
+    authenticateAsDoctor();
+    const awaitingResultWorkspace = {
+      ...CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK,
+      clinicalContext: {
+        ...CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK.clinicalContext,
+        diagnosticSummary: {
+          ...CONSULTATION_WORKSPACE_IN_PROGRESS_MOCK.clinicalContext.diagnosticSummary,
+          totalQueueEntries: 1,
+          openQueueEntries: 0,
+          completedQueueEntries: 1,
+          allMandatoryResultsReady: false,
+          mandatoryPendingCount: 1,
+          performedAwaitingResultCount: 1,
+        },
+        diagnosticOrders: [
+          {
+            orderId: 901,
+            orderCode: 'DIA-202611-0901',
+            serviceId: 301,
+            serviceCode: 'CLS-XN-001',
+            serviceName: 'Tổng phân tích tế bào máu ngoại vi (CBC)',
+            category: 'LABORATORY' as const,
+            priority: 'URGENT',
+            status: 'COMPLETED',
+            resultStatus: 'PERFORMED_AWAITING_RESULT',
+            requiredForConclusion: true,
+            orderedAt: '2026-11-20T09:10:00',
+            hasResult: false,
+            isResultFinalized: false,
+            resultSummary: null,
+            queueEntryId: 9101,
+            ticketNo: 'C-091',
+            queueStatus: 'COMPLETED',
+            servicePointName: 'Phòng Xét nghiệm 201',
+            roomCode: 'P.XN-201',
+            roomName: 'Phòng Xét nghiệm 201',
+            isAdditionalOrder: false,
+            orderSequenceNo: 1,
+            followUpToOrderId: null,
+            followUpToOrderCode: null,
+            additionalOrderReason: null,
+          },
+        ],
+      },
+    };
+
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: awaitingResultWorkspace,
+    });
+
+    renderWithRouter('/doctor/consultation/VIS-2026-0212/complete');
+
+    expect(await screen.findByRole('heading', { name: 'Nguyễn Văn An' })).toBeInTheDocument();
+    expect(await screen.findByText(/PERFORMED_AWAITING_RESULT/i)).toBeInTheDocument();
+  });
 });

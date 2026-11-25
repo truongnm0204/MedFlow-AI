@@ -4,7 +4,9 @@ public sealed record CreatePrescriptionRequest(
     IReadOnlyList<CreatePrescriptionItemRequest>? Items = null,
     string? FulfillmentChoice = null,
     int? ExpectedStateVersion = null,
-    int? ExpectedRevisionNo = null);
+    int? ExpectedRevisionNo = null,
+    string? Status = null,
+    bool? IssueImmediately = null);
 
 public sealed record CreatePrescriptionItemRequest(
     long? MedicineId = null,

@@ -34,7 +34,11 @@ public sealed record UpdateDiagnosticServiceStatusRequest(
     string? Instruction = null,
     string? Reason = null,
     string? BlockedReason = null,
-    int? ExpectedStateVersion = null);
+    int? ExpectedStateVersion = null,
+    string? ExpectedVisitCode = null,
+    long? ExpectedPatientId = null,
+    bool? TechnicalAbort = null,
+    string? CancelDisposition = null);
 
 public sealed record UpdateDiagnosticServiceStatusBatchRequest(
     long? OrderId = null,
@@ -60,7 +64,11 @@ public sealed record UpdateDiagnosticServiceStatusBatchRequest(
     string? Instruction = null,
     string? Reason = null,
     string? BlockedReason = null,
-    int? ExpectedStateVersion = null);
+    int? ExpectedStateVersion = null,
+    string? ExpectedVisitCode = null,
+    long? ExpectedPatientId = null,
+    bool? TechnicalAbort = null,
+    string? CancelDisposition = null);
 
 public sealed record DiagnosticServiceExecutionEligibilityDto(
     bool IsEligible,

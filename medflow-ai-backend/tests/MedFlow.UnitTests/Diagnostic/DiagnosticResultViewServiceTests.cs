@@ -44,7 +44,7 @@ public sealed class DiagnosticResultViewServiceTests : IDisposable
         Assert.Equal("DIA-202610-0001", finalized.OrderCode);
         Assert.Equal("WBC: 8.2 G/L; RBC: 4.6 T/L; HGB: 142 g/L; PLT: 250 G/L.", finalized.ResultText);
         Assert.Equal("Công thức máu trong giới hạn bình thường.", finalized.Conclusion);
-        Assert.Equal("https://cdn.medflow.vn/reports/cbc-0001.pdf", finalized.Document.ReportFileUrl);
+        Assert.Equal("/storage/diagnostic-reports/cbc-0001.pdf", finalized.Document.ReportFileUrl);
         Assert.True(finalized.Document.HasDocument);
         Assert.Equal("cbc-0001.pdf", finalized.Document.FileName);
         Assert.Equal("Không tiền sử dị ứng thuốc", finalized.Patient.Allergies);
