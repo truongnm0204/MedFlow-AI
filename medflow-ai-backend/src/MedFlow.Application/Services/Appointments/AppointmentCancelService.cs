@@ -2,6 +2,7 @@ using System.Globalization;
 using MedFlow.Application.DTOs.Appointments;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Notifications;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
@@ -129,6 +130,37 @@ public sealed class AppointmentCancelService : IAppointmentCancelService
                 NewStatus = AppointmentBookingRules.CancelledStatus
             },
             ipAddress);
+
+        await AppointmentNotificationComposer.InvalidatePendingRemindersAsync(
+            _db,
+            tracked.Id,
+            "Hủy gửi nhắc lịch do bệnh nhân đã hủy lịch hẹn.",
+            ct);
+
+        await AppointmentNotificationComposer.CancelReservedQueueEntriesForAppointmentAsync(
+            _db,
+            tracked.Id,
+            actorUserId: userId,
+            hospitalId: hospitalId,
+            reason: $"Hủy lượt xếp hàng đặt trước do bệnh nhân hủy lịch hẹn: {reason}",
+            ipAddress: ipAddress,
+            nowUtc: _timeProvider.GetUtcNow().UtcDateTime,
+            ct: ct);
+
+        var authorizedEmail = await AppointmentNotificationComposer.ResolveAuthorizedRecipientEmailAsync(
+            _db,
+            tracked.PatientId!.Value,
+            userId,
+            nowLocal,
+            ct);
+        _db.Notifications.Add(AppointmentNotificationComposer.CreateCancelledNotification(
+            patientId: tracked.PatientId!.Value,
+            appointmentId: tracked.Id,
+            appointmentCode: tracked.AppointmentCode ?? $"APT-{tracked.Id}",
+            serviceName: appointment.Slot.Service?.Name ?? "Khám ngoại trú",
+            startsAt: appointment.Slot.StartsAt.Value,
+            authorizedEmail: authorizedEmail,
+            nowLocal: nowLocal));
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);

@@ -20,7 +20,19 @@ database/
 │   ├── 005_readd_auth_session_and_audit_cols.sql  # auth_sessions + audit_logs.ip_address re-added
 │   ├── 006_seed_upcoming_examination_slots.sql    # upcoming 14-day OPEN examination slots seed for demo/booking
 │   ├── 007_add_appointments_reason_for_visit.sql  # appointments.reason_for_visit column for UC12 symptom note
-│   └── 008_add_appointments_cancellation_fields.sql  # appointments cancellation_reason/cancelled_at/cancelled_by_user_id for UC14
+│   ├── 008_add_appointments_cancellation_fields.sql  # appointments cancellation_reason/cancelled_at/cancelled_by_user_id for UC14
+│   ├── 009_sync_doctor_schedule_slots.sql         # doctor duty schedule alignment & weekday examination slots
+│   ├── 010_queue_early_arrival_backfill.sql       # queue early arrival & backfill columns
+│   ├── 011_outpatient_clinical_priority.sql       # manual priority check constraint on queue_entries
+│   ├── 012_payments_one_pending_per_visit.sql     # partial unique index on pending visit payments
+│   ├── 013_payment_gateway_events.sql             # SePay webhook idempotency & audit table
+│   ├── 014_family_link_verification.sql           # family link verification method & legacy access window
+│   ├── 015_patient_identification_hmac.sql        # HMAC-SHA256 national ID hash columns
+│   ├── 016_patients_user_id_unique.sql            # partial unique index on patients.user_id
+│   ├── 017_patient_identity_claims.sql            # patient identity claim workflow table
+│   ├── 018_patient_identity_verify_permission.sql # PATIENT_IDENTITY_VERIFY permission seed
+│   ├── 019_identity_claim_otp_purpose.sql         # IDENTITY_CLAIM OTP purpose check constraint
+│   └── 020_schedule_cronjob_indexes_and_notifications.sql # UC17 notifications read/lease columns & schedule/slot partial/unique indexes
 └── README.md
 ```
 

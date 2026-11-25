@@ -35,6 +35,10 @@ public class SmtpEmailSender : IEmailSender
         mime.Body = new BodyBuilder { HtmlBody = htmlBody }.ToMessageBody();
 
         using var client = new SmtpClient();
+        var configuredTimeoutSeconds = int.TryParse(_configuration["Smtp:TimeoutSeconds"], out var smtpTimeout)
+            ? smtpTimeout
+            : (int.TryParse(_configuration["ScheduleJobs:SmtpTimeoutSeconds"], out var jobTimeout) ? jobTimeout : 20);
+        client.Timeout = Math.Clamp(configuredTimeoutSeconds, 1, 120) * 1000;
         try
         {
             await client.ConnectAsync(host, port, SecureSocketOptions.StartTls, ct);

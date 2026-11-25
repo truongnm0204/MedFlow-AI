@@ -12,6 +12,7 @@ import { AppointmentCard } from '../components/appointment-card';
 import { AppointmentEmptyState } from '../components/appointment-empty-state';
 import { AppointmentFilterBar } from '../components/appointment-filter-bar';
 import { AppointmentQuickViewModal } from '../components/appointment-quick-view-modal';
+import { AppointmentReminderBanner } from '../components/appointment-reminder-banner';
 import { AppointmentRescheduleModal } from '../components/appointment-reschedule-modal';
 import { AppointmentSkeletonList } from '../components/appointment-skeleton-list';
 import { AppointmentTipBanner } from '../components/appointment-tip-banner';
@@ -239,6 +240,9 @@ export function AppointmentListPage() {
               <span>+ Đặt lịch khám mới</span>
             </Link>
           </div>
+
+          {/* Upcoming Appointment Reminder Banner (UC17 — driven by active Appointment state, independent of ReadAt) */}
+          <AppointmentReminderBanner className="mb-6" />
 
           {/* Member Filter, Search Form & Status Tabs */}
           <AppointmentFilterBar

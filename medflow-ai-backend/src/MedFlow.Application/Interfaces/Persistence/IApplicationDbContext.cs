@@ -49,7 +49,10 @@ public interface IApplicationDbContext
     DbSet<DiagnosticOrder> DiagnosticOrders => throw new NotSupportedException("DiagnosticOrders DbSet is not configured in this test context.");
     DbSet<DiagnosticResult> DiagnosticResults => throw new NotSupportedException("DiagnosticResults DbSet is not configured in this test context.");
     DbSet<DiagnosticResultVersion> DiagnosticResultVersions => throw new NotSupportedException("DiagnosticResultVersions DbSet is not configured in this test context.");
+    DbSet<Notification> Notifications => throw new NotSupportedException("Notifications DbSet is not configured in this test context.");
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);
+    Task<bool> TryLockAppointmentForUpdateAsync(long appointmentId, CancellationToken ct = default)
+        => Task.FromResult(false);
 }

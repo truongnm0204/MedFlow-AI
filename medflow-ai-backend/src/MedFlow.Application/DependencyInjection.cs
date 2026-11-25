@@ -10,6 +10,7 @@ using MedFlow.Application.Services.ExaminationSlots;
 using MedFlow.Application.Services.HospitalAdmin;
 using MedFlow.Application.Services.Hospitals;
 using MedFlow.Application.Services.IdentityClaims;
+using MedFlow.Application.Services.Notifications;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Application.Services.Pharmacy;
 using MedFlow.Application.Services.Policies;
@@ -59,6 +60,7 @@ public static class DependencyInjection
         services.AddScoped<IAppointmentRescheduleService, AppointmentRescheduleService>();
         services.AddScoped<IAppointmentStatusTrackingService, AppointmentStatusTrackingService>();
         services.AddScoped<IAppointmentQueueTrackingService, AppointmentQueueTrackingService>();
+        services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<ISystemAdminDashboardService, SystemAdminDashboardService>();
         services.AddScoped<IStaffAccountListService, StaffAccountListService>();
         services.AddScoped<IHospitalAdminDashboardService, HospitalAdminDashboardService>();

@@ -31,6 +31,34 @@ public static class DependencyInjection
         services.AddScoped<IAuthSessionService, AuthSessionService>();
         services.AddTransient<IEmailSender, SmtpEmailSender>();
 
+        services.AddOptions<MedFlow.Application.Options.ScheduleJobsOptions>()
+            .Bind(configuration.GetSection(MedFlow.Application.Options.ScheduleJobsOptions.SectionName))
+            .Validate(
+                o => o.OutboxIntervalSeconds > 0 &&
+                     o.LifecycleIntervalMinutes > 0 &&
+                     o.RollingSlotCheckHours > 0 &&
+                     o.BatchSize > 0 &&
+                     o.MaxEmailConcurrency > 0 &&
+                     o.MaxRetryCount > 0 &&
+                     o.SmtpTimeoutSeconds > 0 &&
+                     o.ProcessingLeaseSeconds > o.SmtpTimeoutSeconds &&
+                     o.DefaultReminderHours > 0 &&
+                     o.DefaultRollingSlotWindowDays > 0 &&
+                     o.MaxRollingSlotWindowDays >= o.DefaultRollingSlotWindowDays &&
+                     o.DefaultSlotDurationMinutes >= 10 &&
+                     o.DefaultSlotCapacity > 0,
+                "ScheduleJobs options must specify positive intervals/capacities and ProcessingLeaseSeconds > SmtpTimeoutSeconds.")
+            .ValidateOnStart();
+
+        services.AddSingleton<BackgroundJobs.NotificationOutboxProcessor>();
+        services.AddHostedService(sp => sp.GetRequiredService<BackgroundJobs.NotificationOutboxProcessor>());
+
+        services.AddSingleton<BackgroundJobs.AppointmentLifecycleProcessor>();
+        services.AddHostedService(sp => sp.GetRequiredService<BackgroundJobs.AppointmentLifecycleProcessor>());
+
+        services.AddSingleton<BackgroundJobs.RollingExaminationSlotGenerator>();
+        services.AddHostedService(sp => sp.GetRequiredService<BackgroundJobs.RollingExaminationSlotGenerator>());
+
         return services;
     }
 }
