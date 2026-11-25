@@ -96,6 +96,8 @@ export interface PatientMedicalRecordDiagnosticSummary {
   signedAt: string | null;
   conclusionSummary: string | null;
   hasReportFile: boolean;
+  resultId?: number | null;
+  reportFileDownloadUrl?: string | null;
 }
 
 export interface PatientMedicalRecordPrescriptionItemSummary {
@@ -164,6 +166,13 @@ export interface PatientMedicalRecordDetail {
   diagnoses: PatientMedicalRecordDiagnosis[];
   diagnosticOrders: PatientMedicalRecordDiagnosticSummary[];
   prescriptions: PatientMedicalRecordPrescriptionSummary[];
+  clinicalProgressionNote?: string | null;
+  clinicalInterpretation?: string | null;
+  treatmentPlan?: string | null;
+  dischargeInstructions?: string | null;
+  followUpInstructions?: string | null;
+  followUpDate?: string | null;
+  warningSigns?: string | null;
 }
 
 export interface PatientPrescriptionListItem {

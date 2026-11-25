@@ -47,7 +47,9 @@ public sealed partial class ConsultationWorkspaceService
             code,
             isQueuePrefix,
             visitIdOrCode,
-            ct);
+            ct,
+            acquireWriteLocks: true,
+            lockVisitPrescriptions: true);
 
         var visit = context.Visit;
         var activeEntry = context.ActiveClinicalEntry;
@@ -58,18 +60,12 @@ public sealed partial class ConsultationWorkspaceService
             throw new ConflictException("Không thể kê đơn thuốc cho lượt khám đã hủy hoặc vắng mặt (NO_SHOW).");
         }
 
-        if (visitStatus is "COMPLETED" or "DONE" ||
-            (activeEntry is not null && NormalizeQueueStatus(activeEntry.Status) == "COMPLETED"))
+        if (visitStatus is "COMPLETED" or "DONE")
         {
             throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED), không thể kê đơn thuốc.");
         }
 
-        if (activeEntry is null || NormalizeQueueStatus(activeEntry.Status) == "CANCELLED")
-        {
-            throw new ConflictException("Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để kê đơn thuốc.");
-        }
-
-        var currentQueueStatus = NormalizeQueueStatus(activeEntry.Status);
+        var currentQueueStatus = activeEntry is not null ? NormalizeQueueStatus(activeEntry.Status) : "WAITING";
         var openDiagnosticCount = CountOpenDiagnosticEntries(context.AllVisitQueueEntries);
 
         if (visitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" ||
@@ -79,6 +75,16 @@ public sealed partial class ConsultationWorkspaceService
                 "Bệnh nhân đang chờ kết quả cận lâm sàng. Vui lòng mở lại phiên khám (IN_PROGRESS) trước khi kê đơn thuốc.");
         }
 
+        if (activeEntry is not null && currentQueueStatus == "COMPLETED" && visitStatus != "RETURN_CONSULTATION")
+        {
+            throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED), không thể kê đơn thuốc.");
+        }
+
+        if (activeEntry is null || currentQueueStatus == "CANCELLED")
+        {
+            throw new ConflictException("Lượt khám chưa có số thứ tự hàng đợi lâm sàng hợp lệ để kê đơn thuốc.");
+        }
+
         var policySet = await QueueOrderingPolicyLoader.LoadAsync(_db, doctorAccess.Hospital.Id, nowUtc, ct);
         var servicePointIdForPolicy = activeEntry.CurrentServicePointId
             ?? activeEntry.ServicePointId
@@ -86,10 +92,10 @@ public sealed partial class ConsultationWorkspaceService
         var policy = policySet.ForServicePoint(servicePointIdForPolicy);
         var hasPendingMandatoryOrders = await HasPendingMandatoryDiagnosticOrdersAsync(visit.Id, ct);
 
-        if ((policy.FinalResultRequired && openDiagnosticCount > 0) || hasPendingMandatoryOrders)
+        if (validated.IssueImmediately && ((policy.FinalResultRequired && openDiagnosticCount > 0) || hasPendingMandatoryOrders))
         {
             throw new ConflictException(
-                "Chưa thể kê đơn thuốc khi kết quả cận lâm sàng bắt buộc chưa hoàn tất.");
+                "Chưa thể phát hành đơn thuốc chính thức (ISSUED) khi kết quả cận lâm sàng bắt buộc chưa hoàn tất. Bác sĩ có thể lưu đơn thuốc nháp (DRAFT).");
         }
 
         if (currentQueueStatus != "IN_PROGRESS" ||
@@ -154,6 +160,7 @@ public sealed partial class ConsultationWorkspaceService
         var hasPrimaryDiagnosis = await _db.VisitDiagnoses.AnyAsync(
             d => d.VisitId == visit.Id &&
                  d.IsPrimary == true &&
+                 (d.Status == null || d.Status.ToUpper() != "SUPERSEDED") &&
                  d.CodeSnapshot != null &&
                  d.CodeSnapshot != "",
             ct);
@@ -173,6 +180,14 @@ public sealed partial class ConsultationWorkspaceService
             .Where(p => p.VisitId == visit.Id)
             .ToListAsync(ct);
 
+        var activeIssuedRx = visitPrescriptions.FirstOrDefault(p =>
+            AppointmentBookingRules.NormalizeStatusKey(p.Status) is "ISSUED" or "PREPARING" or "READY" or "DISPENSED");
+        if (activeIssuedRx is not null)
+        {
+            throw new ConflictException(
+                "Lượt khám đã có đơn thuốc đã phát hành (ISSUED), không thể tạo thêm đơn thuốc mới chồng chéo.");
+        }
+
         var existingDraft = visitPrescriptions
             .Where(p => AppointmentBookingRules.NormalizeStatusKey(p.Status) is "DRAFT" or "PENDING" or "")
             .OrderByDescending(p => p.Id)
@@ -182,6 +197,7 @@ public sealed partial class ConsultationWorkspaceService
         var previousRows = new List<PrescriptionItem>();
         Prescription prescription;
         string outcome;
+        var targetStatus = validated.IssueImmediately ? "ISSUED" : "DRAFT";
 
         if (existingDraft is null)
         {
@@ -190,15 +206,15 @@ public sealed partial class ConsultationWorkspaceService
                 VisitId = visit.Id,
                 PrescribingDoctorId = doctorAccess.Doctor.Id,
                 FulfillmentChoice = validated.FulfillmentChoice,
-                Status = "DRAFT",
+                Status = targetStatus,
                 CreatedAt = nowLocal,
-                IssuedAt = null,
+                IssuedAt = validated.IssueImmediately ? nowLocal : null,
                 ReplacesPrescriptionId = null,
             };
             _db.Prescriptions.Add(prescription);
             await SaveChangesWithConcurrencyGuardAsync(ct);
             prescription.PrescriptionCode = FormatPrescriptionCode(queueDate, prescription.Id);
-            outcome = "PRESCRIPTION_CREATED";
+            outcome = validated.IssueImmediately ? "PRESCRIPTION_ISSUED" : "PRESCRIPTION_CREATED";
         }
         else
         {
@@ -209,14 +225,19 @@ public sealed partial class ConsultationWorkspaceService
 
             existingDraft.FulfillmentChoice = validated.FulfillmentChoice;
             existingDraft.PrescribingDoctorId = doctorAccess.Doctor.Id;
-            existingDraft.Status = "DRAFT";
+            existingDraft.Status = targetStatus;
+            if (validated.IssueImmediately)
+            {
+                existingDraft.IssuedAt ??= nowLocal;
+            }
+
             if (string.IsNullOrWhiteSpace(existingDraft.PrescriptionCode))
             {
                 existingDraft.PrescriptionCode = FormatPrescriptionCode(queueDate, existingDraft.Id);
             }
 
             prescription = existingDraft;
-            outcome = "PRESCRIPTION_UPDATED";
+            outcome = validated.IssueImmediately ? "PRESCRIPTION_ISSUED" : "PRESCRIPTION_UPDATED";
         }
 
         var persistedItems = new List<PrescriptionItem>(resolvedItems.Count);
@@ -428,11 +449,24 @@ public sealed partial class ConsultationWorkspaceService
             }
         }
 
+        var issueImmediately = request.IssueImmediately == true;
+        if (!string.IsNullOrWhiteSpace(request.Status))
+        {
+            var normalizedStatus = request.Status.Trim().ToUpperInvariant();
+            if (normalizedStatus is not ("DRAFT" or "ISSUED"))
+            {
+                throw new ValidationException("Trạng thái đơn thuốc chỉ chấp nhận DRAFT hoặc ISSUED.");
+            }
+
+            issueImmediately = issueImmediately || normalizedStatus == "ISSUED";
+        }
+
         return new ValidatedCreatePrescriptionInput(
             Items: items,
             FulfillmentChoice: fulfillmentChoice,
             ExpectedStateVersion: request.ExpectedStateVersion,
-            ExpectedRevisionNo: request.ExpectedRevisionNo);
+            ExpectedRevisionNo: request.ExpectedRevisionNo,
+            IssueImmediately: issueImmediately);
     }
 
     private async Task<IReadOnlyList<(ValidatedPrescriptionItemInput Item, Medicine Medicine)>> ResolvePrescriptionMedicinesAsync(
@@ -606,7 +640,8 @@ public sealed partial class ConsultationWorkspaceService
         IReadOnlyList<ValidatedPrescriptionItemInput> Items,
         string FulfillmentChoice,
         int? ExpectedStateVersion,
-        int? ExpectedRevisionNo);
+        int? ExpectedRevisionNo,
+        bool IssueImmediately = false);
 
     private sealed record ValidatedPrescriptionItemInput(
         long? MedicineId,

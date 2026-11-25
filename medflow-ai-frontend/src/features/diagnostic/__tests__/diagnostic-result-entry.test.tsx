@@ -179,14 +179,16 @@ describe('DiagnosticResultEntryPage (UC43)', () => {
     fireEvent.click(saveButton);
 
     expect(await screen.findByTestId('result-form-validation-error')).toHaveTextContent(
-      'Vui lòng nhập nội dung kết quả cận lâm sàng.',
+      'Nội dung kết quả cận lâm sàng (ResultText) phải có ít nhất 3 ký tự.',
     );
     expect(postSpy).not.toHaveBeenCalled();
 
-    // Finalize without conclusion → conclusion validation error
+    // Finalize without conclusion on non-verification order (DIA-202610-0048) → conclusion validation error
+    fireEvent.click(await screen.findByTestId('result-entry-order-row-DIA-202610-0048'));
+    await screen.findByTestId('result-entry-form');
     const finalizeButton = screen.getByRole('button', { name: /Duyệt & trả kết quả/i });
     fireEvent.change(screen.getByLabelText('Nội dung kết quả cận lâm sàng'), {
-      target: { value: 'Kết quả sinh hóa: Glucose 14.1 mmol/L, HbA1c 9.2%.' },
+      target: { value: 'Kết quả MRI cột sống thắt lưng: thoát vị đĩa đệm L4-L5.' },
     });
     fireEvent.click(finalizeButton);
 
@@ -194,6 +196,51 @@ describe('DiagnosticResultEntryPage (UC43)', () => {
       'Vui lòng nhập kết luận trước khi duyệt & trả kết quả.',
     );
     expect(postSpy).not.toHaveBeenCalled();
+  });
+
+  it('cho phep luu nhap khi conclusion trong, chan external URL tren reportFileUrl va chan tu tham dinh (BUG-P6-04 / BUG-P6-06)', async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByTestId('result-entry-order-row-DIA-202610-0048'));
+    await screen.findByTestId('result-entry-form');
+
+    // 1. External https:// reportFileUrl is rejected client-side
+    fireEvent.change(screen.getByLabelText('Nội dung kết quả cận lâm sàng'), {
+      target: { value: 'MRI L4-L5 ghi nhận phồng đĩa đệm nhẹ, chưa chèn ép rễ.' },
+    });
+    fireEvent.change(screen.getByLabelText('Đường dẫn tệp kết quả đính kèm'), {
+      target: { value: 'https://evil.example.com/report.pdf' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Lưu kết quả/i }));
+
+    expect(await screen.findByTestId('result-form-validation-error')).toHaveTextContent(
+      'Đường dẫn tệp báo cáo chỉ chấp nhận đường dẫn nội bộ được bảo vệ',
+    );
+
+    // 2. Valid internal storage path + empty conclusion saves DRAFT cleanly
+    fireEvent.change(screen.getByLabelText('Đường dẫn tệp kết quả đính kèm'), {
+      target: { value: '/storage/diagnostic-reports/mri-0048.pdf' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Lưu kết quả/i }));
+
+    const successBanner = await screen.findByTestId('result-entry-success');
+    expect(successBanner).toHaveTextContent('DIA-202610-0048');
+    expect(successBanner).toHaveTextContent('DRAFT');
+
+    // 3. On requiresResultVerification=true order (DIA-202610-0044), saving PENDING_VERIFY by current staff blocks self-verification
+    fireEvent.click(await screen.findByTestId('result-entry-order-row-DIA-202610-0044'));
+    await screen.findByTestId('result-entry-form');
+    fireEvent.change(screen.getByLabelText('Nội dung kết quả cận lâm sàng'), {
+      target: { value: 'Glucose đói 14.1 mmol/L, HbA1c 9.2%.' },
+    });
+    const pendingVerifyRadio = screen
+      .getAllByRole('radio')
+      .find((el) => (el as HTMLInputElement).value === 'PENDING_VERIFY');
+    expect(pendingVerifyRadio).toBeDefined();
+    fireEvent.click(pendingVerifyRadio!);
+    fireEvent.click(screen.getByRole('button', { name: /Lưu kết quả/i }));
+
+    expect(await screen.findByTestId('self-verification-blocked-notice')).toBeInTheDocument();
   });
 
   it('luu ket qua hop le tao phien ban moi va hien thi banner thanh cong + cap nhat bang', async () => {

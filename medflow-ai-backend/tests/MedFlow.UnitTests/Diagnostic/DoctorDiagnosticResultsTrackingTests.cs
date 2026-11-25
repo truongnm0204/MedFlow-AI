@@ -67,18 +67,19 @@ public sealed class DoctorDiagnosticResultsTrackingTests : IDisposable
         Assert.Equal("IN_PROGRESS", visit101.TrackingStatus);
         Assert.Equal(5, visit101.TotalOrders);
         Assert.DoesNotContain(visit101.Orders, o => o.OrderId == 7);
-        Assert.Equal(1, visit101.SignedOrders);
-        Assert.Equal(2, visit101.InProgressOrders);
+        Assert.Equal(0, visit101.SignedOrders);
+        Assert.Equal(3, visit101.InProgressOrders);
         Assert.Equal(2, visit101.PendingOrders);
-        Assert.Equal(20, visit101.CompletionPercent);
+        Assert.Equal(0, visit101.CompletionPercent);
+        Assert.Equal("PERFORMED_AWAITING_RESULT", Assert.Single(visit101.Orders, o => o.OrderId == 6).TrackingStatus);
 
         Assert.Equal(2, response.Stats.TotalVisits);
         Assert.Equal(0, response.Stats.CompletedVisits);
         Assert.Equal(1, response.Stats.InProgressVisits);
         Assert.Equal(1, response.Stats.PendingSignVisits);
         Assert.Equal(7, response.Stats.TotalOrders);
-        Assert.Equal(2, response.Stats.SignedOrders);
-        Assert.Equal(5, response.Stats.WaitingOrders);
+        Assert.Equal(1, response.Stats.SignedOrders);
+        Assert.Equal(6, response.Stats.WaitingOrders);
     }
 
     [Fact]

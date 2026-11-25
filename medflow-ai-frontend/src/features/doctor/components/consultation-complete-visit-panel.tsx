@@ -79,10 +79,18 @@ export function ConsultationCompleteVisitPanel({
   const [clinicalConclusionInput, setClinicalConclusionInput] = useState(
     () => clinicalContext.clinicalConclusion ?? '',
   );
-  const [dischargeInstructionsInput, setDischargeInstructionsInput] = useState('');
-  const [followUpInstructionsInput, setFollowUpInstructionsInput] = useState('');
-  const [followUpDateInput, setFollowUpDateInput] = useState('');
-  const [warningSignsInput, setWarningSignsInput] = useState('');
+  const [dischargeInstructionsInput, setDischargeInstructionsInput] = useState(
+    () => clinicalContext.dischargeInstructions ?? '',
+  );
+  const [followUpInstructionsInput, setFollowUpInstructionsInput] = useState(
+    () => clinicalContext.followUpInstructions ?? '',
+  );
+  const [followUpDateInput, setFollowUpDateInput] = useState(
+    () => clinicalContext.followUpDate ?? '',
+  );
+  const [warningSignsInput, setWarningSignsInput] = useState(
+    () => clinicalContext.warningSigns ?? '',
+  );
   const [completionNoteInput, setCompletionNoteInput] = useState('');
   const [confirmNoPrescriptionInput, setConfirmNoPrescriptionInput] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -90,10 +98,10 @@ export function ConsultationCompleteVisitPanel({
   if (syncKey !== lastSyncKey) {
     setLastSyncKey(syncKey);
     setClinicalConclusionInput(clinicalContext.clinicalConclusion ?? '');
-    setDischargeInstructionsInput('');
-    setFollowUpInstructionsInput('');
-    setFollowUpDateInput('');
-    setWarningSignsInput('');
+    setDischargeInstructionsInput(clinicalContext.dischargeInstructions ?? '');
+    setFollowUpInstructionsInput(clinicalContext.followUpInstructions ?? '');
+    setFollowUpDateInput(clinicalContext.followUpDate ?? '');
+    setWarningSignsInput(clinicalContext.warningSigns ?? '');
     setCompletionNoteInput('');
     setConfirmNoPrescriptionInput(false);
     setValidationError(null);
@@ -114,13 +122,40 @@ export function ConsultationCompleteVisitPanel({
   const isSessionInProgress =
     isFinalized ||
     (workspaceState === 'IN_PROGRESS' && clinicalContext.medicalRecordStatus === 'DRAFT');
-  const hasPrimaryDiagnosis = Boolean(primaryDiagnosis);
+  const requiresDiagnosisReconfirmation =
+    Boolean(clinicalContext.diagnosticSummary.requiresDiagnosisReconfirmation) ||
+    Boolean(primaryDiagnosis && primaryDiagnosis.status === 'PROVISIONAL');
+  const hasPrimaryDiagnosis = Boolean(primaryDiagnosis) && !requiresDiagnosisReconfirmation;
+
+  const activeDiagnosticOrders = (clinicalContext.diagnosticOrders ?? []).filter(
+    (order) => order.status !== 'CANCELLED',
+  );
+  const performedAwaitingResultOrders = activeDiagnosticOrders.filter(
+    (order) =>
+      !order.isResultFinalized &&
+      (order.resultStatus === 'PERFORMED_AWAITING_RESULT' || order.status === 'COMPLETED'),
+  );
+  const pendingMandatoryOrdersCount =
+    clinicalContext.diagnosticSummary.mandatoryPendingCount ??
+    activeDiagnosticOrders.filter(
+      (order) => order.requiredForConclusion && !order.isResultFinalized,
+    ).length;
+  const pendingOptionalOrdersCount =
+    clinicalContext.diagnosticSummary.optionalPendingCount ??
+    activeDiagnosticOrders.filter(
+      (order) => !order.requiredForConclusion && !order.isResultFinalized,
+    ).length;
+  const performedAwaitingResultCount =
+    clinicalContext.diagnosticSummary.performedAwaitingResultCount ??
+    performedAwaitingResultOrders.length;
+
   const hasNoPendingDiagnostics =
     clinicalContext.diagnosticSummary.openQueueEntries === 0 &&
     clinicalContext.diagnosticSummary.allMandatoryResultsReady &&
-    !(clinicalContext.diagnosticOrders ?? []).some(
-      (order) => order.status !== 'COMPLETED' && order.status !== 'CANCELLED',
-    );
+    pendingMandatoryOrdersCount === 0 &&
+    pendingOptionalOrdersCount === 0 &&
+    !activeDiagnosticOrders.some((order) => !order.isResultFinalized);
+
   const hasClinicalConclusion = Boolean(
     clinicalConclusionInput.trim() ||
     clinicalContext.clinicalConclusion?.trim() ||
@@ -131,6 +166,16 @@ export function ConsultationCompleteVisitPanel({
       clinicalContext.prescriptionSummary.latestPrescriptionStatus === 'PENDING') &&
     clinicalContext.prescriptionSummary.itemCount === 0
   );
+
+  const diagnosticsGateDetail = hasNoPendingDiagnostics
+    ? `Không còn chỉ định chờ (${clinicalContext.diagnosticSummary.completedQueueEntries}/${clinicalContext.diagnosticSummary.totalQueueEntries} hoàn tất)`
+    : performedAwaitingResultCount > 0
+      ? `Đã lấy mẫu / thực hiện ${performedAwaitingResultCount} chỉ định nhưng chưa ký trả kết quả (PERFORMED_AWAITING_RESULT)`
+      : pendingMandatoryOrdersCount > 0
+        ? `Còn ${pendingMandatoryOrdersCount} chỉ định bắt buộc chờ kết quả CLS`
+        : pendingOptionalOrdersCount > 0
+          ? `Còn ${pendingOptionalOrdersCount} chỉ định tùy chọn cần có kết quả hoặc hủy rõ ràng trước khi đóng lượt khám`
+          : `Còn ${clinicalContext.diagnosticSummary.openQueueEntries} chỉ định CLS chưa hoàn tất`;
 
   const readinessItems = [
     {
@@ -146,17 +191,17 @@ export function ConsultationCompleteVisitPanel({
     {
       id: 'diagnosis',
       label: 'Chẩn đoán chính (ICD-10)',
-      detail: primaryDiagnosis
-        ? `Đã ghi nhận: ${primaryDiagnosis.code} — ${primaryDiagnosis.name}`
-        : 'Chưa có chẩn đoán ICD-10 chính',
+      detail: !primaryDiagnosis
+        ? 'Chưa có chẩn đoán ICD-10 chính'
+        : requiresDiagnosisReconfirmation
+          ? `Tạm thời (PROVISIONAL): ${primaryDiagnosis.code} — cần xác nhận lại sau khi có kết quả CLS`
+          : `Đã ghi nhận: ${primaryDiagnosis.code} — ${primaryDiagnosis.name}`,
       ready: hasPrimaryDiagnosis,
     },
     {
       id: 'diagnostics',
       label: 'Kết quả Cận lâm sàng (CLS)',
-      detail: hasNoPendingDiagnostics
-        ? `Không còn chỉ định chờ (${clinicalContext.diagnosticSummary.completedQueueEntries}/${clinicalContext.diagnosticSummary.totalQueueEntries} hoàn tất)`
-        : `Còn ${clinicalContext.diagnosticSummary.openQueueEntries} chỉ định CLS chưa hoàn tất`,
+      detail: diagnosticsGateDetail,
       ready: hasNoPendingDiagnostics,
     },
     {
@@ -179,10 +224,10 @@ export function ConsultationCompleteVisitPanel({
   const handleResetDraft = () => {
     clearErrors();
     setClinicalConclusionInput(clinicalContext.clinicalConclusion ?? '');
-    setDischargeInstructionsInput('');
-    setFollowUpInstructionsInput('');
-    setFollowUpDateInput('');
-    setWarningSignsInput('');
+    setDischargeInstructionsInput(clinicalContext.dischargeInstructions ?? '');
+    setFollowUpInstructionsInput(clinicalContext.followUpInstructions ?? '');
+    setFollowUpDateInput(clinicalContext.followUpDate ?? '');
+    setWarningSignsInput(clinicalContext.warningSigns ?? '');
     setCompletionNoteInput('');
     setConfirmNoPrescriptionInput(false);
   };

@@ -52,6 +52,7 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
     private static readonly HashSet<string> ValidResultStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
         "PENDING",
+        "PERFORMED_AWAITING_RESULT",
         "DRAFT",
         "PRELIMINARY",
         "PENDING_VERIFY",
@@ -1792,23 +1793,36 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
         }
         else
         {
-            var isResultFinalized = orderStatus is "COMPLETED" or "FINALIZED" or "VERIFIED" or "DONE" ||
+            if (orderStatus == "CANCELLED" || queueStatus == "CANCELLED")
+            {
+                return new DiagnosticOrderResultState(
+                    HasResult: false,
+                    IsResultReady: false,
+                    IsResultFinalized: false,
+                    ResultStatus: "CANCELLED",
+                    ResultFinalizedAt: null);
+            }
+
+            if (orderStatus is "FINALIZED" or "VERIFIED")
+            {
+                return new DiagnosticOrderResultState(
+                    HasResult: true,
+                    IsResultReady: true,
+                    IsResultFinalized: true,
+                    ResultStatus: orderStatus,
+                    ResultFinalizedAt: queueEntry?.CompletedAt);
+            }
+
+            var isExecutionCompleted = orderStatus is "COMPLETED" or "DONE" ||
                 queueEntry?.CompletedAt.HasValue == true ||
                 queueStatus == "COMPLETED";
-            var isResultReady = isResultFinalized && orderStatus != "CANCELLED";
-            var resultStatus = orderStatus == "CANCELLED" || queueStatus == "CANCELLED"
-                ? "CANCELLED"
-                : isResultFinalized
-                    ? "FINALIZED"
-                    : "PENDING";
-            var finalizedAt = isResultFinalized ? queueEntry?.CompletedAt : null;
 
             return new DiagnosticOrderResultState(
-                HasResult: isResultFinalized,
-                IsResultReady: isResultReady,
-                IsResultFinalized: isResultFinalized,
-                ResultStatus: resultStatus,
-                ResultFinalizedAt: finalizedAt);
+                HasResult: false,
+                IsResultReady: false,
+                IsResultFinalized: false,
+                ResultStatus: isExecutionCompleted ? "PERFORMED_AWAITING_RESULT" : "PENDING",
+                ResultFinalizedAt: null);
         }
     }
 

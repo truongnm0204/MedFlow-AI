@@ -23,7 +23,7 @@ export type ConsultationWorkspaceState =
 
 export type ConsultationMedicalRecordStatus = 'NOT_CREATED' | 'DRAFT' | 'FINALIZED';
 
-export type ConsultationDiagnosisStatus = 'PRELIMINARY' | 'CONFIRMED';
+export type ConsultationDiagnosisStatus = 'PRELIMINARY' | 'PROVISIONAL' | 'CONFIRMED';
 
 export type DiagnosticOrderPriority = 'NORMAL' | 'URGENT' | 'STAT';
 
@@ -155,6 +155,14 @@ export interface ConsultationDiagnosticSummaryDto {
   completedQueueEntries: number;
   allMandatoryResultsReady: boolean;
   finalResultRequired: boolean;
+  mandatoryTotalCount?: number;
+  mandatoryCompletedCount?: number;
+  mandatoryPendingCount?: number;
+  optionalTotalCount?: number;
+  optionalCompletedCount?: number;
+  optionalPendingCount?: number;
+  performedAwaitingResultCount?: number;
+  requiresDiagnosisReconfirmation?: boolean;
 }
 
 export interface ConsultationPrescriptionSummaryDto {
@@ -261,6 +269,13 @@ export interface ConsultationClinicalContextDto {
   diagnosticSummary: ConsultationDiagnosticSummaryDto;
   prescriptionSummary: ConsultationPrescriptionSummaryDto;
   diagnosticOrders?: ConsultationDiagnosticOrderDto[] | null;
+  clinicalProgressionNote?: string | null;
+  clinicalInterpretation?: string | null;
+  treatmentPlan?: string | null;
+  dischargeInstructions?: string | null;
+  followUpInstructions?: string | null;
+  followUpDate?: string | null;
+  warningSigns?: string | null;
 }
 
 export interface ConsultationWorkspaceActionDto {
@@ -314,6 +329,7 @@ export interface RecordClinicalExaminationRequest {
   weightKg?: number | null;
   clinicalFindings?: string | null;
   clinicalConclusion?: string | null;
+  treatmentPlan?: string | null;
   amendmentReason?: string | null;
   isConfirmed?: boolean | null;
   expectedStateVersion?: number | null;
@@ -397,6 +413,8 @@ export interface CreatePrescriptionItemRequest {
 export interface CreatePrescriptionRequest {
   items?: CreatePrescriptionItemRequest[] | null;
   fulfillmentChoice?: PrescriptionFulfillmentChoice | null;
+  status?: 'DRAFT' | 'ISSUED' | (string & {}) | null;
+  issueImmediately?: boolean | null;
   expectedStateVersion?: number | null;
   expectedRevisionNo?: number | null;
 }
@@ -411,6 +429,7 @@ export interface RecordDiagnosisRequest {
   clinicalConclusion?: string | null;
   clinicalFindings?: string | null;
   differentialNotes?: string | null;
+  treatmentPlan?: string | null;
   lifestyleInstructions?: string | null;
   warningSigns?: string | null;
   amendmentReason?: string | null;

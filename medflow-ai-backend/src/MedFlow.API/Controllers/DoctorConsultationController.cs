@@ -154,6 +154,31 @@ public sealed class DoctorConsultationController : ControllerBase
             ct));
 
     /// <summary>
+    /// POST /api/v1/doctor/consultation/{idOrCode}/diagnostic-orders/{orderIdOrCode}/cancel — Hủy phiếu chỉ định cận lâm sàng theo trạng thái thực hiện và thanh toán (ADR-0059 / BUG-P6-02).
+    /// </summary>
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/diagnostic-orders/{orderIdOrCode}/cancel")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/diagnostic-orders/{orderIdOrCode}/cancel")]
+    [HttpPost("/api/v1/visits/{idOrCode}/diagnostic-orders/{orderIdOrCode}/cancel")]
+    [ProducesResponseType<ConsultationWorkspaceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ConsultationWorkspaceResponseDto>> CancelDiagnosticOrder(
+        string idOrCode,
+        string orderIdOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CancelConsultationDiagnosticOrderRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.CancelDiagnosticOrderAsync(
+            GetUserId(),
+            idOrCode,
+            orderIdOrCode,
+            request,
+            GetIp(),
+            ct));
+
+    /// <summary>
     /// GET /api/v1/doctor/consultation/{idOrCode}/diagnostic-results — Xem danh sách và lịch sử phiên bản kết quả cận lâm sàng của lượt khám (UC35 / #114).
     /// </summary>
     [HttpGet("/api/v1/doctor/consultation/{idOrCode}/diagnostic-results")]

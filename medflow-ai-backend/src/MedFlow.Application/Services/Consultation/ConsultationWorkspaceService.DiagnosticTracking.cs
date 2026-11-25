@@ -239,6 +239,11 @@ public sealed partial class ConsultationWorkspaceService
                     orderTrackingStatus = "AWAITING_SIGN";
                     awaitingSignOrders++;
                 }
+                else if (state.ResultStatus == "PERFORMED_AWAITING_RESULT")
+                {
+                    orderTrackingStatus = "PERFORMED_AWAITING_RESULT";
+                    inProgressOrders++;
+                }
                 else if (orderStatus == "IN_PROGRESS" || queueStatus is "CALLED" or "IN_PROGRESS")
                 {
                     orderTrackingStatus = "IN_PROGRESS";

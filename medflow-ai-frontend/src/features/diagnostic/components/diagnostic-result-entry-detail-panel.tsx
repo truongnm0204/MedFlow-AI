@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
+import { useAuthStore } from '@/features/auth/store/auth.store';
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -137,6 +138,8 @@ function resultStatusMeta(resultStatus?: string | null): {
   tone: 'amber' | 'sky' | 'emerald' | 'slate' | 'rose';
 } {
   switch ((resultStatus ?? 'NONE').toUpperCase()) {
+    case 'PERFORMED_AWAITING_RESULT':
+      return { label: 'Đã lấy mẫu / Chờ KQ (PERFORMED_AWAITING_RESULT)', tone: 'amber' };
     case 'DRAFT':
       return { label: 'Bản nháp (DRAFT)', tone: 'sky' };
     case 'PRELIMINARY':
@@ -206,6 +209,23 @@ function DiagnosticResultEntryForm({
   onEnterResult,
   onDirtyChange,
 }: DiagnosticResultEntryFormProps) {
+  const authUser = useAuthStore((s) => s.user);
+  const normalizedResultStatus = (order.resultStatus ?? 'NONE').toUpperCase();
+  const isAwaitingPendingVerifyFirst =
+    order.requiresResultVerification && normalizedResultStatus !== 'PENDING_VERIFY';
+  const isSelfVerificationBlocked = Boolean(
+    order.requiresResultVerification &&
+    normalizedResultStatus === 'PENDING_VERIFY' &&
+    ((authUser?.staffCode &&
+      order.enteredByStaffCode &&
+      authUser.staffCode.trim().toUpperCase() === order.enteredByStaffCode.trim().toUpperCase()) ||
+      (authUser?.id != null &&
+        order.enteredByStaffId != null &&
+        authUser.id === order.enteredByStaffId)),
+  );
+  const effectiveCanFinalize =
+    canFinalizeResult && !isAwaitingPendingVerifyFirst && !isSelfVerificationBlocked;
+
   const hasExistingDraft = Boolean(
     order.hasResult &&
     order.latestVersionNo != null &&
@@ -285,13 +305,19 @@ function DiagnosticResultEntryForm({
     setValidationError(null);
     const submittedSnapshot: EntryFormSnapshot = { ...currentSnapshot };
 
+    const targetSubmitStatus = isFinalized
+      ? order.requiresResultVerification
+        ? 'VERIFIED'
+        : 'FINALIZED'
+      : submittedSnapshot.draftStatus;
+
     const candidatePayload = {
       resultText: submittedSnapshot.resultText,
       conclusion: submittedSnapshot.conclusion.trim() ? submittedSnapshot.conclusion : null,
       reportFileUrl: submittedSnapshot.reportFileUrl.trim()
         ? submittedSnapshot.reportFileUrl
         : null,
-      status: submittedSnapshot.draftStatus,
+      status: targetSubmitStatus,
       isFinalized,
       isVerified: isFinalized ? order.requiresResultVerification : false,
       correctionReason: submittedSnapshot.correctionReason.trim()
@@ -316,7 +342,7 @@ function DiagnosticResultEntryForm({
       resultText: parsed.data.resultText,
       conclusion: parsed.data.conclusion ?? null,
       reportFileUrl: parsed.data.reportFileUrl ?? null,
-      status: isFinalized ? null : parsed.data.status,
+      status: parsed.data.status,
       isFinalized: parsed.data.isFinalized,
       isVerified: parsed.data.isVerified ?? false,
       correctionReason: parsed.data.correctionReason ?? null,
@@ -372,7 +398,7 @@ function DiagnosticResultEntryForm({
 
       <div>
         <label htmlFor="result-text" className="block text-[11px] font-semibold text-navy">
-          Nội dung kết quả cận lâm sàng <span className="text-rose-600">*</span> (tối đa 8000 ký tự)
+          Nội dung kết quả cận lâm sàng <span className="text-rose-600">*</span> (3–5000 ký tự)
         </label>
         <textarea
           id="result-text"
@@ -390,7 +416,7 @@ function DiagnosticResultEntryForm({
         <label htmlFor="result-conclusion" className="block text-[11px] font-semibold text-navy">
           Kết luận chẩn đoán cận lâm sàng{' '}
           <span className="font-normal text-sub">
-            (bắt buộc khi duyệt &amp; trả kết quả — tối đa 2000 ký tự)
+            (tùy chọn khi lưu nháp; bắt buộc khi duyệt &amp; trả kết quả — tối đa 500 ký tự)
           </span>
         </label>
         <textarea
@@ -407,16 +433,16 @@ function DiagnosticResultEntryForm({
 
       <div>
         <label htmlFor="result-file-url" className="block text-[11px] font-semibold text-navy">
-          Đường dẫn tệp kết quả đính kèm (ReportFileUrl — tùy chọn)
+          Đường dẫn tệp kết quả đính kèm nội bộ (ReportFileUrl — tùy chọn)
         </label>
         <input
           id="result-file-url"
-          type="url"
+          type="text"
           aria-label="Đường dẫn tệp kết quả đính kèm"
           value={reportFileUrl}
           disabled={!canSubmitResult || isSubmitting}
           onChange={(e) => setReportFileUrl(e.target.value)}
-          placeholder="Nhập đường dẫn tệp báo cáo đính kèm (https://...)"
+          placeholder="/storage/diagnostic-reports/ten-tep-ket-qua.pdf"
           className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2.5 font-mono text-xs text-ink placeholder:text-sub focus:border-primary focus:outline-none disabled:opacity-60"
         />
       </div>
@@ -490,6 +516,27 @@ function DiagnosticResultEntryForm({
         />
       </div>
 
+      {isAwaitingPendingVerifyFirst && (
+        <div
+          className="rounded-lg border border-sky-200 bg-sky-50/80 px-3 py-2 text-[11px] text-navy"
+          data-testid="two-person-pending-verify-hint"
+        >
+          <strong>Yêu cầu thẩm định 2 người độc lập:</strong> Dịch vụ này bắt buộc lưu kết quả ở
+          trạng thái <span className="font-mono font-semibold">PENDING_VERIFY</span> trước khi nhân
+          viên thứ hai xác nhận duyệt (<span className="font-mono font-semibold">VERIFIED</span>).
+        </div>
+      )}
+
+      {isSelfVerificationBlocked && (
+        <Alert tone="warning">
+          <span data-testid="self-verification-blocked-notice">
+            Quy tắc thẩm định độc lập 2 người: người đã nhập bản kết quả (
+            {order.enteredByStaffName ?? order.enteredByStaffCode}) không được tự duyệt kết quả của
+            chính mình. Vui lòng chuyển cho nhân viên/bác sĩ thẩm định độc lập.
+          </span>
+        </Alert>
+      )}
+
       <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2">
         <Button
           type="button"
@@ -504,7 +551,7 @@ function DiagnosticResultEntryForm({
         <Button
           type="button"
           loading={isSubmitting}
-          disabled={!canSubmitResult || !canFinalizeResult || isSubmitting}
+          disabled={!canSubmitResult || !effectiveCanFinalize || isSubmitting}
           onClick={() => void handleSubmit(true)}
         >
           <SendHorizonal className="h-4 w-4" aria-hidden="true" />
@@ -699,7 +746,7 @@ function DiagnosticResultAmendForm({
           htmlFor="amend-result-conclusion"
           className="block text-[11px] font-semibold text-navy"
         >
-          Kết luận chẩn đoán cận lâm sàng <span className="text-rose-600">*</span> (3–2000 ký tự)
+          Kết luận chẩn đoán cận lâm sàng <span className="text-rose-600">*</span> (3–500 ký tự)
         </label>
         <textarea
           id="amend-result-conclusion"
@@ -717,12 +764,12 @@ function DiagnosticResultAmendForm({
           htmlFor="amend-result-file-url"
           className="block text-[11px] font-semibold text-navy"
         >
-          Đường dẫn tệp kết quả đính kèm
+          Đường dẫn tệp kết quả đính kèm nội bộ
           <span className="font-normal text-sub"> (để nguyên = giữ file; xóa trắng = gỡ file)</span>
         </label>
         <input
           id="amend-result-file-url"
-          type="url"
+          type="text"
           aria-label="Đường dẫn tệp kết quả đính kèm"
           value={reportFileUrl}
           disabled={isSubmitting}
@@ -730,7 +777,7 @@ function DiagnosticResultAmendForm({
             setReportFileUrlTouched(true);
             setReportFileUrl(event.target.value);
           }}
-          placeholder="Nhập đường dẫn tệp báo cáo đính kèm (https://...)"
+          placeholder="/storage/diagnostic-reports/ten-tep-ket-qua.pdf"
           className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2.5 font-mono text-xs text-ink placeholder:text-sub focus:border-primary focus:outline-none disabled:opacity-60"
         />
       </div>

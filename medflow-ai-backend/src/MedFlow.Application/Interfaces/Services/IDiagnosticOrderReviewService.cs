@@ -26,4 +26,12 @@ public interface IDiagnosticOrderReviewService
         ConfirmDiagnosticOrdersBatchRequest? request = null,
         string? ipAddress = null,
         CancellationToken ct = default);
+
+    Task<CancelDiagnosticOrderResponseDto> CancelDiagnosticOrderAsync(
+        long actorUserId,
+        string orderIdOrCode,
+        CancelDiagnosticOrderRequest? request = null,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+        => throw new NotSupportedException("CancelDiagnosticOrderAsync is not implemented by this test double.");
 }

@@ -512,4 +512,63 @@ describe('DiagnosticQueueManagePage (UC41 — Manage Diagnostic Queue)', () => {
       expect(screen.getByTestId('location-probe')).toHaveTextContent('/doctor');
     });
   });
+
+  it('hien thi canh bao UNPAID_DIAGNOSTIC_FEE khi phieu chi dinh chua thanh toan phi CLS (BUG-P6-02)', async () => {
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'tok-diag');
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
+      if (url === '/diagnostic/queue') {
+        const board = resolveMockDiagnosticQueueBoard(
+          config?.params as GetDiagnosticQueueParams | undefined,
+        );
+        return {
+          data: {
+            ...board,
+            entries: board.entries.map((entry) =>
+              entry.formattedQueueEntryId === 'QE-00009041'
+                ? {
+                    ...entry,
+                    isPaymentSettled: false,
+                    paymentStatus: 'UNPAID',
+                    blockedReason: 'UNPAID_DIAGNOSTIC_FEE',
+                    isEligibleForExecution: false,
+                    ineligibleReason:
+                      'Chưa hoàn tất thanh toán phí dịch vụ cận lâm sàng (UNPAID_DIAGNOSTIC_FEE).',
+                    allowedTargetStatuses: ['CANCELLED'],
+                  }
+                : entry,
+            ),
+          },
+        };
+      }
+      const match = url.match(/^\/diagnostic\/queue\/([^/]+)$/);
+      if (match) {
+        const detail = resolveMockDiagnosticQueueEntryDetail(decodeURIComponent(match[1]));
+        return {
+          data: {
+            ...detail,
+            entry: {
+              ...detail.entry,
+              isPaymentSettled: false,
+              paymentStatus: 'UNPAID',
+              blockedReason: 'UNPAID_DIAGNOSTIC_FEE',
+              isEligibleForExecution: false,
+              ineligibleReason:
+                'Chưa hoàn tất thanh toán phí dịch vụ cận lâm sàng (UNPAID_DIAGNOSTIC_FEE).',
+              allowedTargetStatuses: ['CANCELLED'],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    renderPage();
+    fireEvent.click(await screen.findByTestId('queue-entry-row-QE-00009041'));
+
+    expect(await screen.findByTestId('queue-entry-unpaid-fee-banner')).toHaveTextContent(
+      'Chưa hoàn tất thanh toán phí cận lâm sàng',
+    );
+    expect(screen.getByTestId('detail-btn-call-entry')).toBeDisabled();
+  });
 });

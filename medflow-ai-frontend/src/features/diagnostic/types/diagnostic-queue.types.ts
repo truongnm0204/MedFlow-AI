@@ -63,6 +63,8 @@ export interface UpdateDiagnosticQueueStatusRequest {
   notes?: string | null;
   cancelLinkedOrder?: boolean | null;
   expectedStateVersion?: number | null;
+  technicalAbort?: boolean | null;
+  cancelDisposition?: string | null;
 }
 
 export interface CallNextDiagnosticPatientRequest {
@@ -86,6 +88,8 @@ export interface CancelDiagnosticQueueEntryRequest {
   notes?: string | null;
   cancelLinkedOrder?: boolean;
   expectedStateVersion?: number | null;
+  technicalAbort?: boolean | null;
+  cancelDisposition?: string | null;
 }
 
 export interface DiagnosticQueueItemActionDto {
@@ -181,6 +185,8 @@ export interface DiagnosticQueueEntryItemDto {
   canRestore: boolean;
   canCancel: boolean;
   allowedActions: DiagnosticQueueItemActionDto[];
+  paymentStatus?: string | null;
+  isPaymentSettled?: boolean;
 }
 
 export interface DiagnosticServicePointQueueBucketDto {

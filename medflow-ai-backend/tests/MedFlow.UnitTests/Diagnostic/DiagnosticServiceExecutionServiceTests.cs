@@ -51,8 +51,9 @@ public sealed class DiagnosticServiceExecutionServiceTests : IDisposable
         public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
+        public DbSet<VisitCharge> VisitCharges => Set<VisitCharge>();
         public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
-        public DbSet<Payment> Payments => throw NotUsed();
+        public DbSet<Payment> Payments => Set<Payment>();
         public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
         public DbSet<MedicalRecord> MedicalRecords => Set<MedicalRecord>();
         public DbSet<MedicalRecordRevision> MedicalRecordRevisions => Set<MedicalRecordRevision>();
@@ -71,7 +72,8 @@ public sealed class DiagnosticServiceExecutionServiceTests : IDisposable
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<HospitalPolicy>();
             modelBuilder.Ignore<PatientFamilyLink>();
-            modelBuilder.Ignore<Payment>();
+            modelBuilder.Entity<VisitCharge>().HasKey(vc => vc.Id);
+            modelBuilder.Entity<Payment>().HasKey(p => p.Id);
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Role>().HasKey(r => r.Id);
@@ -329,6 +331,19 @@ public sealed class DiagnosticServiceExecutionServiceTests : IDisposable
             FinalizedAt = new DateTime(2026, 10, 20, 8, 59, 0),
             FinalizedByStaffId = 7,
         });
+
+        var seededNowLocal = new DateTime(2026, 10, 20, 8, 30, 0);
+        foreach (var v in db.Visits.Local.ToList())
+        {
+            db.VisitCharges.Add(VisitCharge.CreateExamination(v.Id, 1, 0m, v.CheckedInAt ?? seededNowLocal));
+        }
+        foreach (var o in db.DiagnosticOrders.Local.ToList())
+        {
+            if (o.VisitId.HasValue && o.ServiceId.HasValue)
+            {
+                db.VisitCharges.Add(VisitCharge.CreateDiagnostic(o.VisitId.Value, o.Id, o.ServiceId.Value, 0m, o.OrderedAt ?? seededNowLocal));
+            }
+        }
 
         db.SaveChanges();
     }
@@ -772,5 +787,54 @@ public sealed class DiagnosticServiceExecutionServiceTests : IDisposable
 
         Assert.Equal(2, response.UpdatedCount);
         Assert.All(response.UpdatedOrders, o => Assert.Equal("IN_PROGRESS", o.Status));
+    }
+
+    [Fact]
+    public async Task Phase06_PaymentGate_SpecimenIdentityGuard_AndTechnicalAbortRules_Enforced()
+    {
+        // 1. Cross-patient specimen identity guard (BUG-P6-06): wrong ExpectedPatientId or ExpectedVisitCode throws 409
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.StartServiceExecutionAsync(
+                7,
+                "DIA-202610-0012",
+                new UpdateDiagnosticServiceStatusRequest(
+                    TargetStatus: "IN_PROGRESS",
+                    ExpectedPatientId: 99999)));
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.StartServiceExecutionAsync(
+                7,
+                "DIA-202610-0012",
+                new UpdateDiagnosticServiceStatusRequest(
+                    TargetStatus: "IN_PROGRESS",
+                    ExpectedVisitCode: "VIS-202610-9999")));
+
+        // 2. Per-order payment gate (BUG-P6-02): unpaid REQUIRED VisitCharge blocks StartServiceExecutionAsync with 409
+        var existingWaived = await _dbContext.VisitCharges.SingleAsync(c => c.DiagnosticOrderId == 12);
+        _dbContext.VisitCharges.Remove(existingWaived);
+        _dbContext.VisitCharges.Add(VisitCharge.CreateDiagnostic(10, 12, 6, 180_000m, new DateTime(2026, 10, 20, 8, 32, 0)));
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.StartServiceExecutionAsync(7, "DIA-202610-0012"));
+
+        // 3. IN_PROGRESS cancellation requires explicit TechnicalAbort or TECHNICAL_ERROR disposition (BUG-P6-02)
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.UpdateServiceExecutionStatusAsync(
+                7,
+                "DIA-202610-0015",
+                new UpdateDiagnosticServiceStatusRequest(
+                    TargetStatus: "CANCELLED",
+                    Reason: "Hủy thông thường không đánh dấu lỗi kỹ thuật",
+                    TechnicalAbort: false)));
+
+        var aborted = await _service.UpdateServiceExecutionStatusAsync(
+            7,
+            "DIA-202610-0015",
+            new UpdateDiagnosticServiceStatusRequest(
+                TargetStatus: "CANCELLED",
+                Reason: "Mẫu bệnh phẩm bị vỡ ống khi ly tâm, hủy kỹ thuật.",
+                TechnicalAbort: true));
+        Assert.Equal("CANCELLED", aborted.CurrentStatus);
     }
 }

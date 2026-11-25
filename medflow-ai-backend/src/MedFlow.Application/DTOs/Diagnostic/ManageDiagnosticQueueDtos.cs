@@ -30,7 +30,9 @@ public sealed record UpdateDiagnosticQueueStatusRequest(
     string? BlockedReason = null,
     string? Notes = null,
     bool? CancelLinkedOrder = null,
-    int? ExpectedStateVersion = null);
+    int? ExpectedStateVersion = null,
+    bool? TechnicalAbort = null,
+    string? CancelDisposition = null);
 
 public sealed record CallNextDiagnosticPatientRequest(
     string? ServicePointId = null,
@@ -50,7 +52,9 @@ public sealed record CancelDiagnosticQueueEntryRequest(
     string? Reason = null,
     string? Notes = null,
     bool CancelLinkedOrder = false,
-    int? ExpectedStateVersion = null);
+    int? ExpectedStateVersion = null,
+    bool? TechnicalAbort = null,
+    string? CancelDisposition = null);
 
 public sealed record DiagnosticQueueItemActionDto(
     string Id,
@@ -143,7 +147,9 @@ public sealed record DiagnosticQueueEntryItemDto(
     bool CanSkip,
     bool CanRestore,
     bool CanCancel,
-    IReadOnlyList<DiagnosticQueueItemActionDto> AllowedActions);
+    IReadOnlyList<DiagnosticQueueItemActionDto> AllowedActions,
+    string? PaymentStatus = null,
+    bool IsPaymentSettled = true);
 
 public sealed record DiagnosticServicePointQueueBucketDto(
     long? ServicePointId,

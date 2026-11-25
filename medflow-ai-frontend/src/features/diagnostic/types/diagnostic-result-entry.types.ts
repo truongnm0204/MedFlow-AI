@@ -16,7 +16,13 @@ import type {
 } from './diagnostic.types';
 
 export type DiagnosticResultStatus =
-  'NONE' | 'DRAFT' | 'PRELIMINARY' | 'PENDING_VERIFY' | 'FINALIZED' | 'VERIFIED';
+  | 'NONE'
+  | 'PERFORMED_AWAITING_RESULT'
+  | 'DRAFT'
+  | 'PRELIMINARY'
+  | 'PENDING_VERIFY'
+  | 'FINALIZED'
+  | 'VERIFIED';
 
 export type DiagnosticResultEntryStatusFilter = 'ALL' | DiagnosticOrderStatus;
 export type DiagnosticResultEntryResultStatusFilter = 'ALL' | DiagnosticResultStatus;

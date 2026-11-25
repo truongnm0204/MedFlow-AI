@@ -208,12 +208,17 @@ export function DiagnosticExecutionPage() {
     mutation: typeof updateStatusMutation | typeof startMutation | typeof completeMutation,
     fallbackMessage: string,
   ) => {
+    const submittedOrderCode = orderCode;
     setActionError(null);
     setLastUpdateResult(null);
     try {
-      const response = await mutation.mutateAsync({ idOrCode: orderCode, payload });
+      const response = await mutation.mutateAsync({ idOrCode: submittedOrderCode, payload });
       setLastUpdateResult(response);
-      setSelectedOrderCode(response.order.orderCode);
+      setSelectedOrderCode((prev) =>
+        prev && prev.toUpperCase() !== submittedOrderCode.toUpperCase()
+          ? prev
+          : response.order.orderCode,
+      );
       setSelectedBatchIds((prev) => prev.filter((id) => id !== response.order.orderId));
     } catch (error) {
       setActionError(getErrorMessage(error, fallbackMessage));
@@ -580,17 +585,25 @@ export function DiagnosticExecutionPage() {
                     onToggleOrder={handleToggleBatchOrder}
                     onToggleAllEligible={handleToggleAllEligible}
                     onQuickAction={(orderCode, action) => {
+                      const targetOrder = items.find(
+                        (item) => item.orderCode.toUpperCase() === orderCode.toUpperCase(),
+                      );
+                      const safetyContext = {
+                        expectedStateVersion: targetOrder?.stateVersion ?? null,
+                        expectedVisitCode: targetOrder?.visitCode ?? null,
+                        expectedPatientId: targetOrder?.patient.patientId ?? null,
+                      };
                       if (action === 'start') {
                         void handleSingleUpdate(
                           orderCode,
-                          { targetStatus: 'IN_PROGRESS', expectedStateVersion: null },
+                          { targetStatus: 'IN_PROGRESS', ...safetyContext },
                           startMutation,
                           'Không thể bắt đầu thực hiện phiếu chỉ định. Vui lòng kiểm tra lại.',
                         );
                       } else {
                         void handleSingleUpdate(
                           orderCode,
-                          { targetStatus: 'COMPLETED', expectedStateVersion: null },
+                          { targetStatus: 'COMPLETED', ...safetyContext },
                           completeMutation,
                           'Không thể hoàn tất thực hiện phiếu chỉ định. Vui lòng kiểm tra lại.',
                         );
@@ -604,6 +617,7 @@ export function DiagnosticExecutionPage() {
             {/* Right 5 columns: Execution Detail & History Panel */}
             <div className="xl:col-span-5">
               <DiagnosticExecutionDetailPanel
+                key={activeOrder?.orderCode ?? 'empty'}
                 order={activeOrder}
                 detail={detailQuery.data ?? null}
                 clinicalContext={detailQuery.data?.clinicalContext ?? null}

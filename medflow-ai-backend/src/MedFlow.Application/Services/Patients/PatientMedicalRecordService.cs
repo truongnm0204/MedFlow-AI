@@ -324,7 +324,7 @@ public sealed class PatientMedicalRecordService : IPatientMedicalRecordService
             .Where(d => d.VisitId != null && visitIds.Contains(d.VisitId.Value))
             .ToListAsync(ct));
         var activeDiagnoses = diagnoses
-            .Where(d => AppointmentBookingRules.NormalizeStatusKey(d.Status) is not ("CANCELLED" or "REMOVED"))
+            .Where(d => AppointmentBookingRules.NormalizeStatusKey(d.Status) is not ("CANCELLED" or "REMOVED" or "SUPERSEDED"))
             .ToList();
         var diagnosesByVisitId = activeDiagnoses
             .Where(d => d.VisitId.HasValue)
@@ -725,7 +725,14 @@ public sealed class PatientMedicalRecordService : IPatientMedicalRecordService
             VitalSigns: ParseVitalSigns(revision?.VitalSigns),
             Diagnoses: diagnosisDtos,
             DiagnosticOrders: diagnosticDtos,
-            Prescriptions: prescriptionDtos);
+            Prescriptions: prescriptionDtos,
+            ClinicalProgressionNote: BlankToNull(revision?.ClinicalProgressionNote),
+            ClinicalInterpretation: BlankToNull(revision?.ClinicalInterpretation),
+            TreatmentPlan: BlankToNull(revision?.TreatmentPlan),
+            DischargeInstructions: BlankToNull(revision?.DischargeInstructions),
+            FollowUpInstructions: BlankToNull(revision?.FollowUpInstructions),
+            FollowUpDate: revision?.FollowUpDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            WarningSigns: BlankToNull(revision?.WarningSigns));
     }
 
     private static PatientMedicalRecordDiagnosticSummaryDto MapDiagnosticSummary(
@@ -753,13 +760,23 @@ public sealed class PatientMedicalRecordService : IPatientMedicalRecordService
 
         var isRowFinalized = result is not null &&
             (result.FinalizedAt.HasValue ||
-             AppointmentBookingRules.NormalizeStatusKey(result.Status) is "FINALIZED" or "VERIFIED" or "COMPLETED" ||
+             AppointmentBookingRules.NormalizeStatusKey(result.Status) is "FINALIZED" or "VERIFIED" ||
              latestVersion?.IsFinalized == true ||
              latestVersion?.VerifiedAt.HasValue == true);
 
         var isPublished = result is not null && (isRowFinalized || publishedVersion is not null);
         var content = isPublished ? publishedVersion ?? latestVersion : null;
         var signedAt = isPublished ? content?.VerifiedAt ?? result?.FinalizedAt : null;
+        var hasReportFile = isPublished && !string.IsNullOrWhiteSpace(content?.ReportFileUrl);
+        var reportDownloadUrl = hasReportFile && result is not null
+            ? $"/api/v1/diagnostic/results/{result.Id.ToString(CultureInfo.InvariantCulture)}/report-file"
+            : null;
+        var rawOrderStatus = NormalizeOrDefault(order.Status, "ORDERED");
+        var displayStatus = isPublished
+            ? "PUBLISHED"
+            : rawOrderStatus == "COMPLETED"
+                ? "PERFORMED_AWAITING_RESULT"
+                : rawOrderStatus;
 
         return new PatientMedicalRecordDiagnosticSummaryDto(
             OrderId: order.Id,
@@ -767,12 +784,14 @@ public sealed class PatientMedicalRecordService : IPatientMedicalRecordService
             ServiceCode: BlankToNull(service?.ServiceCode),
             ServiceName: BlankToNull(service?.Name) ?? "Chỉ định cận lâm sàng",
             Priority: NormalizeOrDefault(order.Priority, "NORMAL"),
-            Status: isPublished ? "PUBLISHED" : NormalizeOrDefault(order.Status, "ORDERED"),
+            Status: displayStatus,
             OrderedAt: order.OrderedAt,
             IsResultPublished: isPublished,
             SignedAt: signedAt,
             ConclusionSummary: isPublished ? BlankToNull(content?.Conclusion) : null,
-            HasReportFile: isPublished && !string.IsNullOrWhiteSpace(content?.ReportFileUrl));
+            HasReportFile: hasReportFile,
+            ResultId: isPublished ? result?.Id : null,
+            ReportFileDownloadUrl: reportDownloadUrl);
     }
 
     private static PatientMedicalRecordPrescriptionSummaryDto MapPrescriptionSummary(

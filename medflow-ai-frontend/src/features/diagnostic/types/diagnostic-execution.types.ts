@@ -59,6 +59,10 @@ export interface UpdateDiagnosticServiceStatusRequest {
   reason?: string | null;
   blockedReason?: string | null;
   expectedStateVersion?: number | null;
+  expectedVisitCode?: string | null;
+  expectedPatientId?: number | null;
+  technicalAbort?: boolean | null;
+  cancelDisposition?: string | null;
 }
 
 export interface UpdateDiagnosticServiceStatusBatchRequest {
@@ -86,6 +90,10 @@ export interface UpdateDiagnosticServiceStatusBatchRequest {
   reason?: string | null;
   blockedReason?: string | null;
   expectedStateVersion?: number | null;
+  expectedVisitCode?: string | null;
+  expectedPatientId?: number | null;
+  technicalAbort?: boolean | null;
+  cancelDisposition?: string | null;
 }
 
 export interface DiagnosticServiceExecutionEligibilityDto {

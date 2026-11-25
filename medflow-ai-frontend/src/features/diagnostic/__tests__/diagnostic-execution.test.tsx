@@ -444,4 +444,62 @@ describe('DiagnosticExecutionPage (UC42)', () => {
       ).toBeInTheDocument();
     });
   });
+
+  it('reset form tam dung/ghi chu khi chuyen sang benh nhan khac va gui expectedVisitCode + expectedPatientId (BUG-P6-06)', async () => {
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'valid-diagnostic-jwt-token');
+
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url, config) => {
+      if (url === '/diagnostic/orders/execution') {
+        return {
+          data: resolveMockDiagnosticExecutions(
+            config?.params as GetDiagnosticExecutionsParams | undefined,
+          ),
+        };
+      }
+      if (typeof url === 'string' && url.endsWith('/execution')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return { data: resolveMockDiagnosticExecutionDetail(code) };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    const postSpy = vi.spyOn(apiClient, 'post').mockImplementation(async (url, body) => {
+      if (typeof url === 'string' && url.endsWith('/start')) {
+        const code = decodeURIComponent(url.split('/')[3]);
+        return {
+          data: startMockDiagnosticServiceExecution(
+            code,
+            body as UpdateDiagnosticServiceStatusRequest,
+          ),
+        };
+      }
+      throw new Error(`Unexpected POST ${url}`);
+    });
+
+    renderExecutionPage('/diagnostic/execution/DIA-202611-0063');
+    await screen.findByTestId('execution-order-row-DIA-202611-0063');
+    fireEvent.click(await screen.findByTestId('execution-pause-button'));
+    const reasonInput = await screen.findByLabelText('Lý do tạm dừng thực hiện kỹ thuật');
+    fireEvent.change(reasonInput, {
+      target: { value: 'Mẫu bệnh phẩm của bệnh nhân A cần lấy lại.' },
+    });
+
+    // Switch to another patient's order (DIA-202611-0061) -> remounted panel clears Patient A's form state
+    fireEvent.click(screen.getByTestId('execution-order-row-DIA-202611-0061'));
+    await screen.findByTestId('execution-start-button');
+    expect(screen.queryByTestId('execution-pause-form')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('execution-start-button'));
+    const detail61 = resolveMockDiagnosticExecutionDetail('DIA-202611-0061');
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        '/diagnostic/orders/DIA-202611-0061/start',
+        expect.objectContaining({
+          targetStatus: 'IN_PROGRESS',
+          expectedVisitCode: detail61.order.visitCode,
+          expectedPatientId: detail61.order.patient.patientId,
+        }),
+      );
+    });
+  });
 });

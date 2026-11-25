@@ -337,19 +337,51 @@ export function DiagnosticQueueEntryDetailPanel({
           </div>
         )}
 
-        {/* Blocked / Ineligible Reason */}
-        {(entry.blockedReason || entry.ineligibleReason) && (
+        {/* Per-Order Diagnostic Payment Gate Banner (BUG-P6-02) */}
+        {(entry.blockedReason === 'UNPAID_DIAGNOSTIC_FEE' || entry.isPaymentSettled === false) && (
           <div
-            className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
-            data-testid="queue-entry-blocked-banner"
+            className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs text-rose-900"
+            data-testid="queue-entry-unpaid-fee-banner"
           >
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+            <Ban className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" aria-hidden="true" />
             <div>
-              <span className="font-semibold">Ghi chú trạng thái hàng đợi: </span>
-              <span>{entry.blockedReason || entry.ineligibleReason}</span>
+              <div className="flex flex-wrap items-center gap-1.5 font-bold">
+                <span>Chưa hoàn tất thanh toán phí cận lâm sàng</span>
+                <span className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-rose-700">
+                  UNPAID_DIAGNOSTIC_FEE
+                </span>
+                {entry.paymentStatus && (
+                  <span className="rounded bg-rose-100 px-1.5 py-0.5 font-mono text-[10px] text-rose-800">
+                    {entry.paymentStatus}
+                  </span>
+                )}
+              </div>
+              <div className="mt-0.5">
+                {entry.ineligibleReason ??
+                  'Bệnh nhân cần thanh toán phí dịch vụ cận lâm sàng trước khi được gọi vào phòng kỹ thuật (UC41/UC42).'}
+              </div>
             </div>
           </div>
         )}
+
+        {/* Blocked / Ineligible Reason */}
+        {entry.blockedReason !== 'UNPAID_DIAGNOSTIC_FEE' &&
+          entry.isPaymentSettled !== false &&
+          (entry.blockedReason || entry.ineligibleReason) && (
+            <div
+              className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+              data-testid="queue-entry-blocked-banner"
+            >
+              <AlertTriangle
+                className="mt-0.5 h-4 w-4 shrink-0 text-amber-600"
+                aria-hidden="true"
+              />
+              <div>
+                <span className="font-semibold">Ghi chú trạng thái hàng đợi: </span>
+                <span>{entry.blockedReason || entry.ineligibleReason}</span>
+              </div>
+            </div>
+          )}
 
         {/* Service & Timestamps */}
         <div className="rounded-xl border border-border bg-canvas p-3 text-xs space-y-2">
@@ -605,7 +637,12 @@ export function DiagnosticQueueEntryDetailPanel({
                     type="button"
                     size="sm"
                     variant="primary"
-                    disabled={isSubmitting || !entry.canCall}
+                    disabled={
+                      isSubmitting ||
+                      !entry.canCall ||
+                      entry.isPaymentSettled === false ||
+                      entry.blockedReason === 'UNPAID_DIAGNOSTIC_FEE'
+                    }
                     onClick={() => handleQuickTransition('call')}
                     data-testid="detail-btn-call-entry"
                   >
@@ -617,7 +654,12 @@ export function DiagnosticQueueEntryDetailPanel({
                     type="button"
                     size="sm"
                     variant="primary"
-                    disabled={isSubmitting || !entry.canStart}
+                    disabled={
+                      isSubmitting ||
+                      !entry.canStart ||
+                      entry.isPaymentSettled === false ||
+                      entry.blockedReason === 'UNPAID_DIAGNOSTIC_FEE'
+                    }
                     onClick={() => handleQuickTransition('start')}
                     data-testid="detail-btn-start-execution"
                   >
@@ -629,7 +671,12 @@ export function DiagnosticQueueEntryDetailPanel({
                     type="button"
                     size="sm"
                     variant="secondary"
-                    disabled={isSubmitting || !entry.canComplete}
+                    disabled={
+                      isSubmitting ||
+                      !entry.canComplete ||
+                      entry.isPaymentSettled === false ||
+                      entry.blockedReason === 'UNPAID_DIAGNOSTIC_FEE'
+                    }
                     onClick={() => handleQuickTransition('complete')}
                     data-testid="detail-btn-complete-execution"
                   >

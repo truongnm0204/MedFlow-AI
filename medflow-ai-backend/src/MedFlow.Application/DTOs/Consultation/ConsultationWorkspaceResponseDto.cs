@@ -109,7 +109,14 @@ public sealed record ConsultationClinicalContextDto(
     IReadOnlyList<ConsultationDiagnosisItemDto> Diagnoses,
     ConsultationDiagnosticSummaryDto DiagnosticSummary,
     ConsultationPrescriptionSummaryDto PrescriptionSummary,
-    IReadOnlyList<ConsultationDiagnosticOrderDto>? DiagnosticOrders = null);
+    IReadOnlyList<ConsultationDiagnosticOrderDto>? DiagnosticOrders = null,
+    string? ClinicalProgressionNote = null,
+    string? ClinicalInterpretation = null,
+    string? TreatmentPlan = null,
+    string? DischargeInstructions = null,
+    string? FollowUpInstructions = null,
+    string? FollowUpDate = null,
+    string? WarningSigns = null);
 
 public sealed record ConsultationVitalSignsDto(
     int? BpSystolicMmhg,
@@ -138,7 +145,12 @@ public sealed record ConsultationDiagnosticSummaryDto(
     int OpenQueueEntries,
     int CompletedQueueEntries,
     bool AllMandatoryResultsReady,
-    bool FinalResultRequired);
+    bool FinalResultRequired,
+    int MandatoryPendingCount = 0,
+    int OptionalPendingCount = 0,
+    int PerformedAwaitingResultCount = 0,
+    bool AllOrdersResolvedForCompletion = true,
+    bool RequiresDiagnosisReconfirmation = false);
 
 public sealed record ConsultationPrescriptionSummaryDto(
     int TotalPrescriptions,

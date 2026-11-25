@@ -154,7 +154,7 @@ public sealed class DiagnosticResultEntryEndpointTests : AuthTestBase
         var emptyConclusionResponse = await PostWithTokenAsync(
             OrderResultRoute,
             token,
-            new { resultText = "Kết quả xét nghiệm hợp lệ.", conclusion = "" });
+            new { resultText = "Kết quả xét nghiệm hợp lệ.", conclusion = "", status = "FINALIZED", isFinalized = true });
         Assert.Equal(HttpStatusCode.BadRequest, emptyConclusionResponse.StatusCode);
 
         var xssResultTextResponse = await PostWithTokenAsync(

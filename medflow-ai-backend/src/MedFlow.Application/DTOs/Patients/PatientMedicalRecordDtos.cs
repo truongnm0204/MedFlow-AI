@@ -90,7 +90,9 @@ public sealed record PatientMedicalRecordDiagnosticSummaryDto(
     bool IsResultPublished,
     DateTime? SignedAt,
     string? ConclusionSummary,
-    bool HasReportFile);
+    bool HasReportFile,
+    long? ResultId = null,
+    string? ReportFileDownloadUrl = null);
 
 public sealed record PatientMedicalRecordPrescriptionItemSummaryDto(
     long ItemId,
@@ -155,4 +157,11 @@ public sealed record PatientMedicalRecordDetailDto(
     PatientMedicalRecordVitalSignsDto? VitalSigns,
     IReadOnlyList<PatientMedicalRecordDiagnosisDto> Diagnoses,
     IReadOnlyList<PatientMedicalRecordDiagnosticSummaryDto> DiagnosticOrders,
-    IReadOnlyList<PatientMedicalRecordPrescriptionSummaryDto> Prescriptions);
+    IReadOnlyList<PatientMedicalRecordPrescriptionSummaryDto> Prescriptions,
+    string? ClinicalProgressionNote = null,
+    string? ClinicalInterpretation = null,
+    string? TreatmentPlan = null,
+    string? DischargeInstructions = null,
+    string? FollowUpInstructions = null,
+    string? FollowUpDate = null,
+    string? WarningSigns = null);

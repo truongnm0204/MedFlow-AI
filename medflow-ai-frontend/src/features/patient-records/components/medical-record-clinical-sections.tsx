@@ -1,4 +1,6 @@
 import {
+  AlertTriangle,
+  Calendar,
   CheckCircle2,
   ChevronRight,
   Clock,
@@ -50,16 +52,75 @@ export function MedicalRecordClinicalSections({ detail }: MedicalRecordClinicalS
               {detail.clinicalFindings ?? 'Không có ghi chú bất thường'}
             </dd>
           </div>
+          {detail.clinicalProgressionNote && (
+            <div className="rounded-xl border border-border bg-canvas p-3.5">
+              <dt className="font-semibold text-navy">Diễn biến lâm sàng</dt>
+              <dd className="mt-1 leading-relaxed text-sub">{detail.clinicalProgressionNote}</dd>
+            </div>
+          )}
+          {detail.clinicalInterpretation && (
+            <div className="rounded-xl border border-border bg-canvas p-3.5">
+              <dt className="font-semibold text-navy">Phân tích kết quả cận lâm sàng</dt>
+              <dd className="mt-1 leading-relaxed text-sub">{detail.clinicalInterpretation}</dd>
+            </div>
+          )}
         </dl>
 
-        <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50/70 p-4">
+        <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50/70 p-4 space-y-2">
           <p className="text-xs font-bold uppercase tracking-wide text-primary">
             Kết luận lâm sàng & Hướng điều trị
           </p>
-          <p className="mt-1.5 text-sm font-medium leading-relaxed text-ink">
+          <p className="text-sm font-medium leading-relaxed text-ink">
             {detail.clinicalConclusion ?? 'Đã hoàn tất khám lâm sàng.'}
           </p>
+          {detail.treatmentPlan && (
+            <p className="text-xs leading-relaxed text-sub">
+              <strong className="text-navy">Hướng xử trí / phác đồ:</strong> {detail.treatmentPlan}
+            </p>
+          )}
         </div>
+
+        {(detail.dischargeInstructions ||
+          detail.followUpInstructions ||
+          detail.followUpDate ||
+          detail.warningSigns) && (
+          <div
+            className="mt-4 grid grid-cols-1 gap-3 text-xs sm:grid-cols-2"
+            data-testid="emr-dedicated-care-instructions"
+          >
+            {detail.dischargeInstructions && (
+              <div className="rounded-xl border border-border bg-canvas p-3.5">
+                <p className="font-semibold text-navy">Hướng dẫn chăm sóc & dùng thuốc tại nhà</p>
+                <p className="mt-1 leading-relaxed text-sub">{detail.dischargeInstructions}</p>
+              </div>
+            )}
+            {(detail.followUpInstructions || detail.followUpDate) && (
+              <div className="rounded-xl border border-border bg-canvas p-3.5">
+                <p className="flex items-center gap-1.5 font-semibold text-navy">
+                  <Calendar className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+                  <span>Hẹn tái khám</span>
+                  {detail.followUpDate && (
+                    <span className="rounded bg-primary/10 px-2 py-0.5 font-mono text-[11px] font-bold text-primary">
+                      {detail.followUpDate}
+                    </span>
+                  )}
+                </p>
+                {detail.followUpInstructions && (
+                  <p className="mt-1 leading-relaxed text-sub">{detail.followUpInstructions}</p>
+                )}
+              </div>
+            )}
+            {detail.warningSigns && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 sm:col-span-2">
+                <p className="flex items-center gap-1.5 font-semibold text-amber-900">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" />
+                  <span>Dấu hiệu cảnh báo cần tái khám ngay</span>
+                </p>
+                <p className="mt-1 leading-relaxed text-amber-900">{detail.warningSigns}</p>
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       <section className="rounded-2xl border border-border bg-white p-5 shadow-xs">
@@ -148,7 +209,11 @@ export function MedicalRecordClinicalSections({ detail }: MedicalRecordClinicalS
                         <Clock className="h-3 w-3" aria-hidden="true" />
                       )}
                       <span>
-                        {order.isResultPublished ? 'Đã công bố kết quả' : 'Đang chờ ký duyệt'}
+                        {order.isResultPublished
+                          ? 'Đã công bố kết quả'
+                          : order.status === 'PERFORMED_AWAITING_RESULT'
+                            ? 'Đã lấy mẫu — chờ ký duyệt'
+                            : 'Đang chờ ký duyệt'}
                       </span>
                     </span>
                   </div>
@@ -157,13 +222,23 @@ export function MedicalRecordClinicalSections({ detail }: MedicalRecordClinicalS
                   )}
                 </div>
 
-                <Link
-                  to={`/emr/diagnostic-result/${encodeURIComponent(order.orderCode)}`}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3.5 py-2 text-xs font-semibold text-primary transition-colors hover:bg-sky-50 focus-visible:ring-2 focus-visible:ring-primary"
-                >
-                  <span>Xem kết quả CLS</span>
-                  <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
-                </Link>
+                {order.isResultPublished ? (
+                  <Link
+                    to={`/emr/diagnostic-result/${encodeURIComponent(order.orderCode)}`}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3.5 py-2 text-xs font-semibold text-primary transition-colors hover:bg-sky-50 focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    <span>Xem kết quả CLS</span>
+                    <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                  </Link>
+                ) : (
+                  <span
+                    data-testid={`emr-diagnostic-unpublished-${order.orderCode}`}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3.5 py-2 text-xs font-medium text-sub"
+                  >
+                    <Clock className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" />
+                    <span>Chưa phát hành kết quả</span>
+                  </span>
+                )}
               </div>
             ))}
           </div>

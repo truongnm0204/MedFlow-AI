@@ -145,9 +145,9 @@ const DIAGNOSTIC_RESULT_ENTRY_SEEDS: DiagnosticResultEntrySeed[] = [
     followUpToOrderCode: null,
     additionalOrderReason: null,
     canEnterResult: true,
-    canFinalizeResult: true,
+    canFinalizeResult: false,
     disabledReason: null,
-    eligibility: { ...ELIGIBILITY_BASE },
+    eligibility: { ...ELIGIBILITY_BASE, canFinalizeResult: false },
     versions: [],
   },
   // 2. IN_PROGRESS with an unfinalized DRAFT version — editable.
@@ -218,7 +218,7 @@ const DIAGNOSTIC_RESULT_ENTRY_SEEDS: DiagnosticResultEntrySeed[] = [
     resultText:
       'Điện tâm đồ: nhịp xoang nhanh 98 ck/p, ngoại tâm thu thất rải rác 6-8 lần/phút. Siêu âm tim: FE trái thất 55%, phân suất chèn ép nhẹ.',
     conclusion: 'Ngoại tâm thu thất rải rác — đề nghị theo dõi Holter nếu triệu chứng tăng.',
-    reportFileUrl: 'https://pacs.medflow.vn/reports/ecg-DIA-202610-0045-draft.pdf',
+    reportFileUrl: '/storage/diagnostic-reports/ecg-DIA-202610-0045-draft.pdf',
     enteredByStaffId: 304,
     enteredByStaffCode: 'DIAG-009',
     enteredByStaffName: 'CN. Lê Hoàng Minh',
@@ -230,9 +230,9 @@ const DIAGNOSTIC_RESULT_ENTRY_SEEDS: DiagnosticResultEntrySeed[] = [
     additionalOrderReason:
       'Điện tâm đồ sàng lọc có ngoại tâm thu thất rải rác, cần đánh giá chức năng tâm thu thất trái.',
     canEnterResult: true,
-    canFinalizeResult: true,
+    canFinalizeResult: false,
     disabledReason: null,
-    eligibility: { ...ELIGIBILITY_BASE },
+    eligibility: { ...ELIGIBILITY_BASE, canFinalizeResult: false },
     versions: [
       {
         versionId: 9101,
@@ -241,7 +241,7 @@ const DIAGNOSTIC_RESULT_ENTRY_SEEDS: DiagnosticResultEntrySeed[] = [
         resultText:
           'Điện tâm đồ: nhịp xoang nhanh 98 ck/p, ngoại tâm thu thất rải rác 6-8 lần/phút. Siêu âm tim: FE trái thất 55%, phân suất chèn ép nhẹ.',
         conclusion: 'Ngoại tâm thu thất rải rác — đề nghị theo dõi Holter nếu triệu chứng tăng.',
-        reportFileUrl: 'https://pacs.medflow.vn/reports/ecg-DIA-202610-0045-draft.pdf',
+        reportFileUrl: '/storage/diagnostic-reports/ecg-DIA-202610-0045-draft.pdf',
         isFinalized: false,
         enteredByStaffId: 304,
         enteredByStaffCode: 'DIAG-009',
@@ -323,10 +323,10 @@ const DIAGNOSTIC_RESULT_ENTRY_SEEDS: DiagnosticResultEntrySeed[] = [
     resultText:
       'Siêu âm ổ bụng: túi mật không giãn, thành túi mật mỏng; bùn túi mật lắng đọng lớp mỏng. Gan mật: nhu mô gan đồng nhất, không u nang.',
     conclusion: 'Bùn túi mật — chưa ghi nhận sỏi có bóng lưng; đề nghị theo dõi định kỳ.',
-    reportFileUrl: 'https://pacs.medflow.vn/reports/us-DIA-202610-0046-v2.pdf',
-    enteredByStaffId: 304,
-    enteredByStaffCode: 'DIAG-009',
-    enteredByStaffName: 'CN. Lê Hoàng Minh',
+    reportFileUrl: '/storage/diagnostic-reports/us-DIA-202610-0046-v2.pdf',
+    enteredByStaffId: 306,
+    enteredByStaffCode: 'DIAG-011',
+    enteredByStaffName: 'CN. Vũ Hải Yến',
     enteredAt: '2026-10-20T09:25:00Z',
     isAdditionalOrder: false,
     orderSequenceNo: 1,
@@ -347,9 +347,9 @@ const DIAGNOSTIC_RESULT_ENTRY_SEEDS: DiagnosticResultEntrySeed[] = [
         conclusion: 'Nghi sỏi túi mật nhỏ — cần chụp lại tư thế khác để xác nhận.',
         reportFileUrl: null,
         isFinalized: false,
-        enteredByStaffId: 304,
-        enteredByStaffCode: 'DIAG-009',
-        enteredByStaffName: 'CN. Lê Hoàng Minh',
+        enteredByStaffId: 306,
+        enteredByStaffCode: 'DIAG-011',
+        enteredByStaffName: 'CN. Vũ Hải Yến',
         enteredAt: '2026-10-20T09:15:00Z',
         verifiedByStaffId: null,
         verifiedByStaffCode: null,
@@ -364,11 +364,11 @@ const DIAGNOSTIC_RESULT_ENTRY_SEEDS: DiagnosticResultEntrySeed[] = [
         resultText:
           'Siêu âm ổ bụng: túi mật không giãn, thành túi mật mỏng; bùn túi mật lắng đọng lớp mỏng. Gan mật: nhu mô gan đồng nhất, không u nang.',
         conclusion: 'Bùn túi mật — chưa ghi nhận sỏi có bóng lưng; đề nghị theo dõi định kỳ.',
-        reportFileUrl: 'https://pacs.medflow.vn/reports/us-DIA-202610-0046-v2.pdf',
+        reportFileUrl: '/storage/diagnostic-reports/us-DIA-202610-0046-v2.pdf',
         isFinalized: false,
-        enteredByStaffId: 304,
-        enteredByStaffCode: 'DIAG-009',
-        enteredByStaffName: 'CN. Lê Hoàng Minh',
+        enteredByStaffId: 306,
+        enteredByStaffCode: 'DIAG-011',
+        enteredByStaffName: 'CN. Vũ Hải Yến',
         enteredAt: '2026-10-20T09:25:00Z',
         verifiedByStaffId: null,
         verifiedByStaffCode: null,
@@ -453,7 +453,7 @@ const DIAGNOSTIC_RESULT_ENTRY_SEEDS: DiagnosticResultEntrySeed[] = [
       'Công thức máu: BC 11.2 G/L, tiểu cầu 78 G/L, Hct 38%, Hemoglobin 13.1 g/dL. Cầu trúc đổ ngược cần theo dõi tiểu cầu ngày 3-5.',
     conclusion:
       'Giảm tiểu cầu nhẹ phù hợp giai đoạn đầu sốt xuất huyết — đề nghị đếm lại tiểu cầu sau 24h.',
-    reportFileUrl: 'https://pacs.medflow.vn/reports/cbc-DIA-202610-0041.pdf',
+    reportFileUrl: '/storage/diagnostic-reports/cbc-DIA-202610-0041.pdf',
     enteredByStaffId: 304,
     enteredByStaffCode: 'DIAG-009',
     enteredByStaffName: 'CN. Lê Hoàng Minh',
@@ -489,7 +489,7 @@ const DIAGNOSTIC_RESULT_ENTRY_SEEDS: DiagnosticResultEntrySeed[] = [
           'Công thức máu: BC 11.2 G/L, tiểu cầu 78 G/L, Hct 38%, Hemoglobin 13.1 g/dL. Cầu trúc đổ ngược cần theo dõi tiểu cầu ngày 3-5.',
         conclusion:
           'Giảm tiểu cầu nhẹ phù hợp giai đoạn đầu sốt xuất huyết — đề nghị đếm lại tiểu cầu sau 24h.',
-        reportFileUrl: 'https://pacs.medflow.vn/reports/cbc-DIA-202610-0041.pdf',
+        reportFileUrl: '/storage/diagnostic-reports/cbc-DIA-202610-0041.pdf',
         isFinalized: true,
         enteredByStaffId: 304,
         enteredByStaffCode: 'DIAG-009',
@@ -1308,6 +1308,46 @@ export function enterMockDiagnosticResult(
   const previousOrderStatus = target.orderStatus || target.status;
   const previousQueueStatus = target.queueStatus ?? null;
   const isFinalized = Boolean(payload.isFinalized);
+  const actorStaffId = DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.userId;
+  const actorStaffCode = DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.staffCode ?? 'DIAG-009';
+
+  if (payload.reportFileUrl && payload.reportFileUrl.trim()) {
+    const url = payload.reportFileUrl.trim();
+    if (
+      url.length > 500 ||
+      url.includes('<') ||
+      url.includes('>') ||
+      /\s/.test(url) ||
+      url.includes('..') ||
+      url.includes('//') ||
+      url.includes('\\') ||
+      url.includes('://') ||
+      (!url.toLowerCase().startsWith('/storage/diagnostic-reports/') &&
+        !url.toLowerCase().startsWith('/api/v1/diagnostic/results/'))
+    ) {
+      throw new Error(
+        'Đường dẫn tệp báo cáo chỉ chấp nhận đường dẫn nội bộ được bảo vệ (/storage/diagnostic-reports/... hoặc /api/v1/diagnostic/results/...).',
+      );
+    }
+  }
+
+  if (isFinalized && target.requiresResultVerification) {
+    if ((target.resultStatus ?? '').toUpperCase() !== 'PENDING_VERIFY') {
+      throw new Error(
+        'Dịch vụ cận lâm sàng này bắt buộc thẩm định 2 bước (RequiresResultVerification = true). Vui lòng lưu kết quả ở trạng thái PENDING_VERIFY trước.',
+      );
+    }
+    if (
+      (target.enteredByStaffCode &&
+        target.enteredByStaffCode.toUpperCase() === actorStaffCode.toUpperCase()) ||
+      (target.enteredByStaffId != null && target.enteredByStaffId === actorStaffId)
+    ) {
+      throw new Error(
+        'Vi phạm quy tắc thẩm định độc lập 2 người: người nhập kết quả không được tự thẩm định kết quả của chính mình.',
+      );
+    }
+  }
+
   const isVerified =
     isFinalized && Boolean(payload.isVerified ?? target.requiresResultVerification);
   const requestedStatus = (payload.status ?? '').trim().toUpperCase();
@@ -1322,6 +1362,8 @@ export function enterMockDiagnosticResult(
   const resultId = target.resultId ?? (mockResultIdSeq += 1);
   const versionNo = (target.latestVersionNo ?? 0) + 1;
   const versionId = (mockResultVersionSeq += 1);
+  const preserveOriginalEnterer =
+    isFinalized && target.requiresResultVerification && target.enteredByStaffId != null;
 
   const newVersion: DiagnosticResultVersionItemDto = {
     versionId,
@@ -1329,16 +1371,16 @@ export function enterMockDiagnosticResult(
     versionNo,
     resultText: payload.resultText?.trim() || null,
     conclusion: payload.conclusion?.trim() || null,
-    reportFileUrl: payload.reportFileUrl?.trim() || null,
+    reportFileUrl: payload.reportFileUrl?.trim() || target.reportFileUrl || null,
     isFinalized,
-    enteredByStaffId: DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.userId,
-    enteredByStaffCode: DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.staffCode ?? 'DIAG-009',
-    enteredByStaffName: DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.fullName,
-    enteredAt: nowIso,
-    verifiedByStaffId: isVerified ? DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.userId : null,
-    verifiedByStaffCode: isVerified
-      ? (DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.staffCode ?? 'DIAG-009')
-      : null,
+    enteredByStaffId: preserveOriginalEnterer ? target.enteredByStaffId : actorStaffId,
+    enteredByStaffCode: preserveOriginalEnterer ? target.enteredByStaffCode : actorStaffCode,
+    enteredByStaffName: preserveOriginalEnterer
+      ? target.enteredByStaffName
+      : DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.fullName,
+    enteredAt: preserveOriginalEnterer ? (target.enteredAt ?? nowIso) : nowIso,
+    verifiedByStaffId: isVerified ? actorStaffId : null,
+    verifiedByStaffCode: isVerified ? actorStaffCode : null,
     verifiedByStaffName: isVerified ? DIAGNOSTIC_RESULT_ENTRY_STAFF_PROFILE_MOCK.fullName : null,
     verifiedAt: isVerified ? nowIso : null,
     correctionReason: payload.correctionReason?.trim() || null,
@@ -1346,7 +1388,7 @@ export function enterMockDiagnosticResult(
 
   target.resultId = resultId;
   target.hasResult = true;
-  target.isResultReady = true;
+  target.isResultReady = isFinalized;
   target.resultStatus = resultStatus;
   target.latestVersionNo = versionNo;
   target.resultText = newVersion.resultText;
@@ -1355,8 +1397,15 @@ export function enterMockDiagnosticResult(
   target.enteredByStaffId = newVersion.enteredByStaffId;
   target.enteredByStaffCode = newVersion.enteredByStaffCode;
   target.enteredByStaffName = newVersion.enteredByStaffName;
-  target.enteredAt = nowIso;
+  target.enteredAt = newVersion.enteredAt;
   target.correctionReason = newVersion.correctionReason;
+  if (!isFinalized) {
+    target.canFinalizeResult = !target.requiresResultVerification;
+    target.eligibility = {
+      ...target.eligibility,
+      canFinalizeResult: target.canFinalizeResult,
+    };
+  }
 
   if (isFinalized) {
     target.isResultFinalized = true;
@@ -1486,7 +1535,7 @@ export function amendMockDiagnosticResult(
     payload.conclusion,
     'Kết luận cận lâm sàng (Conclusion)',
     3,
-    2000,
+    500,
   );
   const correctionReason = assertAmendText(
     payload.correctionReason ?? payload.amendmentReason,
@@ -1509,12 +1558,15 @@ export function amendMockDiagnosticResult(
       url.includes('<') ||
       url.includes('>') ||
       /\s/.test(url) ||
-      (!url.startsWith('/') &&
-        !url.toLowerCase().startsWith('http://') &&
-        !url.toLowerCase().startsWith('https://'))
+      url.includes('..') ||
+      url.includes('//') ||
+      url.includes('\\') ||
+      url.includes('://') ||
+      (!url.toLowerCase().startsWith('/storage/diagnostic-reports/') &&
+        !url.toLowerCase().startsWith('/api/v1/diagnostic/results/'))
     ) {
       throw new Error(
-        'Đường dẫn tệp báo cáo cận lâm sàng (ReportFileUrl) chứa ký tự không hợp lệ.',
+        'Đường dẫn tệp báo cáo cận lâm sàng (ReportFileUrl) chỉ chấp nhận đường dẫn nội bộ được bảo vệ (/storage/diagnostic-reports/... hoặc /api/v1/diagnostic/results/...).',
       );
     }
     reportFileUrl = url;

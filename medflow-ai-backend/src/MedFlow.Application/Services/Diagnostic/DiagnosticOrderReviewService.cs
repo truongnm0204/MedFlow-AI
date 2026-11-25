@@ -1,11 +1,15 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MedFlow.Application.Common.Persistence;
 using MedFlow.Application.DTOs.Diagnostic;
+using MedFlow.Application.DTOs.Realtime;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Doctors;
+using MedFlow.Application.Services.Payments;
+using MedFlow.Application.Services.Realtime;
 using MedFlow.Application.Services.Visits;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
@@ -65,13 +69,19 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IVisitChargeSettlementReader _settlementReader;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
 
     public DiagnosticOrderReviewService(
         IApplicationDbContext dbContext,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IVisitChargeSettlementReader? settlementReader = null,
+        IRealtimeNotificationPublisher? realtimePublisher = null)
     {
         _db = dbContext;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _settlementReader = settlementReader ?? new VisitChargeSettlementReader(_db, _timeProvider);
+        _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
     }
 
     public async Task<DiagnosticOrderReviewListResponseDto> GetDiagnosticOrdersAsync(
@@ -264,6 +274,191 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
         return wrapped.Response;
     }
 
+    public async Task<CancelDiagnosticOrderResponseDto> CancelDiagnosticOrderAsync(
+        long actorUserId,
+        string orderIdOrCode,
+        CancelDiagnosticOrderRequest? request = null,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        var parsedId = ParseOrderIdentifier(orderIdOrCode);
+        var rawReason = request?.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(rawReason) ||
+            rawReason.Length < 5 ||
+            rawReason.Length > 500 ||
+            rawReason.Contains('<') ||
+            rawReason.Contains('>'))
+        {
+            throw new ValidationException("Lý do hủy phiếu chỉ định cận lâm sàng phải từ 5 đến 500 ký tự và không chứa ký tự HTML.");
+        }
+
+        if (request?.ExpectedStateVersion is < 1)
+        {
+            throw new ValidationException("Phiên bản trạng thái hàng đợi (ExpectedStateVersion) phải lớn hơn hoặc bằng 1.");
+        }
+
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var referenceDate = DateOnly.FromDateTime(nowLocal);
+
+        var staffAccess = await EnsureDiagnosticStaffAccessAsync(actorUserId, nowUtc, ct);
+        var hospitalId = staffAccess.Hospital.Id;
+
+        var preOrder = await ResolveDiagnosticOrderAsync(parsedId, hospitalId, referenceDate, asTracking: true, ct);
+        var visitOrders = preOrder.VisitId.HasValue
+            ? await TryLoadVisitDiagnosticOrdersAsync(preOrder.VisitId.Value, ct)
+            : [preOrder];
+        if (visitOrders.All(o => o.Id != preOrder.Id))
+        {
+            visitOrders.Add(preOrder);
+        }
+
+        var lookupBundle = await LoadOrderLookupBundleAsync(visitOrders, hospitalId, nowLocal, ct);
+        EnsureOrderHospitalOwnership(preOrder, hospitalId, lookupBundle);
+
+        if (preOrder.QueueEntryId.HasValue && request?.ExpectedStateVersion.HasValue == true)
+        {
+            var preQe = await _db.QueueEntries.AsNoTracking().FirstOrDefaultAsync(q => q.Id == preOrder.QueueEntryId.Value, ct);
+            var preVersion = preQe?.StateVersion is > 0 ? preQe.StateVersion.Value : 1;
+            if (request.ExpectedStateVersion.Value != preVersion)
+            {
+                throw new ConflictException("Dữ liệu hàng đợi cận lâm sàng đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại.");
+            }
+        }
+
+        var preQeForLock = preOrder.QueueEntryId.HasValue && lookupBundle.QueueEntriesById.TryGetValue(preOrder.QueueEntryId.Value, out var foundPreQe)
+            ? foundPreQe
+            : null;
+        var lockSpIds = new List<long>();
+        if (preQeForLock?.CurrentServicePointId.HasValue == true)
+        {
+            lockSpIds.Add(preQeForLock.CurrentServicePointId.Value);
+        }
+        if (preQeForLock?.ServicePointId.HasValue == true)
+        {
+            lockSpIds.Add(preQeForLock.ServicePointId.Value);
+        }
+
+        IDbContextTransaction? tx = null;
+        try
+        {
+            tx = await _db.BeginTransactionAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            tx = null;
+        }
+        catch (InvalidOperationException)
+        {
+            tx = null;
+        }
+
+        DiagnosticOrderLifecycleHelper.DiagnosticOrderCancelOutcome outcome;
+        DiagnosticOrder reloadOrder;
+        Visit? reloadVisit;
+
+        try
+        {
+            await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
+            _db,
+            preOrder.VisitId.HasValue ? new[] { preOrder.VisitId.Value } : Array.Empty<long>(),
+            lockSpIds,
+            preOrder.QueueEntryId.HasValue ? new[] { preOrder.QueueEntryId.Value } : Array.Empty<long>(),
+            new[] { preOrder.Id },
+            includeChargeAndPaymentLocks: true,
+            ct);
+
+            reloadOrder = await _db.DiagnosticOrders.FirstOrDefaultAsync(o => o.Id == preOrder.Id, ct)
+                ?? throw new NotFoundException("DiagnosticOrder", preOrder.Id);
+            reloadVisit = reloadOrder.VisitId.HasValue
+                ? await _db.Visits.FirstOrDefaultAsync(v => v.Id == reloadOrder.VisitId.Value, ct)
+                : null;
+            var reloadQe = reloadOrder.QueueEntryId.HasValue
+                ? await _db.QueueEntries.FirstOrDefaultAsync(q => q.Id == reloadOrder.QueueEntryId.Value, ct)
+                : null;
+
+            if (reloadQe is not null && request?.ExpectedStateVersion.HasValue == true)
+            {
+                var currentVersion = reloadQe.StateVersion is > 0 ? reloadQe.StateVersion.Value : 1;
+                if (request.ExpectedStateVersion.Value != currentVersion)
+                {
+                    throw new ConflictException("Dữ liệu hàng đợi cận lâm sàng đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại.");
+                }
+            }
+
+            outcome = await DiagnosticOrderLifecycleHelper.CancelOrderStateAwareAsync(
+                _db,
+                reloadOrder,
+                reloadVisit,
+                reloadQe,
+                hospitalId,
+                actorUserId,
+                rawReason,
+                technicalAbort: request?.TechnicalAbort == true,
+                explicitDisposition: request?.CancelDisposition,
+                ipAddress: ipAddress,
+                nowUtc: nowUtc,
+                nowLocal: nowLocal,
+                referenceDate: referenceDate,
+                ct: ct);
+
+            await SaveChangesWithConcurrencyGuardAsync(ct);
+
+            if (tx is not null)
+            {
+                await tx.CommitAsync(ct);
+            }
+        }
+        finally
+        {
+            if (tx is not null)
+            {
+                await tx.DisposeAsync();
+            }
+        }
+
+        await _realtimePublisher.TryPublishQueueChangedSafeAsync(
+            new QueueChangedNotification(
+                HospitalId: hospitalId,
+                ServicePointId: preQeForLock?.CurrentServicePointId ?? preQeForLock?.ServicePointId),
+            ct);
+
+        if (outcome.TransitionedToReturnConsultation && outcome.ReturnQueueEntry?.ServicePointId.HasValue == true)
+        {
+            await _realtimePublisher.TryPublishQueueChangedSafeAsync(
+                new QueueChangedNotification(
+                    HospitalId: hospitalId,
+                    ServicePointId: outcome.ReturnQueueEntry.ServicePointId),
+                ct);
+        }
+
+        var orderCode = FormatOrderCode(reloadOrder, referenceDate);
+        var visitCode = reloadVisit is not null ? FormatVisitCode(reloadVisit, referenceDate) : string.Empty;
+
+        return new CancelDiagnosticOrderResponseDto(
+            ActionOutcome: outcome.ChargeStatus == VisitChargeStatuses.CancelledRefundPending
+                ? "CANCELLED_REFUND_PENDING"
+                : "DIAGNOSTIC_ORDER_CANCELLED",
+            Message: outcome.ChargeStatus == VisitChargeStatuses.CancelledRefundPending
+                ? $"Đã hủy phiếu chỉ định '{orderCode}'; phí cận lâm sàng đã thanh toán được chuyển sang trạng thái chờ hoàn tiền (CANCELLED_REFUND_PENDING)."
+                : $"Đã hủy phiếu chỉ định cận lâm sàng '{orderCode}'.",
+            OrderId: reloadOrder.Id,
+            OrderCode: orderCode,
+            VisitId: reloadOrder.VisitId ?? 0,
+            VisitCode: visitCode,
+            VisitStatus: NormalizeVisitStatus(reloadVisit?.Status),
+            PreviousOrderStatus: outcome.PreviousOrderStatus,
+            OrderStatus: outcome.OrderStatus,
+            QueueEntryId: reloadOrder.QueueEntryId,
+            QueueStatus: outcome.QueueStatus,
+            CancelDisposition: outcome.Disposition,
+            ChargeStatus: outcome.ChargeStatus,
+            ExpiredPendingPaymentsCount: outcome.ExpiredPendingPaymentsCount,
+            TransitionedToReturnConsultation: outcome.TransitionedToReturnConsultation,
+            Reason: rawReason,
+            CancelledAtUtc: nowUtc);
+    }
+
     private async Task<ConfirmDiagnosticOrderResponseDto> ConfirmOrdersCoreAsync(
         long actorUserId,
         DiagnosticStaffAccessContext staffAccess,
@@ -345,16 +540,51 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
             tx = null;
         }
 
+        var confirmedOrdersPostCommit = new List<DiagnosticOrder>(executionPlans.Count);
         try
         {
+            await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
+                _db,
+                visitIds,
+                executionPlans.Where(p => p.ServicePoint is not null).Select(p => p.ServicePoint!.Id),
+                executionPlans.Where(p => p.LinkedQueueEntry is not null).Select(p => p.LinkedQueueEntry!.Id),
+                executionPlans.Select(p => p.Order.Id),
+                includeChargeAndPaymentLocks: false,
+                ct);
+
             foreach (var plan in executionPlans)
             {
-                var order = plan.Order;
-                var visit = plan.Visit;
+                var order = await _db.DiagnosticOrders.FirstOrDefaultAsync(o => o.Id == plan.Order.Id, ct)
+                    ?? throw new NotFoundException("DiagnosticOrder", plan.Order.Id);
+                var visit = await _db.Visits.FirstOrDefaultAsync(v => v.Id == plan.Visit.Id, ct)
+                    ?? throw new ConflictException("Phiếu chỉ định cận lâm sàng không gắn với lượt khám hợp lệ.");
                 var service = plan.Service;
                 var resolvedSp = plan.ServicePoint;
                 var resolvedRoom = plan.Room;
-                var linkedQueueEntry = plan.LinkedQueueEntry;
+                var linkedQueueEntry = plan.LinkedQueueEntry is not null
+                    ? await _db.QueueEntries.FirstOrDefaultAsync(q => q.Id == plan.LinkedQueueEntry.Id, ct)
+                    : (order.QueueEntryId.HasValue
+                        ? await _db.QueueEntries.FirstOrDefaultAsync(q => q.Id == order.QueueEntryId.Value, ct)
+                        : null);
+
+                var postLockOrderStatus = ResolveEffectiveOrderStatus(order, lookupBundle.FinalizedOrderIds);
+                if (postLockOrderStatus != "ORDERED")
+                {
+                    var lockedCode = FormatOrderCode(order, referenceDate);
+                    throw new ConflictException($"Phiếu chỉ định cận lâm sàng '{lockedCode}' đang ở trạng thái '{postLockOrderStatus}', không hợp lệ để xác nhận.");
+                }
+
+                var postLockPayment = await _settlementReader.CheckDiagnosticOrderEligibilityAsync(order.Id, ct);
+                if (!postLockPayment.IsUnlocked)
+                {
+                    var lockedCode = FormatOrderCode(order, referenceDate);
+                    throw new ConflictException(
+                        postLockPayment.Message
+                        ?? $"Phiếu chỉ định cận lâm sàng '{lockedCode}' chưa hoàn tất thanh toán phí dịch vụ (UNPAID_DIAGNOSTIC_FEE).");
+                }
+
+                confirmedOrdersPostCommit.Add(order);
+                lookupBundle.VisitsById[visit.Id] = visit;
 
                 int finalStateVersion;
                 int? queueNumber;
@@ -548,11 +778,15 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
             }
         }
 
-        var confirmedDtos = new List<DiagnosticOrderReviewItemDto>(executionPlans.Count);
-        foreach (var plan in executionPlans)
+        await _realtimePublisher.TryPublishQueueChangedSafeAsync(
+            new QueueChangedNotification(HospitalId: hospitalId),
+            ct);
+
+        var confirmedDtos = new List<DiagnosticOrderReviewItemDto>(confirmedOrdersPostCommit.Count);
+        foreach (var confirmedOrder in confirmedOrdersPostCommit)
         {
             var dto = await BuildOrderReviewItemDtoAsync(
-                plan.Order,
+                confirmedOrder,
                 lookupBundle,
                 referenceDate,
                 nowLocal,
@@ -604,6 +838,14 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
         if (orderStatus != "ORDERED")
         {
             throw new ConflictException($"Phiếu chỉ định cận lâm sàng '{orderCode}' đang ở trạng thái '{orderStatus}', không hợp lệ để xác nhận.");
+        }
+
+        var paymentEligibility = await _settlementReader.CheckDiagnosticOrderEligibilityAsync(order.Id, ct);
+        if (!paymentEligibility.IsUnlocked)
+        {
+            throw new ConflictException(
+                paymentEligibility.Message
+                ?? $"Phiếu chỉ định cận lâm sàng '{orderCode}' chưa hoàn tất thanh toán phí dịch vụ (UNPAID_DIAGNOSTIC_FEE).");
         }
 
         var visit = order.VisitId.HasValue && lookupBundle.VisitsById.TryGetValue(order.VisitId.Value, out var foundVisit)
@@ -1129,6 +1371,15 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
         {
             var qStatus = NormalizeQueueStatus(queueEntry?.Status);
             disabledReason = $"Lượt xếp hàng cận lâm sàng của phiếu chỉ định đang ở trạng thái '{qStatus}', không thể xác nhận.";
+        }
+        else
+        {
+            var paymentEligibility = await _settlementReader.CheckDiagnosticOrderEligibilityAsync(order.Id, ct);
+            if (!paymentEligibility.IsUnlocked)
+            {
+                disabledReason = paymentEligibility.Message
+                    ?? $"Phiếu chỉ định cận lâm sàng '{orderCode}' chưa hoàn tất thanh toán phí dịch vụ (UNPAID_DIAGNOSTIC_FEE).";
+            }
         }
 
         var canConfirm = disabledReason is null;
@@ -2580,6 +2831,10 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
         catch (DbUpdateConcurrencyException)
         {
             throw new ConflictException("Dữ liệu phiếu chỉ định hoặc hàng đợi cận lâm sàng vừa được cập nhật bởi thao tác khác. Vui lòng tải lại và thử lại.");
+        }
+        catch (Exception ex) when (PostgresConcurrencyException.IsUniqueViolation(ex) || PostgresConcurrencyException.IsTransientConcurrencyConflict(ex))
+        {
+            throw new ConflictException("Dữ liệu phiếu chỉ định hoặc hàng đợi cận lâm sàng vừa được cập nhật đồng thời bởi thao tác khác. Vui lòng tải lại và thử lại.");
         }
     }
 
