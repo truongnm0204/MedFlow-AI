@@ -1,15 +1,18 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using MedFlow.Application.Common.Persistence;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Pharmacy;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Payments;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MedFlow.Application.Services.Pharmacy;
 
@@ -20,13 +23,16 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IVisitChargeSettlementReader _settlementReader;
 
     public ConfirmMedicineDispensingService(
         IApplicationDbContext dbContext,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IVisitChargeSettlementReader? settlementReader = null)
     {
         _db = dbContext;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _settlementReader = settlementReader ?? new VisitChargeSettlementReader(dbContext, _timeProvider);
     }
 
     public async Task<DispenseConfirmContextDto> GetDispenseContextAsync(
@@ -36,12 +42,15 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
         string? ipAddress = null)
     {
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var today = HospitalClock.GetToday(_timeProvider);
-        var (staff, hospital) = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
+        var (_, hospital) = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
 
         var prescription = await ResolvePrescriptionAsync(idOrCode, hospital.Id, ct);
         var visit = await _db.Visits.AsNoTracking().FirstOrDefaultAsync(v => v.Id == prescription.VisitId, ct)
             ?? throw new NotFoundException("Visit", prescription.VisitId ?? 0);
+
+        EnsureVisitActiveForPharmacy(visit);
 
         var patient = await _db.Patients.AsNoTracking().FirstOrDefaultAsync(p => p.Id == visit.PatientId, ct)
             ?? throw new NotFoundException("Patient", visit.PatientId ?? 0);
@@ -73,13 +82,26 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
         var existingDispenseItems = existingDispense is not null
             ? await _db.DispenseItems.AsNoTracking()
                 .Where(di => di.DispenseId == existingDispense.Id)
+                .OrderBy(di => di.Id)
                 .ToListAsync(ct)
             : [];
 
-        var dispenseItemByPrescriptionItemId = existingDispenseItems
+        var dispenseItemsByPrescriptionItemId = existingDispenseItems
             .Where(di => di.PrescriptionItemId.HasValue)
             .GroupBy(di => di.PrescriptionItemId!.Value)
-            .ToDictionary(g => g.Key, g => g.First());
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var allocatedBatchIds = existingDispenseItems
+            .Where(di => di.MedicineBatchId.HasValue)
+            .Select(di => di.MedicineBatchId!.Value)
+            .Distinct()
+            .ToList();
+
+        var allocatedBatchesById = allocatedBatchIds.Count > 0
+            ? await _db.MedicineBatches.AsNoTracking()
+                .Where(b => allocatedBatchIds.Contains(b.Id))
+                .ToDictionaryAsync(b => b.Id, ct)
+            : new Dictionary<long, MedicineBatch>();
 
         var availableBatches = medicineIds.Count > 0
             ? await _db.MedicineBatches.AsNoTracking()
@@ -101,54 +123,48 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                 .ToListAsync(ct)
             : [];
 
+        var clearance = await _settlementReader.CheckPharmacyVisitClearanceAsync(visit.Id, ct);
         var hasPaidPayment = visitPayments.Any(p => string.Equals(p.Status, "PAID", StringComparison.OrdinalIgnoreCase));
-        var hasPendingPayment = visitPayments.Count > 0 && !hasPaidPayment;
+        var isBlockedByPayment = !clearance.IsUnlocked;
 
         var isAlreadyDispensed = string.Equals(prescription.Status, "DISPENSED", StringComparison.OrdinalIgnoreCase) ||
-                                 string.Equals(existingDispense?.Status, "DISPENSED", StringComparison.OrdinalIgnoreCase) ||
-                                 string.Equals(existingDispense?.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase);
+                                 IsDispensedOrCompleted(existingDispense?.Status);
 
-        var canDispense = !isAlreadyDispensed && !hasPendingPayment;
+        var canDispense = !isAlreadyDispensed && !isBlockedByPayment;
         string? disabledReason = null;
         if (isAlreadyDispensed)
         {
             disabledReason = "Đơn thuốc đã được hoàn tất cấp phát (DISPENSED).";
         }
-        else if (hasPendingPayment)
+        else if (isBlockedByPayment)
         {
-            disabledReason = "Chặn xuất kho: Chờ xác nhận thanh toán trước khi xuất kho.";
+            disabledReason = $"Chặn xuất kho: {clearance.Message ?? "Chờ xác nhận thanh toán trước khi xuất kho."}";
         }
 
         var totalPaid = visitPayments.Where(p => string.Equals(p.Status, "PAID", StringComparison.OrdinalIgnoreCase)).Sum(p => p.Amount ?? 0m);
-        var totalPaidFormatted = totalPaid > 0 ? FormatVndPrice(totalPaid) : "100% Tự nguyện / Bảo hiểm";
-        var paymentMethodLabel = hasPaidPayment ? "VietQR (Đã thanh toán)" : (hasPendingPayment ? "Chờ thanh toán" : "Miễn phí / BHYT");
+        var totalPaidFormatted = totalPaid > 0
+            ? FormatVndPrice(totalPaid)
+            : (clearance.IsUnlocked ? "Miễn phí / BHYT" : "Chưa có dữ liệu");
+        var paymentMethodLabel = hasPaidPayment
+            ? "VietQR (Đã thanh toán)"
+            : (isBlockedByPayment ? "Chờ thanh toán" : "Miễn phí / BHYT");
+        var paymentStatus = hasPaidPayment
+            ? "PAID"
+            : (isBlockedByPayment
+                ? (clearance.StatusCode == VisitChargeSettlementReader.StatusMismatch ? "MISMATCH" : "PENDING")
+                : "NOT_REQUIRED");
 
         var counselingItems = new List<DispenseMedicationCounselingItemDto>(items.Count);
+        var orderCounter = 0;
+
         for (var i = 0; i < items.Count; i++)
         {
             var item = items[i];
             medicinesById.TryGetValue(item.MedicineId ?? 0, out var med);
 
-            MedicineBatch? allocatedBatch = null;
-            if (dispenseItemByPrescriptionItemId.TryGetValue(item.Id, out var existingItem) && existingItem.MedicineBatchId.HasValue)
-            {
-                allocatedBatch = await _db.MedicineBatches.AsNoTracking().FirstOrDefaultAsync(b => b.Id == existingItem.MedicineBatchId.Value, ct);
-            }
-
-            if (allocatedBatch is null && item.MedicineId.HasValue && batchesByMedicineId.TryGetValue(item.MedicineId.Value, out var mBatches) && mBatches.Count > 0)
-            {
-                allocatedBatch = mBatches[0];
-            }
-
             var drugName = med?.Name ?? $"Thuốc #{item.MedicineId}";
             var unit = med?.DispensingUnit ?? item.SingleDoseUnit ?? "viên";
             var prescribedQty = item.PrescribedQuantity ?? 1m;
-            var dispensedQty = existingItem?.DispensedQuantity ?? existingItem?.PlannedQuantity ?? prescribedQty;
-            var batchCode = allocatedBatch?.BatchNumber ?? "CHƯA_GÁN";
-            var expiryDateStr = allocatedBatch?.ExpiryDate.HasValue == true
-                ? allocatedBatch.ExpiryDate.Value.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
-                : "N/A";
-
             var dosage = !string.IsNullOrWhiteSpace(item.DoseScheduleText)
                 ? item.DoseScheduleText
                 : (!string.IsNullOrWhiteSpace(item.Instructions) ? item.Instructions : $"{item.Frequency ?? "Theo chỉ định"} - {item.DurationDays ?? 1} ngày");
@@ -157,25 +173,85 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                 ? item.Instructions!
                 : "Uống thuốc đúng liều và thời gian theo chỉ dẫn của bác sĩ.";
 
-            counselingItems.Add(new DispenseMedicationCounselingItemDto(
-                Id: $"dmed-{item.Id}",
-                OrderIndex: i + 1,
-                PrescriptionItemId: item.Id,
-                MedicineId: item.MedicineId ?? 0,
-                DrugName: drugName,
-                QtyLabel: $"{dispensedQty:0.##} {unit}",
-                PrescribedQuantity: prescribedQty,
-                DispensedQuantity: dispensedQty,
-                Unit: unit,
-                BatchCode: batchCode,
-                BatchId: allocatedBatch?.Id,
-                ExpiryDate: expiryDateStr,
-                DosageInstruction: dosage,
-                WarningNote: warning,
-                TagLabel: med?.DosageForm ?? "Thuốc kê đơn",
-                TagTone: i % 3 == 0 ? "sky" : (i % 3 == 1 ? "amber" : "rose"),
-                ShelfLocation: "Chưa cập nhật"
-            ));
+            if (dispenseItemsByPrescriptionItemId.TryGetValue(item.Id, out var preparedRows) && preparedRows.Count > 0)
+            {
+                for (var rowIdx = 0; rowIdx < preparedRows.Count; rowIdx++)
+                {
+                    var existingItem = preparedRows[rowIdx];
+                    MedicineBatch? allocatedBatch = null;
+                    if (existingItem.MedicineBatchId.HasValue)
+                    {
+                        allocatedBatchesById.TryGetValue(existingItem.MedicineBatchId.Value, out allocatedBatch);
+                    }
+
+                    if (allocatedBatch is null && item.MedicineId.HasValue && batchesByMedicineId.TryGetValue(item.MedicineId.Value, out var fallbackBatches) && fallbackBatches.Count > 0)
+                    {
+                        allocatedBatch = fallbackBatches[0];
+                    }
+
+                    var dispensedQty = existingItem.DispensedQuantity ?? existingItem.PlannedQuantity ?? prescribedQty;
+                    var batchCode = allocatedBatch?.BatchNumber ?? "CHƯA_GÁN";
+                    var expiryDateStr = allocatedBatch?.ExpiryDate.HasValue == true
+                        ? allocatedBatch.ExpiryDate.Value.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
+                        : "N/A";
+                    orderCounter++;
+
+                    counselingItems.Add(new DispenseMedicationCounselingItemDto(
+                        Id: preparedRows.Count > 1 ? $"dmed-{item.Id}-b{allocatedBatch?.Id ?? rowIdx}" : $"dmed-{item.Id}",
+                        OrderIndex: orderCounter,
+                        PrescriptionItemId: item.Id,
+                        MedicineId: item.MedicineId ?? 0,
+                        DrugName: drugName,
+                        QtyLabel: $"{dispensedQty:0.##} {unit}",
+                        PrescribedQuantity: prescribedQty,
+                        DispensedQuantity: dispensedQty,
+                        Unit: unit,
+                        BatchCode: batchCode,
+                        BatchId: allocatedBatch?.Id,
+                        ExpiryDate: expiryDateStr,
+                        DosageInstruction: dosage,
+                        WarningNote: warning,
+                        TagLabel: med?.DosageForm ?? "Thuốc kê đơn",
+                        TagTone: (orderCounter - 1) % 3 == 0 ? "sky" : ((orderCounter - 1) % 3 == 1 ? "amber" : "rose"),
+                        ShelfLocation: "Chưa cập nhật"
+                    ));
+                }
+            }
+            else
+            {
+                MedicineBatch? allocatedBatch = null;
+                if (item.MedicineId.HasValue && batchesByMedicineId.TryGetValue(item.MedicineId.Value, out var mBatches) && mBatches.Count > 0)
+                {
+                    allocatedBatch = mBatches[0];
+                }
+
+                var dispensedQty = prescribedQty;
+                var batchCode = allocatedBatch?.BatchNumber ?? "CHƯA_GÁN";
+                var expiryDateStr = allocatedBatch?.ExpiryDate.HasValue == true
+                    ? allocatedBatch.ExpiryDate.Value.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
+                    : "N/A";
+                orderCounter++;
+
+                counselingItems.Add(new DispenseMedicationCounselingItemDto(
+                    Id: $"dmed-{item.Id}",
+                    OrderIndex: orderCounter,
+                    PrescriptionItemId: item.Id,
+                    MedicineId: item.MedicineId ?? 0,
+                    DrugName: drugName,
+                    QtyLabel: $"{dispensedQty:0.##} {unit}",
+                    PrescribedQuantity: prescribedQty,
+                    DispensedQuantity: dispensedQty,
+                    Unit: unit,
+                    BatchCode: batchCode,
+                    BatchId: allocatedBatch?.Id,
+                    ExpiryDate: expiryDateStr,
+                    DosageInstruction: dosage,
+                    WarningNote: warning,
+                    TagLabel: med?.DosageForm ?? "Thuốc kê đơn",
+                    TagTone: (orderCounter - 1) % 3 == 0 ? "sky" : ((orderCounter - 1) % 3 == 1 ? "amber" : "rose"),
+                    ShelfLocation: "Chưa cập nhật"
+                ));
+            }
         }
 
         var checks = new List<PharmacistHandoverCheckDto>
@@ -213,7 +289,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             DoctorName: doctorName,
             TotalPaidFormatted: totalPaidFormatted,
             PaymentMethodLabel: paymentMethodLabel,
-            PaymentStatus: hasPaidPayment ? "PAID" : (hasPendingPayment ? "PENDING" : "NOT_REQUIRED"),
+            PaymentStatus: paymentStatus,
             RegimenBadge: $"Đơn thuốc điều trị ngoại trú ({items.Count} khoản thuốc)",
             Receiver: receiver,
             Medications: counselingItems,
@@ -260,256 +336,527 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
         }
 
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var today = HospitalClock.GetToday(_timeProvider);
         var (staff, hospital) = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
 
-        var prescription = await ResolvePrescriptionAsync(idOrCode, hospital.Id, ct);
+        var preLockPrescription = await ResolvePrescriptionAsync(idOrCode, hospital.Id, ct);
+        var visitId = preLockPrescription.VisitId
+            ?? throw new NotFoundException("Visit", 0);
 
-        if (!string.IsNullOrWhiteSpace(request.IdempotencyKey))
+        var normalizedIdempotencyKey = string.IsNullOrWhiteSpace(request.IdempotencyKey)
+            ? null
+            : request.IdempotencyKey.Trim();
+
+        long confirmedDispenseId;
+
+        await using (var tx = await _db.BeginTransactionAsync(ct))
         {
-            var existingIdempotentDispense = await _db.MedicationDispenses.AsNoTracking()
-                .FirstOrDefaultAsync(md => md.PrescriptionId == prescription.Id && md.IdempotencyKey == request.IdempotencyKey.Trim(), ct);
-
-            if (existingIdempotentDispense is not null && string.Equals(existingIdempotentDispense.Status, "DISPENSED", StringComparison.OrdinalIgnoreCase))
+            try
             {
-                return await BuildDispensingResultDetailAsync(existingIdempotentDispense.Id, ct);
-            }
-        }
+                // ADR-0059 strict lock order: visits (09) -> prescriptions (13) -> medicine_batches (14, sorted ASC)
+                await _db.TryLockVisitForUpdateAsync(visitId, ct);
+                await _db.TryLockPrescriptionForUpdateAsync(preLockPrescription.Id, ct);
 
-        if (string.Equals(prescription.Status, "DISPENSED", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ConflictException("Đơn thuốc đã được hoàn tất cấp phát trước đó.");
-        }
-
-        var visitPayments = prescription.VisitId.HasValue
-            ? await _db.Payments.AsNoTracking()
-                .Where(p => p.VisitId == prescription.VisitId.Value)
-                .ToListAsync(ct)
-            : [];
-
-        var hasPaidPayment = visitPayments.Any(p => string.Equals(p.Status, "PAID", StringComparison.OrdinalIgnoreCase));
-        if (visitPayments.Count > 0 && !hasPaidPayment)
-        {
-            throw new ConflictException("Lượt khám chưa hoàn tất thanh toán. Vui lòng thanh toán trước khi cấp phát thuốc.");
-        }
-
-        var prescriptionItems = await _db.PrescriptionItems
-            .Where(pi => pi.PrescriptionId == prescription.Id)
-            .OrderBy(pi => pi.Id)
-            .ToListAsync(ct);
-
-        if (prescriptionItems.Count == 0)
-        {
-            throw new ValidationException("Đơn thuốc không có danh mục thuốc để cấp phát.");
-        }
-
-        var medicineIds = prescriptionItems.Where(i => i.MedicineId.HasValue).Select(i => i.MedicineId!.Value).Distinct().ToList();
-        var medicinesById = await _db.Medicines
-            .Where(m => medicineIds.Contains(m.Id))
-            .ToDictionaryAsync(m => m.Id, ct);
-
-        var existingDispense = await _db.MedicationDispenses
-            .FirstOrDefaultAsync(md => md.PrescriptionId == prescription.Id, ct);
-
-        var existingDispenseItems = existingDispense is not null
-            ? await _db.DispenseItems
-                .Where(di => di.DispenseId == existingDispense.Id)
-                .ToListAsync(ct)
-            : [];
-
-        var dispenseItemByPrescriptionItemId = existingDispenseItems
-            .Where(di => di.PrescriptionItemId.HasValue)
-            .GroupBy(di => di.PrescriptionItemId!.Value)
-            .ToDictionary(g => g.Key, g => g.First());
-
-        var requestItemsByPiId = (request.Items ?? [])
-            .GroupBy(i => i.PrescriptionItemId)
-            .ToDictionary(g => g.Key, g => g.First());
-
-        var availableBatches = await _db.MedicineBatches
-            .Where(b => b.MedicineId.HasValue && medicineIds.Contains(b.MedicineId.Value))
-            .ToListAsync(ct);
-
-        var batchesById = availableBatches.ToDictionary(b => b.Id);
-
-        var allocations = new List<(PrescriptionItem Item, MedicineBatch Batch, decimal Qty, string? ShortageReason)>();
-
-        foreach (var pItem in prescriptionItems)
-        {
-            var prescribedQty = pItem.PrescribedQuantity ?? 1m;
-            decimal qtyToDispense = prescribedQty;
-            string? shortageReason = null;
-            MedicineBatch? targetBatch = null;
-
-            if (requestItemsByPiId.TryGetValue(pItem.Id, out var reqItem))
-            {
-                if (reqItem.MedicineBatchId.HasValue && batchesById.TryGetValue(reqItem.MedicineBatchId.Value, out var reqBatch))
+                if (_db is DbContext trackerCtx)
                 {
-                    targetBatch = reqBatch;
+                    trackerCtx.ChangeTracker.Clear();
                 }
-                if (reqItem.DispensedQuantity.HasValue && reqItem.DispensedQuantity.Value > 0)
+
+                var visit = await _db.Visits.AsNoTracking()
+                    .FirstOrDefaultAsync(v => v.Id == visitId, ct)
+                    ?? throw new NotFoundException("Visit", visitId);
+
+                EnsureVisitActiveForPharmacy(visit);
+
+                var prescription = await _db.Prescriptions
+                    .FirstOrDefaultAsync(p => p.Id == preLockPrescription.Id, ct)
+                    ?? throw new NotFoundException($"Không tìm thấy đơn thuốc '{idOrCode}'.");
+
+                await ValidatePrescriptionEligibilityAsync(prescription, ct);
+
+                var existingDispense = await _db.MedicationDispenses
+                    .Where(md => md.PrescriptionId == prescription.Id)
+                    .OrderByDescending(md => md.DispensedAt ?? md.PreparedAt)
+                    .ThenByDescending(md => md.Id)
+                    .FirstOrDefaultAsync(ct);
+
+                if (existingDispense is not null && IsDispensedOrCompleted(existingDispense.Status))
                 {
-                    qtyToDispense = reqItem.DispensedQuantity.Value;
+                    if (normalizedIdempotencyKey is not null &&
+                        string.Equals(existingDispense.IdempotencyKey, normalizedIdempotencyKey, StringComparison.Ordinal))
+                    {
+                        await SafeRollbackAsync(tx, ct);
+                        return await BuildDispensingResultDetailAsync(existingDispense.Id, ct, request.ReceiverName);
+                    }
+
+                    throw new ConflictException("Đơn thuốc đã được hoàn tất cấp phát trước đó.");
                 }
-                shortageReason = reqItem.ShortageReason;
-            }
-            else if (dispenseItemByPrescriptionItemId.TryGetValue(pItem.Id, out var existDi) && existDi.MedicineBatchId.HasValue)
-            {
-                if (batchesById.TryGetValue(existDi.MedicineBatchId.Value, out var existBatch))
+
+                if (string.Equals(prescription.Status, "DISPENSED", StringComparison.OrdinalIgnoreCase))
                 {
-                    targetBatch = existBatch;
+                    throw new ConflictException("Đơn thuốc đã được hoàn tất cấp phát trước đó.");
                 }
-                if (existDi.DispensedQuantity.HasValue && existDi.DispensedQuantity.Value > 0)
+
+                var clearance = await _settlementReader.CheckPharmacyVisitClearanceAsync(visit.Id, ct);
+                if (!clearance.IsUnlocked)
                 {
-                    qtyToDispense = existDi.DispensedQuantity.Value;
+                    throw new ConflictException(
+                        clearance.Message ?? "Lượt khám chưa hoàn tất thanh toán. Vui lòng thanh toán trước khi cấp phát thuốc.");
                 }
-                else if (existDi.PlannedQuantity.HasValue && existDi.PlannedQuantity.Value > 0)
+
+                var prescriptionItems = await _db.PrescriptionItems
+                    .Where(pi => pi.PrescriptionId == prescription.Id)
+                    .OrderBy(pi => pi.Id)
+                    .ToListAsync(ct);
+
+                if (prescriptionItems.Count == 0)
                 {
-                    qtyToDispense = existDi.PlannedQuantity.Value;
+                    throw new ValidationException("Đơn thuốc không có danh mục thuốc để cấp phát.");
                 }
-                shortageReason = existDi.ShortageReason;
-            }
 
-            if (targetBatch is null && pItem.MedicineId.HasValue)
-            {
-                targetBatch = availableBatches
-                    .Where(b => b.MedicineId == pItem.MedicineId.Value && b.IsBlocked != true && (b.ExpiryDate == null || b.ExpiryDate > today) && (b.QuantityOnHand ?? 0) >= qtyToDispense)
-                    .OrderBy(b => b.ExpiryDate)
-                    .ThenBy(b => b.Id)
-                    .FirstOrDefault();
-
-                if (targetBatch is null)
+                var prescriptionItemsById = prescriptionItems.ToDictionary(pi => pi.Id);
+                foreach (var reqLine in request.Items ?? [])
                 {
-                    targetBatch = availableBatches
-                        .Where(b => b.MedicineId == pItem.MedicineId.Value && b.IsBlocked != true && (b.ExpiryDate == null || b.ExpiryDate > today))
-                        .OrderBy(b => b.ExpiryDate)
-                        .ThenBy(b => b.Id)
-                        .FirstOrDefault();
+                    if (!prescriptionItemsById.ContainsKey(reqLine.PrescriptionItemId))
+                    {
+                        throw new ValidationException($"Khoản thuốc #{reqLine.PrescriptionItemId} không thuộc đơn thuốc cần cấp phát.");
+                    }
+
+                    if (reqLine.DispensedQuantity is < 0m)
+                    {
+                        throw new ValidationException("Số lượng thực xuất không được âm.");
+                    }
                 }
-            }
 
-            if (targetBatch is null)
-            {
-                var medName = medicinesById.TryGetValue(pItem.MedicineId ?? 0, out var m) ? m.Name : $"Thuốc #{pItem.MedicineId}";
-                throw new ConflictException($"Không tìm thấy lô thuốc khả dụng trong kho cho thuốc '{medName}'.");
-            }
+                var medicineIds = prescriptionItems
+                    .Where(i => i.MedicineId.HasValue)
+                    .Select(i => i.MedicineId!.Value)
+                    .Distinct()
+                    .ToList();
 
-            if (targetBatch.MedicineId != pItem.MedicineId)
-            {
-                throw new ValidationException($"Lô thuốc '{targetBatch.BatchNumber}' không thuộc mặt hàng thuốc yêu cầu.");
-            }
+                var medicinesById = await _db.Medicines.AsNoTracking()
+                    .Where(m => medicineIds.Contains(m.Id))
+                    .ToDictionaryAsync(m => m.Id, ct);
 
-            if (targetBatch.IsBlocked == true)
-            {
-                throw new ConflictException($"Lô thuốc '{targetBatch.BatchNumber}' đang bị khóa, không thể xuất kho.");
-            }
+                var existingDispenseItems = existingDispense is not null
+                    ? await _db.DispenseItems
+                        .Where(di => di.DispenseId == existingDispense.Id)
+                        .OrderBy(di => di.Id)
+                        .ToListAsync(ct)
+                    : [];
 
-            if (targetBatch.ExpiryDate.HasValue && targetBatch.ExpiryDate.Value <= today)
-            {
-                throw new ConflictException($"Lô thuốc '{targetBatch.BatchNumber}' đã hết hạn sử dụng ({targetBatch.ExpiryDate:dd/MM/yyyy}), không thể cấp phát.");
-            }
+                var requestedBatchIds = (request.Items ?? [])
+                    .Where(i => i.MedicineBatchId.HasValue && i.MedicineBatchId.Value > 0)
+                    .Select(i => i.MedicineBatchId!.Value);
 
-            var currentOnHand = targetBatch.QuantityOnHand ?? 0m;
-            if (currentOnHand < qtyToDispense && string.IsNullOrWhiteSpace(shortageReason))
-            {
-                throw new ConflictException($"Số lượng tồn khả dụng của lô '{targetBatch.BatchNumber}' không đủ ({currentOnHand} < {qtyToDispense}).");
-            }
+                var preparedBatchIds = existingDispenseItems
+                    .Where(di => di.MedicineBatchId.HasValue && di.MedicineBatchId.Value > 0)
+                    .Select(di => di.MedicineBatchId!.Value);
 
-            allocations.Add((pItem, targetBatch, qtyToDispense, shortageReason));
-        }
+                var medicineBatchIds = await _db.MedicineBatches.AsNoTracking()
+                    .Where(b => b.MedicineId.HasValue && medicineIds.Contains(b.MedicineId.Value))
+                    .Select(b => b.Id)
+                    .ToListAsync(ct);
 
-        await using var tx = await _db.BeginTransactionAsync(ct);
+                var allCandidateBatchIds = medicineBatchIds
+                    .Concat(requestedBatchIds)
+                    .Concat(preparedBatchIds)
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToArray();
 
-        var medicationDispense = existingDispense ?? new MedicationDispense
-        {
-            PrescriptionId = prescription.Id,
-            PreparedByStaffId = staff.Id,
-            PreparedAt = nowUtc
-        };
-
-        medicationDispense.Status = "DISPENSED";
-        medicationDispense.DispensedByStaffId = staff.Id;
-        medicationDispense.DispensedAt = nowUtc;
-        medicationDispense.IdempotencyKey = !string.IsNullOrWhiteSpace(request.IdempotencyKey)
-            ? request.IdempotencyKey.Trim()
-            : $"DISP-{prescription.Id}-{nowUtc:yyyyMMddHHmmss}";
-
-        if (existingDispense is null)
-        {
-            _db.MedicationDispenses.Add(medicationDispense);
-        }
-        await _db.SaveChangesAsync(ct);
-
-        foreach (var (item, batch, qtyToDispense, shortageReason) in allocations)
-        {
-            batch.QuantityOnHand = (batch.QuantityOnHand ?? 0m) - qtyToDispense;
-
-            DispenseItem dispenseItem;
-            if (dispenseItemByPrescriptionItemId.TryGetValue(item.Id, out var existingItem))
-            {
-                dispenseItem = existingItem;
-                dispenseItem.MedicineBatchId = batch.Id;
-                dispenseItem.DispensedQuantity = qtyToDispense;
-                dispenseItem.ShortageReason = shortageReason;
-            }
-            else
-            {
-                dispenseItem = new DispenseItem
+                if (allCandidateBatchIds.Length > 0)
                 {
-                    DispenseId = medicationDispense.Id,
-                    PrescriptionItemId = item.Id,
-                    MedicineBatchId = batch.Id,
-                    PlannedQuantity = item.PrescribedQuantity ?? qtyToDispense,
-                    DispensedQuantity = qtyToDispense,
-                    ShortageReason = shortageReason
+                    await _db.TryLockMedicineBatchesForUpdateAsync(allCandidateBatchIds, ct);
+                }
+
+                var availableBatches = allCandidateBatchIds.Length > 0
+                    ? await _db.MedicineBatches
+                        .Where(b => allCandidateBatchIds.Contains(b.Id))
+                        .ToListAsync(ct)
+                    : [];
+
+                var batchesById = availableBatches.ToDictionary(b => b.Id);
+
+                var dispenseItemsByPiId = existingDispenseItems
+                    .Where(di => di.PrescriptionItemId.HasValue)
+                    .GroupBy(di => di.PrescriptionItemId!.Value)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+
+                var requestItemsByPiId = (request.Items ?? [])
+                    .GroupBy(i => i.PrescriptionItemId)
+                    .ToDictionary(g => g.Key, g => g.ToList());
+
+                var allocations = new List<(
+                    PrescriptionItem Item,
+                    MedicineBatch? Batch,
+                    decimal Qty,
+                    string? ShortageReason,
+                    DispenseItem? ExistingItem)>();
+
+                var consumedInAutoAllocationByBatchId = new Dictionary<long, decimal>();
+
+                foreach (var pItem in prescriptionItems)
+                {
+                    var prescribedQty = pItem.PrescribedQuantity ?? 1m;
+                    var medName = medicinesById.TryGetValue(pItem.MedicineId ?? 0, out var medObj)
+                        ? medObj.Name
+                        : $"Thuốc #{pItem.MedicineId}";
+
+                    dispenseItemsByPiId.TryGetValue(pItem.Id, out var existListForPi);
+                    existListForPi ??= [];
+
+                    requestItemsByPiId.TryGetValue(pItem.Id, out var reqListForPi);
+                    reqListForPi ??= [];
+
+                    var itemAllocations = new List<(
+                        PrescriptionItem Item,
+                        MedicineBatch? Batch,
+                        decimal Qty,
+                        string? ShortageReason,
+                        DispenseItem? ExistingItem)>();
+
+                    var usePreparedMultiBatchDirectly =
+                        reqListForPi.Count == 1 &&
+                        existListForPi.Count > 1 &&
+                        !reqListForPi[0].MedicineBatchId.HasValue &&
+                        !reqListForPi[0].DispensedQuantity.HasValue;
+
+                    if (reqListForPi.Count > 0 && !usePreparedMultiBatchDirectly)
+                    {
+                        var matchedExistingSet = new HashSet<DispenseItem>();
+
+                        foreach (var reqLine in reqListForPi)
+                        {
+                            var matchedExisting = reqLine.MedicineBatchId.HasValue
+                                ? existListForPi.FirstOrDefault(di =>
+                                    !matchedExistingSet.Contains(di) &&
+                                    di.MedicineBatchId == reqLine.MedicineBatchId.Value)
+                                : (existListForPi.Count == 1 && reqListForPi.Count == 1
+                                    ? existListForPi[0]
+                                    : null);
+
+                            if (matchedExisting is not null)
+                            {
+                                matchedExistingSet.Add(matchedExisting);
+                            }
+
+                            // BUG-P3-03: null -> PlannedQuantity ?? PrescribedQuantity; 0 -> explicit zero-dispense (never fallback!); > 0 -> physical qty
+                            decimal qtyToDispense = reqLine.DispensedQuantity.HasValue
+                                ? reqLine.DispensedQuantity.Value
+                                : (matchedExisting?.DispensedQuantity ?? matchedExisting?.PlannedQuantity ?? prescribedQty);
+
+                            var shortageReason = !string.IsNullOrWhiteSpace(reqLine.ShortageReason)
+                                ? reqLine.ShortageReason.Trim()
+                                : matchedExisting?.ShortageReason;
+
+                            MedicineBatch? targetBatch = null;
+                            if (reqLine.MedicineBatchId.HasValue)
+                            {
+                                if (!batchesById.TryGetValue(reqLine.MedicineBatchId.Value, out targetBatch))
+                                {
+                                    throw new ValidationException($"Không tìm thấy lô thuốc #{reqLine.MedicineBatchId.Value} cho thuốc '{medName}'.");
+                                }
+                            }
+                            else if (matchedExisting?.MedicineBatchId.HasValue == true)
+                            {
+                                batchesById.TryGetValue(matchedExisting.MedicineBatchId.Value, out targetBatch);
+                            }
+
+                            if (targetBatch is null && pItem.MedicineId.HasValue)
+                            {
+                                targetBatch = SelectSingleFefoBatch(
+                                    availableBatches,
+                                    pItem.MedicineId.Value,
+                                    qtyToDispense,
+                                    today,
+                                    consumedInAutoAllocationByBatchId);
+                            }
+
+                            if (targetBatch is not null && qtyToDispense > 0m)
+                            {
+                                consumedInAutoAllocationByBatchId.TryGetValue(targetBatch.Id, out var prevAuto);
+                                consumedInAutoAllocationByBatchId[targetBatch.Id] = prevAuto + qtyToDispense;
+                            }
+
+                            itemAllocations.Add((pItem, targetBatch, qtyToDispense, shortageReason, matchedExisting));
+                        }
+                    }
+                    else if (existListForPi.Count > 0)
+                    {
+                        var fallbackReason = reqListForPi.FirstOrDefault()?.ShortageReason;
+                        foreach (var existDi in existListForPi)
+                        {
+                            var qtyToDispense = existDi.DispensedQuantity ?? existDi.PlannedQuantity ?? prescribedQty;
+                            var shortageReason = !string.IsNullOrWhiteSpace(fallbackReason)
+                                ? fallbackReason.Trim()
+                                : existDi.ShortageReason;
+
+                            MedicineBatch? targetBatch = null;
+                            if (existDi.MedicineBatchId.HasValue)
+                            {
+                                batchesById.TryGetValue(existDi.MedicineBatchId.Value, out targetBatch);
+                            }
+
+                            if (targetBatch is null && pItem.MedicineId.HasValue)
+                            {
+                                targetBatch = SelectSingleFefoBatch(
+                                    availableBatches,
+                                    pItem.MedicineId.Value,
+                                    qtyToDispense,
+                                    today,
+                                    consumedInAutoAllocationByBatchId);
+                            }
+
+                            if (targetBatch is not null && qtyToDispense > 0m)
+                            {
+                                consumedInAutoAllocationByBatchId.TryGetValue(targetBatch.Id, out var prevAuto);
+                                consumedInAutoAllocationByBatchId[targetBatch.Id] = prevAuto + qtyToDispense;
+                            }
+
+                            itemAllocations.Add((pItem, targetBatch, qtyToDispense, shortageReason, existDi));
+                        }
+                    }
+                    else
+                    {
+                        var targetBatch = pItem.MedicineId.HasValue
+                            ? SelectSingleFefoBatch(
+                                availableBatches,
+                                pItem.MedicineId.Value,
+                                prescribedQty,
+                                today,
+                                consumedInAutoAllocationByBatchId)
+                            : null;
+
+                        if (targetBatch is not null && prescribedQty > 0m)
+                        {
+                            consumedInAutoAllocationByBatchId.TryGetValue(targetBatch.Id, out var prevAuto);
+                            consumedInAutoAllocationByBatchId[targetBatch.Id] = prevAuto + prescribedQty;
+                        }
+
+                        itemAllocations.Add((pItem, targetBatch, prescribedQty, null, null));
+                    }
+
+                    // Validate per-item quantities & shortage reasons (BUG-P3-03)
+                    var totalDispensedForItem = itemAllocations.Sum(a => a.Qty);
+                    var hasItemShortageReason = itemAllocations.Any(a => !string.IsNullOrWhiteSpace(a.ShortageReason));
+
+                    if (totalDispensedForItem == 0m && !hasItemShortageReason)
+                    {
+                        throw new ValidationException(
+                            $"Khoản thuốc '{medName}' có số lượng thực xuất bằng 0 bắt buộc phải nhập lý do thiếu thuốc (ShortageReason).");
+                    }
+
+                    if (totalDispensedForItem < prescribedQty && !hasItemShortageReason)
+                    {
+                        throw new ValidationException(
+                            $"Số lượng thực xuất ({totalDispensedForItem:0.###}) nhỏ hơn số lượng kê đơn ({prescribedQty:0.###}) cho thuốc '{medName}'. Vui lòng nhập lý do thiếu thuốc.");
+                    }
+
+                    if (totalDispensedForItem > prescribedQty)
+                    {
+                        throw new ValidationException(
+                            $"Số lượng thực xuất ({totalDispensedForItem:0.###}) không được vượt quá số lượng kê đơn ({prescribedQty:0.###}) cho thuốc '{medName}'.");
+                    }
+
+                    foreach (var alloc in itemAllocations)
+                    {
+                        if (alloc.Batch is null)
+                        {
+                            if (alloc.Qty == 0m)
+                            {
+                                continue;
+                            }
+
+                            throw new ConflictException($"Không tìm thấy lô thuốc khả dụng trong kho cho thuốc '{medName}'.");
+                        }
+
+                        if (alloc.Batch.MedicineId != pItem.MedicineId)
+                        {
+                            throw new ValidationException($"Lô thuốc '{alloc.Batch.BatchNumber}' không thuộc mặt hàng thuốc yêu cầu.");
+                        }
+
+                        if (alloc.Qty > 0m)
+                        {
+                            if (alloc.Batch.IsBlocked == true)
+                            {
+                                throw new ConflictException($"Lô thuốc '{alloc.Batch.BatchNumber}' đang bị khóa, không thể xuất kho.");
+                            }
+
+                            if (alloc.Batch.ExpiryDate.HasValue && alloc.Batch.ExpiryDate.Value <= today)
+                            {
+                                throw new ConflictException($"Lô thuốc '{alloc.Batch.BatchNumber}' đã hết hạn sử dụng ({alloc.Batch.ExpiryDate:dd/MM/yyyy}), không thể cấp phát.");
+                            }
+                        }
+                    }
+
+                    allocations.AddRange(itemAllocations);
+                }
+
+                // BUG-P3-01: Aggregate total requested quantity per BatchId across ALL lines and enforce UNCONDITIONAL non-negative stock!
+                var totalRequestedByBatchId = allocations
+                    .Where(a => a.Qty > 0m && a.Batch is not null)
+                    .GroupBy(a => a.Batch!.Id)
+                    .Select(g => (Batch: g.First().Batch!, TotalQty: g.Sum(x => x.Qty)))
+                    .ToList();
+
+                foreach (var (batch, totalRequested) in totalRequestedByBatchId)
+                {
+                    var currentOnHand = batch.QuantityOnHand ?? 0m;
+                    if (currentOnHand < totalRequested)
+                    {
+                        throw new ConflictException(
+                            $"Số lượng tồn khả dụng của lô '{batch.BatchNumber}' không đủ ({currentOnHand:0.###} < {totalRequested:0.###}).");
+                    }
+                }
+
+                var medicationDispense = existingDispense ?? new MedicationDispense
+                {
+                    PrescriptionId = prescription.Id,
+                    PreparedByStaffId = staff.Id,
+                    PreparedAt = nowLocal
                 };
-                _db.DispenseItems.Add(dispenseItem);
-            }
-            await _db.SaveChangesAsync(ct);
 
-            var stockTx = new StockTransaction
+                medicationDispense.Status = "DISPENSED";
+                medicationDispense.DispensedByStaffId = staff.Id;
+                medicationDispense.DispensedAt = nowLocal;
+                medicationDispense.IdempotencyKey = normalizedIdempotencyKey
+                    ?? $"DISP-{prescription.Id}-{nowUtc:yyyyMMddHHmmss}";
+
+                if (existingDispense is null)
+                {
+                    _db.MedicationDispenses.Add(medicationDispense);
+                }
+                await _db.SaveChangesAsync(ct);
+
+                var retainedExistingItems = allocations
+                    .Where(a => a.ExistingItem is not null)
+                    .Select(a => a.ExistingItem!)
+                    .ToHashSet();
+
+                var obsoleteDispenseItems = existingDispenseItems
+                    .Where(di => !retainedExistingItems.Contains(di))
+                    .ToList();
+                if (obsoleteDispenseItems.Count > 0)
+                {
+                    _db.DispenseItems.RemoveRange(obsoleteDispenseItems);
+                }
+
+                foreach (var (item, batch, qtyToDispense, shortageReason, matchedExistingItem) in allocations)
+                {
+                    if (batch is not null && qtyToDispense > 0m)
+                    {
+                        batch.QuantityOnHand = (batch.QuantityOnHand ?? 0m) - qtyToDispense;
+                    }
+
+                    DispenseItem dispenseItem;
+                    if (matchedExistingItem is not null)
+                    {
+                        dispenseItem = matchedExistingItem;
+                        dispenseItem.MedicineBatchId = batch?.Id;
+                        dispenseItem.DispensedQuantity = qtyToDispense;
+                        dispenseItem.ShortageReason = shortageReason;
+                    }
+                    else
+                    {
+                        dispenseItem = new DispenseItem
+                        {
+                            DispenseId = medicationDispense.Id,
+                            PrescriptionItemId = item.Id,
+                            MedicineBatchId = batch?.Id,
+                            PlannedQuantity = item.PrescribedQuantity ?? qtyToDispense,
+                            DispensedQuantity = qtyToDispense,
+                            ShortageReason = shortageReason
+                        };
+                        _db.DispenseItems.Add(dispenseItem);
+                    }
+
+                    await _db.SaveChangesAsync(ct);
+
+                    if (batch is not null && qtyToDispense > 0m)
+                    {
+                        var stockTx = new StockTransaction
+                        {
+                            MedicineBatchId = batch.Id,
+                            DispenseItemId = dispenseItem.Id,
+                            TransactionType = "DISPENSE",
+                            QuantityDelta = -qtyToDispense,
+                            PerformedByStaffId = staff.Id,
+                            Reason = $"Xuất kho cấp phát theo đơn thuốc {prescription.PrescriptionCode ?? prescription.Id.ToString(CultureInfo.InvariantCulture)}",
+                            SourceReference = prescription.PrescriptionCode ?? $"RX-{prescription.Id:D6}",
+                            OccurredAt = nowLocal
+                        };
+                        _db.StockTransactions.Add(stockTx);
+                    }
+                }
+
+                prescription.Status = "DISPENSED";
+
+                _db.AuditLogs.Add(new AuditLog
+                {
+                    ActorUserId = actorUserId,
+                    HospitalId = hospital.Id,
+                    Action = "MEDICINE_DISPENSED",
+                    EntityType = "Prescription",
+                    EntityId = prescription.Id.ToString(CultureInfo.InvariantCulture),
+                    Reason = "Xác nhận bàn giao thuốc và trừ tồn kho (UC46)",
+                    ChangeData = JsonSerializer.Serialize(new
+                    {
+                        prescriptionId = prescription.Id,
+                        prescriptionCode = prescription.PrescriptionCode,
+                        dispenseId = medicationDispense.Id,
+                        dispensedByStaffId = staff.Id,
+                        receiverName = request.ReceiverName,
+                        relationship = request.Relationship,
+                        itemCount = allocations.Count,
+                        dispensedAt = nowUtc
+                    }),
+                    IpAddress = IPAddress.TryParse(ipAddress, out var confirmIp) ? confirmIp : null,
+                    OccurredAt = nowUtc
+                });
+
+                await _db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+                confirmedDispenseId = medicationDispense.Id;
+            }
+            catch (DbUpdateException ex) when (PostgresConcurrencyException.IsUniqueViolation(ex))
             {
-                MedicineBatchId = batch.Id,
-                DispenseItemId = dispenseItem.Id,
-                TransactionType = "DISPENSE",
-                QuantityDelta = -qtyToDispense,
-                PerformedByStaffId = staff.Id,
-                Reason = $"Xuất kho cấp phát theo đơn thuốc {prescription.PrescriptionCode ?? prescription.Id.ToString()}",
-                SourceReference = prescription.PrescriptionCode ?? $"RX-{prescription.Id:D6}",
-                OccurredAt = nowUtc
-            };
-            _db.StockTransactions.Add(stockTx);
+                await SafeRollbackAsync(tx, ct);
+                if (_db is DbContext dbCtx)
+                {
+                    dbCtx.ChangeTracker.Clear();
+                }
+
+                var concurrentDispense = await _db.MedicationDispenses.AsNoTracking()
+                    .Where(md => md.PrescriptionId == preLockPrescription.Id)
+                    .OrderByDescending(md => md.DispensedAt ?? md.PreparedAt)
+                    .ThenByDescending(md => md.Id)
+                    .FirstOrDefaultAsync(ct);
+
+                if (concurrentDispense is not null &&
+                    IsDispensedOrCompleted(concurrentDispense.Status) &&
+                    normalizedIdempotencyKey is not null &&
+                    string.Equals(concurrentDispense.IdempotencyKey, normalizedIdempotencyKey, StringComparison.Ordinal))
+                {
+                    return await BuildDispensingResultDetailAsync(concurrentDispense.Id, ct, request.ReceiverName);
+                }
+
+                throw new ConflictException("Đơn thuốc đã được hoàn tất cấp phát trước đó.");
+            }
+            catch (Exception ex) when (PostgresConcurrencyException.IsDeadlockOrSerializationFailure(ex))
+            {
+                await SafeRollbackAsync(tx, ct);
+                if (_db is DbContext dbCtx)
+                {
+                    dbCtx.ChangeTracker.Clear();
+                }
+
+                throw new ConflictException("Giao dịch cấp phát thuốc đang có xung đột đồng thời, vui lòng thử lại.");
+            }
         }
 
-        prescription.Status = "DISPENSED";
-
-        _db.AuditLogs.Add(new AuditLog
-        {
-            ActorUserId = actorUserId,
-            HospitalId = hospital.Id,
-            Action = "MEDICINE_DISPENSED",
-            EntityType = "Prescription",
-            EntityId = prescription.Id.ToString(CultureInfo.InvariantCulture),
-            Reason = "Xác nhận bàn giao thuốc và trừ tồn kho (UC46)",
-            ChangeData = JsonSerializer.Serialize(new
-            {
-                prescriptionId = prescription.Id,
-                prescriptionCode = prescription.PrescriptionCode,
-                dispenseId = medicationDispense.Id,
-                dispensedByStaffId = staff.Id,
-                receiverName = request.ReceiverName,
-                relationship = request.Relationship,
-                itemCount = allocations.Count,
-                dispensedAt = nowUtc
-            }),
-            IpAddress = IPAddress.TryParse(ipAddress, out var confirmIp) ? confirmIp : null,
-            OccurredAt = nowUtc
-        });
-
-        await _db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-
-        return await BuildDispensingResultDetailAsync(medicationDispense.Id, ct, request.ReceiverName);
+        return await BuildDispensingResultDetailAsync(confirmedDispenseId, ct, request.ReceiverName);
     }
 
     public async Task<DispensingResultDetailDto> GetDispensingResultAsync(
@@ -519,7 +866,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
         string? ipAddress = null)
     {
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var (staff, hospital) = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
+        var (_, hospital) = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
 
         long? targetDispenseId = null;
         if (long.TryParse(idOrCode, out var numericId) && numericId > 0)
@@ -529,6 +876,16 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             if (byDispenseId is not null)
             {
                 targetDispenseId = byDispenseId.Id;
+            }
+        }
+
+        if (!targetDispenseId.HasValue && PharmacyDispenseCode.TryExtractDispenseId(idOrCode, out var codeDispenseId))
+        {
+            var candidate = await _db.MedicationDispenses.AsNoTracking()
+                .FirstOrDefaultAsync(md => md.Id == codeDispenseId, ct);
+            if (candidate is not null && PharmacyDispenseCode.Matches(candidate, idOrCode, nowUtc))
+            {
+                targetDispenseId = candidate.Id;
             }
         }
 
@@ -562,6 +919,46 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
         await _db.SaveChangesAsync(ct);
 
         return result;
+    }
+
+    private static MedicineBatch? SelectSingleFefoBatch(
+        IReadOnlyList<MedicineBatch> availableBatches,
+        long medicineId,
+        decimal qtyToDispense,
+        DateOnly today,
+        IReadOnlyDictionary<long, decimal> consumedByBatchId)
+    {
+        if (qtyToDispense <= 0m)
+        {
+            return availableBatches
+                .Where(b => b.MedicineId == medicineId && b.IsBlocked != true && (b.ExpiryDate == null || b.ExpiryDate > today))
+                .OrderBy(b => b.ExpiryDate)
+                .ThenBy(b => b.Id)
+                .FirstOrDefault();
+        }
+
+        var sufficient = availableBatches
+            .Where(b =>
+            {
+                if (b.MedicineId != medicineId || b.IsBlocked == true || (b.ExpiryDate.HasValue && b.ExpiryDate.Value <= today))
+                    return false;
+                consumedByBatchId.TryGetValue(b.Id, out var consumed);
+                return (b.QuantityOnHand ?? 0m) - consumed >= qtyToDispense;
+            })
+            .OrderBy(b => b.ExpiryDate)
+            .ThenBy(b => b.Id)
+            .FirstOrDefault();
+
+        if (sufficient is not null)
+        {
+            return sufficient;
+        }
+
+        return availableBatches
+            .Where(b => b.MedicineId == medicineId && b.IsBlocked != true && (b.ExpiryDate == null || b.ExpiryDate > today))
+            .OrderBy(b => b.ExpiryDate)
+            .ThenBy(b => b.Id)
+            .FirstOrDefault();
     }
 
     private async Task<DispensingResultDetailDto> BuildDispensingResultDetailAsync(
@@ -600,12 +997,20 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             .OrderBy(di => di.Id)
             .ToListAsync(ct);
 
-        var prescriptionItemIds = dispenseItems.Where(di => di.PrescriptionItemId.HasValue).Select(di => di.PrescriptionItemId!.Value).ToList();
+        var prescriptionItemIds = dispenseItems
+            .Where(di => di.PrescriptionItemId.HasValue)
+            .Select(di => di.PrescriptionItemId!.Value)
+            .Distinct()
+            .ToList();
         var pItemsById = await _db.PrescriptionItems.AsNoTracking()
             .Where(pi => prescriptionItemIds.Contains(pi.Id))
             .ToDictionaryAsync(pi => pi.Id, ct);
 
-        var batchIds = dispenseItems.Where(di => di.MedicineBatchId.HasValue).Select(di => di.MedicineBatchId!.Value).ToList();
+        var batchIds = dispenseItems
+            .Where(di => di.MedicineBatchId.HasValue)
+            .Select(di => di.MedicineBatchId!.Value)
+            .Distinct()
+            .ToList();
         var batchesById = await _db.MedicineBatches.AsNoTracking()
             .Where(b => batchIds.Contains(b.Id))
             .ToDictionaryAsync(b => b.Id, ct);
@@ -644,10 +1049,10 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             var drugName = med?.Name ?? $"Thuốc #{pi?.MedicineId}";
             var dosageForm = med?.DosageForm ?? "Viên nén";
             var unit = med?.DispensingUnit ?? pi?.SingleDoseUnit ?? "viên";
-            var qty = di.DispensedQuantity ?? di.PlannedQuantity ?? 1m;
+            var qty = di.DispensedQuantity ?? di.PlannedQuantity ?? 0m;
             totalUnits += qty;
 
-            var batchCode = batch?.BatchNumber ?? "LÔ_CHÍNH_THỨC";
+            var batchCode = batch?.BatchNumber ?? (qty == 0m ? "KHÔNG_XUẤT_KHO" : "LÔ_CHÍNH_THỨC");
             var expiry = batch?.ExpiryDate.HasValue == true
                 ? batch.ExpiryDate.Value.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
                 : "N/A";
@@ -673,7 +1078,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
         var rxCode = prescription.PrescriptionCode ?? $"RX-{prescription.Id:D6}";
         var visitCode = visit.VisitCode ?? $"VIS-{visit.Id:D6}";
         var ticketNo = visit.VisitCode?.Split('-').LastOrDefault() ?? $"{visit.Id:D3}";
-        var dispenseCode = $"DISP-{(dispense.DispensedAt ?? nowUtc).Year:D4}-{dispense.Id:D6}";
+        var dispenseCode = PharmacyDispenseCode.Format(dispense, nowUtc);
 
         var maskedIdentity = (!string.IsNullOrWhiteSpace(patient.IdentificationHash) || !string.IsNullOrWhiteSpace(patient.IdentificationHashHmac))
             ? "****** (Đã đối chiếu CCCD)"
@@ -811,10 +1216,10 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
 
         var upper = trimmed.ToUpperInvariant();
 
-        var query = from p in _db.Prescriptions
-                    join v in _db.Visits on p.VisitId equals v.Id
-                    from r in _db.HospitalRooms.Where(r => r.Id == v.ExaminationRoomId).DefaultIfEmpty()
-                    from d in _db.Doctors.Where(d => d.Id == v.AssignedDoctorId).DefaultIfEmpty()
+        var query = from p in _db.Prescriptions.AsNoTracking()
+                    join v in _db.Visits.AsNoTracking() on p.VisitId equals v.Id
+                    from r in _db.HospitalRooms.AsNoTracking().Where(r => r.Id == v.ExaminationRoomId).DefaultIfEmpty()
+                    from d in _db.Doctors.AsNoTracking().Where(d => d.Id == v.AssignedDoctorId).DefaultIfEmpty()
                     where (isNumeric ? p.Id == parsedId || (p.PrescriptionCode != null && p.PrescriptionCode.ToUpper() == upper)
                                      : p.PrescriptionCode != null && p.PrescriptionCode.ToUpper() == upper)
                     where (r != null && r.HospitalId == hospitalId) ||
@@ -826,7 +1231,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
 
         if (prescription is null)
         {
-            var fallback = await _db.Prescriptions
+            var fallback = await _db.Prescriptions.AsNoTracking()
                 .FirstOrDefaultAsync(p => (isNumeric ? p.Id == parsedId || (p.PrescriptionCode != null && p.PrescriptionCode.ToUpper() == upper)
                                                     : p.PrescriptionCode != null && p.PrescriptionCode.ToUpper() == upper), ct);
 
@@ -848,14 +1253,21 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             prescription = fallback;
         }
 
+        await ValidatePrescriptionEligibilityAsync(prescription, ct);
+
+        return prescription;
+    }
+
+    private async Task ValidatePrescriptionEligibilityAsync(Prescription prescription, CancellationToken ct)
+    {
         if (string.Equals(prescription.Status, "CANCELLED", StringComparison.OrdinalIgnoreCase))
         {
-            throw new ValidationException("Đơn thuốc đã bị hủy, không thể cấp phát.");
+            throw new ConflictException("Đơn thuốc đã bị hủy, không thể cấp phát.");
         }
 
         if (string.Equals(prescription.Status, "DRAFT", StringComparison.OrdinalIgnoreCase))
         {
-            throw new ValidationException("Đơn thuốc đang ở trạng thái nháp, chưa được bác sĩ phát hành.");
+            throw new ConflictException("Đơn thuốc đang ở trạng thái nháp, chưa được bác sĩ phát hành.");
         }
 
         var isFulfillmentHospital = prescription.FulfillmentChoice != null &&
@@ -864,7 +1276,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
 
         if (!isFulfillmentHospital)
         {
-            throw new ValidationException("Đơn thuốc được chỉ định mua ngoài viện, không thuộc phạm vi cấp phát của nhà thuốc bệnh viện.");
+            throw new ConflictException("Đơn thuốc được chỉ định mua ngoài viện, không thuộc phạm vi cấp phát của nhà thuốc bệnh viện.");
         }
 
         var isSuperseded = await _db.Prescriptions.AsNoTracking().AnyAsync(replacement =>
@@ -877,10 +1289,33 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
 
         if (isSuperseded)
         {
-            throw new ValidationException("Đơn thuốc đã bị thay thế bởi đơn thuốc mới hơn.");
+            throw new ConflictException("Đơn thuốc đã bị thay thế bởi đơn thuốc mới hơn.");
         }
+    }
 
-        return prescription;
+    private static void EnsureVisitActiveForPharmacy(Visit visit)
+    {
+        var status = visit.Status?.Trim().ToUpperInvariant();
+        if (status is "CANCELLED" or "NO_SHOW")
+        {
+            throw new ConflictException("Lượt khám đã hủy hoặc không đến, không thể cấp phát thuốc.");
+        }
+    }
+
+    private static bool IsDispensedOrCompleted(string? status) =>
+        string.Equals(status?.Trim(), "DISPENSED", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(status?.Trim(), "COMPLETED", StringComparison.OrdinalIgnoreCase);
+
+    private static async Task SafeRollbackAsync(IDbContextTransaction tx, CancellationToken ct)
+    {
+        try
+        {
+            await tx.RollbackAsync(ct);
+        }
+        catch
+        {
+            // Transaction already aborted on server.
+        }
     }
 
     private static string FormatDoctorDisplayName(Doctor doctor, Staff? staff)
@@ -905,22 +1340,6 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
         }
 
         return !string.IsNullOrWhiteSpace(doctor.DoctorCode) ? doctor.DoctorCode : "Bác sĩ điều trị";
-    }
-
-    private static string MaskIdentityNumber(string? identity)
-    {
-        if (string.IsNullOrWhiteSpace(identity))
-        {
-            return "Chưa cập nhật";
-        }
-
-        var trimmed = identity.Trim();
-        if (trimmed.Length >= 8)
-        {
-            return $"{trimmed[..4]}****{trimmed[^4..]}";
-        }
-
-        return "****";
     }
 
     private static string FormatVndPrice(decimal price)

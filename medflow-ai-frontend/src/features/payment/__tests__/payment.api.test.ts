@@ -56,6 +56,16 @@ describe('payment.api', () => {
     expect(post).toHaveBeenCalledWith('/patients/visits/VIS-1%2F2/payments/qr', {});
   });
 
+  it('sends visitChargeId in body when targeting a specific charge', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({ data: qrDto });
+
+    await expect(generateQrPaymentApi('VIS-202611-0001', 77)).resolves.toEqual(qrDto);
+
+    expect(post).toHaveBeenCalledWith('/patients/visits/VIS-202611-0001/payments/qr', {
+      visitChargeId: 77,
+    });
+  });
+
   it('gets visit charges by visit code', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValueOnce({ data: chargesDto });
 

@@ -36,13 +36,19 @@ interface ProblemDetailsBody {
   message?: string;
 }
 
-function extractPharmacyApiError(error: unknown, fallbackMessage: string): Error {
+export interface PharmacyApiError extends Error {
+  status?: number;
+}
+
+function extractPharmacyApiError(error: unknown, fallbackMessage: string): PharmacyApiError {
   if (axios.isAxiosError(error)) {
+    const status = error.response?.status;
     const body = error.response?.data as ProblemDetailsBody | undefined;
     const msg = body?.detail || body?.message || body?.title;
     if (msg && msg.trim().length > 0) {
-      return new Error(msg.trim());
+      return Object.assign(new Error(msg.trim()), { status });
     }
+    return Object.assign(new Error(error.message || fallbackMessage), { status });
   }
   if (error instanceof Error) {
     return error;

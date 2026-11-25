@@ -1,9 +1,8 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text.Json;
-using MedFlow.Application.DTOs.Payments;
 using MedFlow.Application.Services.Payments;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.IntegrationTests.Auth;
 using Microsoft.EntityFrameworkCore;
@@ -71,18 +70,27 @@ public sealed class SePayWebhookEndpointTests : AuthTestBase
     }
 
     [Fact]
-    public async Task Webhook_PartialTransfers_ConfirmOnSecond()
+    public async Task Webhook_PartialTransfer_TransitionsToMismatchWithoutUnlocking()
     {
         var seed = await SeedAsync(amount: 120_000m);
         try
         {
-            await PostWebhookAsync(Payload(9002, 60_000m, seed.Code));
-            Db.ChangeTracker.Clear();
-            Assert.Equal(PaymentStatuses.Pending, (await Db.Payments.AsNoTracking().FirstAsync(p => p.Id == seed.PaymentId)).Status);
+            var first = await PostWebhookAsync(Payload(9002, 60_000m, seed.Code));
+            Assert.Equal(HttpStatusCode.OK, first.StatusCode);
 
-            await PostWebhookAsync(Payload(9003, 60_000m, seed.Code));
             Db.ChangeTracker.Clear();
-            Assert.Equal(PaymentStatuses.Paid, (await Db.Payments.AsNoTracking().FirstAsync(p => p.Id == seed.PaymentId)).Status);
+            var payment = await Db.Payments.AsNoTracking().FirstAsync(p => p.Id == seed.PaymentId);
+            Assert.Equal(SePayWebhookService.MismatchPaymentStatus, payment.Status);
+            Assert.Null(payment.PaidAt);
+            Assert.Equal(1, await Db.AuditLogs.CountAsync(
+                a => a.EntityId == seed.PaymentId.ToString() &&
+                     a.Action == SePayWebhookService.ReconciliationRequiredAuditAction));
+
+            var second = await PostWebhookAsync(Payload(9003, 60_000m, seed.Code));
+            Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+
+            Db.ChangeTracker.Clear();
+            Assert.Equal(SePayWebhookService.MismatchPaymentStatus, (await Db.Payments.AsNoTracking().FirstAsync(p => p.Id == seed.PaymentId)).Status);
             Assert.Equal(2, await CountEventsAsync(seed.PaymentId));
         }
         finally
@@ -222,12 +230,18 @@ public sealed class SePayWebhookEndpointTests : AuthTestBase
         };
         Db.Visits.Add(visit);
         await Db.SaveChangesAsync();
-        Db.VisitCharges.Add(new VisitCharge
+
+        var charge = new VisitCharge
         {
             VisitId = visit.Id,
+            ChargeType = VisitChargeTypes.Examination,
+            Status = VisitChargeStatuses.Active,
             UnitPrice = amount,
             PaymentRequirement = "REQUIRED",
-        });
+            CreatedAt = createdAt ?? VietnamNow(),
+        };
+        Db.VisitCharges.Add(charge);
+        await Db.SaveChangesAsync();
 
         var policy = new HospitalPolicy
         {
@@ -238,13 +252,12 @@ public sealed class SePayWebhookEndpointTests : AuthTestBase
             PolicyVersion = 1,
         };
         Db.HospitalPolicies.Add(policy);
-        var payment = new Payment
-        {
-            VisitId = visit.Id,
-            Amount = amount,
-            Status = PaymentStatuses.Pending,
-            CreatedAt = createdAt ?? VietnamNow(),
-        };
+        var payment = Payment.CreateForCharge(
+            visit.Id,
+            charge.Id,
+            amount,
+            createdAt ?? VietnamNow(),
+            PaymentStatuses.Pending);
         Db.Payments.Add(payment);
         await Db.SaveChangesAsync();
         payment.PaymentCode = $"MF{payment.Id}";

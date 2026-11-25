@@ -20,10 +20,12 @@ export async function fetchVisitChargesApi(visitIdOrCode: string): Promise<Visit
 /** POST /patients/visits/{idOrCode}/payments/qr — 200 = REUSED/ADOPTED, 201 = CREATED. */
 export async function generateQrPaymentApi(
   visitIdOrCode: string,
+  visitChargeId?: number | null,
 ): Promise<GenerateQrPaymentResponse> {
+  const body = visitChargeId != null ? { visitChargeId } : {};
   const { data } = await apiClient.post<GenerateQrPaymentResponse>(
     `/patients/visits/${encodeURIComponent(visitIdOrCode.trim())}/payments/qr`,
-    {},
+    body,
   );
   return data;
 }

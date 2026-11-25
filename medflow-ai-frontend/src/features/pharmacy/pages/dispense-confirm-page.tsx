@@ -1,3 +1,4 @@
+import axios from 'axios';
 import {
   ArrowLeft,
   ArrowRight,
@@ -6,7 +7,7 @@ import {
   Printer,
   RefreshCw,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
@@ -16,7 +17,10 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 
 import { DispenseIdentityVerificationCard } from '../components/dispense-identity-verification-card';
-import { DispenseMedicationCounselingList } from '../components/dispense-medication-counseling-list';
+import {
+  DispenseMedicationCounselingList,
+  type DispenseLineEditState,
+} from '../components/dispense-medication-counseling-list';
 import { PharmacySidebar } from '../components/pharmacy-sidebar';
 import { PHARMACY_WORKBENCH_META } from '../data/pharmacy-mock-data';
 import {
@@ -24,6 +28,25 @@ import {
   useDispenseConfirmContext,
 } from '../hooks/use-pharmacy-workbench';
 import type { PharmacistHandoverCheck } from '../types/dispense-confirm.types';
+
+function createAttemptToken(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function isValidationOrConflictError(error: unknown): boolean {
+  if (axios.isAxiosError(error)) {
+    const status = error.response?.status;
+    return status === 400 || status === 409 || status === 422;
+  }
+  if (error instanceof Error && 'status' in error) {
+    const status = (error as { status?: number }).status;
+    return status === 400 || status === 409 || status === 422;
+  }
+  return false;
+}
 
 export function DispenseConfirmPage() {
   const params = useParams<{ prescriptionCode?: string }>();
@@ -41,6 +64,9 @@ export function DispenseConfirmPage() {
   const [checkOverridesByRx, setCheckOverridesByRx] = useState<
     Record<string, Record<string, boolean>>
   >({});
+  const [lineEditsByRx, setLineEditsByRx] = useState<
+    Record<string, Record<string, DispenseLineEditState>>
+  >({});
   const [dispensedCodeByRx, setDispensedCodeByRx] = useState<Record<string, string>>({});
   const [noticeState, setNoticeState] = useState<{
     rxCode: string;
@@ -48,7 +74,29 @@ export function DispenseConfirmPage() {
     message: string;
   } | null>(null);
 
+  // BUG-P3-01: Scoped idempotencyKey per (prescriptionId, attemptId):
+  // - Regenerated when switching prescriptions or after validation/conflict errors / payload edits
+  // - Preserved across network/5xx retries of the exact same submit
+  const attemptByPrescriptionRef = useRef<Map<string, string>>(new Map());
+
   const ctx = contextQuery.data;
+  const prescriptionScopeKey =
+    ctx?.prescriptionId != null ? String(ctx.prescriptionId) : activeRxCode;
+
+  const getOrCreateIdempotencyKey = (scopeKey: string): string => {
+    let attemptId = attemptByPrescriptionRef.current.get(scopeKey);
+    if (!attemptId) {
+      attemptId = createAttemptToken();
+      attemptByPrescriptionRef.current.set(scopeKey, attemptId);
+    }
+    return `${scopeKey}:${attemptId}`;
+  };
+
+  const rotateIdempotencyAttempt = (scopeKey: string) => {
+    if (!scopeKey) return;
+    attemptByPrescriptionRef.current.set(scopeKey, createAttemptToken());
+  };
+
   const isServerDispensed = ctx?.dispenseStatus === 'DISPENSED';
   const isServerCancelled = ctx?.dispenseStatus === 'CANCELLED';
   const isServerBlocked = isServerDispensed || isServerCancelled || ctx?.canDispense === false;
@@ -57,6 +105,7 @@ export function DispenseConfirmPage() {
     : '';
   const serverChecks = ctx?.checks;
   const activeCheckEdits = activeRxCode ? checkOverridesByRx[activeRxCode] : undefined;
+  const activeLineEdits = activeRxCode ? lineEditsByRx[activeRxCode] : undefined;
   const notice = noticeState?.rxCode === activeRxCode ? noticeState : null;
 
   const isIdentityVerified = isServerBlocked
@@ -104,10 +153,47 @@ export function DispenseConfirmPage() {
     });
   };
 
+  const handleChangeLineQuantity = (medId: string, quantity: number) => {
+    if (isServerBlocked || !activeRxCode) return;
+    rotateIdempotencyAttempt(prescriptionScopeKey);
+    setLineEditsByRx((prev) => {
+      const rxEdits = prev[activeRxCode] ?? {};
+      return {
+        ...prev,
+        [activeRxCode]: {
+          ...rxEdits,
+          [medId]: {
+            ...rxEdits[medId],
+            dispensedQuantity: quantity,
+          },
+        },
+      };
+    });
+  };
+
+  const handleChangeShortageReason = (medId: string, reason: string) => {
+    if (isServerBlocked || !activeRxCode) return;
+    rotateIdempotencyAttempt(prescriptionScopeKey);
+    setLineEditsByRx((prev) => {
+      const rxEdits = prev[activeRxCode] ?? {};
+      return {
+        ...prev,
+        [activeRxCode]: {
+          ...rxEdits,
+          [medId]: {
+            ...rxEdits[medId],
+            shortageReason: reason,
+          },
+        },
+      };
+    });
+  };
+
   const handleConfirmDispense = async () => {
     if (!ctx || isServerBlocked) return;
 
     if (!isIdentityVerified) {
+      rotateIdempotencyAttempt(prescriptionScopeKey);
       setNoticeState({
         rxCode: activeRxCode,
         tone: 'error',
@@ -119,6 +205,7 @@ export function DispenseConfirmPage() {
 
     const unchecked = checks.filter((c) => !c.checked);
     if (unchecked.length > 0) {
+      rotateIdempotencyAttempt(prescriptionScopeKey);
       setNoticeState({
         rxCode: activeRxCode,
         tone: 'error',
@@ -126,6 +213,65 @@ export function DispenseConfirmPage() {
       });
       return;
     }
+
+    const itemsPayload = ctx.medications
+      .filter((m) => m.prescriptionItemId != null)
+      .map((m) => {
+        const edit = activeLineEdits?.[m.id];
+        const defaultQty = m.dispensedQuantity ?? m.prescribedQuantity ?? null;
+        const resolvedQty =
+          edit?.dispensedQuantity !== undefined ? edit.dispensedQuantity : defaultQty;
+        const trimmedReason = edit?.shortageReason?.trim() || undefined;
+        return {
+          prescriptionItemId: m.prescriptionItemId as number,
+          medicineBatchId: m.batchId ?? null,
+          dispensedQuantity: resolvedQty,
+          shortageReason: trimmedReason ?? null,
+          prescribedQuantity: m.prescribedQuantity ?? 0,
+          drugName: m.drugName,
+        };
+      });
+
+    for (const row of itemsPayload) {
+      if (row.dispensedQuantity != null && row.dispensedQuantity < 0) {
+        rotateIdempotencyAttempt(prescriptionScopeKey);
+        setNoticeState({
+          rxCode: activeRxCode,
+          tone: 'error',
+          message: `Số lượng thực xuất của thuốc ${row.drugName} không được âm.`,
+        });
+        return;
+      }
+    }
+
+    // Group by prescriptionItemId to enforce shortageReason when total dispensed < prescribed (including 0)
+    const groupedByPi = new Map<
+      number,
+      { prescribed: number; dispensed: number; hasReason: boolean; drugName: string }
+    >();
+    for (const row of itemsPayload) {
+      const prev = groupedByPi.get(row.prescriptionItemId);
+      groupedByPi.set(row.prescriptionItemId, {
+        prescribed: row.prescribedQuantity || prev?.prescribed || 0,
+        dispensed: (prev?.dispensed ?? 0) + (row.dispensedQuantity ?? 0),
+        hasReason: Boolean(prev?.hasReason || row.shortageReason),
+        drugName: row.drugName,
+      });
+    }
+
+    for (const [, summary] of groupedByPi) {
+      if (summary.dispensed < summary.prescribed && !summary.hasReason) {
+        rotateIdempotencyAttempt(prescriptionScopeKey);
+        setNoticeState({
+          rxCode: activeRxCode,
+          tone: 'error',
+          message: `Thuốc ${summary.drugName} có số lượng thực xuất (${summary.dispensed}) nhỏ hơn kê đơn (${summary.prescribed}). Vui lòng nhập lý do cấp thiếu thuốc.`,
+        });
+        return;
+      }
+    }
+
+    const idempotencyKey = getOrCreateIdempotencyKey(prescriptionScopeKey);
 
     try {
       const result = await confirmMutation.mutateAsync({
@@ -136,16 +282,21 @@ export function DispenseConfirmPage() {
         receiverPhone: ctx.receiver.phone,
         isIdentityVerified: true,
         checksConfirmed: true,
-        items: ctx.medications
-          .filter((m) => m.prescriptionItemId != null)
-          .map((m) => ({
-            prescriptionItemId: m.prescriptionItemId as number,
-            medicineBatchId: m.batchId ?? null,
-            dispensedQuantity: m.dispensedQuantity ?? null,
-          })),
+        idempotencyKey,
+        items: itemsPayload.map((item) => ({
+          prescriptionItemId: item.prescriptionItemId,
+          medicineBatchId: item.medicineBatchId,
+          dispensedQuantity: item.dispensedQuantity,
+          ...(item.shortageReason ? { shortageReason: item.shortageReason } : {}),
+        })),
       });
 
       setCheckOverridesByRx((prev) => {
+        const next = { ...prev };
+        delete next[activeRxCode];
+        return next;
+      });
+      setLineEditsByRx((prev) => {
         const next = { ...prev };
         delete next[activeRxCode];
         return next;
@@ -167,6 +318,9 @@ export function DispenseConfirmPage() {
         message: `Đã hoàn tất bàn giao đơn thuốc ${ctx.rxCode} cho bệnh nhân ${ctx.receiver.fullName}, trừ tồn kho FEFO và phát hành biên nhận ${result.dispenseCode}.`,
       });
     } catch (error) {
+      if (isValidationOrConflictError(error)) {
+        rotateIdempotencyAttempt(prescriptionScopeKey);
+      }
       setNoticeState({
         rxCode: activeRxCode,
         tone: 'error',
@@ -238,7 +392,7 @@ export function DispenseConfirmPage() {
 
         <main className="flex-1 space-y-5 overflow-y-auto p-6 pb-28">
           {!activeRxCode && (
-            <div className="rounded-2xl border border-border bg-white p-8 text-center space-y-3">
+            <div className="space-y-3 rounded-2xl border border-border bg-white p-8 text-center">
               <p className="text-sm font-bold text-navy">
                 Chưa chọn đơn thuốc để xác nhận bàn giao
               </p>
@@ -311,6 +465,10 @@ export function DispenseConfirmPage() {
                   medications={ctx.medications}
                   checks={checks}
                   onToggleCheck={handleToggleCheck}
+                  lineEdits={activeLineEdits}
+                  onChangeLineQuantity={handleChangeLineQuantity}
+                  onChangeShortageReason={handleChangeShortageReason}
+                  disabled={isDispensed || isServerBlocked || confirmMutation.isPending}
                 />
               </div>
             </div>

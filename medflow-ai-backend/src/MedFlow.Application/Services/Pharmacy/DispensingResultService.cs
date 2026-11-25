@@ -78,22 +78,16 @@ public sealed class DispensingResultService : IDispensingResultService
             }
         }
 
-        if (dispense is null && upperIdOrCode.StartsWith("DISP-", StringComparison.Ordinal))
+        if (dispense is null && PharmacyDispenseCode.TryExtractDispenseId(upperIdOrCode, out var extractedId))
         {
-            var lastDash = upperIdOrCode.LastIndexOf('-');
-            if (lastDash >= 0 &&
-                long.TryParse(upperIdOrCode[(lastDash + 1)..], out var extractedId) &&
-                extractedId > 0)
-            {
-                var candidate = await _db.MedicationDispenses
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(md => md.Id == extractedId, ct);
+            var candidate = await _db.MedicationDispenses
+                .AsNoTracking()
+                .FirstOrDefaultAsync(md => md.Id == extractedId, ct);
 
-                if (candidate is not null &&
-                    string.Equals(FormatDispenseCode(candidate, nowUtc), upperIdOrCode, StringComparison.Ordinal))
-                {
-                    dispense = candidate;
-                }
+            if (candidate is not null &&
+                PharmacyDispenseCode.Matches(candidate, upperIdOrCode, nowUtc))
+            {
+                dispense = candidate;
             }
         }
 
@@ -242,15 +236,34 @@ public sealed class DispensingResultService : IDispensingResultService
             : new Dictionary<long, Medicine>();
 
         var hasInvalidItemGraph = dispenseItems.Count == 0 || dispenseItems.Any(di =>
-            !di.PrescriptionItemId.HasValue ||
-            !prescriptionItemsById.TryGetValue(di.PrescriptionItemId.Value, out var prescriptionItem) ||
-            !prescriptionItem.MedicineId.HasValue ||
-            !medicinesById.TryGetValue(prescriptionItem.MedicineId.Value, out var medicine) ||
-            medicine.HospitalId != hospitalId ||
-            !di.MedicineBatchId.HasValue ||
-            !batchesById.TryGetValue(di.MedicineBatchId.Value, out var batch) ||
-            batch.MedicineId != medicine.Id ||
-            (di.DispensedQuantity ?? di.PlannedQuantity ?? 0m) <= 0m);
+        {
+            if (!di.PrescriptionItemId.HasValue ||
+                !prescriptionItemsById.TryGetValue(di.PrescriptionItemId.Value, out var prescriptionItem) ||
+                !prescriptionItem.MedicineId.HasValue ||
+                !medicinesById.TryGetValue(prescriptionItem.MedicineId.Value, out var medicine) ||
+                medicine.HospitalId != hospitalId)
+            {
+                return true;
+            }
+
+            var isZeroDispenseWithReason = di.DispensedQuantity.HasValue &&
+                                           di.DispensedQuantity.Value == 0m &&
+                                           !string.IsNullOrWhiteSpace(di.ShortageReason);
+
+            var effectiveQty = di.DispensedQuantity ?? di.PlannedQuantity ?? 0m;
+            if (effectiveQty < 0m || (!isZeroDispenseWithReason && effectiveQty <= 0m))
+            {
+                return true;
+            }
+
+            if (!di.MedicineBatchId.HasValue)
+            {
+                return !isZeroDispenseWithReason;
+            }
+
+            return !batchesById.TryGetValue(di.MedicineBatchId.Value, out var batch) ||
+                   batch.MedicineId != medicine.Id;
+        });
 
         if (hasInvalidItemGraph)
         {
@@ -574,10 +587,7 @@ public sealed class DispensingResultService : IDispensingResultService
     }
 
     private static string FormatDispenseCode(MedicationDispense dispense, DateTime fallbackUtc)
-    {
-        var dispenseDate = dispense.DispensedAt ?? dispense.PreparedAt ?? fallbackUtc;
-        return $"DISP-{dispenseDate:yyyy-MMdd}-{dispense.Id:D4}";
-    }
+        => PharmacyDispenseCode.Format(dispense, fallbackUtc);
 
     private static string FormatVnd(decimal amount)
     {

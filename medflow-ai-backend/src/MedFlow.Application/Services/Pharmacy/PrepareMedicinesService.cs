@@ -67,6 +67,7 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
         ValidateIdOrCode(idOrCode);
 
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var todayDateOnly = HospitalClock.GetToday(_timeProvider);
         var staffContext = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
 
@@ -178,9 +179,10 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
                 .ToListAsync(ct)
             : new List<DispenseItem>();
 
-        var dispenseItemByPrescriptionItemId = existingDispenseItems
+        var dispenseItemsByPrescriptionItemId = existingDispenseItems
             .Where(di => di.PrescriptionItemId.HasValue)
-            .ToDictionary(di => di.PrescriptionItemId!.Value);
+            .GroupBy(di => di.PrescriptionItemId!.Value)
+            .ToDictionary(g => g.Key, g => g.OrderBy(di => di.Id).ToList());
 
         // Fetch batches for all medicines in this prescription
         var medicineIds = rawItems.Select(r => r.Medicine.Id).Distinct().ToList();
@@ -220,7 +222,8 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
                 IsFefoRecommended: fefoBatch != null && b.Id == fefoBatch.Id
             )).ToList();
 
-            dispenseItemByPrescriptionItemId.TryGetValue(pi.Id, out var existingDi);
+            dispenseItemsByPrescriptionItemId.TryGetValue(pi.Id, out var existingDis);
+            var existingDi = existingDis?.FirstOrDefault();
 
             var selectedBatchId = existingDi?.MedicineBatchId ?? fefoBatch?.Id;
             var selectedBatchCode = candidateBatches.FirstOrDefault(b => b.Id == selectedBatchId)?.BatchNumber
@@ -228,7 +231,9 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
                 ?? (candidateBatches.Count > 0 ? candidateBatches[0].BatchNumber : null);
 
             var prescribedQty = pi.PrescribedQuantity ?? 0;
-            var pickedQty = existingDi?.PlannedQuantity ?? prescribedQty;
+            var pickedQty = existingDis is { Count: > 0 }
+                ? existingDis.Sum(di => di.PlannedQuantity ?? 0m)
+                : prescribedQty;
             var isPrepared = existingDi != null || (pickedQty == prescribedQty && selectedBatchId.HasValue);
 
             var usageInstruction = string.Join(" • ", new[]
@@ -342,22 +347,33 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
         }
 
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var todayDateOnly = HospitalClock.GetToday(_timeProvider);
         var staffContext = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
 
-        var prescription = await ResolveScopedPrescriptionAsync(idOrCode, staffContext.HospitalId, ct);
+        var preCheckPrescription = await ResolveScopedPrescriptionAsync(idOrCode, staffContext.HospitalId, ct);
+        var visitId = preCheckPrescription.VisitId
+            ?? throw new NotFoundException("Visit", 0);
 
-        // State Machine validation
-        var currentStatus = prescription.Status?.Trim().ToUpperInvariant();
-        if (currentStatus == "DISPENSED")
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        await _db.TryLockVisitForUpdateAsync(visitId, ct);
+        await _db.TryLockPrescriptionForUpdateAsync(preCheckPrescription.Id, ct);
+
+        if (_db is DbContext trackerCtx)
         {
-            throw new ConflictException("Đơn thuốc đã được hoàn tất cấp phát, không thể thực hiện soạn lại.");
+            trackerCtx.ChangeTracker.Clear();
         }
 
-        if (currentStatus == "CANCELLED")
-        {
-            throw new ConflictException("Đơn thuốc đã bị hủy, không thể thực hiện soạn thuốc.");
-        }
+        var visit = await _db.Visits.AsNoTracking()
+            .FirstOrDefaultAsync(v => v.Id == visitId, ct)
+            ?? throw new NotFoundException("Visit", visitId);
+        EnsureVisitActiveForPharmacy(visit);
+
+        var prescription = await _db.Prescriptions
+            .FirstOrDefaultAsync(p => p.Id == preCheckPrescription.Id, ct)
+            ?? throw new NotFoundException("Prescription", preCheckPrescription.Id);
+        EnsurePrescriptionEligibleForPreparation(prescription, allowAlreadyDispensedRead: false);
 
         // Query all items for this prescription
         var prescriptionItems = await (
@@ -399,8 +415,25 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
             throw new ValidationException($"Còn {missingItemIds.Count} khoản thuốc trong đơn chưa được soạn đủ.");
         }
 
-        // Validate batches and stocks
+        var medicineIds = prescriptionItems.Select(x => x.Medicine.Id).Distinct().ToList();
+        var candidateBatchIds = await _db.MedicineBatches.AsNoTracking()
+            .Where(b => b.MedicineId.HasValue && medicineIds.Contains(b.MedicineId.Value))
+            .OrderBy(b => b.Id)
+            .Select(b => b.Id)
+            .ToListAsync(ct);
+
+        if (candidateBatchIds.Count > 0)
+        {
+            await _db.TryLockMedicineBatchesForUpdateAsync(candidateBatchIds, ct);
+        }
+
+        var lockedBatches = await _db.MedicineBatches.AsNoTracking()
+            .Where(b => b.MedicineId.HasValue && medicineIds.Contains(b.MedicineId.Value))
+            .ToListAsync(ct);
+
+        // Validate batches and per-batch aggregated stocks
         var preparedItemsData = new List<(PrescriptionItem Item, Medicine Medicine, MedicineBatch Batch, decimal PickedQty, string? ShortageReason)>();
+        var totalPickedByBatchId = new Dictionary<long, decimal>();
 
         foreach (var reqItem in request.Items)
         {
@@ -411,19 +444,24 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
             MedicineBatch? batch = null;
             if (reqItem.MedicineBatchId.HasValue)
             {
-                batch = await _db.MedicineBatches
-                    .FirstOrDefaultAsync(b => b.Id == reqItem.MedicineBatchId.Value && b.MedicineId == med.Id, ct);
+                batch = lockedBatches
+                    .FirstOrDefault(b => b.Id == reqItem.MedicineBatchId.Value && b.MedicineId == med.Id);
             }
             else if (!string.IsNullOrWhiteSpace(reqItem.BatchCode))
             {
                 var trimmedCode = reqItem.BatchCode.Trim();
-                batch = await _db.MedicineBatches
-                    .FirstOrDefaultAsync(b => b.BatchNumber == trimmedCode && b.MedicineId == med.Id, ct);
+                batch = lockedBatches
+                    .FirstOrDefault(b => b.BatchNumber == trimmedCode && b.MedicineId == med.Id);
             }
 
             if (batch == null)
             {
                 throw new ValidationException($"Không tìm thấy lô thuốc hợp lệ cho thuốc {med.Name}.");
+            }
+
+            if (preparedItemsData.Any(p => p.Item.Id == pi.Id && p.Batch.Id == batch.Id))
+            {
+                throw new ValidationException($"Không được chọn trùng lô {batch.BatchNumber} cho cùng khoản thuốc {med.Name}.");
             }
 
             if (batch.IsBlocked == true)
@@ -436,24 +474,40 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
                 throw new ConflictException($"Lô thuốc {batch.BatchNumber} của thuốc {med.Name} đã hết hạn sử dụng ({batch.ExpiryDate.Value:dd/MM/yyyy}).");
             }
 
+            totalPickedByBatchId.TryGetValue(batch.Id, out var priorPickedForBatch);
+            var cumulativeForBatch = priorPickedForBatch + reqItem.PickedQuantity;
             var availableStock = batch.QuantityOnHand ?? 0;
-            if (availableStock < reqItem.PickedQuantity)
+            if (availableStock < cumulativeForBatch)
             {
-                throw new ConflictException($"Lô thuốc {batch.BatchNumber} không đủ tồn kho khả dụng ({availableStock} < {reqItem.PickedQuantity}) cho thuốc {med.Name}.");
+                throw new ConflictException($"Lô thuốc {batch.BatchNumber} không đủ tồn kho khả dụng ({availableStock} < {cumulativeForBatch}) cho thuốc {med.Name}.");
             }
 
-            var prescribedQty = pi.PrescribedQuantity ?? 0;
-            if (reqItem.PickedQuantity != prescribedQty && string.IsNullOrWhiteSpace(reqItem.ShortageReason))
-            {
-                throw new ValidationException($"Số lượng thực soạn ({reqItem.PickedQuantity}) chưa khớp y lệnh ({prescribedQty}) cho thuốc {med.Name}. Vui lòng nhập lý do nếu thiếu thuốc.");
-            }
-
+            totalPickedByBatchId[batch.Id] = cumulativeForBatch;
             preparedItemsData.Add((pi, med, batch, reqItem.PickedQuantity, reqItem.ShortageReason));
+        }
+
+        foreach (var group in preparedItemsData.GroupBy(x => x.Item.Id))
+        {
+            var first = group.First();
+            var prescribedQty = first.Item.PrescribedQuantity ?? 0m;
+            var totalPickedForItem = group.Sum(x => x.PickedQty);
+            var hasShortageReason = group.Any(x => !string.IsNullOrWhiteSpace(x.ShortageReason));
+            if (totalPickedForItem != prescribedQty && !hasShortageReason)
+            {
+                throw new ValidationException($"Số lượng thực soạn ({totalPickedForItem}) chưa khớp y lệnh ({prescribedQty}) cho thuốc {first.Medicine.Name}. Vui lòng nhập lý do nếu thiếu thuốc.");
+            }
         }
 
         // Find or create MedicationDispense
         var dispense = await _db.MedicationDispenses
             .FirstOrDefaultAsync(md => md.PrescriptionId == prescription.Id, ct);
+
+        if (dispense != null &&
+            (string.Equals(dispense.Status, "DISPENSED", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(dispense.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ConflictException("Đơn thuốc đã được hoàn tất cấp phát, không thể thực hiện soạn lại.");
+        }
 
         if (dispense == null)
         {
@@ -462,7 +516,7 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
                 PrescriptionId = prescription.Id,
                 PreparedByStaffId = staffContext.Staff.Id,
                 Status = "READY",
-                PreparedAt = nowUtc,
+                PreparedAt = nowLocal,
             };
             _db.MedicationDispenses.Add(dispense);
             await _db.SaveChangesAsync(ct);
@@ -471,26 +525,36 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
         {
             dispense.PreparedByStaffId = staffContext.Staff.Id;
             dispense.Status = "READY";
-            dispense.PreparedAt = nowUtc;
+            dispense.PreparedAt = nowLocal;
         }
 
-        // Manage DispenseItems
+        // Manage DispenseItems (preserve multi-batch FEFO allocations and store DispensedQuantity = null!)
         var existingDispenseItems = await _db.DispenseItems
             .Where(di => di.DispenseId == dispense.Id)
+            .OrderBy(di => di.Id)
             .ToListAsync(ct);
 
-        var existingByPrescriptionItemId = existingDispenseItems
-            .Where(di => di.PrescriptionItemId.HasValue)
-            .ToDictionary(di => di.PrescriptionItemId!.Value);
+        var retainedItems = new HashSet<DispenseItem>();
 
         foreach (var prep in preparedItemsData)
         {
-            if (existingByPrescriptionItemId.TryGetValue(prep.Item.Id, out var existingDi))
+            var existingMatch = existingDispenseItems.FirstOrDefault(di =>
+                !retainedItems.Contains(di) &&
+                di.PrescriptionItemId == prep.Item.Id &&
+                di.MedicineBatchId == prep.Batch.Id);
+
+            existingMatch ??= existingDispenseItems.FirstOrDefault(di =>
+                !retainedItems.Contains(di) &&
+                di.PrescriptionItemId == prep.Item.Id &&
+                preparedItemsData.Count(p => p.Item.Id == prep.Item.Id) == 1);
+
+            if (existingMatch != null)
             {
-                existingDi.MedicineBatchId = prep.Batch.Id;
-                existingDi.PlannedQuantity = prep.PickedQty;
-                existingDi.DispensedQuantity = 0;
-                existingDi.ShortageReason = prep.ShortageReason;
+                retainedItems.Add(existingMatch);
+                existingMatch.MedicineBatchId = prep.Batch.Id;
+                existingMatch.PlannedQuantity = prep.PickedQty;
+                existingMatch.DispensedQuantity = null;
+                existingMatch.ShortageReason = prep.ShortageReason;
             }
             else
             {
@@ -500,11 +564,19 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
                     PrescriptionItemId = prep.Item.Id,
                     MedicineBatchId = prep.Batch.Id,
                     PlannedQuantity = prep.PickedQty,
-                    DispensedQuantity = 0,
+                    DispensedQuantity = null,
                     ShortageReason = prep.ShortageReason,
                 };
                 _db.DispenseItems.Add(newDi);
             }
+        }
+
+        var obsoleteItems = existingDispenseItems
+            .Where(di => !retainedItems.Contains(di))
+            .ToList();
+        if (obsoleteItems.Count > 0)
+        {
+            _db.DispenseItems.RemoveRange(obsoleteItems);
         }
 
         // Update Prescription Status to READY
@@ -533,6 +605,7 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
         });
 
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
 
         var staffName = !string.IsNullOrWhiteSpace(staffContext.Staff.FullName)
             ? staffContext.Staff.FullName
@@ -659,9 +732,6 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
             where isNumericId
                 ? prescription.Id == parsedId || (prescription.PrescriptionCode != null && prescription.PrescriptionCode!.ToUpper() == trimmed.ToUpper())
                 : prescription.PrescriptionCode != null && prescription.PrescriptionCode!.ToUpper() == trimmed.ToUpper()
-            where prescription.FulfillmentChoice == null ||
-                  prescription.FulfillmentChoice!.ToUpper() == "HOSPITAL" ||
-                  prescription.FulfillmentChoice!.ToUpper() == "HOSPITAL_PHARMACY"
             where (room != null && room.HospitalId == hospitalId) ||
                   (assignedDoctor != null && assignedDoctor.HospitalId == hospitalId) ||
                   (prescription.PrescribingDoctorId.HasValue && _db.Doctors.Any(d => d.Id == prescription.PrescribingDoctorId!.Value && d.HospitalId == hospitalId))
@@ -669,14 +739,56 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
                 replacement.ReplacesPrescriptionId == prescription.Id &&
                 replacement.Status != null &&
                 replacement.Status!.ToUpper() != "CANCELLED")
-            select prescription;
+            select new { Prescription = prescription, Visit = visit };
 
-        var entity = await query.FirstOrDefaultAsync(ct);
-        if (entity == null)
+        var resolved = await query.FirstOrDefaultAsync(ct);
+        if (resolved == null)
         {
             throw new NotFoundException("Prescription", idOrCode);
         }
 
-        return entity;
+        EnsureVisitActiveForPharmacy(resolved.Visit);
+        EnsurePrescriptionEligibleForPreparation(resolved.Prescription, allowAlreadyDispensedRead: true);
+
+        return resolved.Prescription;
+    }
+
+    private static void EnsureVisitActiveForPharmacy(Visit visit)
+    {
+        var visitStatus = visit.Status?.Trim().ToUpperInvariant();
+        if (visitStatus is "CANCELLED" or "NO_SHOW")
+        {
+            throw new ConflictException("Lượt khám đã hủy hoặc không đến, không thể soạn thuốc.");
+        }
+    }
+
+    private static void EnsurePrescriptionEligibleForPreparation(
+        Prescription prescription,
+        bool allowAlreadyDispensedRead)
+    {
+        var currentStatus = prescription.Status?.Trim().ToUpperInvariant();
+        if (currentStatus == "DRAFT")
+        {
+            throw new ConflictException("Đơn thuốc đang ở trạng thái nháp (DRAFT), chưa được bác sĩ phát hành.");
+        }
+
+        if (currentStatus == "CANCELLED")
+        {
+            throw new ConflictException("Đơn thuốc đã bị hủy, không thể thực hiện soạn thuốc.");
+        }
+
+        if (!allowAlreadyDispensedRead && currentStatus == "DISPENSED")
+        {
+            throw new ConflictException("Đơn thuốc đã được hoàn tất cấp phát, không thể thực hiện soạn lại.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(prescription.FulfillmentChoice))
+        {
+            var choice = prescription.FulfillmentChoice.Trim().ToUpperInvariant();
+            if (choice is not ("HOSPITAL" or "HOSPITAL_PHARMACY"))
+            {
+                throw new ConflictException("Đơn thuốc mua ngoài viện (EXTERNAL_PHARMACY), không thuộc phạm vi soạn thuốc tại bệnh viện.");
+            }
+        }
     }
 }

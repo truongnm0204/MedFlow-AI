@@ -2,9 +2,16 @@ export type ChargeSource = 'PERSISTED' | 'DERIVED';
 
 export type ChargeDataStatus = 'VALID' | 'INVALID' | 'UNPRICED';
 
+export type ChargeType = 'EXAMINATION' | 'DIAGNOSTIC';
+
+export type ChargeStatus = 'ACTIVE' | 'CANCELLED' | 'CANCELLED_REFUND_PENDING';
+
 export type SettlementStatus = 'UNPAID' | 'PAID' | 'MISMATCH' | 'UNDETERMINED';
 
-export type PaymentStatus = 'UNPAID' | 'PENDING' | 'PAID' | 'EXPIRED' | 'CANCELLED' | 'FAILED';
+export type LineSettlementStatus = SettlementStatus | 'WAIVED' | 'CANCELLED';
+
+export type PaymentStatus =
+  'UNPAID' | 'PENDING' | 'PAID' | 'MISMATCH' | 'EXPIRED' | 'CANCELLED' | 'FAILED';
 
 export type QrPaymentIssueKind = 'CREATED' | 'ADOPTED' | 'REUSED';
 
@@ -19,6 +26,13 @@ export interface VisitChargeLine {
   paymentRequirement: string | null;
   payable: boolean | null;
   chargeDataStatus: ChargeDataStatus;
+  chargeType?: ChargeType;
+  chargeStatus?: ChargeStatus;
+  lineSettlementStatus?: LineSettlementStatus;
+  paymentId?: number | null;
+  paymentCode?: string | null;
+  paymentStatus?: PaymentStatus | null;
+  canPayByQr?: boolean;
 }
 
 export interface VisitChargesResponse {
@@ -57,6 +71,7 @@ export interface GenerateQrPaymentResponse {
   accountName: string;
   transferContent: string;
   issueKind: QrPaymentIssueKind;
+  visitChargeId?: number | null;
 }
 
 // ── Patient visit list (GET /patients/me/visits) ───────────────────────────────

@@ -12,6 +12,12 @@ const PAYMENT_CONNECTED_POLL_MS = 15_000;
 
 const chargesKey = (visitCode: string) => ['payments', 'charges', visitCode] as const;
 
+function hasAnyPendingQr(data: VisitChargesResponse | undefined): boolean {
+  if (!data) return false;
+  if (data.paymentStatus?.toUpperCase() === 'PENDING') return true;
+  return data.charges.some((line) => line.paymentStatus?.toUpperCase() === 'PENDING');
+}
+
 /** Poll 15 giây khi đang kết nối SignalR, 5 giây dự phòng khi mất kết nối cho mã PENDING. */
 export function useVisitChargesQuery(visitCode: string) {
   const queryClient = useQueryClient();
@@ -21,9 +27,8 @@ export function useVisitChargesQuery(visitCode: string) {
   const cached = queryClient.getQueryData<VisitChargesResponse>(key);
   const isTerminal =
     cached?.settlementStatus === 'PAID' ||
-    cached?.paymentStatus === 'PAID' ||
-    cached?.paymentStatus === 'CANCELLED' ||
-    cached?.paymentStatus === 'FAILED';
+    (cached?.charges.length === 0 &&
+      (cached?.paymentStatus === 'CANCELLED' || cached?.paymentStatus === 'FAILED'));
 
   const shouldSubscribe = Boolean(trimmed) && !isTerminal;
   const channel = useMemo<RealtimeChannel | null>(
@@ -51,7 +56,7 @@ export function useVisitChargesQuery(visitCode: string) {
     queryFn: () => fetchVisitChargesApi(visitCode),
     enabled: Boolean(visitCode),
     refetchInterval: (query) => {
-      if (query.state.data?.paymentStatus !== 'PENDING') {
+      if (!hasAnyPendingQr(query.state.data)) {
         return false;
       }
       return isLive ? PAYMENT_CONNECTED_POLL_MS : PAYMENT_DISCONNECTED_POLL_MS;
@@ -63,7 +68,7 @@ export function useVisitChargesQuery(visitCode: string) {
 export function useGenerateQrPaymentMutation(visitCode: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => generateQrPaymentApi(visitCode),
+    mutationFn: (visitChargeId?: number | null) => generateQrPaymentApi(visitCode, visitChargeId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: chargesKey(visitCode) }),
   });
 }

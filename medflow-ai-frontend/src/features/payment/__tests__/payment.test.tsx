@@ -287,4 +287,107 @@ describe('PatientPaymentDetailPage', () => {
     expect(await screen.findByText(detail)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Thử lại/ })).toBeInTheDocument();
   });
+
+  it('không báo đã thanh toán đủ khi phí khám PAID nhưng cận lâm sàng còn UNPAID và gửi visitChargeId khi tạo QR', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: charges({
+        settlementStatus: 'UNPAID',
+        payableTotal: 350000,
+        recognizedPaidTotal: 200000,
+        amountDue: 150000,
+        paymentId: 11,
+        paymentCode: 'MF11',
+        paymentStatus: 'PAID',
+        paymentAmount: 200000,
+        canPayByQr: true,
+        charges: [
+          charge({
+            chargeId: 101,
+            serviceName: 'Khám Nội tổng quát',
+            unitPrice: 200000,
+            chargeType: 'EXAMINATION',
+            chargeStatus: 'ACTIVE',
+            lineSettlementStatus: 'PAID',
+            canPayByQr: false,
+          }),
+          charge({
+            chargeId: 102,
+            serviceName: 'Xét nghiệm công thức máu',
+            diagnosticOrderId: 501,
+            unitPrice: 150000,
+            chargeType: 'DIAGNOSTIC',
+            chargeStatus: 'ACTIVE',
+            lineSettlementStatus: 'UNPAID',
+            canPayByQr: true,
+          }),
+        ],
+      }),
+    } as never);
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: qrResponse({
+        paymentId: 99,
+        paymentCode: 'MF99',
+        amount: 150000,
+        transferContent: 'MF99',
+        visitChargeId: 102,
+      }),
+    } as never);
+
+    renderWithProviders(<PatientPaymentDetailPage />, '/payments/VIS-1');
+
+    expect(await screen.findByText('Xét nghiệm công thức máu')).toBeInTheDocument();
+    expect(screen.queryByText(/đã được thanh toán đủ/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Tạo mã VietQR' }));
+
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/patients/visits/VIS-1/payments/qr', {
+        visitChargeId: 102,
+      }),
+    );
+    expect(await screen.findByRole('img', { name: 'Mã VietQR MF99' })).toBeInTheDocument();
+  });
+
+  it('tự động khôi phục mã VietQR đang PENDING khi tải lại trang', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: charges({
+        settlementStatus: 'UNPAID',
+        canPayByQr: false,
+        paymentId: 88,
+        paymentCode: 'MF88',
+        paymentStatus: 'PENDING',
+        paymentAmount: 200000,
+        charges: [
+          charge({
+            chargeId: 1,
+            unitPrice: 200000,
+            lineSettlementStatus: 'UNPAID',
+            paymentId: 88,
+            paymentCode: 'MF88',
+            paymentStatus: 'PENDING',
+            canPayByQr: false,
+          }),
+        ],
+      }),
+    } as never);
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: qrResponse({
+        paymentId: 88,
+        paymentCode: 'MF88',
+        transferContent: 'MF88',
+        issueKind: 'REUSED',
+        visitChargeId: 1,
+      }),
+    } as never);
+
+    renderWithProviders(<PatientPaymentDetailPage />, '/payments/VIS-1');
+
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith('/patients/visits/VIS-1/payments/qr', {
+        visitChargeId: 1,
+      }),
+    );
+    expect(await screen.findByRole('img', { name: 'Mã VietQR MF88' })).toBeInTheDocument();
+  });
 });

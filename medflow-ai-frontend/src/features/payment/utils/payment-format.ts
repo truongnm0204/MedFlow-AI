@@ -1,4 +1,9 @@
-import type { ChargeDataStatus, PaymentStatus, SettlementStatus } from '../types/payment.types';
+import type {
+  ChargeDataStatus,
+  LineSettlementStatus,
+  PaymentStatus,
+  SettlementStatus,
+} from '../types/payment.types';
 
 /** Backend tự đánh EXPIRED sau 15 phút (ADR 0042). */
 export const PAYMENT_QR_TTL_MS = 15 * 60 * 1000;
@@ -11,10 +16,20 @@ const SETTLEMENT_LABELS: Record<SettlementStatus, string> = {
   UNDETERMINED: 'Chưa xác định',
 };
 
+const LINE_SETTLEMENT_LABELS: Record<LineSettlementStatus, string> = {
+  UNPAID: 'Chưa thanh toán',
+  PAID: 'Đã thanh toán',
+  WAIVED: 'Miễn thu',
+  CANCELLED: 'Đã hủy',
+  MISMATCH: 'Chờ đối soát',
+  UNDETERMINED: 'Chưa xác định',
+};
+
 const PAYMENT_LABELS: Record<PaymentStatus, string> = {
   UNPAID: 'Chưa thanh toán',
   PENDING: 'Chờ thanh toán',
   PAID: 'Đã thanh toán',
+  MISMATCH: 'Chờ đối soát',
   EXPIRED: 'Mã đã hết hạn',
   CANCELLED: 'Đã hủy',
   FAILED: 'Thanh toán thất bại',
@@ -86,6 +101,11 @@ export function formatVisitTime(value: string | null | undefined): string {
 export function settlementLabel(status: string | null | undefined): string {
   if (!status) return 'Chưa xác định';
   return SETTLEMENT_LABELS[status as SettlementStatus] ?? status;
+}
+
+export function lineSettlementLabel(status: string | null | undefined): string {
+  if (!status) return 'Chưa xác định';
+  return LINE_SETTLEMENT_LABELS[status as LineSettlementStatus] ?? status;
 }
 
 export function paymentLabel(status: string | null | undefined): string {
