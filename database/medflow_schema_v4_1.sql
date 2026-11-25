@@ -873,3 +873,57 @@ CROSS JOIN "permissions" p
 WHERE p."code" = 'PATIENT_IDENTITY_VERIFY'
   AND r."code" IN ('HOSPITAL_ADMIN', 'SYSTEM_ADMIN')
 ON CONFLICT DO NOTHING;
+
+-- 019_identity_claim_otp_purpose
+ALTER TABLE "auth_verification_challenges"
+  DROP CONSTRAINT IF EXISTS "ck_avc_purpose";
+
+ALTER TABLE "auth_verification_challenges"
+  ADD CONSTRAINT "ck_avc_purpose"
+  CHECK ("purpose" IN ('REGISTER_EMAIL', 'CHANGE_EMAIL', 'CHANGE_PHONE', 'PASSWORD_RESET', 'IDENTITY_CLAIM'));
+
+-- 020_schedule_cronjob_indexes_and_notifications
+ALTER TABLE "notifications"
+  ADD COLUMN IF NOT EXISTS "read_at" timestamp without time zone NULL,
+  ADD COLUMN IF NOT EXISTS "notification_type" varchar(40) NULL,
+  ADD COLUMN IF NOT EXISTS "processing_token" varchar(64) NULL,
+  ADD COLUMN IF NOT EXISTS "lease_until" timestamp without time zone NULL;
+
+CREATE INDEX IF NOT EXISTS "ix_notifications_pending_due"
+  ON "notifications" ("scheduled_at")
+  WHERE "status" = 'PENDING';
+
+CREATE INDEX IF NOT EXISTS "ix_notifications_processing_lease"
+  ON "notifications" ("lease_until")
+  WHERE "status" = 'PROCESSING';
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_notifications_idempotency_key"
+  ON "notifications" ("idempotency_key")
+  WHERE "idempotency_key" IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS "ix_notifications_patient_unread"
+  ON "notifications" ("patient_id", "created_at" DESC)
+  WHERE "read_at" IS NULL;
+
+CREATE INDEX IF NOT EXISTS "ix_appointments_active_slot"
+  ON "appointments" ("slot_id")
+  WHERE "status" IN ('BOOKED', 'CONFIRMED');
+
+CREATE INDEX IF NOT EXISTS "ix_examination_slots_time_window"
+  ON "examination_slots" ("starts_at", "ends_at");
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_examination_slots_active_doctor_start"
+  ON "examination_slots" ("doctor_id", "starts_at")
+  WHERE "doctor_id" IS NOT NULL AND "status" <> 'CLOSED';
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_examination_slots_active_room_start"
+  ON "examination_slots" ("room_id", "starts_at")
+  WHERE "room_id" IS NOT NULL AND "status" <> 'CLOSED';
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_examination_slots_doctor_service_start"
+  ON "examination_slots" ("doctor_id", "service_id", "starts_at")
+  WHERE "doctor_id" IS NOT NULL AND "service_id" IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_examination_slots_unassigned_service_room_start"
+  ON "examination_slots" ("service_id", "room_id", "starts_at")
+  WHERE "doctor_id" IS NULL AND "service_id" IS NOT NULL AND "room_id" IS NOT NULL;

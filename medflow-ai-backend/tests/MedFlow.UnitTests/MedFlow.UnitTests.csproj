@@ -22,6 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MedFlow.Application\MedFlow.Application.csproj" />
     <ProjectReference Include="..\..\src\MedFlow.Domain\MedFlow.Domain.csproj" />
+    <ProjectReference Include="..\..\src\MedFlow.Infrastructure\MedFlow.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

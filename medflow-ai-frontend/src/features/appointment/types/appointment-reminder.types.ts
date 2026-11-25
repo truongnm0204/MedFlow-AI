@@ -2,10 +2,11 @@ export type ReminderUrgency = 'URGENT' | 'UPCOMING' | 'NORMAL';
 
 export interface AppointmentReminder {
   id: string;
+  appointmentId?: string;
   appointmentCode: string;
   patientName: string;
   doctorName: string;
-  doctorAvatar?: string;
+  doctorAvatar?: string | null;
   specialtyName: string;
   roomName: string;
   scheduledDate: string;
@@ -25,7 +26,32 @@ export interface PatientNotification {
   title: string;
   message: string;
   category: NotificationCategory;
+  notificationType?: string;
   createdAt: string;
+  createdAtIso?: string;
   isRead: boolean;
-  appointmentReminder?: AppointmentReminder;
+  appointmentReminder?: AppointmentReminder | null;
+}
+
+export interface NotificationFeedResponse {
+  unreadCount: number;
+  activeReminder: AppointmentReminder | null;
+  items: PatientNotification[];
+}
+
+export interface GetNotificationsParams {
+  limit?: number;
+  unreadOnly?: boolean;
+}
+
+export interface MarkNotificationReadResponse {
+  id: string;
+  isRead: boolean;
+  readAtIso: string;
+  unreadCount: number;
+}
+
+export interface MarkAllNotificationsReadResponse {
+  markedCount: number;
+  unreadCount: number;
 }

@@ -335,6 +335,47 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
 
         await using var tx = await _db.BeginTransactionAsync(ct);
 
+        if (await _db.TryLockAppointmentForUpdateAsync(appointment.Id, ct))
+        {
+            var latestAppt = await _db.Appointments
+                .AsNoTracking()
+                .FirstOrDefaultAsync(a => a.Id == appointment.Id, ct)
+                ?? throw new NotFoundException("Appointment", trimmedIdentifier);
+
+            appointment.Status = latestAppt.Status;
+            var lockedApptStatus = AppointmentBookingRules.NormalizeStatusKey(latestAppt.Status);
+            if (string.IsNullOrEmpty(lockedApptStatus))
+            {
+                lockedApptStatus = AppointmentBookingRules.BookedStatus;
+            }
+
+            if (lockedApptStatus == AppointmentBookingRules.CancelledStatus)
+            {
+                throw new ConflictException("Lịch hẹn đã bị hủy, không thể thực hiện check-in.");
+            }
+
+            if (lockedApptStatus == AppointmentBookingRules.NoShowStatus)
+            {
+                throw new ConflictException("Lịch hẹn đã được ghi nhận vắng mặt (NO_SHOW), không thể thực hiện check-in.");
+            }
+
+            if (lockedApptStatus == AppointmentBookingRules.CompletedStatus)
+            {
+                throw new ConflictException("Lịch hẹn đã hoàn tất khám, không thể thực hiện check-in lại.");
+            }
+
+            if (lockedApptStatus == AppointmentBookingRules.CheckedInStatus ||
+                await _db.Visits.AsNoTracking().AnyAsync(v => v.AppointmentId == appointment.Id, ct))
+            {
+                throw new ConflictException("Lịch hẹn đã được check-in trước đó, không thể tạo thêm lượt khám mới.");
+            }
+
+            if (lockedApptStatus is not ("BOOKED" or "CONFIRMED" or "PENDING"))
+            {
+                throw new ConflictException($"Trạng thái lịch hẹn '{latestAppt.Status}' không hợp lệ để check-in.");
+            }
+        }
+
         var previousAppointmentStatus = appointment.Status ?? AppointmentBookingRules.BookedStatus;
         appointment.Status = AppointmentBookingRules.CheckedInStatus;
         appointment.ReasonForVisit ??= resolvedReason;

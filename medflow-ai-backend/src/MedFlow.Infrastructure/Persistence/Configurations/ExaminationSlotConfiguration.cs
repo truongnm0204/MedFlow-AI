@@ -53,5 +53,28 @@ public class ExaminationSlotConfiguration : IEntityTypeConfiguration<Examination
             .WithMany()
             .HasForeignKey(s => s.RoomId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasIndex(s => new { s.StartsAt, s.EndsAt })
+            .HasDatabaseName("ix_examination_slots_time_window");
+
+        builder.HasIndex(s => new { s.DoctorId, s.StartsAt })
+            .IsUnique()
+            .HasDatabaseName("uq_examination_slots_active_doctor_start")
+            .HasFilter("\"doctor_id\" IS NOT NULL AND \"status\" <> 'CLOSED'");
+
+        builder.HasIndex(s => new { s.RoomId, s.StartsAt })
+            .IsUnique()
+            .HasDatabaseName("uq_examination_slots_active_room_start")
+            .HasFilter("\"room_id\" IS NOT NULL AND \"status\" <> 'CLOSED'");
+
+        builder.HasIndex(s => new { s.DoctorId, s.ServiceId, s.StartsAt })
+            .IsUnique()
+            .HasDatabaseName("uq_examination_slots_doctor_service_start")
+            .HasFilter("\"doctor_id\" IS NOT NULL AND \"service_id\" IS NOT NULL");
+
+        builder.HasIndex(s => new { s.ServiceId, s.RoomId, s.StartsAt })
+            .IsUnique()
+            .HasDatabaseName("uq_examination_slots_unassigned_service_room_start")
+            .HasFilter("\"doctor_id\" IS NULL AND \"service_id\" IS NOT NULL AND \"room_id\" IS NOT NULL");
     }
 }

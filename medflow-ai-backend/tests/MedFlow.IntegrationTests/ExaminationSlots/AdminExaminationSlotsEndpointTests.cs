@@ -1082,6 +1082,7 @@ public sealed class AdminExaminationSlotsEndpointTests : AuthTestBase
         {
             if (createdApptId > 0)
             {
+                await Db.Notifications.Where(n => n.AppointmentId == createdApptId).ExecuteDeleteAsync();
                 await Db.Appointments.Where(a => a.Id == createdApptId).ExecuteDeleteAsync();
             }
             if (createdSlotId > 0)

@@ -6,6 +6,7 @@ using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Doctors;
+using MedFlow.Application.Services.Notifications;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Services;
 using MedFlow.Domain.Entities;
@@ -90,6 +91,30 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
             appointmentIdStr,
             new { appointment.AppointmentCode, SlotId = slot.Id, PatientId = selection.PatientId },
             ipAddress);
+
+        var authorizedEmail = await AppointmentNotificationComposer.ResolveAuthorizedRecipientEmailAsync(
+            _db,
+            selection.PatientId,
+            userId,
+            selection.NowLocal,
+            ct);
+        var bookedRoomLabel = slot.RoomId is long bookedRoomId
+            ? await _db.HospitalRooms
+                .AsNoTracking()
+                .Where(r => r.Id == bookedRoomId)
+                .Select(r => !string.IsNullOrWhiteSpace(r.Name) ? r.Name : r.RoomCode)
+                .FirstOrDefaultAsync(ct)
+            : null;
+        _db.Notifications.Add(AppointmentNotificationComposer.CreateBookedNotification(
+            patientId: selection.PatientId,
+            appointmentId: appointment.Id,
+            appointmentCode: appointment.AppointmentCode,
+            serviceName: selection.Service.Name,
+            startsAt: slot.StartsAt!.Value,
+            endsAt: slot.EndsAt!.Value,
+            roomLabel: bookedRoomLabel,
+            authorizedEmail: authorizedEmail,
+            nowLocal: selection.NowLocal));
 
         await _db.SaveChangesAsync(ct);
 

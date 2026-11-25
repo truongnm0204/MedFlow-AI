@@ -11,6 +11,7 @@ export function useCreateAppointmentMutation() {
       queryClient.setQueryData(['appointments', 'detail', created.id], created);
       queryClient.setQueryData(['appointments', 'detail', created.appointmentCode], created);
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
     },
   });
 }

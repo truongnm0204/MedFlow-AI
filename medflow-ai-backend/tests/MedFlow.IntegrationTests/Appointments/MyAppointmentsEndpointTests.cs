@@ -96,8 +96,8 @@ public sealed class MyAppointmentsEndpointTests : AuthTestBase
             ServiceId = 1,
             DoctorId = 1,
             RoomId = 1,
-            StartsAt = tomorrow.ToDateTime(new TimeOnly(9, 0), DateTimeKind.Unspecified),
-            EndsAt = tomorrow.ToDateTime(new TimeOnly(9, 30), DateTimeKind.Unspecified),
+            StartsAt = tomorrow.ToDateTime(new TimeOnly(6, 0), DateTimeKind.Unspecified),
+            EndsAt = tomorrow.ToDateTime(new TimeOnly(6, 30), DateTimeKind.Unspecified),
             Capacity = 2,
             Status = "OPEN",
         };

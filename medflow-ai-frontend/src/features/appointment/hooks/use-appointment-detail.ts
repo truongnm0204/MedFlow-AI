@@ -25,6 +25,7 @@ export function useRescheduleAppointmentMutation() {
       queryClient.setQueryData(['appointments', 'detail', updated.id], updated);
       queryClient.setQueryData(['appointments', 'detail', updated.appointmentCode], updated);
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
     },
   });
 }
@@ -38,6 +39,7 @@ export function useCancelAppointmentMutation() {
       queryClient.setQueryData(['appointments', 'detail', updated.id], updated);
       queryClient.setQueryData(['appointments', 'detail', updated.appointmentCode], updated);
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
     },
   });
 }
@@ -51,6 +53,7 @@ export function useUpdateAppointmentReasonMutation() {
       queryClient.setQueryData(['appointments', 'detail', updated.id], updated);
       queryClient.setQueryData(['appointments', 'detail', updated.appointmentCode], updated);
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
+      queryClient.invalidateQueries({ queryKey: ['notifications'] });
     },
   });
 }

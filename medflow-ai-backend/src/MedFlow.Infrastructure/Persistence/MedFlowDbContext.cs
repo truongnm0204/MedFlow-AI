@@ -57,9 +57,23 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<DiagnosticOrder> DiagnosticOrders => Set<DiagnosticOrder>();
     public DbSet<DiagnosticResult> DiagnosticResults => Set<DiagnosticResult>();
     public DbSet<DiagnosticResultVersion> DiagnosticResultVersions => Set<DiagnosticResultVersion>();
+    public DbSet<Notification> Notifications => Set<Notification>();
 
     public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => Database.BeginTransactionAsync(ct);
+
+    public async Task<bool> TryLockAppointmentForUpdateAsync(long appointmentId, CancellationToken ct = default)
+    {
+        if (!Database.IsRelational())
+        {
+            return false;
+        }
+
+        await Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM appointments WHERE id = {appointmentId} FOR UPDATE",
+            ct);
+        return true;
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -49,8 +49,9 @@ public sealed class AppointmentBookingServiceTests : IDisposable
         public DbSet<AuthVerificationChallenge> AuthVerificationChallenges => throw NotUsed();
         public DbSet<HospitalPolicy> HospitalPolicies => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
-        public DbSet<QueueEntry> QueueEntries => throw NotUsed();
+        public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
         public DbSet<Payment> Payments => throw NotUsed();
+        public DbSet<Notification> Notifications => Set<Notification>();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
             => Database.BeginTransactionAsync(ct);
@@ -65,9 +66,10 @@ public sealed class AppointmentBookingServiceTests : IDisposable
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
             modelBuilder.Ignore<HospitalPolicy>();
-            modelBuilder.Ignore<QueueEntry>();
             modelBuilder.Ignore<Payment>();
             modelBuilder.Entity<Visit>().HasKey(v => v.Id);
+            modelBuilder.Entity<QueueEntry>().HasKey(q => q.Id);
+            modelBuilder.Entity<Notification>().HasKey(n => n.Id);
 
             modelBuilder.Entity<AuditLog>().HasKey(a => a.Id);
             modelBuilder.Entity<User>().HasKey(u => u.Id);

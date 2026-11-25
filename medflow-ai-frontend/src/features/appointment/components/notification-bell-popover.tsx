@@ -3,6 +3,11 @@ import { useState } from 'react';
 
 import { useClickOutside } from '@/shared/hooks/use-click-outside';
 
+import {
+  useMarkAllNotificationsReadMutation,
+  useMarkNotificationReadMutation,
+  useNotificationsQuery,
+} from '../hooks/use-notifications';
 import type { AppointmentReminder, PatientNotification } from '../types/appointment-reminder.types';
 import { AppointmentReminderModal } from './appointment-reminder-modal';
 
@@ -10,23 +15,31 @@ interface NotificationBellPopoverProps {
   initialNotifications?: PatientNotification[];
 }
 
-export function NotificationBellPopover({
-  initialNotifications = [],
-}: NotificationBellPopoverProps = {}) {
+interface NotificationBellContentProps {
+  notifications: PatientNotification[];
+  unreadCount: number;
+  isLoading?: boolean;
+  onMarkOneRead: (item: PatientNotification) => void;
+  onMarkAllRead: () => void;
+}
+
+function NotificationBellContent({
+  notifications,
+  unreadCount,
+  isLoading = false,
+  onMarkOneRead,
+  onMarkAllRead,
+}: NotificationBellContentProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<PatientNotification[]>(initialNotifications);
   const [selectedReminder, setSelectedReminder] = useState<AppointmentReminder | null>(null);
 
   const containerRef = useClickOutside<HTMLDivElement>(() => setIsOpen(false));
 
-  const unreadCount = notifications.filter((n) => !n.isRead).length;
-
-  const handleMarkAllAsRead = () => {
-    setNotifications((prev) => prev.map((item) => ({ ...item, isRead: true })));
-  };
-
   const handleNotificationClick = (item: PatientNotification) => {
-    setNotifications((prev) => prev.map((n) => (n.id === item.id ? { ...n, isRead: true } : n)));
+    if (!item.isRead) {
+      onMarkOneRead(item);
+    }
+
     if (item.appointmentReminder) {
       setSelectedReminder(item.appointmentReminder);
       setIsOpen(false);
@@ -52,7 +65,7 @@ export function NotificationBellPopover({
               data-testid="unread-badge"
               className="animate-in zoom-in-75 absolute top-1.5 right-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-rose-500 px-1 font-mono text-[10px] font-bold text-white shadow-xs"
             >
-              {unreadCount}
+              {unreadCount > 99 ? '99+' : unreadCount}
             </span>
           )}
         </button>
@@ -63,7 +76,6 @@ export function NotificationBellPopover({
             aria-label="Danh sách thông báo"
             className="animate-in fade-in zoom-in-95 absolute right-0 z-50 mt-2 w-80 overflow-hidden rounded-2xl border border-border bg-white shadow-xl duration-150 sm:w-96"
           >
-            {/* Header */}
             <div className="flex items-center justify-between border-b border-border bg-canvas p-4">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold text-ink">Thông báo</span>
@@ -76,7 +88,7 @@ export function NotificationBellPopover({
               {unreadCount > 0 && (
                 <button
                   type="button"
-                  onClick={handleMarkAllAsRead}
+                  onClick={onMarkAllRead}
                   className="flex items-center gap-1 text-xs font-medium text-primary transition-colors hover:text-primary-dark"
                 >
                   <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
@@ -85,9 +97,10 @@ export function NotificationBellPopover({
               )}
             </div>
 
-            {/* List */}
             <div className="max-h-[360px] divide-y divide-slate-100 overflow-y-auto">
-              {notifications.length === 0 ? (
+              {isLoading && notifications.length === 0 ? (
+                <div className="p-8 text-center text-xs text-sub">Đang tải thông báo...</div>
+              ) : notifications.length === 0 ? (
                 <div className="p-8 text-center text-xs text-sub">Bạn không có thông báo nào.</div>
               ) : (
                 notifications.map((item) => {
@@ -167,4 +180,55 @@ export function NotificationBellPopover({
       )}
     </>
   );
+}
+
+function ControlledNotificationBellPopover({
+  initialNotifications,
+}: {
+  initialNotifications: PatientNotification[];
+}) {
+  const [notifications, setNotifications] = useState<PatientNotification[]>(initialNotifications);
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
+
+  return (
+    <NotificationBellContent
+      notifications={notifications}
+      unreadCount={unreadCount}
+      onMarkOneRead={(item) =>
+        setNotifications((prev) => prev.map((n) => (n.id === item.id ? { ...n, isRead: true } : n)))
+      }
+      onMarkAllRead={() =>
+        setNotifications((prev) => prev.map((item) => ({ ...item, isRead: true })))
+      }
+    />
+  );
+}
+
+function LiveNotificationBellPopover() {
+  const { data, isLoading } = useNotificationsQuery();
+  const markReadMutation = useMarkNotificationReadMutation();
+  const markAllMutation = useMarkAllNotificationsReadMutation();
+
+  const notifications = data?.items ?? [];
+  const unreadCount = data?.unreadCount ?? 0;
+
+  return (
+    <NotificationBellContent
+      notifications={notifications}
+      unreadCount={unreadCount}
+      isLoading={isLoading}
+      onMarkOneRead={(item) => markReadMutation.mutate(item.id)}
+      onMarkAllRead={() => markAllMutation.mutate()}
+    />
+  );
+}
+
+export function NotificationBellPopover({
+  initialNotifications,
+}: NotificationBellPopoverProps = {}) {
+  if (initialNotifications !== undefined) {
+    return <ControlledNotificationBellPopover initialNotifications={initialNotifications} />;
+  }
+
+  return <LiveNotificationBellPopover />;
 }

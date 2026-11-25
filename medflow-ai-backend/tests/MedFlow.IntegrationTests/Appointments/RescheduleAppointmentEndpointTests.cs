@@ -81,24 +81,7 @@ public sealed class RescheduleAppointmentEndpointTests : AuthTestBase
 
         public async ValueTask DisposeAsync()
         {
-            var apptIds = await _db.Appointments
-                .Where(a => a.SlotId == SlotA.Id || a.SlotId == SlotB.Id)
-                .Select(a => a.Id.ToString())
-                .ToListAsync();
-
-            if (apptIds.Count > 0)
-            {
-                await _db.AuditLogs
-                    .Where(l => l.EntityType == "APPOINTMENT" && l.EntityId != null && apptIds.Contains(l.EntityId))
-                    .ExecuteDeleteAsync();
-            }
-
-            await _db.Appointments
-                .Where(a => a.SlotId == SlotA.Id || a.SlotId == SlotB.Id)
-                .ExecuteDeleteAsync();
-            await _db.ExaminationSlots
-                .Where(s => s.Id == SlotA.Id || s.Id == SlotB.Id)
-                .ExecuteDeleteAsync();
+            await NotificationTestCleanupHelper.CleanupSlotsAndAppointmentsAsync(_db, SlotA.Id, SlotB.Id);
         }
     }
 

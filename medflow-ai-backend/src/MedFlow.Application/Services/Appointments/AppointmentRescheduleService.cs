@@ -2,6 +2,7 @@ using System.Globalization;
 using MedFlow.Application.DTOs.Appointments;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Notifications;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
@@ -192,6 +193,47 @@ public sealed class AppointmentRescheduleService : IAppointmentRescheduleService
                 RescheduleNote = note
             },
             ipAddress);
+
+        await AppointmentNotificationComposer.InvalidatePendingRemindersAsync(
+            _db,
+            tracked.Id,
+            "Hủy gửi nhắc lịch do bệnh nhân đã đổi sang khung giờ khám mới.",
+            ct);
+
+        await AppointmentNotificationComposer.CancelReservedQueueEntriesForAppointmentAsync(
+            _db,
+            tracked.Id,
+            actorUserId: userId,
+            hospitalId: hospitalId,
+            reason: "Hủy lượt xếp hàng đặt trước do bệnh nhân đổi lịch khám.",
+            ipAddress: ipAddress,
+            nowUtc: _timeProvider.GetUtcNow().UtcDateTime,
+            ct: ct);
+
+        var authorizedEmail = await AppointmentNotificationComposer.ResolveAuthorizedRecipientEmailAsync(
+            _db,
+            tracked.PatientId!.Value,
+            userId,
+            nowLocal,
+            ct);
+        var targetRoomLabel = lockedTarget.RoomId is long targetRoomId
+            ? await _db.HospitalRooms
+                .AsNoTracking()
+                .Where(r => r.Id == targetRoomId)
+                .Select(r => !string.IsNullOrWhiteSpace(r.Name) ? r.Name : r.RoomCode)
+                .FirstOrDefaultAsync(ct)
+            : null;
+        _db.Notifications.Add(AppointmentNotificationComposer.CreateRescheduledNotification(
+            patientId: tracked.PatientId.Value,
+            newAppointmentId: newAppointment.Id,
+            oldAppointmentCode: tracked.AppointmentCode ?? $"APT-{tracked.Id}",
+            newAppointmentCode: newAppointment.AppointmentCode,
+            serviceName: current.Service?.Name ?? "Khám ngoại trú",
+            newStartsAt: lockedTarget.StartsAt!.Value,
+            newEndsAt: lockedTarget.EndsAt!.Value,
+            roomLabel: targetRoomLabel,
+            authorizedEmail: authorizedEmail,
+            nowLocal: nowLocal));
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);

@@ -44,6 +44,7 @@ internal static class AppointmentReadTestDb
         public DbSet<HospitalPolicy> HospitalPolicies => Set<HospitalPolicy>();
         public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
         public DbSet<QueueFairnessState> QueueFairnessStates => Set<QueueFairnessState>();
+        public DbSet<Notification> Notifications => Set<Notification>();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
             => Database.BeginTransactionAsync(ct);
@@ -67,6 +68,7 @@ internal static class AppointmentReadTestDb
             modelBuilder.Entity<HospitalPolicy>().HasKey(p => p.Id);
             modelBuilder.Entity<QueueServicePoint>().HasKey(sp => sp.Id);
             modelBuilder.Entity<QueueFairnessState>().HasKey(s => new { s.ServicePointId, s.QueueDate });
+            modelBuilder.Entity<Notification>().HasKey(n => n.Id);
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Patient>(b =>
