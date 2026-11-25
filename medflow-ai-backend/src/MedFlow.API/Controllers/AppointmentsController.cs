@@ -4,6 +4,7 @@ using MedFlow.Application.Services.Appointments;
 using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace MedFlow.API.Controllers;
 
@@ -80,12 +81,14 @@ public sealed class AppointmentsController : ControllerBase
 
     /// <summary>POST /api/v1/appointments — Đặt lịch khám (UC12).</summary>
     [HttpPost]
+    [EnableRateLimiting("appointment-write")]
     [ProducesResponseType<CreateAppointmentResponse>(StatusCodes.Status201Created)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<CreateAppointmentResponse>> Create(
         [FromBody] CreateAppointmentRequest request,
         CancellationToken ct)
@@ -140,12 +143,14 @@ public sealed class AppointmentsController : ControllerBase
 
     /// <summary>POST /api/v1/appointments/{idOrCode}/cancel — Hủy lịch hẹn còn đủ điều kiện kèm lý do (UC14).</summary>
     [HttpPost("{idOrCode}/cancel")]
+    [EnableRateLimiting("appointment-write")]
     [ProducesResponseType<AppointmentDetailDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<AppointmentDetailDto>> Cancel(
         string idOrCode,
         [FromBody] CancelAppointmentRequest request,
@@ -154,24 +159,28 @@ public sealed class AppointmentsController : ControllerBase
 
     /// <summary>POST /api/v1/appointments/{idOrCode}/reschedule — Đổi lịch hẹn sang khung giờ khác còn khả dụng (UC13).</summary>
     [HttpPost("{idOrCode}/reschedule")]
+    [EnableRateLimiting("appointment-write")]
     [ProducesResponseType<AppointmentDetailDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<AppointmentDetailDto>> Reschedule(
         string idOrCode, [FromBody] RescheduleAppointmentRequest request, CancellationToken ct)
         => Ok(await _rescheduleService.RescheduleAsync(GetUserId(), idOrCode, request, GetIp(), ct));
 
     /// <summary>PATCH /api/v1/appointments/{idOrCode}/reason — Cập nhật lý do khám / triệu chứng ban đầu cho lịch hẹn sắp tới.</summary>
     [HttpPatch("{idOrCode}/reason")]
+    [EnableRateLimiting("appointment-write")]
     [ProducesResponseType<AppointmentDetailDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<AppointmentDetailDto>> UpdateReason(
         string idOrCode,
         [FromBody] UpdateAppointmentReasonRequest request,
