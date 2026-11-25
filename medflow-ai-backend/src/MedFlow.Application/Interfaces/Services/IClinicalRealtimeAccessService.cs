@@ -8,6 +8,12 @@ public interface IClinicalRealtimeAccessService
         long userId,
         CancellationToken ct = default);
 
+    Task EnsureConnectedSessionActiveAsync(
+        long userId,
+        long? sessionId,
+        CancellationToken ct = default)
+        => EnsureConnectedUserActiveAsync(userId, ct);
+
     Task<AuthorizedRealtimeSubscription> AuthorizeVisitPaymentJoinAsync(
         long userId,
         string? visitIdOrCode,

@@ -22,7 +22,7 @@ export function FamilyProfileDetailPage() {
   const [isRemoveModalOpen, setIsRemoveModalOpen] = useState(false);
 
   const handleBookAppointment = (target: FamilyMember) => {
-    navigate(`/booking?patientId=${encodeURIComponent(target.id)}`);
+    navigate(`/booking?patientId=${encodeURIComponent(String(target.memberPatientId))}`);
   };
 
   const handleDownloadPdf = () => {

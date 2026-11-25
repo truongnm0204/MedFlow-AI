@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using MedFlow.Application.Options;
+using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.Extensions.Options;
 
@@ -51,5 +52,9 @@ internal static class IdentificationNumber
     }
 
     public static bool AllowShaFallback(IOptions<IdentityHashOptions>? options)
-        => !string.Equals(options?.Value.Mode, "hmac", StringComparison.OrdinalIgnoreCase);
+        => !string.Equals(options?.Value.Mode?.Trim(), "hmac", StringComparison.OrdinalIgnoreCase);
+
+    public static bool HasVerifiedIdentity(Patient patient, IOptions<IdentityHashOptions>? options)
+        => !string.IsNullOrWhiteSpace(patient.IdentificationHashHmac) ||
+           (AllowShaFallback(options) && !string.IsNullOrWhiteSpace(patient.IdentificationHash));
 }

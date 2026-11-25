@@ -30,4 +30,20 @@ public interface IRealtimeAccessRevoker
         => keepSessionId.HasValue
             ? Task.CompletedTask
             : RevokeUserConnectionsAsync(userId, reasonCode, ct);
+
+    Task RevokeUserConnectionsExceptSessionFamilyAsync(
+        long userId,
+        IReadOnlyCollection<long>? keepSessionIds,
+        string reasonCode = "SESSION_REVOKED",
+        CancellationToken ct = default)
+        => keepSessionIds is { Count: > 0 }
+            ? RevokeUserConnectionsExceptSessionAsync(userId, keepSessionIds.First(), reasonCode, ct)
+            : RevokeUserConnectionsAsync(userId, reasonCode, ct);
+
+    Task RevokeUserSessionFamilyConnectionsAsync(
+        long userId,
+        IReadOnlyCollection<long> sessionIds,
+        string reasonCode = "LOGOUT",
+        CancellationToken ct = default)
+        => Task.CompletedTask;
 }

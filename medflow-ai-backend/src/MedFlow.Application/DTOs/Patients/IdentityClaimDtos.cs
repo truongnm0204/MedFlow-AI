@@ -24,3 +24,16 @@ public sealed record StaffIdentityClaimDto(
     DateTime ExpiresAt);
 
 public sealed record RejectIdentityClaimRequest(string Reason);
+
+public sealed record VerifyFamilyLinkRequest(
+    long? OwnerPatientId = null,
+    long? MemberPatientId = null,
+    long? HospitalId = null);
+
+public sealed record VerifyFamilyLinkResponse(
+    long OwnerPatientId,
+    long MemberPatientId,
+    string VerificationStatus,
+    string VerificationMethod,
+    long? VerifiedByStaffId,
+    DateTime VerifiedAt);

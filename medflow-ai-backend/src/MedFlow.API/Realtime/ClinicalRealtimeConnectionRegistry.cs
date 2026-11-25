@@ -58,6 +58,7 @@ public sealed class ClinicalRealtimeConnectionRegistry
         public readonly object SyncRoot = new();
         public required long UserId { get; init; }
         public long? SessionId { get; init; }
+        public bool IsRevoked { get; set; }
         public readonly Dictionary<string, TrackedSubscriptionEntry> Subscriptions = new(StringComparer.OrdinalIgnoreCase);
         public readonly Queue<DateTime> InvocationTimestampsUtc = new();
     }
@@ -86,6 +87,37 @@ public sealed class ClinicalRealtimeConnectionRegistry
     public void UnregisterConnection(string connectionId)
     {
         _connections.TryRemove(connectionId, out _);
+    }
+
+    public bool IsConnectionRevoked(string connectionId)
+    {
+        if (!_connections.TryGetValue(connectionId, out var session))
+            return false;
+
+        lock (session.SyncRoot)
+        {
+            return session.IsRevoked;
+        }
+    }
+
+    public IReadOnlyList<string> EvictConnection(string connectionId)
+    {
+        if (!_connections.TryGetValue(connectionId, out var session))
+            return [];
+
+        lock (session.SyncRoot)
+        {
+            session.IsRevoked = true;
+            if (session.Subscriptions.Count == 0)
+                return [];
+
+            var groups = session.Subscriptions.Values
+                .SelectMany(s => s.AllGroupNames)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            session.Subscriptions.Clear();
+            return groups;
+        }
     }
 
     public bool TryCheckInvocationRateLimit(string connectionId, out string? errorMessage)
@@ -131,6 +163,18 @@ public sealed class ClinicalRealtimeConnectionRegistry
 
         lock (session.SyncRoot)
         {
+            if (session.IsRevoked)
+            {
+                return new UpsertSubscriptionOutcome(
+                    Allowed: false,
+                    ErrorCode: "UNAUTHORIZED",
+                    ErrorMessage: "[UNAUTHORIZED] Phiên kết nối thời gian thực đã bị thu hồi.",
+                    ExpiresAtUtc: nowUtc,
+                    GroupsToAdd: [],
+                    GroupsToRemove: [],
+                    PrunedExpiredGroups: []);
+            }
+
             var prunedExpiredGroups = PruneExpiredInsideLock(session, nowUtc);
 
             session.Subscriptions.TryGetValue(grant.ResourceKey, out var existing);
@@ -211,6 +255,16 @@ public sealed class ClinicalRealtimeConnectionRegistry
 
         lock (session.SyncRoot)
         {
+            if (session.IsRevoked)
+            {
+                return new LeaveSubscriptionOutcome(
+                    Allowed: false,
+                    ErrorCode: "UNAUTHORIZED",
+                    ErrorMessage: "[UNAUTHORIZED] Phiên kết nối thời gian thực đã bị thu hồi.",
+                    GroupsToRemove: [],
+                    PrunedExpiredGroups: []);
+            }
+
             var prunedExpiredGroups = PruneExpiredInsideLock(session, nowUtc);
 
             TrackedSubscriptionEntry? matched = null;
@@ -372,12 +426,22 @@ public sealed class ClinicalRealtimeConnectionRegistry
     }
 
     public IReadOnlyList<EvictedSubscriptionItem> EvictUserSubscriptions(long userId)
-        => EvictUserSubscriptionsExceptSession(userId, keepSessionId: null);
+        => EvictUserSubscriptionsExceptSessionFamily(userId, keepSessionIds: null);
 
     public IReadOnlyList<EvictedSubscriptionItem> EvictUserSubscriptionsExceptSession(
         long userId,
         long? keepSessionId)
+        => EvictUserSubscriptionsExceptSessionFamily(
+            userId,
+            keepSessionId.HasValue ? [keepSessionId.Value] : null);
+
+    public IReadOnlyList<EvictedSubscriptionItem> EvictUserSubscriptionsExceptSessionFamily(
+        long userId,
+        IReadOnlyCollection<long>? keepSessionIds)
     {
+        var keepSet = keepSessionIds is { Count: > 0 }
+            ? keepSessionIds.ToHashSet()
+            : null;
         var evicted = new List<EvictedSubscriptionItem>();
 
         foreach (var (connId, session) in _connections)
@@ -385,11 +449,52 @@ public sealed class ClinicalRealtimeConnectionRegistry
             if (session.UserId != userId)
                 continue;
 
-            if (keepSessionId.HasValue && session.SessionId == keepSessionId.Value)
+            if (keepSet is not null && session.SessionId is long sid && keepSet.Contains(sid))
                 continue;
 
             lock (session.SyncRoot)
             {
+                session.IsRevoked = true;
+                if (session.Subscriptions.Count == 0)
+                {
+                    evicted.Add(new EvictedSubscriptionItem(connId, "session", []));
+                    continue;
+                }
+
+                var allKeys = session.Subscriptions.Keys.ToList();
+                foreach (var key in allKeys)
+                {
+                    var removed = session.Subscriptions[key];
+                    session.Subscriptions.Remove(key);
+                    evicted.Add(new EvictedSubscriptionItem(connId, removed.ResourceKey, removed.AllGroupNames));
+                }
+            }
+        }
+
+        return evicted;
+    }
+
+    public IReadOnlyList<EvictedSubscriptionItem> EvictUserSessionFamilySubscriptions(
+        long userId,
+        IReadOnlyCollection<long> sessionIds)
+    {
+        if (sessionIds is null || sessionIds.Count == 0)
+            return [];
+
+        var targetSet = sessionIds.ToHashSet();
+        var evicted = new List<EvictedSubscriptionItem>();
+
+        foreach (var (connId, session) in _connections)
+        {
+            if (session.UserId != userId)
+                continue;
+
+            if (session.SessionId is not long sid || !targetSet.Contains(sid))
+                continue;
+
+            lock (session.SyncRoot)
+            {
+                session.IsRevoked = true;
                 if (session.Subscriptions.Count == 0)
                 {
                     evicted.Add(new EvictedSubscriptionItem(connId, "session", []));

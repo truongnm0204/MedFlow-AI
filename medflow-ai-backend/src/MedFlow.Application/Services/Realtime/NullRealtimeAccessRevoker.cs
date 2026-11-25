@@ -31,6 +31,18 @@ public sealed class NullRealtimeAccessRevoker : IRealtimeAccessRevoker
         long? keepSessionId,
         string reasonCode = "SESSION_REVOKED",
         CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task RevokeUserConnectionsExceptSessionFamilyAsync(
+        long userId,
+        IReadOnlyCollection<long>? keepSessionIds,
+        string reasonCode = "SESSION_REVOKED",
+        CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task RevokeUserSessionFamilyConnectionsAsync(
+        long userId,
+        IReadOnlyCollection<long> sessionIds,
+        string reasonCode = "LOGOUT",
+        CancellationToken ct = default) => Task.CompletedTask;
 }
 
 public static class RealtimeRevokeSafeExtensions
@@ -113,6 +125,40 @@ public static class RealtimeRevokeSafeExtensions
         catch
         {
             // Best-effort selective session eviction.
+        }
+    }
+
+    public static async Task TryRevokeUserConnectionsExceptSessionFamilySafeAsync(
+        this IRealtimeAccessRevoker revoker,
+        long userId,
+        IReadOnlyCollection<long>? keepSessionIds,
+        string reasonCode = "SESSION_REVOKED",
+        CancellationToken ct = default)
+    {
+        try
+        {
+            await revoker.RevokeUserConnectionsExceptSessionFamilyAsync(userId, keepSessionIds, reasonCode, ct);
+        }
+        catch
+        {
+            // Best-effort selective session family eviction.
+        }
+    }
+
+    public static async Task TryRevokeUserSessionFamilyConnectionsSafeAsync(
+        this IRealtimeAccessRevoker revoker,
+        long userId,
+        IReadOnlyCollection<long> sessionIds,
+        string reasonCode = "LOGOUT",
+        CancellationToken ct = default)
+    {
+        try
+        {
+            await revoker.RevokeUserSessionFamilyConnectionsAsync(userId, sessionIds, reasonCode, ct);
+        }
+        catch
+        {
+            // Best-effort session family eviction.
         }
     }
 }

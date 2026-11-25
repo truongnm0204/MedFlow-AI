@@ -7,10 +7,12 @@ public interface IPatientDiagnosticResultService
     Task<PatientDiagnosticResultListResponseDto> GetMyResultsAsync(
         long actorUserId,
         GetPatientDiagnosticResultsRequest? request,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? ipAddress = null);
 
     Task<PatientDiagnosticResultDetailDto> GetMyResultAsync(
         long actorUserId,
         string? idOrCode,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? ipAddress = null);
 }

@@ -41,6 +41,7 @@ export function isStaffRole(roles?: readonly string[] | null): boolean {
 export function resolvePostLoginRedirect(
   returnUrl: string | null | undefined,
   roles?: readonly string[] | null,
+  explicitPermissions?: readonly string[] | null,
 ): string {
   if (
     returnUrl &&
@@ -50,7 +51,7 @@ export function resolvePostLoginRedirect(
     !returnUrl.startsWith('/register') &&
     !returnUrl.startsWith('/verify-otp')
   ) {
-    if (roles && roles.length > 0 && !canAccessRoute(returnUrl, roles)) {
+    if (roles && roles.length > 0 && !canAccessRoute(returnUrl, roles, explicitPermissions)) {
       return getRoleLandingRoute(roles);
     }
     return returnUrl;

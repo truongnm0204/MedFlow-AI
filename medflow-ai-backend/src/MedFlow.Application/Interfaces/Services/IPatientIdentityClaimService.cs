@@ -35,4 +35,10 @@ public interface IPatientIdentityClaimService
         long claimId,
         RejectIdentityClaimRequest request,
         CancellationToken ct = default);
+
+    Task<VerifyFamilyLinkResponse> VerifyFamilyLinkAsync(
+        long actorUserId,
+        string linkId,
+        VerifyFamilyLinkRequest? request = null,
+        CancellationToken ct = default);
 }

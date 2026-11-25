@@ -96,7 +96,12 @@ public sealed class UpdatePatientAtReceptionServiceTests : IDisposable
             .UseInMemoryDatabase($"update-patient-{Guid.NewGuid():N}")
             .Options;
         _db = new UpdateTestDbContext(options);
-        _sut = new UpdatePatientAtReceptionService(_db);
+        _sut = new UpdatePatientAtReceptionService(
+            _db,
+            hashOptions: Microsoft.Extensions.Options.Options.Create(new MedFlow.Application.Options.IdentityHashOptions
+            {
+                HashKey = "unit-test-identity-key-32-bytes-min!!",
+            }));
     }
 
     public void Dispose() => _db.Dispose();

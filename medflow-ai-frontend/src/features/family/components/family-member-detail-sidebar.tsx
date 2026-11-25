@@ -59,7 +59,9 @@ export function FamilyMemberDetailSidebar({
             <span className="rounded-md border border-sky-200/80 bg-sky-50 px-2.5 py-0.5 font-semibold text-sky-700">
               {member.relationship}
             </span>
-            <span className="font-mono font-semibold text-sky-600">{member.patientCode}</span>
+            <span className="font-mono font-semibold text-sky-600">
+              {member.patientCode ?? 'Chờ xác minh'}
+            </span>
           </div>
 
           <p className="mt-1.5 text-xs text-slate-500">{member.subStatus}</p>

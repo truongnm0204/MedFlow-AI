@@ -4,8 +4,10 @@ using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Patients;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Options;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
+using Microsoft.Extensions.Options;
 
 namespace MedFlow.Application.Services.Patients;
 
@@ -43,11 +45,13 @@ public sealed partial class PatientProfileService : IPatientProfileService
     private readonly IApplicationDbContext _db;
     private readonly IAuditLogger _audit;
     private readonly TimeProvider _timeProvider;
+    private readonly IOptions<IdentityHashOptions>? _hashOptions;
 
     public PatientProfileService(
         IApplicationDbContext db,
         IAuditLogger audit,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IOptions<IdentityHashOptions>? hashOptions = null)
     {
         ArgumentNullException.ThrowIfNull(db);
         ArgumentNullException.ThrowIfNull(audit);
@@ -55,6 +59,7 @@ public sealed partial class PatientProfileService : IPatientProfileService
         _db = db;
         _audit = audit;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _hashOptions = hashOptions;
     }
 
     public async Task<PatientProfileResponse> GetPersonalProfileAsync(
@@ -64,7 +69,7 @@ public sealed partial class PatientProfileService : IPatientProfileService
         if (userId <= 0)
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
 
-        var patient = await PatientSelfResolver.LoadActiveAsync(_db, userId, ct);
+        var patient = await PatientSelfResolver.LoadActiveAsync(_db, userId, ct, _timeProvider);
         var user = patient.User
             ?? throw new UnauthorizedAccessException("Tài khoản bệnh nhân chưa kích hoạt hoặc đã bị khóa.");
 
@@ -85,7 +90,7 @@ public sealed partial class PatientProfileService : IPatientProfileService
 
         await using var tx = await _db.BeginTransactionAsync(ct);
 
-        var patient = await PatientSelfResolver.LoadActiveTrackedAsync(_db, userId, ct);
+        var patient = await PatientSelfResolver.LoadActiveTrackedAsync(_db, userId, ct, _timeProvider);
         var user = patient.User
             ?? throw new UnauthorizedAccessException("Tài khoản bệnh nhân chưa kích hoạt hoặc đã bị khóa.");
 
@@ -93,7 +98,7 @@ public sealed partial class PatientProfileService : IPatientProfileService
 
         EnsureLegalIdentityNotTampered(request, patient);
 
-        var isIdentityVerified = !string.IsNullOrWhiteSpace(patient.IdentificationHash);
+        var isIdentityVerified = IdentificationNumber.HasVerifiedIdentity(patient, _hashOptions);
         var today = HospitalClock.GetToday(_timeProvider);
         var changedFields = new List<string>();
         var selfReportedBloodTypeUpdated = false;
@@ -226,11 +231,11 @@ public sealed partial class PatientProfileService : IPatientProfileService
         return MapToResponse(patient, user, userId);
     }
 
-    private static void EnsureLegalIdentityNotTampered(
+    private void EnsureLegalIdentityNotTampered(
         UpdateMyPatientProfileRequest request,
         Patient patient)
     {
-        var hasVerifiedIdentity = !string.IsNullOrWhiteSpace(patient.IdentificationHash);
+        var hasVerifiedIdentity = IdentificationNumber.HasVerifiedIdentity(patient, _hashOptions);
         if ((request.IdentityCard.IsSpecified && (hasVerifiedIdentity || !string.IsNullOrWhiteSpace(request.IdentityCard.Value))) ||
             (request.IdentificationHash.IsSpecified && (hasVerifiedIdentity || !string.IsNullOrWhiteSpace(request.IdentificationHash.Value))))
         {
@@ -323,7 +328,7 @@ public sealed partial class PatientProfileService : IPatientProfileService
             : user.Email;
 
         var isEmailVerified = user.EmailVerifiedAt.HasValue;
-        var isIdentityVerified = !string.IsNullOrWhiteSpace(patient.IdentificationHash);
+        var isIdentityVerified = IdentificationNumber.HasVerifiedIdentity(patient, _hashOptions);
         var maskedIdentification = isIdentityVerified ? MaskedVerifiedIdentityText : null;
         var age = CalculateAge(patient.DateOfBirth, HospitalClock.GetToday(_timeProvider));
 

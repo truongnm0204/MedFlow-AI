@@ -16,7 +16,8 @@ export function useRoleAccess(explicitPermissions?: readonly string[] | null) {
   const user = useAuthStore((state) => state.user);
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const roles = normalizeRoleCodes(user?.roles);
-  const permissions = resolveEffectivePermissions(roles, explicitPermissions);
+  const effectiveExplicit = explicitPermissions ?? user?.permissions;
+  const permissions = resolveEffectivePermissions(roles, effectiveExplicit);
 
   return {
     user,
@@ -29,10 +30,10 @@ export function useRoleAccess(explicitPermissions?: readonly string[] | null) {
     hasRole: (targetRole: string) => hasRole(roles, targetRole),
     hasAnyRole: (allowedRoles: readonly string[]) => hasAnyRole(roles, allowedRoles),
     hasPermission: (permissionCode: string) =>
-      hasPermission(roles, permissionCode, explicitPermissions),
+      hasPermission(roles, permissionCode, effectiveExplicit),
     hasAnyPermission: (permissionCodes: readonly string[]) =>
-      hasAnyPermission(roles, permissionCodes, explicitPermissions),
-    canAccessRoute: (pathname: string) => canAccessRoute(pathname, roles),
+      hasAnyPermission(roles, permissionCodes, effectiveExplicit),
+    canAccessRoute: (pathname: string) => canAccessRoute(pathname, roles, effectiveExplicit),
   };
 }
 
