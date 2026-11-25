@@ -53,10 +53,90 @@ public interface IApplicationDbContext
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);
-    Task<bool> TryLockAppointmentForUpdateAsync(long appointmentId, CancellationToken ct = default)
-        => Task.FromResult(false);
+
+    // ADR-0059 16-Level Global Lock Hierarchy (01 -> 16).
+    // All relational implementations require an active transaction, sort multi-ID sets ASC,
+    // and return true iff all requested IDs exist and were locked FOR UPDATE.
+
+    // Level 01: users
     Task<bool> TryLockUserForUpdateAsync(long userId, CancellationToken ct = default)
         => Task.FromResult(false);
+
+    // Level 02: patients
     Task<bool> TryLockPatientForUpdateAsync(long patientId, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockPatientsForUpdateAsync(IReadOnlyCollection<long> patientIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 03: patient_identity_claims
+    Task<bool> TryLockIdentityClaimForUpdateAsync(long claimId, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 04: services
+    Task<bool> TryLockServiceForUpdateAsync(long serviceId, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 05: doctors
+    Task<bool> TryLockDoctorsForUpdateAsync(IReadOnlyCollection<long> doctorIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 06: hospital_rooms (physical v4.1 table name)
+    Task<bool> TryLockRoomForUpdateAsync(long roomId, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockRoomsForUpdateAsync(IReadOnlyCollection<long> roomIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 07: examination_slots
+    Task<bool> TryLockSlotsForUpdateAsync(IReadOnlyCollection<long> slotIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 08: appointments
+    Task<bool> TryLockAppointmentForUpdateAsync(long appointmentId, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockAppointmentsForUpdateAsync(IReadOnlyCollection<long> appointmentIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 09: visits (Clinical Aggregate Root Lock)
+    Task<bool> TryLockVisitForUpdateAsync(long visitId, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 10: queue_service_points + deterministic unrouted queue advisory lock
+    Task<bool> TryLockServicePointForUpdateAsync(long servicePointId, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockServicePointsForUpdateAsync(IReadOnlyCollection<long> servicePointIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockUnroutedQueueAdvisoryAsync(long hospitalId, DateOnly queueDate, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 11: queue_entries
+    Task<bool> TryLockQueueEntryForUpdateAsync(long queueEntryId, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockQueueEntriesForUpdateAsync(IReadOnlyCollection<long> queueEntryIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 12: diagnostic_orders
+    Task<bool> TryLockDiagnosticOrderForUpdateAsync(long diagnosticOrderId, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockDiagnosticOrdersForUpdateAsync(IReadOnlyCollection<long> diagnosticOrderIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 13: prescriptions
+    Task<bool> TryLockPrescriptionForUpdateAsync(long prescriptionId, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 14: medicine_batches
+    Task<bool> TryLockMedicineBatchesForUpdateAsync(IReadOnlyCollection<long> batchIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 15: visit_charges
+    Task<bool> TryLockVisitChargeForUpdateAsync(long visitChargeId, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockVisitChargesForUpdateAsync(IReadOnlyCollection<long> visitChargeIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 16: payments
+    Task<bool> TryLockPaymentForUpdateAsync(long paymentId, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockPaymentsForUpdateAsync(IReadOnlyCollection<long> paymentIds, CancellationToken ct = default)
         => Task.FromResult(false);
 }

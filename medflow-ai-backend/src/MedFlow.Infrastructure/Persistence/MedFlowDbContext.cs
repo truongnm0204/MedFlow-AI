@@ -1,4 +1,8 @@
+using System.Buffers.Binary;
+using System.Security.Cryptography;
+using System.Text;
 using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -7,10 +11,27 @@ namespace MedFlow.Infrastructure.Persistence;
 
 public class MedFlowDbContext : DbContext, IApplicationDbContext
 {
-    public MedFlowDbContext(DbContextOptions<MedFlowDbContext> options)
-        : base(options)
+    private enum LockTargetTable
     {
+        Users = 1,
+        Patients = 2,
+        PatientIdentityClaims = 3,
+        Services = 4,
+        Doctors = 5,
+        HospitalRooms = 6,
+        ExaminationSlots = 7,
+        Appointments = 8,
+        Visits = 9,
+        QueueServicePoints = 10,
+        QueueEntries = 11,
+        DiagnosticOrders = 12,
+        Prescriptions = 13,
+        MedicineBatches = 14,
+        VisitCharges = 15,
+        Payments = 16,
     }
+
+    public MedFlowDbContext(DbContextOptions<MedFlowDbContext> options) : base(options) { }
 
     public DbSet<User> Users => Set<User>();
     public DbSet<Role> Roles => Set<Role>();
@@ -62,43 +83,242 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => Database.BeginTransactionAsync(ct);
 
-    public async Task<bool> TryLockAppointmentForUpdateAsync(long appointmentId, CancellationToken ct = default)
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
+        NormalizeBillingEntities();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        NormalizeBillingEntities();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void NormalizeBillingEntities()
+    {
+        var nowVietnam = DateTime.SpecifyKind(DateTime.UtcNow.AddHours(7), DateTimeKind.Unspecified);
+
+        foreach (var entry in ChangeTracker.Entries<VisitCharge>())
+        {
+            if (entry.State is EntityState.Added or EntityState.Modified)
+            {
+                if (entry.Entity.DiagnosticOrderId.HasValue)
+                {
+                    entry.Entity.ChargeType = VisitChargeTypes.Diagnostic;
+                }
+                else if (string.IsNullOrWhiteSpace(entry.Entity.ChargeType))
+                {
+                    entry.Entity.ChargeType = VisitChargeTypes.Examination;
+                }
+
+                if (string.IsNullOrWhiteSpace(entry.Entity.Status))
+                {
+                    entry.Entity.Status = VisitChargeStatuses.Active;
+                }
+
+                if (entry.State == EntityState.Added && entry.Entity.CreatedAt is null)
+                {
+                    entry.Entity.CreatedAt = nowVietnam;
+                }
+            }
+        }
+
+        foreach (var entry in ChangeTracker.Entries<Payment>())
+        {
+            if (entry.State is EntityState.Added or EntityState.Modified)
+            {
+                if (entry.Entity.VisitChargeId.HasValue)
+                {
+                    entry.Entity.PaymentScope = PaymentScopes.Charge;
+                }
+                else if (string.IsNullOrWhiteSpace(entry.Entity.PaymentScope))
+                {
+                    entry.Entity.PaymentScope = PaymentScopes.LegacyVisit;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Computes a deterministic 64-bit PostgreSQL advisory lock key from SHA-256 (big-endian)
+    /// that is identical across all OSes, .NET versions, and horizontally scaled API containers (ADR-0059).
+    /// </summary>
+    public static long ComputeDeterministicAdvisoryLockKey(string domain, string scopeKey)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(domain);
+        ArgumentException.ThrowIfNullOrWhiteSpace(scopeKey);
+
+        Span<byte> digest = stackalloc byte[32];
+        var byteCount = Encoding.UTF8.GetByteCount($"medflow:{domain}:{scopeKey}");
+        var buffer = byteCount <= 256 ? stackalloc byte[byteCount] : new byte[byteCount];
+        Encoding.UTF8.GetBytes($"medflow:{domain}:{scopeKey}", buffer);
+        SHA256.HashData(buffer, digest);
+        return BinaryPrimitives.ReadInt64BigEndian(digest[..8]);
+    }
+
+    public Task<bool> TryLockUserForUpdateAsync(long userId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Users, [userId], ct);
+
+    public Task<bool> TryLockPatientForUpdateAsync(long patientId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Patients, [patientId], ct);
+
+    public Task<bool> TryLockPatientsForUpdateAsync(IReadOnlyCollection<long> patientIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Patients, patientIds, ct);
+
+    public Task<bool> TryLockIdentityClaimForUpdateAsync(long claimId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.PatientIdentityClaims, [claimId], ct);
+
+    public Task<bool> TryLockServiceForUpdateAsync(long serviceId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Services, [serviceId], ct);
+
+    public Task<bool> TryLockDoctorsForUpdateAsync(IReadOnlyCollection<long> doctorIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Doctors, doctorIds, ct);
+
+    public Task<bool> TryLockRoomForUpdateAsync(long roomId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.HospitalRooms, [roomId], ct);
+
+    public Task<bool> TryLockRoomsForUpdateAsync(IReadOnlyCollection<long> roomIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.HospitalRooms, roomIds, ct);
+
+    public Task<bool> TryLockSlotsForUpdateAsync(IReadOnlyCollection<long> slotIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.ExaminationSlots, slotIds, ct);
+
+    public Task<bool> TryLockAppointmentForUpdateAsync(long appointmentId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Appointments, [appointmentId], ct);
+
+    public Task<bool> TryLockAppointmentsForUpdateAsync(IReadOnlyCollection<long> appointmentIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Appointments, appointmentIds, ct);
+
+    public Task<bool> TryLockVisitForUpdateAsync(long visitId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Visits, [visitId], ct);
+
+    public Task<bool> TryLockServicePointForUpdateAsync(long servicePointId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.QueueServicePoints, [servicePointId], ct);
+
+    public Task<bool> TryLockServicePointsForUpdateAsync(IReadOnlyCollection<long> servicePointIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.QueueServicePoints, servicePointIds, ct);
+
+    public async Task<bool> TryLockUnroutedQueueAdvisoryAsync(long hospitalId, DateOnly queueDate, CancellationToken ct = default)
+    {
+        if (hospitalId <= 0)
+        {
+            return false;
+        }
+
         if (!Database.IsRelational())
         {
             return false;
         }
 
-        await Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT 1 FROM appointments WHERE id = {appointmentId} FOR UPDATE",
-            ct);
+        EnsureActiveRelationalTransaction("advisory:queue-unrouted");
+        var key = ComputeDeterministicAdvisoryLockKey("queue-unrouted", $"{hospitalId}:{queueDate:yyyy-MM-dd}");
+        await Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({key})", ct);
         return true;
     }
 
-    public async Task<bool> TryLockUserForUpdateAsync(long userId, CancellationToken ct = default)
+    public Task<bool> TryLockQueueEntryForUpdateAsync(long queueEntryId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.QueueEntries, [queueEntryId], ct);
+
+    public Task<bool> TryLockQueueEntriesForUpdateAsync(IReadOnlyCollection<long> queueEntryIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.QueueEntries, queueEntryIds, ct);
+
+    public Task<bool> TryLockDiagnosticOrderForUpdateAsync(long diagnosticOrderId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.DiagnosticOrders, [diagnosticOrderId], ct);
+
+    public Task<bool> TryLockDiagnosticOrdersForUpdateAsync(IReadOnlyCollection<long> diagnosticOrderIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.DiagnosticOrders, diagnosticOrderIds, ct);
+
+    public Task<bool> TryLockPrescriptionForUpdateAsync(long prescriptionId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Prescriptions, [prescriptionId], ct);
+
+    public Task<bool> TryLockMedicineBatchesForUpdateAsync(IReadOnlyCollection<long> batchIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.MedicineBatches, batchIds, ct);
+
+    public Task<bool> TryLockVisitChargeForUpdateAsync(long visitChargeId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.VisitCharges, [visitChargeId], ct);
+
+    public Task<bool> TryLockVisitChargesForUpdateAsync(IReadOnlyCollection<long> visitChargeIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.VisitCharges, visitChargeIds, ct);
+
+    public Task<bool> TryLockPaymentForUpdateAsync(long paymentId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Payments, [paymentId], ct);
+
+    public Task<bool> TryLockPaymentsForUpdateAsync(IReadOnlyCollection<long> paymentIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Payments, paymentIds, ct);
+
+    private async Task<bool> LockRowsForUpdateAsync(
+        LockTargetTable table,
+        IReadOnlyCollection<long> ids,
+        CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(ids);
+
         if (!Database.IsRelational())
         {
             return false;
         }
 
-        await Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT 1 FROM users WHERE id = {userId} FOR UPDATE",
-            ct);
-        return true;
+        EnsureActiveRelationalTransaction(table.ToString());
+
+        if (ids.Count == 0)
+        {
+            return true;
+        }
+
+        if (ids.Any(id => id <= 0))
+        {
+            return false;
+        }
+
+        var sortedIds = ids.Distinct().OrderBy(id => id).ToArray();
+        var lockedIds = table switch
+        {
+            LockTargetTable.Users => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM users WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.Patients => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM patients WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.PatientIdentityClaims => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM patient_identity_claims WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.Services => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM services WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.Doctors => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM doctors WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.HospitalRooms => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM hospital_rooms WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.ExaminationSlots => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM examination_slots WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.Appointments => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM appointments WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.Visits => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM visits WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.QueueServicePoints => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM queue_service_points WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.QueueEntries => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM queue_entries WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.DiagnosticOrders => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM diagnostic_orders WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.Prescriptions => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM prescriptions WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.MedicineBatches => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM medicine_batches WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.VisitCharges => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM visit_charges WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.Payments => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM payments WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            _ => throw new ArgumentOutOfRangeException(nameof(table), table, "Unsupported lock target table."),
+        };
+
+        return lockedIds.Count == sortedIds.Length;
     }
 
-    public async Task<bool> TryLockPatientForUpdateAsync(long patientId, CancellationToken ct = default)
+    private void EnsureActiveRelationalTransaction(string target)
     {
-        if (!Database.IsRelational())
+        if (Database.CurrentTransaction is null)
         {
-            return false;
+            throw new InvalidOperationException(
+                $"Acquiring FOR UPDATE lock on '{target}' requires an active database transaction (ADR-0059).");
         }
-
-        await Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT 1 FROM patients WHERE id = {patientId} FOR UPDATE",
-            ct);
-        return true;
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

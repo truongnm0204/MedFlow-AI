@@ -949,3 +949,114 @@ CREATE INDEX IF NOT EXISTS "ix_medicine_batches_fefo_lookup"
 
 CREATE INDEX IF NOT EXISTS "ix_service_prices_effective_lookup"
   ON "service_prices" ("service_id", "effective_from" DESC);
+
+-- 022_patients_emergency_contact_columns
+ALTER TABLE "patients"
+  ADD COLUMN IF NOT EXISTS "emergency_contact_name" varchar(200) NULL,
+  ADD COLUMN IF NOT EXISTS "emergency_contact_relationship" varchar(60) NULL,
+  ADD COLUMN IF NOT EXISTS "emergency_contact_phone" varchar(30) NULL;
+
+-- 023_business_integrity_constraints_and_indexes (ADR-0059)
+ALTER TABLE "diagnostic_orders"
+  ALTER COLUMN "visit_id" SET NOT NULL,
+  ADD CONSTRAINT "uq_diagnostic_orders_id_visit_id" UNIQUE ("id", "visit_id");
+
+ALTER TABLE "visit_charges"
+  ALTER COLUMN "visit_id" SET NOT NULL,
+  ADD COLUMN IF NOT EXISTS "charge_type" varchar(20) NOT NULL DEFAULT 'EXAMINATION',
+  ADD COLUMN IF NOT EXISTS "status" varchar(24) NOT NULL DEFAULT 'ACTIVE',
+  ADD COLUMN IF NOT EXISTS "created_at" timestamp without time zone NOT NULL DEFAULT (now() AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+  ADD COLUMN IF NOT EXISTS "cancelled_at" timestamp without time zone NULL,
+  ADD CONSTRAINT "uq_visit_charges_id_visit_id" UNIQUE ("id", "visit_id"),
+  ADD CONSTRAINT "chk_visit_charges_unit_price_nonneg" CHECK ("unit_price" IS NULL OR "unit_price" >= 0),
+  ADD CONSTRAINT "chk_visit_charges_status" CHECK ("status" IN ('ACTIVE', 'CANCELLED', 'CANCELLED_REFUND_PENDING')),
+  ADD CONSTRAINT "chk_visit_charges_type_consistency" CHECK (
+    ("charge_type" = 'EXAMINATION' AND "diagnostic_order_id" IS NULL)
+    OR ("charge_type" = 'DIAGNOSTIC' AND "diagnostic_order_id" IS NOT NULL)
+  ),
+  ADD CONSTRAINT "fk_visit_charges_diagnostic_order_visit"
+    FOREIGN KEY ("diagnostic_order_id", "visit_id") REFERENCES "diagnostic_orders" ("id", "visit_id");
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_visit_charges_active_exam_per_visit"
+  ON "visit_charges" ("visit_id")
+  WHERE "charge_type" = 'EXAMINATION' AND "status" = 'ACTIVE';
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_visit_charges_diagnostic_order"
+  ON "visit_charges" ("diagnostic_order_id")
+  WHERE "diagnostic_order_id" IS NOT NULL;
+
+ALTER TABLE "payments"
+  ALTER COLUMN "visit_id" SET NOT NULL,
+  ADD COLUMN IF NOT EXISTS "visit_charge_id" bigint NULL,
+  ADD COLUMN IF NOT EXISTS "payment_scope" varchar(16) NOT NULL DEFAULT 'CHARGE',
+  ADD CONSTRAINT "chk_payments_scope_charge_consistency" CHECK (
+    ("payment_scope" = 'CHARGE' AND "visit_charge_id" IS NOT NULL AND "visit_id" IS NOT NULL)
+    OR ("payment_scope" = 'LEGACY_VISIT' AND "visit_charge_id" IS NULL AND "visit_id" IS NOT NULL)
+  ),
+  ADD CONSTRAINT "fk_payments_charge_visit"
+    FOREIGN KEY ("visit_charge_id", "visit_id") REFERENCES "visit_charges" ("id", "visit_id");
+
+CREATE INDEX IF NOT EXISTS "ix_payments_visit_charge_id"
+  ON "payments" ("visit_charge_id");
+
+DROP INDEX IF EXISTS "ux_payments_one_pending_per_visit";
+
+CREATE UNIQUE INDEX IF NOT EXISTS "ux_payments_one_pending_per_charge"
+  ON "payments" ("visit_charge_id")
+  WHERE "visit_charge_id" IS NOT NULL AND upper(btrim("status")) = 'PENDING';
+
+CREATE UNIQUE INDEX IF NOT EXISTS "ux_payments_one_paid_per_charge"
+  ON "payments" ("visit_charge_id")
+  WHERE "visit_charge_id" IS NOT NULL AND upper(btrim("status")) = 'PAID';
+
+CREATE UNIQUE INDEX IF NOT EXISTS "ux_payments_one_pending_legacy_visit"
+  ON "payments" ("visit_id")
+  WHERE "visit_id" IS NOT NULL AND "visit_charge_id" IS NULL AND upper(btrim("status")) = 'PENDING';
+
+ALTER TABLE "auth_sessions"
+  ADD COLUMN IF NOT EXISTS "root_session_id" bigint NULL REFERENCES "auth_sessions" ("id"),
+  ADD COLUMN IF NOT EXISTS "revoked_reason" varchar(32) NULL;
+
+CREATE INDEX IF NOT EXISTS "ix_auth_sessions_root_session_id"
+  ON "auth_sessions" ("root_session_id");
+
+ALTER TABLE "appointments"
+  ADD COLUMN IF NOT EXISTS "root_appointment_id" bigint NULL REFERENCES "appointments" ("id"),
+  ADD COLUMN IF NOT EXISTS "rescheduled_from_appointment_id" bigint NULL REFERENCES "appointments" ("id");
+
+CREATE INDEX IF NOT EXISTS "ix_appointments_root_appointment_id"
+  ON "appointments" ("root_appointment_id");
+
+ALTER TABLE "medical_record_revisions"
+  ADD COLUMN IF NOT EXISTS "clinical_progression_note" text NULL,
+  ADD COLUMN IF NOT EXISTS "clinical_interpretation" text NULL,
+  ADD COLUMN IF NOT EXISTS "treatment_plan" text NULL,
+  ADD COLUMN IF NOT EXISTS "discharge_instructions" text NULL,
+  ADD COLUMN IF NOT EXISTS "follow_up_instructions" text NULL,
+  ADD COLUMN IF NOT EXISTS "follow_up_date" date NULL,
+  ADD COLUMN IF NOT EXISTS "warning_signs" text NULL;
+
+ALTER TABLE "medicine_batches"
+  ALTER COLUMN "quantity_on_hand" SET NOT NULL,
+  ADD CONSTRAINT "chk_medicine_batches_quantity_non_negative" CHECK ("quantity_on_hand" >= 0);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_medication_dispenses_dispensed_prescription"
+  ON "medication_dispenses" ("prescription_id")
+  WHERE "prescription_id" IS NOT NULL AND upper(btrim("status")) IN ('DISPENSED', 'COMPLETED');
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_prescriptions_one_draft_per_visit"
+  ON "prescriptions" ("visit_id")
+  WHERE "visit_id" IS NOT NULL AND upper(btrim("status")) = 'DRAFT';
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_medical_records_visit_id"
+  ON "medical_records" ("visit_id")
+  WHERE "visit_id" IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_medical_record_revisions_record_revision_no"
+  ON "medical_record_revisions" ("medical_record_id", "revision_no");
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_diagnostic_results_order_id"
+  ON "diagnostic_results" ("diagnostic_order_id");
+
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_diagnostic_result_versions_result_version_no"
+  ON "diagnostic_result_versions" ("diagnostic_result_id", "version_no");

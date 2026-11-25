@@ -28,5 +28,10 @@ public class MedicalRecordConfiguration : IEntityTypeConfiguration<MedicalRecord
         builder.Property(m => m.FinalizedAt)
             .HasColumnName("finalized_at")
             .HasColumnType("timestamp without time zone");
+
+        builder.HasIndex(m => m.VisitId)
+            .HasDatabaseName("uq_medical_records_visit_id")
+            .IsUnique()
+            .HasFilter("\"visit_id\" IS NOT NULL");
     }
 }

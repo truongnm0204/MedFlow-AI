@@ -34,7 +34,10 @@ database/
 │   ├── 019_identity_claim_otp_purpose.sql         # IDENTITY_CLAIM OTP purpose check constraint
 │   ├── 020_schedule_cronjob_indexes_and_notifications.sql # UC17 notifications read/lease columns & schedule/slot partial/unique indexes
 │   ├── 021_hot_query_composite_indexes.sql        # hot-query composite indexes (queue, UC56 visits, UC60 audit logs, UC45 FEFO, service prices)
-│   └── 022_patients_emergency_contact_columns.sql # UC05 optional emergency contact columns on patients
+│   ├── 022_patients_emergency_contact_columns.sql # UC05 optional emergency contact columns on patients
+│   └── 023_business_integrity_constraints_and_indexes.sql # ADR-0059 per-charge billing (Option A), composite FKs, lineage/EMR cols & clinical/pharmacy integrity constraints
+├── scripts/
+│   └── preflight_023_audit.sql                    # read-only preflight audit for Migration 023
 └── README.md
 ```
 

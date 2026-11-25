@@ -49,5 +49,9 @@ public class DiagnosticResultVersionConfiguration : IEntityTypeConfiguration<Dia
 
         builder.Property(x => x.CorrectionReason)
             .HasColumnName("correction_reason");
+
+        builder.HasIndex(x => new { x.DiagnosticResultId, x.VersionNo })
+            .HasDatabaseName("uq_diagnostic_result_versions_result_version_no")
+            .IsUnique();
     }
 }

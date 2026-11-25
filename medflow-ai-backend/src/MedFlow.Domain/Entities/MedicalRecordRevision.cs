@@ -11,6 +11,13 @@ public class MedicalRecordRevision
     public string? VitalSigns { get; set; }
     public string? ClinicalFindings { get; set; }
     public string? ClinicalConclusion { get; set; }
+    public string? ClinicalProgressionNote { get; set; }
+    public string? ClinicalInterpretation { get; set; }
+    public string? TreatmentPlan { get; set; }
+    public string? DischargeInstructions { get; set; }
+    public string? FollowUpInstructions { get; set; }
+    public DateOnly? FollowUpDate { get; set; }
+    public string? WarningSigns { get; set; }
     public long? EditedByDoctorId { get; set; }
     public DateTime? RecordedAt { get; set; }
     public bool? IsConfirmed { get; set; }

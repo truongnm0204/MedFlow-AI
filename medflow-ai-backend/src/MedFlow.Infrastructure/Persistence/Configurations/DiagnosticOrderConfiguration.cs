@@ -55,5 +55,10 @@ public class DiagnosticOrderConfiguration : IEntityTypeConfiguration<DiagnosticO
         builder.Property(x => x.OrderedAt)
             .HasColumnName("ordered_at")
             .HasColumnType("timestamp without time zone");
+
+        builder.HasOne<Visit>()
+            .WithMany()
+            .HasForeignKey(x => x.VisitId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

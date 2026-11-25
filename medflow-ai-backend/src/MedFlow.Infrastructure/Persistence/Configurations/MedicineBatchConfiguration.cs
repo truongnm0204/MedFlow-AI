@@ -8,7 +8,10 @@ public class MedicineBatchConfiguration : IEntityTypeConfiguration<MedicineBatch
 {
     public void Configure(EntityTypeBuilder<MedicineBatch> builder)
     {
-        builder.ToTable("medicine_batches");
+        builder.ToTable("medicine_batches", t =>
+            t.HasCheckConstraint(
+                "chk_medicine_batches_quantity_non_negative",
+                "\"quantity_on_hand\" >= 0"));
 
         builder.HasKey(mb => mb.Id);
         builder.Property(mb => mb.Id)

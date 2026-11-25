@@ -23,11 +23,16 @@ public class AuthSessionConfiguration : IEntityTypeConfiguration<AuthSession>
         builder.Property(s => s.ExpiresAt).HasColumnName("expires_at").IsRequired();
         builder.Property(s => s.RevokedAt).HasColumnName("revoked_at");
 
-        // Columns added back via migration 005
+        // Columns added via migration 005
         builder.Property(s => s.ReplacedByTokenHash).HasColumnName("replaced_by_token_hash").HasMaxLength(128);
         builder.Property(s => s.CreatedByIp).HasColumnName("created_by_ip").HasMaxLength(45);
         builder.Property(s => s.RevokedByIp).HasColumnName("revoked_by_ip").HasMaxLength(45);
         builder.Property(s => s.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("now()");
+
+        // Columns added via migration 023 (ADR-0059 session lineage)
+        builder.Property(s => s.RootSessionId).HasColumnName("root_session_id");
+        builder.Property(s => s.RevokedReason).HasColumnName("revoked_reason").HasMaxLength(32);
+        builder.HasIndex(s => s.RootSessionId).HasDatabaseName("ix_auth_sessions_root_session_id");
 
         builder.Ignore(s => s.IsActive);
     }

@@ -1,7 +1,9 @@
 using System.Net;
 using System.Text.Json;
+using MedFlow.Application.Common.Persistence;
 using MedFlow.Domain.Exceptions;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace MedFlow.API.Middleware;
 
@@ -42,14 +44,35 @@ public class ExceptionMiddleware
                 new ProblemDetails { Status = 403, Title = "Không có quyền truy cập", Detail = fe.Message }),
             ConflictException ce => (HttpStatusCode.Conflict,
                 new ProblemDetails { Status = 409, Title = "Xung đột dữ liệu", Detail = ce.Message }),
-            Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException => (HttpStatusCode.Conflict,
-                new ProblemDetails { Status = 409, Title = "Xung đột dữ liệu", Detail = "Dữ liệu vừa được cập nhật bởi thao tác khác. Vui lòng tải lại và thử lại." }),
+            DbUpdateConcurrencyException => (HttpStatusCode.Conflict,
+                new ProblemDetails
+                {
+                    Status = 409,
+                    Title = "Xung đột dữ liệu",
+                    Detail = "Dữ liệu vừa được cập nhật bởi thao tác khác. Vui lòng tải lại và thử lại.",
+                }),
+            _ when PostgresConcurrencyException.IsDeadlockOrSerializationFailure(ex) => (HttpStatusCode.Conflict,
+                new ProblemDetails
+                {
+                    Status = 409,
+                    Title = "Xung đột giao dịch đồng thời",
+                    Detail = "Hệ thống đang xử lý thao tác đồng thời trên cùng hồ sơ. Vui lòng thử lại.",
+                }),
             _ => (HttpStatusCode.InternalServerError,
                 new ProblemDetails { Status = 500, Title = "Lỗi hệ thống", Detail = "Đã xảy ra lỗi không mong muốn" }),
         };
 
         if (statusCode == HttpStatusCode.InternalServerError)
+        {
             _logger.LogError(ex, "Unhandled exception");
+        }
+        else if (PostgresConcurrencyException.IsTransientConcurrencyConflict(ex))
+        {
+            _logger.LogWarning(
+                "Concurrency conflict mapped to HTTP 409 (SqlState={SqlState}, Path={Path})",
+                PostgresConcurrencyException.TryGetSqlState(ex) ?? "xmin",
+                context.Request.Path);
+        }
 
         context.Response.ContentType = "application/problem+json";
         context.Response.StatusCode = (int)statusCode;
