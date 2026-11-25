@@ -119,6 +119,7 @@ public sealed class QueueCallNextEndpointTests : AuthTestBase
                     .ToListAsync();
                 if (staleVisitIds.Count > 0)
                 {
+                    await Db.Payments.Where(p => p.VisitId != null && staleVisitIds.Contains(p.VisitId.Value)).ExecuteDeleteAsync();
                     await Db.VisitCharges.Where(c => c.VisitId != null && staleVisitIds.Contains(c.VisitId.Value)).ExecuteDeleteAsync();
                 }
                 await Db.Visits.Where(v => v.ExaminationRoomId.HasValue && staleRooms.Contains(v.ExaminationRoomId.Value)).ExecuteDeleteAsync();
