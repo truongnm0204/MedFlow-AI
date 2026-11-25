@@ -20,7 +20,7 @@ public sealed record FamilyMemberResponse(
     string FullName,
     string Relationship,
     string RelationshipBadgeColor,
-    string PatientCode,
+    string? PatientCode,
     string SubStatus,
     bool IsPrimaryAccount,
     string? AvatarUrl,

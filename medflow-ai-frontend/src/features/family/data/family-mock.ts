@@ -3,6 +3,7 @@ import type { FamilyMember } from '../types/family.types';
 export const initialMockFamilyMembers: FamilyMember[] = [
   {
     id: 'FAM-001',
+    memberPatientId: 101,
     fullName: 'NGUYỄN VĂN AN',
     relationship: 'Bản thân',
     relationshipBadgeColor: 'slate',
@@ -42,6 +43,7 @@ export const initialMockFamilyMembers: FamilyMember[] = [
   },
   {
     id: 'FAM-002',
+    memberPatientId: 102,
     fullName: 'NGUYỄN MINH KHANG',
     relationship: 'Con trai',
     relationshipBadgeColor: 'blue',
@@ -89,6 +91,7 @@ export const initialMockFamilyMembers: FamilyMember[] = [
   },
   {
     id: 'FAM-003',
+    memberPatientId: 103,
     fullName: 'NGUYỄN THỊ BÌNH',
     relationship: 'Vợ',
     relationshipBadgeColor: 'rose',
@@ -134,6 +137,7 @@ export const initialMockFamilyMembers: FamilyMember[] = [
   },
   {
     id: 'FAM-004',
+    memberPatientId: 104,
     fullName: 'LÊ THỊ MAI',
     relationship: 'Mẹ ruột',
     relationshipBadgeColor: 'amber',

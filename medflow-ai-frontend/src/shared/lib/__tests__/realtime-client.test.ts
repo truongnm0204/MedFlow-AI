@@ -269,4 +269,86 @@ describe('realtime-client & Vite WebSocket proxy (#831)', () => {
     expect(invalidateSpy).toHaveBeenCalledTimes(1);
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['appointments', 'queue', 'APT-99'] });
   });
+
+  it.each(['PASSWORD_RESET', 'PASSWORD_CHANGED', 'SESSION_REVOKED'] as const)(
+    'tears down active SignalR connection immediately when MembershipRevoked carries %s',
+    async (reasonCode) => {
+      let activeConn: FakeHubConnection | null = null;
+      setRealtimeConnectionFactoryForTests(() => {
+        activeConn = new FakeHubConnection();
+        return activeConn;
+      });
+
+      seedAuthenticatedUser(25, 'jwt-25');
+      const unsub = subscribeRealtimeChannel({
+        channel: { type: 'visit-payment', visitIdOrCode: 'VIS-250' },
+        event: 'VisitPaymentChanged',
+        onEvent: () => {},
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(getRealtimeConnectionStatus()).toBe('connected');
+      expect(activeConn).not.toBeNull();
+
+      activeConn!.emit('MembershipRevoked', {
+        eventType: 'MembershipRevoked',
+        resourceKey: 'session',
+        reasonCode,
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(activeConn!.stopCalls).toBeGreaterThanOrEqual(1);
+      expect(getRealtimeConnectionStatus()).toBe('disconnected');
+
+      unsub();
+    },
+  );
+
+  it('invokes LeaveSubscription on server when subscriber unsubscribes while Join RPC is still in-flight', async () => {
+    let resolveInFlightJoin: ((ack: { resourceKey: string; expiresAtUtc: string }) => void) | null =
+      null;
+    let fakeConn: FakeHubConnection | null = null;
+
+    setRealtimeConnectionFactoryForTests(() => {
+      fakeConn = new FakeHubConnection();
+      fakeConn.invokeImpl = (method) => {
+        if (method === 'JoinVisitPaymentGroup') {
+          return new Promise((resolve) => {
+            resolveInFlightJoin = resolve;
+          });
+        }
+        return Promise.resolve(null);
+      };
+      return fakeConn;
+    });
+
+    seedAuthenticatedUser(31, 'jwt-31');
+    const unsub = subscribeRealtimeChannel({
+      channel: { type: 'visit-payment', visitIdOrCode: 'VIS-310' },
+      event: 'VisitPaymentChanged',
+      onEvent: () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(resolveInFlightJoin).not.toBeNull();
+
+    // Unsubscribe BEFORE JoinVisitPaymentGroup resolves on the server
+    unsub();
+
+    // Now resolve the in-flight JoinVisitPaymentGroup ack
+    resolveInFlightJoin!({
+      resourceKey: 'visit-payment:310',
+      expiresAtUtc: new Date(Date.now() + 300_000).toISOString(),
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(
+      fakeConn!.invoked.some(
+        (call) => call.method === 'LeaveSubscription' && call.args[0] === 'visit-payment:310',
+      ),
+    ).toBe(true);
+    expect(isRealtimeChannelJoined({ type: 'visit-payment', visitIdOrCode: 'VIS-310' })).toBe(
+      false,
+    );
+  });
 });

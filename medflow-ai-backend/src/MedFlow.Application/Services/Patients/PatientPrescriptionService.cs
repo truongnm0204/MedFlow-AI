@@ -2,15 +2,19 @@ using System.Globalization;
 using MedFlow.Application.DTOs.Patients;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Appointments;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace MedFlow.Application.Services.Patients;
 
 public sealed class PatientPrescriptionService : IPatientPrescriptionService
 {
+    public const string AuditActionVisitOwnershipConflict = "PATIENT_VISIT_OWNERSHIP_CONFLICT";
+
     private const int MaxIdentifierLength = 40;
     private const int MaxPageSize = 50;
     private const string NotFoundMessage = "Không tìm thấy đơn thuốc.";
@@ -20,15 +24,18 @@ public sealed class PatientPrescriptionService : IPatientPrescriptionService
     private readonly IApplicationDbContext _db;
     private readonly IAuditLogger _auditLogger;
     private readonly TimeProvider _timeProvider;
+    private readonly ILogger<PatientPrescriptionService>? _logger;
 
     public PatientPrescriptionService(
         IApplicationDbContext db,
         IAuditLogger auditLogger,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        ILogger<PatientPrescriptionService>? logger = null)
     {
         _db = db;
         _auditLogger = auditLogger;
         _timeProvider = timeProvider;
+        _logger = logger;
     }
 
     public async Task<PatientPrescriptionListResponseDto> GetMyPrescriptionsAsync(
@@ -39,8 +46,24 @@ public sealed class PatientPrescriptionService : IPatientPrescriptionService
     {
         EnsureActor(actorUserId);
         var paging = NormalizeListRequest(request);
-        var patientId = await ResolveActivePatientIdAsync(actorUserId, ct);
-        var query = BuildVisibleQuery(patientId);
+        var (selfPatientId, phiPatientIds) = await ResolvePhiPatientScopeAsync(actorUserId, ct);
+        var validVisitIds = await ResolveAuthorizedVisitIdsAsync(actorUserId, phiPatientIds, ipAddress, ct);
+
+        if (validVisitIds.Count == 0)
+        {
+            _auditLogger.Add(
+                actorUserId,
+                "PATIENT_PRESCRIPTIONS_VIEWED",
+                "PATIENT",
+                selfPatientId.ToString(CultureInfo.InvariantCulture),
+                new { page = paging.Page, pageSize = paging.PageSize, resultCount = 0 },
+                ipAddress);
+            await TrySaveChangesAsync(ct);
+
+            return new PatientPrescriptionListResponseDto([], paging.Page, paging.PageSize, 0);
+        }
+
+        var query = BuildVisibleQueryForVisits(validVisitIds);
         var totalCount = await query.CountAsync(ct);
         var prescriptions = await query
             .OrderByDescending(p => p.IssuedAt ?? p.CreatedAt)
@@ -54,10 +77,10 @@ public sealed class PatientPrescriptionService : IPatientPrescriptionService
             actorUserId,
             "PATIENT_PRESCRIPTIONS_VIEWED",
             "PATIENT",
-            patientId.ToString(CultureInfo.InvariantCulture),
+            selfPatientId.ToString(CultureInfo.InvariantCulture),
             new { page = paging.Page, pageSize = paging.PageSize, resultCount = items.Count },
             ipAddress);
-        await _db.SaveChangesAsync(ct);
+        await TrySaveChangesAsync(ct);
 
         return new PatientPrescriptionListResponseDto(items, paging.Page, paging.PageSize, totalCount);
     }
@@ -70,14 +93,24 @@ public sealed class PatientPrescriptionService : IPatientPrescriptionService
     {
         EnsureActor(actorUserId);
         var identifier = ParseIdentifier(idOrCode);
-        var patientId = await ResolveActivePatientIdAsync(actorUserId, ct);
-        var query = BuildVisibleQuery(patientId);
+        var (_, phiPatientIds) = await ResolvePhiPatientScopeAsync(actorUserId, ct);
+
+        var baseQuery = BuildBaseVisiblePrescriptionQuery();
         var prescription = identifier.Id is long id
-            ? await query.FirstOrDefaultAsync(p => p.Id == id, ct)
-            : await query.FirstOrDefaultAsync(
+            ? await baseQuery.FirstOrDefaultAsync(p => p.Id == id, ct)
+            : await baseQuery.FirstOrDefaultAsync(
                 p => p.PrescriptionCode != null && p.PrescriptionCode.ToUpper() == identifier.Code,
                 ct);
-        if (prescription is null)
+        if (prescription?.VisitId is not long visitId)
+            throw new NotFoundException(NotFoundMessage);
+
+        var visit = await _db.Visits.AsNoTracking()
+            .FirstOrDefaultAsync(v => v.Id == visitId, ct);
+        if (visit is null || IsCancelledOrNoShowVisit(visit))
+            throw new NotFoundException(NotFoundMessage);
+
+        var effectivePatientId = await ResolveVisitPatientIdStrictAsync(actorUserId, visit, ipAddress, ct);
+        if (effectivePatientId is not long resolvedPatientId || !phiPatientIds.Contains(resolvedPatientId))
             throw new NotFoundException(NotFoundMessage);
 
         var summary = (await MapListItemsAsync([prescription], ct)).Single();
@@ -117,21 +150,20 @@ public sealed class PatientPrescriptionService : IPatientPrescriptionService
             "PATIENT_PRESCRIPTION_VIEWED",
             "PRESCRIPTION",
             prescription.Id.ToString(CultureInfo.InvariantCulture),
-            new { prescription.VisitId },
+            new { prescription.VisitId, patientId = resolvedPatientId },
             ipAddress);
-        await _db.SaveChangesAsync(ct);
+        await TrySaveChangesAsync(ct);
 
         return new PatientPrescriptionDetailDto(summary, items);
     }
 
-    private IQueryable<Prescription> BuildVisibleQuery(long patientId) =>
+    private IQueryable<Prescription> BuildBaseVisiblePrescriptionQuery() =>
         _db.Prescriptions
             .AsNoTracking()
             .Where(prescription =>
                 prescription.VisitId != null &&
                 prescription.Status != null &&
                 VisibleStatuses.Contains(prescription.Status.ToUpper()) &&
-                _db.Visits.Any(visit => visit.Id == prescription.VisitId && visit.PatientId == patientId) &&
                 _db.PrescriptionItems.Any(item =>
                     item.PrescriptionId == prescription.Id &&
                     item.MedicineId != null &&
@@ -146,6 +178,10 @@ public sealed class PatientPrescriptionService : IPatientPrescriptionService
                     replacement.ReplacesPrescriptionId == prescription.Id &&
                     replacement.Status != null &&
                     VisibleStatuses.Contains(replacement.Status.ToUpper())));
+
+    private IQueryable<Prescription> BuildVisibleQueryForVisits(IReadOnlyCollection<long> visitIds) =>
+        BuildBaseVisiblePrescriptionQuery()
+            .Where(prescription => prescription.VisitId != null && visitIds.Contains(prescription.VisitId.Value));
 
     private async Task<IReadOnlyList<PatientPrescriptionListItemDto>> MapListItemsAsync(
         IReadOnlyList<Prescription> prescriptions,
@@ -209,6 +245,190 @@ public sealed class PatientPrescriptionService : IPatientPrescriptionService
                 itemCounts[prescription.Id]);
         }).ToList();
     }
+
+    private async Task<(long SelfPatientId, HashSet<long> PhiPatientIds)> ResolvePhiPatientScopeAsync(
+        long actorUserId,
+        CancellationToken ct)
+    {
+        var selfPatientId = await ResolveActivePatientIdAsync(actorUserId, ct);
+        var phiPatientIds = new HashSet<long> { selfPatientId };
+
+        try
+        {
+            var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+            var familyMemberIds = await _db.PatientFamilyLinks
+                .AsNoTracking()
+                .Include(l => l.MemberPatient)
+                .WherePhiMemberOf(selfPatientId, nowLocal)
+                .Select(l => l.MemberPatientId)
+                .ToListAsync(ct);
+            foreach (var memberId in familyMemberIds)
+                phiPatientIds.Add(memberId);
+        }
+        catch (NotSupportedException)
+        {
+            // Specialized unit-test DbContext without PatientFamilyLinks DbSet.
+        }
+
+        return (selfPatientId, phiPatientIds);
+    }
+
+    private async Task<List<long>> ResolveAuthorizedVisitIdsAsync(
+        long actorUserId,
+        IReadOnlySet<long> phiPatientIds,
+        string? ipAddress,
+        CancellationToken ct)
+    {
+        var ownedAppointmentIds = await TryLoadOwnedAppointmentIdsAsync(phiPatientIds, ct);
+
+        var candidateVisits = await _db.Visits.AsNoTracking()
+            .Where(v =>
+                (v.PatientId != null && phiPatientIds.Contains(v.PatientId.Value)) ||
+                (v.PatientId == null && v.AppointmentId != null && ownedAppointmentIds.Contains(v.AppointmentId.Value)))
+            .ToListAsync(ct);
+
+        if (candidateVisits.Count == 0)
+            return [];
+
+        var appointmentIds = candidateVisits
+            .Where(v => v.AppointmentId.HasValue)
+            .Select(v => v.AppointmentId!.Value)
+            .Distinct()
+            .ToList();
+        var appointmentsById = await TryLoadAppointmentsByIdAsync(appointmentIds, ct);
+
+        var validIds = new List<long>(candidateVisits.Count);
+        foreach (var visit in candidateVisits)
+        {
+            if (IsCancelledOrNoShowVisit(visit))
+                continue;
+
+            Appointment? appt = null;
+            if (visit.AppointmentId is long apptId)
+                appointmentsById.TryGetValue(apptId, out appt);
+
+            if (visit.PatientId.HasValue &&
+                appt?.PatientId is long apptPatientId &&
+                visit.PatientId.Value != apptPatientId)
+            {
+                await RecordOwnershipConflictAsync(actorUserId, visit, apptPatientId, ipAddress, ct);
+                continue;
+            }
+
+            var effectivePatientId = visit.PatientId ?? appt?.PatientId;
+            if (effectivePatientId is long pid && phiPatientIds.Contains(pid))
+            {
+                validIds.Add(visit.Id);
+            }
+        }
+
+        return validIds;
+    }
+
+    private async Task<long?> ResolveVisitPatientIdStrictAsync(
+        long actorUserId,
+        Visit visit,
+        string? ipAddress,
+        CancellationToken ct)
+    {
+        Appointment? appointment = null;
+        if (visit.AppointmentId is long appointmentId)
+        {
+            var dict = await TryLoadAppointmentsByIdAsync([appointmentId], ct);
+            dict.TryGetValue(appointmentId, out appointment);
+        }
+
+        if (visit.PatientId.HasValue &&
+            appointment?.PatientId is long appointmentPatientId &&
+            visit.PatientId.Value != appointmentPatientId)
+        {
+            await RecordOwnershipConflictAsync(actorUserId, visit, appointmentPatientId, ipAddress, ct);
+            throw new NotFoundException(NotFoundMessage);
+        }
+
+        return visit.PatientId ?? appointment?.PatientId;
+    }
+
+    private async Task RecordOwnershipConflictAsync(
+        long actorUserId,
+        Visit visit,
+        long appointmentPatientId,
+        string? ipAddress,
+        CancellationToken ct)
+    {
+        _logger?.LogWarning(
+            "PHI ownership conflict detected on Visit {VisitId}: Visit.PatientId={VisitPatientId} != Appointment.PatientId={AppointmentPatientId}.",
+            visit.Id,
+            visit.PatientId,
+            appointmentPatientId);
+
+        _auditLogger.Add(
+            actorUserId,
+            AuditActionVisitOwnershipConflict,
+            "VISIT",
+            visit.Id.ToString(CultureInfo.InvariantCulture),
+            new
+            {
+                visitId = visit.Id,
+                visitPatientId = visit.PatientId,
+                appointmentId = visit.AppointmentId,
+                appointmentPatientId,
+            },
+            ipAddress);
+        await TrySaveChangesAsync(ct);
+    }
+
+    private async Task<HashSet<long>> TryLoadOwnedAppointmentIdsAsync(
+        IReadOnlySet<long> patientIds,
+        CancellationToken ct)
+    {
+        try
+        {
+            var ids = await _db.Appointments.AsNoTracking()
+                .Where(a => a.PatientId != null && patientIds.Contains(a.PatientId.Value))
+                .Select(a => a.Id)
+                .ToListAsync(ct);
+            return ids.ToHashSet();
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    private async Task<Dictionary<long, Appointment>> TryLoadAppointmentsByIdAsync(
+        IReadOnlyCollection<long> appointmentIds,
+        CancellationToken ct)
+    {
+        if (appointmentIds.Count == 0)
+            return [];
+
+        try
+        {
+            return await _db.Appointments.AsNoTracking()
+                .Where(a => appointmentIds.Contains(a.Id))
+                .ToDictionaryAsync(a => a.Id, ct);
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    private async Task TrySaveChangesAsync(CancellationToken ct)
+    {
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            // Specialized unit-test DbContext without AuditLogs DbSet.
+        }
+    }
+
+    private static bool IsCancelledOrNoShowVisit(Visit visit)
+        => AppointmentBookingRules.NormalizeStatusKey(visit.Status) is "CANCELLED" or "NO_SHOW";
 
     private async Task<long> ResolveActivePatientIdAsync(long actorUserId, CancellationToken ct)
     {

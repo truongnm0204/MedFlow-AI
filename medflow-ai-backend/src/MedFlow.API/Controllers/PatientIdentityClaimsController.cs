@@ -9,7 +9,7 @@ namespace MedFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/reception/patient-identity-claims")]
-[Authorize(Roles = $"{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
+[Authorize]
 public sealed class PatientIdentityClaimsController : ControllerBase
 {
     private readonly IPatientIdentityClaimService _service;
@@ -52,6 +52,20 @@ public sealed class PatientIdentityClaimsController : ControllerBase
         [FromBody] RejectIdentityClaimRequest request,
         CancellationToken ct)
         => Ok(await _service.RejectAsync(GetUserId(), id, request, ct));
+
+    /// <summary>POST /api/v1/reception/patient-identity-claims/family-links/{linkId}/verify</summary>
+    [HttpPost("family-links/{linkId}/verify")]
+    [ProducesResponseType<VerifyFamilyLinkResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<VerifyFamilyLinkResponse>> VerifyFamilyLink(
+        [FromRoute] string linkId,
+        [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] VerifyFamilyLinkRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _service.VerifyFamilyLinkAsync(GetUserId(), linkId, request, ct));
 
     private long GetUserId()
     {

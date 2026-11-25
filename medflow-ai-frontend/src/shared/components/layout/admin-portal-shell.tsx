@@ -22,6 +22,7 @@ import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { hasPermission } from '@/features/auth/utils/rbac';
 import { MedflowLogo } from './medflow-logo';
 
 function computeAdminInitials(name: string): string {
@@ -43,6 +44,7 @@ export type AdminPortalTab =
   | 'Chính sách hẹn'
   | 'Chính sách hàng đợi'
   | 'Cấu hình tích hợp'
+  | 'Xác minh hồ sơ'
   | 'Vai trò & Phân quyền'
   | 'Nhật ký kiểm toán'
   | 'Báo cáo vận hành';
@@ -74,6 +76,7 @@ const TABS: { name: AdminPortalTab; href?: string; icon: LucideIcon }[] = [
   { name: 'Chính sách hẹn', href: '/admin/policies', icon: SlidersHorizontal },
   { name: 'Chính sách hàng đợi', href: '/admin/queue-policy', icon: ListOrdered },
   { name: 'Cấu hình tích hợp', href: '/admin/integrations', icon: Plug },
+  { name: 'Xác minh hồ sơ', href: '/admin/identity-claims', icon: ShieldCheck },
   { name: 'Vai trò & Phân quyền', href: '/admin/roles', icon: ShieldCheck },
   { name: 'Nhật ký kiểm toán', href: '/admin/audit-logs', icon: FileSearch },
   { name: 'Báo cáo vận hành', href: '/admin/reports', icon: BarChart3 },
@@ -93,9 +96,20 @@ export function AdminPortalShell({
   const roleLabel = user?.roles.includes('SYSTEM_ADMIN') ? 'SYSTEM_ADMIN' : 'HOSPITAL_ADMIN';
   const isSystemAdmin =
     Boolean(user?.roles.includes('SYSTEM_ADMIN')) || activeTab === 'Tổng quan hệ thống';
+  const canVerifyIdentity = hasPermission(
+    user?.roles,
+    'PATIENT_IDENTITY_VERIFY',
+    user?.permissions,
+  );
+  const filteredBaseTabs = TABS.filter(
+    (tab) => tab.name !== 'Xác minh hồ sơ' || canVerifyIdentity || activeTab === 'Xác minh hồ sơ',
+  );
   const visibleTabs = isSystemAdmin
-    ? [{ name: 'Tổng quan hệ thống' as const, href: '/system-admin', icon: ShieldCheck }, ...TABS]
-    : TABS;
+    ? [
+        { name: 'Tổng quan hệ thống' as const, href: '/system-admin', icon: ShieldCheck },
+        ...filteredBaseTabs,
+      ]
+    : filteredBaseTabs;
 
   return (
     <div className="flex min-h-screen bg-canvas font-sans text-ink antialiased">

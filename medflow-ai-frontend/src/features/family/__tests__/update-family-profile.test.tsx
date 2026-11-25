@@ -125,4 +125,57 @@ describe('Update Family Profile (real API)', () => {
       expect(screen.queryByText('Cập nhật Thông tin Hồ sơ Người thân')).not.toBeInTheDocument();
     });
   });
+
+  it('không lấy nhầm emergencyPhone làm phone mặc định, cho phép xóa trắng phone/email và truyền numeric memberPatientId khi đặt khám', async () => {
+    const putSpy = vi.spyOn(apiClient, 'put').mockResolvedValueOnce({
+      data: {
+        ...initialMockFamilyMembers[2],
+        phone: undefined,
+        email: undefined,
+      },
+    } as AxiosResponse);
+
+    // 1. FAM-002 has undefined phone and emergencyPhone='0912 345 678' -> phone input must initialize to ''
+    const { unmount } = renderDetailPage();
+    fireEvent.click(await screen.findByRole('button', { name: /Chỉnh sửa thông tin liên hệ/i }));
+    const khangPhoneInput = screen.getByLabelText(
+      /Số điện thoại liên hệ chính/i,
+    ) as HTMLInputElement;
+    expect(khangPhoneInput.value).toBe('');
+    unmount();
+
+    // 2. Clearing phone & email on FAM-003 sends empty strings "" cleanly
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/family/FAM-003']}>
+          <Routes>
+            <Route path="/family/:memberId" element={<FamilyProfileDetailPage />} />
+            <Route path="/booking" element={<div>BOOKING TARGET</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Cập nhật$/i }));
+    fireEvent.change(screen.getByLabelText(/Số điện thoại liên hệ chính/i), {
+      target: { value: '' },
+    });
+    fireEvent.change(screen.getByLabelText(/Email nhận kết quả xét nghiệm/i), {
+      target: { value: '' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Lưu thay đổi/i }));
+
+    await waitFor(() => {
+      expect(putSpy).toHaveBeenCalledWith(
+        '/patients/me/family-members/FAM-003',
+        expect.objectContaining({ phone: '', email: '' }),
+      );
+    });
+
+    // 3. Clicking Đặt lịch khám passes numeric memberPatientId (103), not string 'FAM-003'
+    const bookButtons = screen.getAllByRole('button', { name: /Đặt lịch khám/i });
+    fireEvent.click(bookButtons[0]!);
+    expect(await screen.findByText('BOOKING TARGET')).toBeInTheDocument();
+  });
 });

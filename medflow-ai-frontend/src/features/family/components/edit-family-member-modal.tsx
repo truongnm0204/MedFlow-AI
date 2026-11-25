@@ -37,34 +37,43 @@ interface EditFamilyMemberFormProps {
 function EditFamilyMemberForm({ member, onClose, onSave }: EditFamilyMemberFormProps) {
   const updateMutation = useUpdateFamilyMember();
 
-  const [phone, setPhone] = useState(member.phone ?? member.emergencyPhone ?? '');
+  const [phone, setPhone] = useState(member.phone ?? '');
   const [email, setEmail] = useState(member.email ?? '');
   const [address, setAddress] = useState(member.address ?? '');
 
-  const defaultRel = member.emergencyContactRelation ?? 'Chủ tài khoản chính';
-  const defaultName = member.emergencyContactName ?? member.guardian ?? '';
+  const defaultRel = member.emergencyContactRelation?.trim() ?? '';
+  const defaultName = member.emergencyContactName?.trim() ?? '';
   const [emergencyNameAndRel, setEmergencyNameAndRel] = useState(
-    defaultName ? (defaultName.includes('-') ? defaultName : `${defaultName} - ${defaultRel}`) : '',
+    defaultName
+      ? defaultName.includes('-')
+        ? defaultName
+        : defaultRel
+          ? `${defaultName} - ${defaultRel}`
+          : defaultName
+      : '',
   );
-  const [emergencyPhone, setEmergencyPhone] = useState(member.emergencyPhone ?? member.phone ?? '');
+  const [emergencyPhone, setEmergencyPhone] = useState(member.emergencyPhone ?? '');
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors({});
 
-    // Parse Họ tên & Mối quan hệ
-    const parts = emergencyNameAndRel.split('-').map((s) => s.trim());
-    const emergencyContactName = parts[0] || member.emergencyContactName || undefined;
-    const emergencyContactRelation = parts[1] || member.emergencyContactRelation || undefined;
+    // Parse Họ tên & Mối quan hệ (cho phép xóa trắng hoàn toàn)
+    const trimmedEmergency = emergencyNameAndRel.trim();
+    const dashIndex = trimmedEmergency.indexOf('-');
+    const emergencyContactName =
+      dashIndex >= 0 ? trimmedEmergency.slice(0, dashIndex).trim() : trimmedEmergency;
+    const emergencyContactRelation =
+      dashIndex >= 0 ? trimmedEmergency.slice(dashIndex + 1).trim() : '';
 
     const inputData: UpdateFamilyMemberInput = {
-      phone: phone.trim() || undefined,
-      email: email.trim() || undefined,
+      phone: phone.trim(),
+      email: email.trim(),
       address: address.trim(),
       emergencyContactName,
       emergencyContactRelation,
-      emergencyPhone: emergencyPhone.trim() || undefined,
+      emergencyPhone: emergencyPhone.trim(),
     };
 
     const result = updateFamilyMemberSchema.safeParse(inputData);
@@ -95,7 +104,7 @@ function EditFamilyMemberForm({ member, onClose, onSave }: EditFamilyMemberFormP
   };
 
   const isSubmitting = updateMutation.isPending;
-  const displayCode = member.identificationNo ?? member.patientCode;
+  const displayCode = member.identificationNo ?? member.patientCode ?? 'Chờ xác minh';
 
   return (
     <div className="relative p-6 sm:p-7">
@@ -178,7 +187,7 @@ function EditFamilyMemberForm({ member, onClose, onSave }: EditFamilyMemberFormP
             <div>
               <div className="flex items-center justify-between">
                 <label htmlFor="family-edit-phone" className="text-xs font-semibold text-slate-700">
-                  Số điện thoại liên hệ chính <span className="text-rose-500">*</span>
+                  Số điện thoại liên hệ chính
                 </label>
                 <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
                   <Check className="h-3 w-3 stroke-[2.5]" />
@@ -210,7 +219,7 @@ function EditFamilyMemberForm({ member, onClose, onSave }: EditFamilyMemberFormP
                 htmlFor="family-edit-email"
                 className="block text-xs font-semibold text-slate-700"
               >
-                Email nhận kết quả xét nghiệm / đơn thuốc <span className="text-rose-500">*</span>
+                Email nhận kết quả xét nghiệm / đơn thuốc
               </label>
               <div className="relative mt-1.5">
                 <Mail className="pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2 text-slate-400" />

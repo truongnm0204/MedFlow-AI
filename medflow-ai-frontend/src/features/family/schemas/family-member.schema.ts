@@ -144,9 +144,9 @@ export const updateFamilyMemberSchema = z.object({
   emergencyContactName: z
     .string()
     .trim()
-    .min(2, 'Họ tên người liên hệ khẩn cấp tối thiểu 2 ký tự')
-    .refine((v) => !v || /^[\p{L}\s.'-]+$/u.test(v), {
-      message: 'Họ tên người liên hệ khẩn cấp chỉ được chứa chữ cái và khoảng trắng',
+    .refine((v) => !v || (v.length >= 2 && /^[\p{L}\s.'-]+$/u.test(v)), {
+      message:
+        'Họ tên người liên hệ khẩn cấp chỉ được chứa chữ cái và khoảng trắng (tối thiểu 2 ký tự)',
     })
     .optional(),
   emergencyContactRelation: z.string().trim().optional(),

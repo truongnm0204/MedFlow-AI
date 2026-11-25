@@ -53,7 +53,15 @@ public class AuthService : IAuthService
     public async Task<RegisterResponse> RegisterAsync(RegisterRequest request, string? ipAddress, CancellationToken ct = default)
     {
         var email = NormalizeEmail(request.Email);
-        await EnsureEmailNotTakenAsync(email, ct);
+        var existingUser = await _db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Email.ToLower() == email, ct);
+
+        if (existingUser is not null)
+        {
+            return await HandleExistingEmailOnRegisterAsync(existingUser, email, ct);
+        }
+
         var patientRole = await GetDefaultRoleAsync(ct);
         var (otp, challenge) = CreateOtpChallenge(email);
 
@@ -76,18 +84,69 @@ public class AuthService : IAuthService
             Status = "ACTIVE",
         };
 
-        await PersistRegisterDataAsync(user, patient, patientRole, challenge, ipAddress, ct);
+        try
+        {
+            await PersistRegisterDataAsync(user, patient, patientRole, challenge, ipAddress, ct);
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+        {
+            if (_db is DbContext efCtx)
+            {
+                efCtx.ChangeTracker.Clear();
+            }
+
+            var racedUser = await _db.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Email.ToLower() == email, ct);
+            if (racedUser is not null)
+            {
+                return await HandleExistingEmailOnRegisterAsync(racedUser, email, ct);
+            }
+
+            throw new ValidationException("Email đã được sử dụng");
+        }
+
         await SendOtpEmailAfterCommitAsync(email, request.FullName, otp, user.Id, ct);
 
         return new RegisterResponse(user.Id, email);
     }
 
-    private static string NormalizeEmail(string email) => email.ToLowerInvariant();
+    private static string NormalizeEmail(string email) => (email ?? string.Empty).Trim().ToLowerInvariant();
 
-    private async Task EnsureEmailNotTakenAsync(string email, CancellationToken ct)
+    private async Task<RegisterResponse> HandleExistingEmailOnRegisterAsync(
+        User existingUser,
+        string normalizedEmail,
+        CancellationToken ct)
     {
-        if (await _db.Users.AnyAsync(u => u.Email.ToLower() == email, ct))
-            throw new ValidationException("Email đã được sử dụng");
+        if (existingUser.AccountStatus == AccountStatus.PENDING &&
+            string.Equals(existingUser.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase))
+        {
+            await _otpService.TryResendPendingRegistrationOtpThrottledAsync(existingUser.Id, normalizedEmail, ct);
+            return new RegisterResponse(existingUser.Id, normalizedEmail);
+        }
+
+        throw new ValidationException("Email đã được sử dụng");
+    }
+
+    private static bool IsUniqueViolation(DbUpdateException ex)
+    {
+        for (var current = ex.InnerException; current is not null; current = current.InnerException)
+        {
+            var sqlStateProp = current.GetType().GetProperty("SqlState");
+            if (sqlStateProp?.GetValue(current) is string sqlState &&
+                string.Equals(sqlState, "23505", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (current.Message.Contains("23505", StringComparison.Ordinal) ||
+                current.Message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task<Role> GetDefaultRoleAsync(CancellationToken ct)
@@ -182,6 +241,8 @@ public class AuthService : IAuthService
         user.LockedUntil = null;
 
         var tokens = await IssueTokensAsync(user, ipAddress, ct);
+        var roleIds = user.UserRoles.Select(ur => ur.RoleId).ToArray();
+        var permissions = await LoadUserPermissionsAsync(roleIds, ct);
         _audit.Add(user.Id, "LOGIN_SUCCESS", "USER", user.Id.ToString(), null, ipAddress);
         await _db.SaveChangesAsync(ct);
 
@@ -190,7 +251,7 @@ public class AuthService : IAuthService
             tokens.ExpiresInSeconds,
             tokens.RawRefreshToken,
             GetRefreshExpirySeconds(),
-            BuildUserDto(user, tokens.Roles));
+            BuildUserDto(user, tokens.Roles, permissions));
     }
 
     private void ApplyLockoutRules(User user)
@@ -209,6 +270,7 @@ public class AuthService : IAuthService
             user.LockedUntil = HospitalClock.GetUtcNow(_timeProvider).AddMinutes(_options.LockoutDurationMinutes);
             user.FailedLoginAttempts = 0;
             lockedNow = true;
+            await _sessionService.RevokeAllForUserAsync(user.Id, ipAddress, AuthSessionRevokeReasons.AccountLocked, ct);
         }
         _audit.Add(user.Id, "LOGIN_FAILED", "USER", user.Id.ToString(), null, ipAddress);
         await _db.SaveChangesAsync(ct);
@@ -218,7 +280,7 @@ public class AuthService : IAuthService
             await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
                 _accessRevoker,
                 user.Id,
-                "ACCOUNT_LOCKED",
+                AuthSessionRevokeReasons.AccountLocked,
                 ct);
         }
     }
@@ -235,14 +297,39 @@ public class AuthService : IAuthService
             refresh.RawToken, roles);
     }
 
-    private static UserDto BuildUserDto(User user, string[] roles)
+    private static UserDto BuildUserDto(User user, string[] roles, string[]? permissions = null)
         => new(
             user.Id,
             user.Email,
             user.Patient?.FullName ?? user.Staff?.FullName,
             roles,
             user.Patient?.PatientCode,
-            user.Staff?.StaffCode);
+            user.Staff?.StaffCode,
+            permissions);
+
+    private async Task<string[]?> LoadUserPermissionsAsync(IReadOnlyCollection<long> roleIds, CancellationToken ct)
+    {
+        if (roleIds.Count == 0)
+            return null;
+
+        try
+        {
+            var permissions = await (
+                from rp in _db.RolePermissions.AsNoTracking()
+                join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
+                where roleIds.Contains(rp.RoleId)
+                orderby p.Code
+                select p.Code)
+                .Distinct()
+                .ToArrayAsync(ct);
+
+            return permissions.Length > 0 ? permissions : null;
+        }
+        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or NullReferenceException)
+        {
+            return null;
+        }
+    }
 
     // ── Refresh ───────────────────────────────────────────────────────────
     public async Task<RefreshResponse> RefreshAsync(RefreshRequest request, string? ipAddress, CancellationToken ct = default)
@@ -272,7 +359,11 @@ public class AuthService : IAuthService
         if (result.User.AccountStatus != AccountStatus.ACTIVE ||
             (result.User.LockedUntil.HasValue && result.User.LockedUntil.Value > nowUtc))
         {
-            await _sessionService.RevokeAllForUserAsync(result.User.Id, ipAddress, ct);
+            await _sessionService.RevokeAllForUserAsync(
+                result.User.Id,
+                ipAddress,
+                AuthSessionRevokeReasons.AccountLocked,
+                ct);
             await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
                 _accessRevoker,
                 result.User.Id,
@@ -296,16 +387,45 @@ public class AuthService : IAuthService
     }
 
     // ── Logout ────────────────────────────────────────────────────────────
-    public async Task LogoutAsync(long userId, string refreshToken, string? ipAddress, CancellationToken ct = default)
+    public Task LogoutAsync(long userId, string refreshToken, string? ipAddress, CancellationToken ct = default)
+        => LogoutAsync(userId, refreshToken, currentSessionId: null, ipAddress, ct);
+
+    public async Task LogoutAsync(
+        long userId,
+        string refreshToken,
+        long? currentSessionId,
+        string? ipAddress,
+        CancellationToken ct = default)
     {
-        await _sessionService.RevokeAsync(refreshToken, ipAddress, ct);
+        var outcome = await _sessionService.RevokeSessionFamilyAsync(
+            userId,
+            refreshToken,
+            currentSessionId,
+            ipAddress,
+            AuthSessionRevokeReasons.Logout,
+            ct);
+        if (outcome is null)
+        {
+            await _sessionService.RevokeAsync(refreshToken, ipAddress, ct);
+            outcome = new RevokeSessionFamilyOutcome(
+                true,
+                currentSessionId,
+                currentSessionId.HasValue ? [currentSessionId.Value] : []);
+        }
+
         _audit.Add(userId, "LOGOUT", "USER", userId.ToString(), null, ipAddress);
         await _db.SaveChangesAsync(ct);
-        await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
-            _accessRevoker,
-            userId,
-            "LOGOUT",
-            ct);
+
+        if (outcome.Revoked && outcome.FamilySessionIds.Count > 0)
+        {
+            await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions
+                .TryRevokeUserSessionFamilyConnectionsSafeAsync(
+                    _accessRevoker,
+                    userId,
+                    outcome.FamilySessionIds,
+                    AuthSessionRevokeReasons.Logout,
+                    ct);
+        }
     }
 
     // ── OTP (delegate) ────────────────────────────────────────────────────
@@ -372,7 +492,11 @@ public class AuthService : IAuthService
         user.FailedLoginAttempts = 0;
         user.LockedUntil = null;
 
-        await _sessionService.RevokeAllForUserAsync(user.Id, ipAddress, ct);
+        await _sessionService.RevokeAllForUserAsync(
+            user.Id,
+            ipAddress,
+            AuthSessionRevokeReasons.PasswordReset,
+            ct);
         _audit.Add(user.Id, "PASSWORD_RESET_COMPLETED", "USER", user.Id.ToString(), null, ipAddress);
 
         await _db.SaveChangesAsync(ct);
@@ -381,7 +505,7 @@ public class AuthService : IAuthService
         await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
             _accessRevoker,
             user.Id,
-            "PASSWORD_RESET",
+            AuthSessionRevokeReasons.PasswordReset,
             ct);
 
         return new ResetPasswordResponse();
@@ -406,6 +530,7 @@ public class AuthService : IAuthService
 
         var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         long? keptSessionId;
+        IReadOnlyList<long>? keptFamilySessionIds;
         var lockedNow = false;
 
         await using (var tx = await _db.BeginTransactionAsync(ct))
@@ -433,7 +558,11 @@ public class AuthService : IAuthService
                     user.LockedUntil = nowUtc.AddMinutes(_options.LockoutDurationMinutes);
                     user.FailedLoginAttempts = 0;
                     lockedNow = true;
-                    await _sessionService.RevokeAllForUserAsync(user.Id, ipAddress, ct);
+                    await _sessionService.RevokeAllForUserAsync(
+                        user.Id,
+                        ipAddress,
+                        AuthSessionRevokeReasons.AccountLocked,
+                        ct);
                 }
 
                 _audit.Add(
@@ -452,7 +581,7 @@ public class AuthService : IAuthService
                     await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
                         _accessRevoker,
                         user.Id,
-                        "ACCOUNT_LOCKED",
+                        AuthSessionRevokeReasons.AccountLocked,
                         ct);
                 }
 
@@ -474,8 +603,9 @@ public class AuthService : IAuthService
                 request.CurrentRefreshToken,
                 currentSessionId,
                 ipAddress,
-                ct);
+                ct) ?? new RevokeOtherSessionsOutcome(null, 0);
             keptSessionId = revokeOutcome.KeptSessionId;
+            keptFamilySessionIds = revokeOutcome.KeptFamilySessionIds;
 
             _audit.Add(
                 user.Id,
@@ -493,13 +623,26 @@ public class AuthService : IAuthService
             await tx.CommitAsync(ct);
         }
 
-        await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions
-            .TryRevokeUserConnectionsExceptSessionSafeAsync(
-                _accessRevoker,
-                userId,
-                keptSessionId,
-                "PASSWORD_CHANGED",
-                ct);
+        if (keptFamilySessionIds is { Count: > 0 })
+        {
+            await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions
+                .TryRevokeUserConnectionsExceptSessionFamilySafeAsync(
+                    _accessRevoker,
+                    userId,
+                    keptFamilySessionIds,
+                    AuthSessionRevokeReasons.PasswordChanged,
+                    ct);
+        }
+        else
+        {
+            await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions
+                .TryRevokeUserConnectionsExceptSessionSafeAsync(
+                    _accessRevoker,
+                    userId,
+                    keptSessionId,
+                    AuthSessionRevokeReasons.PasswordChanged,
+                    ct);
+        }
 
         return new ChangePasswordResponse(
             Message: keptSessionId.HasValue
@@ -538,7 +681,9 @@ public class AuthService : IAuthService
             ?? throw new NotFoundException("User", userId);
 
         var roles = user.UserRoles.Select(ur => ur.Role.Code).ToArray();
-        return BuildUserDto(user, roles);
+        var roleIds = user.UserRoles.Select(ur => ur.RoleId).ToArray();
+        var permissions = await LoadUserPermissionsAsync(roleIds, ct);
+        return BuildUserDto(user, roles, permissions);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────

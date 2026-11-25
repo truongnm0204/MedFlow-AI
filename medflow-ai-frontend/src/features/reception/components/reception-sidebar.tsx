@@ -12,6 +12,7 @@ import {
 import { useState } from 'react';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { hasPermission } from '@/features/auth/utils/rbac';
 import { MedflowLogo } from '@/shared/components/layout/medflow-logo';
 
 interface ReceptionSidebarProps {
@@ -65,6 +66,14 @@ export function ReceptionSidebar({
 }: ReceptionSidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const user = useAuthStore((s) => s.user);
+  const canVerifyIdentity = hasPermission(
+    user?.roles,
+    'PATIENT_IDENTITY_VERIFY',
+    user?.permissions,
+  );
+  const visibleNavItems = NAV_ITEMS.filter(
+    (item) => item.id !== 'identity-claims' || canVerifyIdentity,
+  );
   const staffDisplayName = user?.fullName?.trim() || 'Nhân viên tiếp đón';
   const subLabel = user?.staffCode?.trim()
     ? `Mã NV: ${user.staffCode.trim()}`
@@ -132,7 +141,7 @@ export function ReceptionSidebar({
             Nghiệp vụ tiếp đón
           </div>
         )}
-        {NAV_ITEMS.map((item) => {
+        {visibleNavItems.map((item) => {
           const isActive = activeItem === item.id;
           const Icon = item.icon;
           return (

@@ -15,6 +15,7 @@ import {
   RequireDiagnostic,
   RequireDoctor,
   RequireHospitalAdmin,
+  RequireIdentityClaimVerify,
   RequirePharmacy,
   RequireReception,
   RequireRole,
@@ -800,9 +801,9 @@ function AppRoutes() {
         path="/reception/identity-claims"
         element={
           <RequireAuth>
-            <RequireRole allowedRoles={['HOSPITAL_ADMIN', 'SYSTEM_ADMIN']}>
+            <RequireIdentityClaimVerify>
               <ReceptionIdentityClaimPage />
-            </RequireRole>
+            </RequireIdentityClaimVerify>
           </RequireAuth>
         }
       />
@@ -1417,6 +1418,16 @@ function AppRoutes() {
         }
       />
       <Route
+        path="/admin/identity-claims"
+        element={
+          <RequireAuth>
+            <RequireIdentityClaimVerify adminOnly>
+              <ReceptionIdentityClaimPage />
+            </RequireIdentityClaimVerify>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/admin/staff"
         element={
           <RequireAuth>
@@ -1807,10 +1818,32 @@ function AppRoutes() {
         }
       />
       <Route
+        path="/patient/diagnostic-results"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientDiagnosticResultPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/patient/diagnostic-results/:orderCode"
+        element={
+          <RequireAuth>
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientDiagnosticResultPage />
+            </RequireRole>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/patient/emr/diagnostic-result"
         element={
           <RequireAuth>
-            <PatientDiagnosticResultPage />
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientDiagnosticResultPage />
+            </RequireRole>
           </RequireAuth>
         }
       />
@@ -1818,7 +1851,9 @@ function AppRoutes() {
         path="/emr/diagnostic-result/:orderCode"
         element={
           <RequireAuth>
-            <PatientDiagnosticResultPage />
+            <RequireRole allowedRoles={['PATIENT']}>
+              <PatientDiagnosticResultPage />
+            </RequireRole>
           </RequireAuth>
         }
       />

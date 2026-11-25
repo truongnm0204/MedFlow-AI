@@ -40,15 +40,45 @@ public sealed class AuthFlowTests(TestWebAppFactory factory) : AuthTestBase(fact
     }
 
     [Fact]
-    public async Task Register_DuplicateEmail_Returns400_CaseInsensitive()
+    public async Task Register_DuplicateEmail_PendingPreservesCredentials_ActiveReturns400_CaseInsensitive()
     {
         var email = UniqueEmail();
-        var first = await Client.PostAsJsonAsync("/api/v1/auth/register", ValidRegister(email));
+        var initialReq = ValidRegister(email);
+        var first = await Client.PostAsJsonAsync("/api/v1/auth/register", initialReq);
         first.EnsureSuccessStatusCode();
 
-        var dup = await Client.PostAsJsonAsync("/api/v1/auth/register",
+        var initialUser = await Db.Users.AsNoTracking().FirstAsync(u => u.Email == email);
+        var initialPatient = await Db.Patients.AsNoTracking().FirstAsync(p => p.UserId == initialUser.Id);
+
+        // BUG-P2-07: Re-registering a PENDING email returns 200 without overwriting PasswordHash/FullName/Phone
+        var hijackedReq = new RegisterRequest
+        {
+            Email = email.ToUpperInvariant(),
+            Password = "HijackPassword999!",
+            ConfirmPassword = "HijackPassword999!",
+            FullName = "Kẻ Chiếm Đoạt",
+            DateOfBirth = initialReq.DateOfBirth,
+            Gender = initialReq.Gender,
+            Phone = "0999888777",
+        };
+        var pendingDup = await Client.PostAsJsonAsync("/api/v1/auth/register", hijackedReq);
+        Assert.Equal(HttpStatusCode.OK, pendingDup.StatusCode);
+
+        var afterDupUser = await Db.Users.AsNoTracking().FirstAsync(u => u.Id == initialUser.Id);
+        var afterDupPatient = await Db.Patients.AsNoTracking().FirstAsync(p => p.UserId == initialUser.Id);
+        Assert.Equal(initialUser.PasswordHash, afterDupUser.PasswordHash);
+        Assert.Equal(initialPatient.FullName, afterDupPatient.FullName);
+        Assert.Equal(initialPatient.Phone, afterDupPatient.Phone);
+
+        // Once verified (ACTIVE), duplicate registration returns 400 BadRequest
+        var otp = Factory.EmailSender.LatestOtpFor(email)!;
+        var verify = await Client.PostAsJsonAsync("/api/v1/auth/verify-otp",
+            new VerifyOtpRequest { Email = email, Otp = otp });
+        verify.EnsureSuccessStatusCode();
+
+        var activeDup = await Client.PostAsJsonAsync("/api/v1/auth/register",
             ValidRegister(email.ToUpperInvariant()));
-        Assert.Equal(HttpStatusCode.BadRequest, dup.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, activeDup.StatusCode);
     }
 
     [Fact]

@@ -35,9 +35,10 @@ public sealed class ClinicalRealtimeHub : Hub
         EnsureAllowedWebSocketOrigin();
 
         var userId = ExtractAuthenticatedUserId();
+        var sessionId = ExtractOptionalSessionId();
         try
         {
-            await _accessService.EnsureConnectedUserActiveAsync(userId, Context.ConnectionAborted);
+            await _accessService.EnsureConnectedSessionActiveAsync(userId, sessionId, Context.ConnectionAborted);
         }
         catch (Exception ex) when (IsDomainAccessException(ex))
         {
@@ -45,7 +46,7 @@ public sealed class ClinicalRealtimeHub : Hub
             throw TranslateDomainException(ex);
         }
 
-        _registry.RegisterConnection(Context.ConnectionId, userId, ExtractOptionalSessionId());
+        _registry.RegisterConnection(Context.ConnectionId, userId, sessionId);
         await base.OnConnectedAsync();
     }
 
@@ -96,15 +97,28 @@ public sealed class ClinicalRealtimeHub : Hub
     {
         EnsureInvocationRateLimit();
         var userId = ExtractAuthenticatedUserId();
+        var sessionId = ExtractOptionalSessionId();
         var ct = Context.ConnectionAborted;
+
+        if (_registry.IsConnectionRevoked(Context.ConnectionId))
+        {
+            await EvictAndAbortCurrentConnectionAsync();
+            throw new HubException("[UNAUTHORIZED] Phiên kết nối thời gian thực đã bị thu hồi.");
+        }
 
         AuthorizedRealtimeSubscription grant;
         try
         {
+            await _accessService.EnsureConnectedSessionActiveAsync(userId, sessionId, ct);
             grant = await authorizeAsync(userId, ct);
         }
         catch (Exception ex) when (IsDomainAccessException(ex))
         {
+            if (ex is UnauthorizedAccessException)
+            {
+                await EvictAndAbortCurrentConnectionAsync();
+            }
+
             throw TranslateDomainException(ex);
         }
 
@@ -113,7 +127,14 @@ public sealed class ClinicalRealtimeHub : Hub
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, expiredGroup, ct);
 
         if (!outcome.Allowed)
+        {
+            if (string.Equals(outcome.ErrorCode, "UNAUTHORIZED", StringComparison.OrdinalIgnoreCase))
+            {
+                await EvictAndAbortCurrentConnectionAsync();
+            }
+
             throw new HubException(outcome.ErrorMessage ?? "[GROUP_LIMIT_EXCEEDED] Không thể tham gia thêm nhóm thời gian thực.");
+        }
 
         foreach (var staleGroup in outcome.GroupsToRemove)
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, staleGroup, ct);
@@ -122,6 +143,17 @@ public sealed class ClinicalRealtimeHub : Hub
             await Groups.AddToGroupAsync(Context.ConnectionId, group, ct);
 
         return new RealtimeSubscriptionAckDto(grant.ResourceKey, outcome.ExpiresAtUtc);
+    }
+
+    private async Task EvictAndAbortCurrentConnectionAsync()
+    {
+        var groupsToRemove = _registry.EvictConnection(Context.ConnectionId);
+        foreach (var group in groupsToRemove)
+        {
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, group, CancellationToken.None);
+        }
+
+        Context.Abort();
     }
 
     private async Task ExecuteLeaveAsync(string? resourceKeyPrefix, string? rawIdentifier)

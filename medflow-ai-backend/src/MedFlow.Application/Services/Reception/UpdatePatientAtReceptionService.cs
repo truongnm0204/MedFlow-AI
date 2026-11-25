@@ -1,13 +1,13 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.RegularExpressions;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Options;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MedFlow.Application.Services.Reception;
 
@@ -17,13 +17,16 @@ public sealed partial class UpdatePatientAtReceptionService : IUpdatePatientAtRe
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IOptions<IdentityHashOptions>? _hashOptions;
 
     public UpdatePatientAtReceptionService(
         IApplicationDbContext db,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IOptions<IdentityHashOptions>? hashOptions = null)
     {
         _db = db;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _hashOptions = hashOptions;
     }
 
     public async Task<UpdatePatientResponseDto> UpdatePatientAsync(
@@ -67,15 +70,32 @@ public sealed partial class UpdatePatientAtReceptionService : IUpdatePatientAtRe
         if (email is not null && !new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(email))
             throw new ValidationException("Email không hợp lệ.");
 
-        string? identityCard = string.IsNullOrWhiteSpace(request.IdentityCard) ? null : request.IdentityCard.Trim();
-        string? hash = null;
-        if (identityCard is not null)
-        {
-            if (!IdentityCardRegex().IsMatch(identityCard))
-                throw new ValidationException("CCCD phải gồm đúng 12 chữ số.");
+        string? rawIdentityCard = string.IsNullOrWhiteSpace(request.IdentityCard) ? null : request.IdentityCard.Trim();
+        string? canonicalIdentityCard = null;
+        string? hmacHash = null;
+        string? legacyHash = null;
+        var allowShaFallback = IdentificationNumber.AllowShaFallback(_hashOptions);
 
-            hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identityCard))).ToLowerInvariant();
-            var duplicate = await _db.Patients.AnyAsync(p => p.Id != patient.Id && p.IdentificationHash == hash, ct);
+        if (rawIdentityCard is not null)
+        {
+            canonicalIdentityCard = IdentificationNumber.Normalize(rawIdentityCard);
+            var hashKey = IdentificationNumber.RequireKey(_hashOptions);
+            hmacHash = IdentificationNumber.ComputeHmac(canonicalIdentityCard, hashKey);
+            if (allowShaFallback)
+            {
+                legacyHash = IdentificationNumber.ComputeSha256(canonicalIdentityCard);
+            }
+
+            var duplicate = await _db.Patients.AnyAsync(
+                p => p.Id != patient.Id && p.IdentificationHashHmac == hmacHash,
+                ct);
+            if (!duplicate && allowShaFallback && legacyHash is not null)
+            {
+                duplicate = await _db.Patients.AnyAsync(
+                    p => p.Id != patient.Id && p.IdentificationHash == legacyHash,
+                    ct);
+            }
+
             if (duplicate)
                 throw new ConflictException("CCCD đã được đăng ký cho bệnh nhân khác.");
         }
@@ -88,14 +108,21 @@ public sealed partial class UpdatePatientAtReceptionService : IUpdatePatientAtRe
         patient.Address = address;
         patient.Email = email;
         patient.BloodType = string.IsNullOrWhiteSpace(request.BloodType) ? null : request.BloodType.Trim();
-        if (hash is not null)
-            patient.IdentificationHash = hash;
+        if (hmacHash is not null)
+        {
+            patient.IdentificationHashHmac = hmacHash;
+            patient.HashVersion = IdentificationNumber.CurrentHashVersion;
+            if (allowShaFallback)
+            {
+                patient.IdentificationHash = legacyHash;
+            }
+        }
 
         await _db.SaveChangesAsync(ct);
 
-        string? masked = identityCard is not null
-            ? string.Concat("********", identityCard.AsSpan(8))
-            : !string.IsNullOrWhiteSpace(patient.IdentificationHash)
+        string? masked = canonicalIdentityCard is not null
+            ? string.Concat(new string('*', Math.Max(4, canonicalIdentityCard.Length - 4)), canonicalIdentityCard.AsSpan(canonicalIdentityCard.Length - 4))
+            : IdentificationNumber.HasVerifiedIdentity(patient, _hashOptions)
                 ? PatientProfileService.MaskedVerifiedIdentityText
                 : null;
 
@@ -115,7 +142,4 @@ public sealed partial class UpdatePatientAtReceptionService : IUpdatePatientAtRe
 
     [GeneratedRegex(@"^0[35789]\d{8}$")]
     private static partial Regex PhoneRegex();
-
-    [GeneratedRegex(@"^\d{12}$")]
-    private static partial Regex IdentityCardRegex();
 }

@@ -6,4 +6,5 @@ public sealed record UserDto(
     string? FullName,
     string[] Roles,
     string? PatientCode,
-    string? StaffCode = null);
+    string? StaffCode = null,
+    string[]? Permissions = null);
