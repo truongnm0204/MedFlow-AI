@@ -113,6 +113,15 @@ public sealed class QueueCallNextEndpointTests : AuthTestBase
                 .ToListAsync();
             if (staleRooms.Count > 0)
             {
+                var staleVisitIds = await Db.Visits
+                    .Where(v => v.ExaminationRoomId.HasValue && staleRooms.Contains(v.ExaminationRoomId.Value))
+                    .Select(v => v.Id)
+                    .ToListAsync();
+                if (staleVisitIds.Count > 0)
+                {
+                    await Db.Payments.Where(p => p.VisitId != null && staleVisitIds.Contains(p.VisitId.Value)).ExecuteDeleteAsync();
+                    await Db.VisitCharges.Where(c => c.VisitId != null && staleVisitIds.Contains(c.VisitId.Value)).ExecuteDeleteAsync();
+                }
                 await Db.Visits.Where(v => v.ExaminationRoomId.HasValue && staleRooms.Contains(v.ExaminationRoomId.Value)).ExecuteDeleteAsync();
                 await Db.HospitalRooms.Where(r => staleRooms.Contains(r.Id)).ExecuteDeleteAsync();
             }
@@ -170,6 +179,11 @@ public sealed class QueueCallNextEndpointTests : AuthTestBase
             Db.Visits.AddRange(visit1, visit2);
             await Db.SaveChangesAsync();
             createdVisitIds.AddRange([visit1.Id, visit2.Id]);
+
+            Db.VisitCharges.AddRange(
+                VisitCharge.CreateExamination(visit1.Id, serviceId: 1, unitPrice: 0m, createdAtLocal: baseTime, waived: true),
+                VisitCharge.CreateExamination(visit2.Id, serviceId: 1, unitPrice: 0m, createdAtLocal: baseTime, waived: true));
+            await Db.SaveChangesAsync();
 
             var queue1 = new QueueEntry
             {
@@ -294,6 +308,9 @@ public sealed class QueueCallNextEndpointTests : AuthTestBase
 
             if (createdVisitIds.Count > 0)
             {
+                await Db.VisitCharges
+                    .Where(c => c.VisitId != null && createdVisitIds.Contains(c.VisitId.Value))
+                    .ExecuteDeleteAsync();
                 await Db.Visits
                     .Where(v => createdVisitIds.Contains(v.Id))
                     .ExecuteDeleteAsync();

@@ -37,6 +37,7 @@ export function CheckInModal({
     isIdentityVerified: false,
     isInsuranceVerified: false,
     priority: 'NORMAL',
+    priorityVerificationConfirmed: false,
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -91,6 +92,7 @@ export function CheckInModal({
       isIdentityVerified: false,
       isInsuranceVerified: false,
       priority: 'NORMAL',
+      priorityVerificationConfirmed: false,
     });
     setErrors({});
     setSuccessResult(null);

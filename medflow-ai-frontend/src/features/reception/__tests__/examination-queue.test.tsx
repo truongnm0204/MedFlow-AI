@@ -657,7 +657,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
       presenceStatus: 'PRESENT',
       reason: null,
     });
-    expect(patchSpy).toHaveBeenCalledWith('/reception/examination-queue/q-002/status', {
+    expect(patchSpy).toHaveBeenCalledWith('/reception/examination-queue/entries/q-002/status', {
       targetStatus: 'IN_PROGRESS',
       presenceStatus: 'PRESENT',
       reason: null,
@@ -1155,6 +1155,7 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
       reason: 'Bệnh nhân xin về, không tiếp tục khám',
       expectedStateVersion: 4,
       notes: null,
+      disposition: 'PATIENT_ABANDONED',
     });
 
     await waitFor(() => {

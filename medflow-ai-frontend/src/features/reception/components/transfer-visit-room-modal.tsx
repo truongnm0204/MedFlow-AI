@@ -15,7 +15,6 @@ import { Button } from '@/shared/ui/button';
 import { Input } from '@/shared/ui/input';
 import { Modal } from '@/shared/ui/modal';
 
-import { COMPATIBLE_TRANSFER_ROOMS_MOCK } from '../data/reception-mock-data';
 import { useTransferVisitRoom, useVisitCompatibleRooms } from '../hooks/use-visit-room-transfer';
 import {
   transferVisitRoomSchema,
@@ -52,10 +51,12 @@ export interface TransferVisitRoomModalProps {
 
 type FieldErrors = Partial<Record<keyof TransferVisitRoomFormValues, string>>;
 
+const EMPTY_COMPATIBLE_ROOMS: CompatibleExaminationRoomItemDto[] = [];
+
 export function TransferVisitRoomModal({
   open,
   target,
-  fallbackRooms = COMPATIBLE_TRANSFER_ROOMS_MOCK,
+  fallbackRooms = EMPTY_COMPATIBLE_ROOMS,
   fallbackHistory = [],
   onClose,
   onTransferred,
@@ -123,6 +124,10 @@ export function TransferVisitRoomModal({
       targetRoomCode: parsed.data.targetRoomCode.toUpperCase(),
       reason: parsed.data.reason,
       notes: parsed.data.notes.length > 0 ? parsed.data.notes : null,
+      targetDoctorId:
+        selectedRoom?.activeDoctorCount === 1 && selectedRoom.defaultDoctorId
+          ? selectedRoom.defaultDoctorId
+          : null,
     };
 
     try {
@@ -176,13 +181,19 @@ export function TransferVisitRoomModal({
           <Badge tone="emerald">Giữ nguyên STT</Badge>
         </div>
 
-        {apiError && (
+        {(apiError || compatibleRoomsQuery.isError) && (
           <div
             role="alert"
             className="mt-4 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700"
           >
             <AlertCircle aria-hidden="true" className="h-4 w-4 shrink-0" />
-            <span>{apiError}</span>
+            <span>
+              {apiError ??
+                getErrorMessage(
+                  compatibleRoomsQuery.error,
+                  'Không tải được danh sách buồng khám tương thích.',
+                )}
+            </span>
           </div>
         )}
 
@@ -322,6 +333,21 @@ export function TransferVisitRoomModal({
                         {room.unavailableReason}
                       </div>
                     )}
+
+                    {!room.unavailableReason && (room.activeDoctorCount ?? 0) > 1 && (
+                      <div className="mt-1.5 text-[11px] font-medium text-amber-700">
+                        Buồng dùng chung ({room.activeDoctorCount} bác sĩ) — chờ gán bác sĩ sau khi
+                        chuyển
+                      </div>
+                    )}
+
+                    {!room.unavailableReason &&
+                      room.activeDoctorCount === 1 &&
+                      room.defaultDoctorName && (
+                        <div className="mt-1.5 text-[11px] font-medium text-emerald-700">
+                          Bác sĩ phụ trách: {room.defaultDoctorName}
+                        </div>
+                      )}
 
                     {isSelected && (
                       <div className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-primary">

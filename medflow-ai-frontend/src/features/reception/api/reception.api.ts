@@ -179,7 +179,6 @@ interface CheckInResponseDto {
 
 const PRIORITIES: Record<string, true> = {
   NORMAL: true,
-  URGENT: true,
   ELDERLY: true,
   PREGNANT: true,
 };
@@ -220,6 +219,10 @@ export async function checkInScheduledPatient(
       isIdentityVerified: form.isIdentityVerified,
       isInsuranceVerified: form.isInsuranceVerified,
       priority: form.priority,
+      priorityVerificationConfirmed:
+        form.priority === 'ELDERLY' || form.priority === 'PREGNANT'
+          ? form.priorityVerificationConfirmed === true
+          : false,
     },
   );
 
@@ -287,9 +290,9 @@ export async function fetchWalkInCatalog(): Promise<WalkInCatalog> {
 }
 
 const CLINICAL_PRIORITY_MAP: Record<ClinicalPriority, string> = {
-  STANDARD: 'NORMAL',
-  PRIORITY: 'ELDERLY',
-  EMERGENCY: 'URGENT',
+  NORMAL: 'NORMAL',
+  ELDERLY: 'ELDERLY',
+  PREGNANT: 'PREGNANT',
 };
 
 interface CreateWalkInResponseDto {
@@ -308,10 +311,12 @@ export async function createWalkInVisit(input: {
   reasonForVisit: string;
   symptoms: string[];
   clinicalPriority: ClinicalPriority;
+  priorityVerificationConfirmed?: boolean;
   paymentMethod: PaymentMethod;
   serviceName: string;
   priceFormatted: string;
 }): Promise<CreatedWalkInVisitResult> {
+  const mappedPriority = CLINICAL_PRIORITY_MAP[input.clinicalPriority];
   const { data } = await apiClient.post<CreateWalkInResponseDto>('/reception/visits/walk-in', {
     patientId: input.patient.id,
     patientCode: input.patient.patientCode,
@@ -319,7 +324,12 @@ export async function createWalkInVisit(input: {
     serviceId: input.serviceId,
     reasonForVisit: input.reasonForVisit,
     symptoms: input.symptoms,
-    clinicalPriority: CLINICAL_PRIORITY_MAP[input.clinicalPriority],
+    priority: mappedPriority,
+    clinicalPriority: mappedPriority,
+    priorityVerificationConfirmed:
+      mappedPriority === 'ELDERLY' || mappedPriority === 'PREGNANT'
+        ? input.priorityVerificationConfirmed === true
+        : false,
     paymentMethod: input.paymentMethod,
     isIdentityVerified: true,
   });

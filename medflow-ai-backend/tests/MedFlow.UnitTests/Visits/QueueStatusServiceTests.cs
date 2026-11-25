@@ -5,6 +5,7 @@ using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MedFlow.UnitTests.Visits;
@@ -13,9 +14,14 @@ public sealed class QueueStatusServiceTests : IDisposable
 {
     private sealed class QueueStatusTestDbContext : DbContext, IApplicationDbContext
     {
-        public QueueStatusTestDbContext(DbContextOptions<QueueStatusTestDbContext> options)
+        private readonly bool _enableBillingAndDiagnosticSets;
+
+        public QueueStatusTestDbContext(
+            DbContextOptions<QueueStatusTestDbContext> options,
+            bool enableBillingAndDiagnosticSets = false)
             : base(options)
         {
+            _enableBillingAndDiagnosticSets = enableBillingAndDiagnosticSets;
         }
 
         private static NotSupportedException NotUsed() =>
@@ -39,14 +45,17 @@ public sealed class QueueStatusServiceTests : IDisposable
         public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => Set<Service>();
-        public DbSet<ServicePrice> ServicePrices => throw NotUsed();
+        public DbSet<ServicePrice> ServicePrices => _enableBillingAndDiagnosticSets ? Set<ServicePrice>() : throw NotUsed();
         public DbSet<HospitalPolicy> HospitalPolicies => Set<HospitalPolicy>();
         public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
+        public DbSet<VisitCharge> VisitCharges => _enableBillingAndDiagnosticSets ? Set<VisitCharge>() : throw NotUsed();
+        public DbSet<DiagnosticOrder> DiagnosticOrders => _enableBillingAndDiagnosticSets ? Set<DiagnosticOrder>() : throw NotUsed();
+        public DbSet<DiagnosticResult> DiagnosticResults => _enableBillingAndDiagnosticSets ? Set<DiagnosticResult>() : throw NotUsed();
         public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
         public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
-        public DbSet<Payment> Payments => throw NotUsed();
+        public DbSet<Payment> Payments => _enableBillingAndDiagnosticSets ? Set<Payment>() : throw NotUsed();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
             => Database.BeginTransactionAsync(ct);
@@ -55,9 +64,7 @@ public sealed class QueueStatusServiceTests : IDisposable
         {
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<ServicePrice>();
             modelBuilder.Ignore<PatientFamilyLink>();
-            modelBuilder.Ignore<Payment>();
             modelBuilder.Ignore<Medicine>();
             modelBuilder.Ignore<MedicineBatch>();
             modelBuilder.Ignore<Prescription>();
@@ -65,6 +72,12 @@ public sealed class QueueStatusServiceTests : IDisposable
             modelBuilder.Ignore<MedicationDispense>();
             modelBuilder.Ignore<DispenseItem>();
             modelBuilder.Ignore<StockTransaction>();
+
+            modelBuilder.Entity<ServicePrice>(b => b.HasKey(p => p.Id));
+            modelBuilder.Entity<VisitCharge>(b => b.HasKey(c => c.Id));
+            modelBuilder.Entity<Payment>(b => b.HasKey(p => p.Id));
+            modelBuilder.Entity<DiagnosticOrder>(b => b.HasKey(o => o.Id));
+            modelBuilder.Entity<DiagnosticResult>(b => b.HasKey(r => r.Id));
 
             modelBuilder.Entity<User>(b => b.HasKey(u => u.Id));
             modelBuilder.Entity<Role>(b => b.HasKey(r => r.Id));
@@ -163,6 +176,7 @@ public sealed class QueueStatusServiceTests : IDisposable
     {
         var options = new DbContextOptionsBuilder<QueueStatusTestDbContext>()
             .UseInMemoryDatabase($"QueueStatusServiceTests_{Guid.NewGuid()}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         _db = new QueueStatusTestDbContext(options);
@@ -1006,7 +1020,7 @@ public sealed class QueueStatusServiceTests : IDisposable
 
         var visitInDb = await _db.Visits.AsNoTracking().FirstAsync(v => v.Id == 1001);
         Assert.Equal("CANCELLED", visitInDb.Status);
-        Assert.NotNull(visitInDb.CompletedAt);
+        Assert.Null(visitInDb.CompletedAt);
 
         var audit = await _db.AuditLogs.AsNoTracking()
             .SingleAsync(a => a.Action == QueueStatusService.QueueEntryCancelAction && a.EntityId == "10");
@@ -1244,5 +1258,101 @@ public sealed class QueueStatusServiceTests : IDisposable
             await Assert.ThrowsAsync<ForbiddenException>(() =>
                 _service.CancelQueueEntryAsync(actorId, "10", req));
         }
+    }
+
+    [Fact]
+    public async Task Phase05_PayBeforeServiceAndStructuredCancellationDispositions_EnforcedOnStatusAndCancel()
+    {
+        var opts = new DbContextOptionsBuilder<QueueStatusTestDbContext>()
+            .UseInMemoryDatabase($"QueueStatusPhase05_{Guid.NewGuid():N}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+
+        using var db = new QueueStatusTestDbContext(opts, enableBillingAndDiagnosticSets: true);
+        db.Hospitals.Add(new Hospital { Id = 1, HospitalCode = "H1", Name = "BV 1", IsActive = true });
+        db.Departments.Add(new Department { Id = 10, HospitalId = 1, DepartmentCode = "NOI", Name = "Nội", IsActive = true });
+        db.HospitalRooms.Add(new HospitalRoom { Id = 101, HospitalId = 1, DepartmentId = 10, RoomCode = "A-101", Name = "Phòng 101", RoomType = "EXAMINATION", Capacity = 2, Status = "ACTIVE" });
+        db.QueueServicePoints.Add(new QueueServicePoint { Id = 1, HospitalId = 1, RoomId = 101, DoctorId = 50, PointType = "EXAMINATION", Name = "SP 1", IsActive = true });
+        db.Roles.Add(new Role { Id = 2, Code = "RECEPTION", Name = "Lễ tân" });
+        db.Permissions.Add(new Permission { Id = 5, Code = "QUEUE_MANAGE" });
+        db.RolePermissions.Add(new RolePermission { RoleId = 2, PermissionId = 5 });
+        db.Users.Add(new User { Id = 5, Email = "rec@medflow.test", AccountStatus = AccountStatus.ACTIVE });
+        db.UserRoles.Add(new UserRole { UserId = 5, RoleId = 2 });
+        db.Staff.Add(new Staff { Id = 10, UserId = 5, HospitalId = 1, DepartmentId = 10, StaffCode = "REC-1", FullName = "Lễ tân", Status = "ACTIVE" });
+        db.Doctors.Add(new Doctor { Id = 50, HospitalId = 1, DoctorCode = "DR-50", IsActive = true });
+        db.Services.Add(new Service { Id = 1, HospitalId = 1, DepartmentId = 10, ServiceCode = "EX-01", Name = "Khám Nội", ServiceType = "EXAMINATION", IsActive = true });
+        db.Patients.AddRange(
+            new Patient { Id = 1, PatientCode = "BN-1", FullName = "BN Chưa Thanh Toán" },
+            new Patient { Id = 2, PatientCode = "BN-2", FullName = "BN Đã Thanh Toán" },
+            new Patient { Id = 3, PatientCode = "BN-3", FullName = "BN Điều Phối Lại" });
+
+        var nowLocal = new DateTime(2026, 10, 27, 9, 0, 0);
+        var visitUnpaid = new Visit { Id = 101, VisitCode = "VIS-UNPAID", PatientId = 1, AssignedDoctorId = 50, ExaminationRoomId = 101, Status = "WAITING", CheckedInAt = nowLocal, CheckedInByStaffId = 10 };
+        var visitPaid = new Visit { Id = 102, VisitCode = "VIS-PAID", PatientId = 2, AssignedDoctorId = 50, ExaminationRoomId = 101, Status = "WAITING", CheckedInAt = nowLocal, CheckedInByStaffId = 10 };
+        var visitReroute = new Visit { Id = 103, VisitCode = "VIS-REROUTE", PatientId = 3, AssignedDoctorId = 50, ExaminationRoomId = 101, Status = "WAITING", CheckedInAt = nowLocal, CheckedInByStaffId = 10 };
+        db.Visits.AddRange(visitUnpaid, visitPaid, visitReroute);
+
+        var chargeUnpaid = VisitCharge.CreateExamination(101, 1, 200_000m, nowLocal, waived: false);
+        chargeUnpaid.Id = 501;
+        var chargePaid = VisitCharge.CreateExamination(102, 1, 200_000m, nowLocal, waived: false);
+        chargePaid.Id = 502;
+        var chargeReroute = VisitCharge.CreateExamination(103, 1, 200_000m, nowLocal, waived: false);
+        chargeReroute.Id = 503;
+        db.VisitCharges.AddRange(chargeUnpaid, chargePaid, chargeReroute);
+
+        var pendingQr = Payment.CreateForCharge(101, 501, 200_000m, nowLocal);
+        pendingQr.Id = 701;
+        pendingQr.PaymentCode = "MF701";
+        var settledPayment = Payment.CreateForCharge(102, 502, 200_000m, nowLocal);
+        settledPayment.Id = 702;
+        settledPayment.PaymentCode = "MF702";
+        settledPayment.Status = "PAID";
+        settledPayment.PaidAt = nowLocal;
+        db.Payments.AddRange(pendingQr, settledPayment);
+
+        db.QueueEntries.AddRange(
+            new QueueEntry { Id = 1, VisitId = 101, ServicePointId = 1, CurrentServicePointId = 1, QueueDate = new DateOnly(2026, 10, 27), QueueNumber = 1, QueueType = "EXAMINATION", Status = "WAITING", PresenceStatus = "PRESENT", StateVersion = 1 },
+            new QueueEntry { Id = 2, VisitId = 102, ServicePointId = 1, CurrentServicePointId = 1, QueueDate = new DateOnly(2026, 10, 27), QueueNumber = 2, QueueType = "EXAMINATION", Status = "WAITING", PresenceStatus = "PRESENT", StateVersion = 1 },
+            new QueueEntry { Id = 3, VisitId = 103, ServicePointId = 1, CurrentServicePointId = 1, QueueDate = new DateOnly(2026, 10, 27), QueueNumber = 3, QueueType = "EXAMINATION", Status = "WAITING", PresenceStatus = "PRESENT", StateVersion = 1 });
+        await db.SaveChangesAsync();
+
+        var svc = new QueueStatusService(db);
+
+        // 1. Unpaid EXAMINATION cannot transition to CALLED -> 409 Conflict
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            svc.UpdateQueueEntryStatusAsync(5, "1", new UpdateQueueStatusRequest(TargetStatus: "CALLED", ExpectedStateVersion: 1)));
+
+        // 2. PATIENT_ABANDONED on unpaid visit expires PENDING QR and cancels charge + visit (CompletedAt = null)
+        await svc.CancelQueueEntryAsync(5, "1", new CancelQueueEntryRequest(
+            Reason: "Bệnh nhân tự ý ra về trước khi thanh toán",
+            ExpectedStateVersion: 1,
+            Disposition: "PATIENT_ABANDONED"));
+
+        Assert.Equal("CANCELLED", (await db.Visits.AsNoTracking().SingleAsync(v => v.Id == 101)).Status);
+        Assert.Null((await db.Visits.AsNoTracking().SingleAsync(v => v.Id == 101)).CompletedAt);
+        Assert.Equal("CANCELLED", (await db.VisitCharges.AsNoTracking().SingleAsync(c => c.Id == 501)).Status);
+        Assert.Equal("EXPIRED", (await db.Payments.AsNoTracking().SingleAsync(p => p.Id == 701)).Status);
+
+        // 3. PATIENT_ABANDONED on paid visit marks charge CANCELLED_REFUND_PENDING while keeping PAID payment immutable
+        await svc.CancelQueueEntryAsync(5, "2", new CancelQueueEntryRequest(
+            Reason: "Bệnh nhân đã thanh toán nhưng xin về trước khám",
+            ExpectedStateVersion: 1,
+            Disposition: "PATIENT_ABANDONED"));
+
+        Assert.Equal("CANCELLED", (await db.Visits.AsNoTracking().SingleAsync(v => v.Id == 102)).Status);
+        Assert.Null((await db.Visits.AsNoTracking().SingleAsync(v => v.Id == 102)).CompletedAt);
+        Assert.Equal("CANCELLED_REFUND_PENDING", (await db.VisitCharges.AsNoTracking().SingleAsync(c => c.Id == 502)).Status);
+        Assert.Equal("PAID", (await db.Payments.AsNoTracking().SingleAsync(p => p.Id == 702)).Status);
+        Assert.Contains(await db.AuditLogs.AsNoTracking().ToListAsync(), a => a.Action == QueueStatusService.ExaminationChargeRefundPendingAction);
+
+        // 4. REASSIGN_REQUEUE without TargetRoomId cancels queue entry only while preserving Visit (CHECKED_IN awaiting room) and VisitCharge ACTIVE
+        await svc.CancelQueueEntryAsync(5, "3", new CancelQueueEntryRequest(
+            Reason: "Hủy phiếu xếp hàng cũ để điều phối lại",
+            ExpectedStateVersion: 1,
+            Disposition: "REASSIGN_REQUEUE"));
+
+        Assert.Equal("CANCELLED", (await db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == 3)).Status);
+        Assert.Equal("CHECKED_IN", (await db.Visits.AsNoTracking().SingleAsync(v => v.Id == 103)).Status);
+        Assert.Equal("ACTIVE", (await db.VisitCharges.AsNoTracking().SingleAsync(c => c.Id == 503)).Status);
     }
 }

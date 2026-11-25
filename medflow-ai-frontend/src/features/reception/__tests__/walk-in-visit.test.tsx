@@ -120,15 +120,35 @@ describe('WalkInVisitPage (Issue #75)', () => {
     expect(screen.getByText(/CCCD đã xác thực/i)).toBeInTheDocument();
   });
 
-  it('renders clinical priority options and updates selection on click', async () => {
+  it('renders outpatient priority options without EMERGENCY/URGENT and requires verification for ELDERLY/PREGNANT', async () => {
     renderPage();
 
-    const priorityBtn = await screen.findByRole('button', {
-      name: /Ưu tiên người cao tuổi \/ Thai sản \/ Trẻ nhỏ/i,
+    const elderlyBtn = await screen.findByRole('button', {
+      name: /Người cao tuổi/i,
     });
-    fireEvent.click(priorityBtn);
+    expect(screen.queryByRole('button', { name: /Cấp cứu|Khẩn cấp/i })).not.toBeInTheDocument();
 
-    expect(priorityBtn).toHaveClass('ring-2');
+    fireEvent.click(elderlyBtn);
+    expect(elderlyBtn).toHaveClass('ring-2');
+
+    const reasonInput = await screen.findByLabelText(/Lý do đến khám/i);
+    fireEvent.change(reasonInput, {
+      target: { value: 'Đau thượng vị kéo dài 2 ngày nay.' },
+    });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Tạo lượt khám & Chuyển sang phân buồng/i }),
+    );
+
+    expect(
+      await screen.findByText(/Bắt buộc xác nhận giấy tờ đối tượng ưu tiên/i),
+    ).toBeInTheDocument();
+
+    const confirmCheckbox = screen.getByRole('checkbox', {
+      name: /Đã đối chiếu giấy tờ xác nhận đối tượng ưu tiên/i,
+    });
+    fireEvent.click(confirmCheckbox);
+    expect(confirmCheckbox).toBeChecked();
   });
 
   it('updates available services when changing department', async () => {

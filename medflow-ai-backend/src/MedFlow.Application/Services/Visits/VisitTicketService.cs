@@ -30,6 +30,23 @@ public sealed class VisitTicketService : IVisitTicketService
         PermissionCodes.QueueManage,
     ];
 
+    private static readonly string[] AllowedHospitalAdminPermissions =
+    [
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.QueueManage,
+        PermissionCodes.HospitalConfig,
+    ];
+
+    private static readonly string[] AllowedSystemAdminPermissions =
+    [
+        PermissionCodes.PatientCheckin,
+        PermissionCodes.VisitAssign,
+        PermissionCodes.QueueManage,
+        PermissionCodes.HospitalConfig,
+        PermissionCodes.UserManage,
+    ];
+
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
 
@@ -114,7 +131,7 @@ public sealed class VisitTicketService : IVisitTicketService
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
 
-        var (actorStaff, hospital) = await EnsureReceptionAccessAsync(actorUserId, nowUtc, ct);
+        var actor = await EnsureReceptionAccessAsync(actorUserId, nowUtc, ct);
 
         var visit = visitId.HasValue
             ? await _db.Visits
@@ -193,10 +210,36 @@ public sealed class VisitTicketService : IVisitTicketService
             appointment?.Slot?.Room?.HospitalId,
         };
 
-        if (associatedHospitalIds.Any(hId => hId.HasValue && hId.Value != hospital.Id))
+        if (!actor.IsSystemAdmin &&
+            actor.Hospital is not null &&
+            associatedHospitalIds.Any(hId => hId.HasValue && hId.Value != actor.Hospital.Id))
         {
             throw new ForbiddenException("Bạn không có quyền truy cập phiếu khám của cơ sở y tế khác.");
         }
+
+        var hospital = actor.Hospital;
+        if (hospital is null || actor.IsSystemAdmin)
+        {
+            var resolvedHospitalId = associatedHospitalIds.FirstOrDefault(hId => hId.HasValue)
+                ?? actor.ActorStaff?.HospitalId
+                ?? hospital?.Id;
+
+            if (resolvedHospitalId.HasValue && (hospital is null || hospital.Id != resolvedHospitalId.Value))
+            {
+                hospital = await _db.Hospitals
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(h => h.Id == resolvedHospitalId.Value, ct);
+            }
+
+            hospital ??= await _db.Hospitals
+                .AsNoTracking()
+                .Where(h => h.IsActive != false)
+                .OrderBy(h => h.Id)
+                .FirstOrDefaultAsync(ct)
+                ?? throw new NotFoundException("Hospital", resolvedHospitalId ?? 0);
+        }
+
+        var actorStaff = actor.ActorStaff;
 
         var visitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
         if (string.IsNullOrEmpty(visitStatus))
@@ -318,16 +361,17 @@ public sealed class VisitTicketService : IVisitTicketService
         }
 
         var waitingAheadCount = 0;
+        var currentSpId = examQueue?.CurrentServicePointId ?? examQueue?.ServicePointId;
         if (visitStatus != "COMPLETED" &&
             queueStatus is not ("COMPLETED" or "IN_PROGRESS" or "IN_CONSULTATION" or "CALLED") &&
-            examQueue?.ServicePointId != null)
+            currentSpId != null)
         {
-            var servicePointId = examQueue.ServicePointId.Value;
+            var servicePointId = currentSpId.Value;
             waitingAheadCount = await _db.QueueEntries
                 .AsNoTracking()
                 .CountAsync(q =>
-                    q.Id != examQueue.Id &&
-                    q.ServicePointId == servicePointId &&
+                    q.Id != examQueue!.Id &&
+                    (q.CurrentServicePointId == servicePointId || q.ServicePointId == servicePointId) &&
                     q.QueueDate == queueDate &&
                     (q.QueueType == null || q.QueueType.ToUpper() == "EXAMINATION" || q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
                     q.QueueNumber != null &&
@@ -562,20 +606,26 @@ public sealed class VisitTicketService : IVisitTicketService
             ReasonForVisit: reasonForVisit,
             CheckedInAt: visit.CheckedInAt,
             CheckedInAtLabel: checkedInAtLabel,
-            CheckedInByStaffId: visit.CheckedInByStaffId ?? actorStaff.Id,
-            CheckedInByStaffName: checkedInStaff?.FullName ?? actorStaff.FullName,
+            CheckedInByStaffId: visit.CheckedInByStaffId ?? actorStaff?.Id,
+            CheckedInByStaffName: checkedInStaff?.FullName ?? actorStaff?.FullName,
             PrintedAtUtc: nowUtc,
             PrintedAtLabel: printedAtLabel,
             PrintedByUserId: actorUserId,
-            PrintedByStaffCode: actorStaff.StaffCode,
-            PrintedByStaffName: actorStaff.FullName,
+            PrintedByStaffCode: actorStaff?.StaffCode ?? RoleNames.SystemAdmin,
+            PrintedByStaffName: actorStaff?.FullName ?? actor.ActorUser.Email,
             Copies: copies,
             PrintCount: printCount,
             IsReprint: isReprint,
             GuidanceNote: guidanceNote);
     }
 
-    private async Task<(Staff ActorStaff, Hospital Hospital)> EnsureReceptionAccessAsync(
+    private sealed record TicketActorContext(
+        bool IsSystemAdmin,
+        User ActorUser,
+        Staff? ActorStaff,
+        Hospital? Hospital);
+
+    private async Task<TicketActorContext> EnsureReceptionAccessAsync(
         long actorUserId,
         DateTime nowUtc,
         CancellationToken ct)
@@ -608,7 +658,14 @@ public sealed class VisitTicketService : IVisitTicketService
             .Select(r => r.Code)
             .ToListAsync(ct);
 
-        if (!actorRoleCodes.Any(c => string.Equals(c, RoleNames.Reception, StringComparison.OrdinalIgnoreCase)))
+        var isSystemAdmin = actorRoleCodes.Any(c =>
+            string.Equals(c, RoleNames.SystemAdmin, StringComparison.OrdinalIgnoreCase));
+        var isHospitalAdmin = actorRoleCodes.Any(c =>
+            string.Equals(c, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase));
+        var isReception = actorRoleCodes.Any(c =>
+            string.Equals(c, RoleNames.Reception, StringComparison.OrdinalIgnoreCase));
+
+        if (!isReception && !isHospitalAdmin && !isSystemAdmin)
         {
             throw new ForbiddenException("Người dùng không có quyền in phiếu khám bệnh.");
         }
@@ -633,8 +690,14 @@ public sealed class VisitTicketService : IVisitTicketService
             .Select(p => p.Code)
             .ToListAsync(ct);
 
+        var allowedPermissions = isSystemAdmin
+            ? AllowedSystemAdminPermissions
+            : isHospitalAdmin
+                ? AllowedHospitalAdminPermissions
+                : AllowedReceptionPermissions;
+
         var hasTicketPermission = actorPermissions.Any(code =>
-            AllowedReceptionPermissions.Contains(code, StringComparer.OrdinalIgnoreCase));
+            allowedPermissions.Contains(code, StringComparer.OrdinalIgnoreCase));
 
         if (!hasTicketPermission)
         {
@@ -645,27 +708,38 @@ public sealed class VisitTicketService : IVisitTicketService
             .AsNoTracking()
             .FirstOrDefaultAsync(s => s.UserId == actorUserId, ct);
 
-        if (actorStaff is null || !actorStaff.HospitalId.HasValue)
-        {
-            throw new ForbiddenException("Tài khoản nhân viên tiếp đón chưa được gán cơ sở y tế.");
-        }
-
-        if (!string.Equals(actorStaff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+        if (actorStaff is not null &&
+            !string.Equals(actorStaff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
         {
             throw new ForbiddenException("Hồ sơ nhân sự của nhân viên tiếp đón đã ngừng hoạt động.");
         }
 
-        var hospital = await _db.Hospitals
-            .AsNoTracking()
-            .FirstOrDefaultAsync(h => h.Id == actorStaff.HospitalId.Value, ct)
-            ?? throw new NotFoundException("Hospital", actorStaff.HospitalId.Value);
-
-        if (hospital.IsActive == false)
+        Hospital? hospital = null;
+        if (!isSystemAdmin)
         {
-            throw new ForbiddenException("Cơ sở y tế của nhân viên tiếp đón hiện đang ngừng hoạt động.");
+            if (actorStaff is null || !actorStaff.HospitalId.HasValue)
+            {
+                throw new ForbiddenException("Tài khoản nhân viên tiếp đón chưa được gán cơ sở y tế.");
+            }
+
+            hospital = await _db.Hospitals
+                .AsNoTracking()
+                .FirstOrDefaultAsync(h => h.Id == actorStaff.HospitalId.Value, ct)
+                ?? throw new NotFoundException("Hospital", actorStaff.HospitalId.Value);
+
+            if (hospital.IsActive == false)
+            {
+                throw new ForbiddenException("Cơ sở y tế của nhân viên tiếp đón hiện đang ngừng hoạt động.");
+            }
+        }
+        else if (actorStaff?.HospitalId.HasValue == true)
+        {
+            hospital = await _db.Hospitals
+                .AsNoTracking()
+                .FirstOrDefaultAsync(h => h.Id == actorStaff.HospitalId.Value, ct);
         }
 
-        return (actorStaff, hospital);
+        return new TicketActorContext(isSystemAdmin, actorUser, actorStaff, hospital);
     }
 
     private static (string Trimmed, long? Id, string? Code) ParseVisitIdentifier(string? idOrVisitCode)

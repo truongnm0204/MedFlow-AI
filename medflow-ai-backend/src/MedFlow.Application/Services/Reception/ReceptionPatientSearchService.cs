@@ -1,10 +1,9 @@
 using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Options;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Domain.Constants;
@@ -12,6 +11,7 @@ using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MedFlow.Application.Services.Reception;
 
@@ -45,11 +45,16 @@ public sealed class ReceptionPatientSearchService : IReceptionPatientSearchServi
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IOptions<IdentityHashOptions>? _hashOptions;
 
-    public ReceptionPatientSearchService(IApplicationDbContext db, TimeProvider? timeProvider = null)
+    public ReceptionPatientSearchService(
+        IApplicationDbContext db,
+        TimeProvider? timeProvider = null,
+        IOptions<IdentityHashOptions>? hashOptions = null)
     {
         _db = db;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _hashOptions = hashOptions;
     }
 
     public async Task<ReceptionDashboardSummaryDto> GetDashboardSummaryAsync(
@@ -125,14 +130,39 @@ public sealed class ReceptionPatientSearchService : IReceptionPatientSearchServi
         if (!string.IsNullOrEmpty(term))
         {
             var lowered = term.ToLowerInvariant();
-            if (IsIdentityNumber(term))
+            if (IsIdentityNumber(term, out var canonicalIdentity))
             {
-                var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(term))).ToLowerInvariant();
-                patients = patients.Where(p =>
-                    p.PatientCode.ToLower().Contains(lowered)
-                    || p.FullName.ToLower().Contains(lowered)
-                    || (p.Phone != null && p.Phone.ToLower().Contains(lowered))
-                    || p.IdentificationHash == hash);
+                if (!IdentificationNumber.AllowShaFallback(_hashOptions))
+                {
+                    var hmacKey = IdentificationNumber.RequireKey(_hashOptions);
+                    var hmac = IdentificationNumber.ComputeHmac(canonicalIdentity, hmacKey);
+                    patients = patients.Where(p =>
+                        p.PatientCode.ToLower().Contains(lowered)
+                        || p.FullName.ToLower().Contains(lowered)
+                        || (p.Phone != null && p.Phone.ToLower().Contains(lowered))
+                        || p.IdentificationHashHmac == hmac);
+                }
+                else
+                {
+                    var sha = IdentificationNumber.ComputeSha256(canonicalIdentity);
+                    var rawKey = _hashOptions?.Value.HashKey;
+                    var hmac = string.IsNullOrWhiteSpace(rawKey)
+                        ? null
+                        : IdentificationNumber.ComputeHmac(canonicalIdentity, rawKey);
+
+                    patients = hmac is not null
+                        ? patients.Where(p =>
+                            p.PatientCode.ToLower().Contains(lowered)
+                            || p.FullName.ToLower().Contains(lowered)
+                            || (p.Phone != null && p.Phone.ToLower().Contains(lowered))
+                            || p.IdentificationHashHmac == hmac
+                            || p.IdentificationHash == sha)
+                        : patients.Where(p =>
+                            p.PatientCode.ToLower().Contains(lowered)
+                            || p.FullName.ToLower().Contains(lowered)
+                            || (p.Phone != null && p.Phone.ToLower().Contains(lowered))
+                            || p.IdentificationHash == sha);
+                }
             }
             else
             {
@@ -238,7 +268,7 @@ public sealed class ReceptionPatientSearchService : IReceptionPatientSearchServi
                     p.FullName,
                     p.Gender,
                     p.DateOfBirth,
-                    string.IsNullOrWhiteSpace(p.IdentificationHash) ? null : PatientProfileService.MaskedVerifiedIdentityText,
+                    IdentificationNumber.HasVerifiedIdentity(p, _hashOptions) ? PatientProfileService.MaskedVerifiedIdentityText : null,
                     p.Phone,
                     p.Address,
                     todaySummary,
@@ -621,8 +651,19 @@ public sealed class ReceptionPatientSearchService : IReceptionPatientSearchServi
             .FirstOrDefaultAsync(ct) ?? 0L;
     }
 
-    private static bool IsIdentityNumber(string term) =>
-        term.Length == 12 && term.All(char.IsAsciiDigit);
+    private static bool IsIdentityNumber(string term, out string canonical)
+    {
+        var compact = term.Replace(" ", string.Empty, StringComparison.Ordinal)
+            .Replace("-", string.Empty, StringComparison.Ordinal);
+        if (compact.Length is 9 or 12 && compact.All(char.IsAsciiDigit))
+        {
+            canonical = compact;
+            return true;
+        }
+
+        canonical = string.Empty;
+        return false;
+    }
 
     private static string NormalizeTab(string? tab)
     {

@@ -1,5 +1,4 @@
 import { useState, type FormEvent } from 'react';
-import axios from 'axios';
 import {
   Activity,
   AlertCircle,
@@ -115,12 +114,6 @@ const SKIPPED_REASON_SUGGESTIONS: readonly string[] = [
 ];
 
 type FieldErrors = Partial<Record<keyof UpdateQueueStatusFormValues, string>>;
-
-function shouldFallbackToLocalUpdate(error: unknown): boolean {
-  if (!axios.isAxiosError(error)) return false;
-  if (!error.response) return true;
-  return error.response.status === 404;
-}
 
 function toTargetFromEntry(entry: ExaminationQueueEntryDto): UpdateQueueStatusTarget {
   return {
@@ -270,21 +263,6 @@ export function UpdateQueueStatusModal({
         response,
       });
     } catch (error) {
-      if (!onSubmitOverride && shouldFallbackToLocalUpdate(error)) {
-        onUpdated({
-          entryId: activeTarget.entryId,
-          visitCode: activeTarget.visitCode,
-          ticketNo: activeTarget.ticketNo,
-          patientName: activeTarget.patientName,
-          previousStatus: activeTarget.currentStatus,
-          currentStatus: parsed.data.targetStatus,
-          presenceStatus: parsed.data.presenceStatus,
-          blockedReason: parsed.data.targetStatus === 'SKIPPED' ? parsed.data.reason : null,
-          reason: parsed.data.reason.length > 0 ? parsed.data.reason : null,
-        });
-        return;
-      }
-
       setApiError(getErrorMessage(error, 'Không thể cập nhật trạng thái hàng đợi khám.'));
     } finally {
       setIsSubmitting(false);

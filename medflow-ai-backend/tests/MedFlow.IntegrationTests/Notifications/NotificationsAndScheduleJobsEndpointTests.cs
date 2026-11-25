@@ -553,6 +553,12 @@ public sealed class NotificationsAndScheduleJobsEndpointTests : AuthTestBase
                 await Db.AuditLogs
                     .Where(l => l.EntityType == "VISIT" && l.EntityId != null && visitIdStrings.Contains(l.EntityId))
                     .ExecuteDeleteAsync();
+                await Db.Payments
+                    .Where(p => p.VisitId != null && visitIds.Contains(p.VisitId.Value))
+                    .ExecuteDeleteAsync();
+                await Db.VisitCharges
+                    .Where(c => c.VisitId != null && visitIds.Contains(c.VisitId.Value))
+                    .ExecuteDeleteAsync();
                 await Db.QueueEntries
                     .Where(q => q.VisitId != null && visitIds.Contains(q.VisitId.Value))
                     .ExecuteDeleteAsync();

@@ -24,7 +24,8 @@ public sealed record QueueOrderingItem(
     int QueueNumber,
     string QueueType = ClinicalQueueRules.QueueTypeExamination,
     string? BlockedReason = null,
-    bool PendingRequiredResults = false);
+    bool PendingRequiredResults = false,
+    bool PendingPaymentSettlement = false);
 
 public sealed record QueueEntryEvaluation(
     int ServingOrder,

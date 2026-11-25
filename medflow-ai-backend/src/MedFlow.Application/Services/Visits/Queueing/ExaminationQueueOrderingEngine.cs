@@ -50,8 +50,11 @@ public static class ExaminationQueueOrderingEngine
             var activeWaiting = item.Status is "WAITING" or "READY";
 
             // A HOLD_FOR_SLOT block only lasts until the appointment time; once due, protection is restored.
+            // Unpaid EXAMINATION fees NEVER auto-expire until settled or waived (ADR-0059 Pay Before Service).
             var holdExpired = item.IsScheduled && item.ScheduledAt.HasValue && item.ScheduledAt.Value <= now;
-            var isBlocked = !string.IsNullOrWhiteSpace(item.BlockedReason) && !holdExpired;
+            var isUnpaidExam = item.QueueType == ClinicalQueueRules.QueueTypeExamination
+                && item.PendingPaymentSettlement;
+            var isBlocked = (!string.IsNullOrWhiteSpace(item.BlockedReason) && !holdExpired) || isUnpaidExam;
             var isAwaitingResults = item.QueueType == ClinicalQueueRules.QueueTypeReturnConsultation
                 && policy.FinalResultRequired
                 && item.PendingRequiredResults;
@@ -318,6 +321,11 @@ public static class ExaminationQueueOrderingEngine
         if (item.PresenceStatus != "PRESENT")
         {
             return (false, "Bệnh nhân phải ở trạng thái Có mặt trước khi Safe Backfill.");
+        }
+
+        if (item.QueueType == ClinicalQueueRules.QueueTypeExamination && item.PendingPaymentSettlement)
+        {
+            return (false, "Bệnh nhân chưa hoàn tất thanh toán phí khám trước khi thực hiện dịch vụ.");
         }
 
         if (awaitingResults)

@@ -5,6 +5,7 @@ using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MedFlow.UnitTests.Visits;
@@ -45,6 +46,7 @@ public sealed class VisitRoomTransferServiceTests : IDisposable
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
         public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
+        public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
         public DbSet<Payment> Payments => throw NotUsed();
 
         public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
@@ -146,6 +148,7 @@ public sealed class VisitRoomTransferServiceTests : IDisposable
 
             modelBuilder.Entity<Visit>(b => b.HasKey(v => v.Id));
             modelBuilder.Entity<QueueEntry>(b => b.HasKey(q => q.Id));
+            modelBuilder.Entity<QueueServicePoint>(b => b.HasKey(sp => sp.Id));
             modelBuilder.Entity<AuditLog>(b =>
             {
                 b.HasKey(a => a.Id);
@@ -161,6 +164,7 @@ public sealed class VisitRoomTransferServiceTests : IDisposable
     {
         var options = new DbContextOptionsBuilder<VisitRoomTransferTestDbContext>()
             .UseInMemoryDatabase($"VisitRoomTransferTests_{Guid.NewGuid()}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         _db = new VisitRoomTransferTestDbContext(options);
@@ -868,5 +872,54 @@ public sealed class VisitRoomTransferServiceTests : IDisposable
             await Assert.ThrowsAsync<ForbiddenException>(() =>
                 _service.GetCompatibleRoomsAsync(actorId, "100"));
         }
+    }
+
+    [Fact]
+    public async Task TransferToCompatibleRoomAsync_SharedRoomWithMultipleActiveDoctorsWithoutTargetDoctorId_ClearsAssignedDoctorAwaitingSelection()
+    {
+        var todayVn = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
+        var nowHour = DateTime.UtcNow.AddHours(7).Hour;
+        var slotStart = todayVn.ToDateTime(new TimeOnly(nowHour, 0), DateTimeKind.Unspecified);
+        _db.ExaminationSlots.AddRange(
+            new ExaminationSlot
+            {
+                Id = 50,
+                ServiceId = 1,
+                DoctorId = 1,
+                RoomId = 2,
+                StartsAt = slotStart,
+                EndsAt = slotStart.AddMinutes(30),
+                Capacity = 5,
+                Status = "OPEN",
+            },
+            new ExaminationSlot
+            {
+                Id = 51,
+                ServiceId = 1,
+                DoctorId = 2,
+                RoomId = 2,
+                StartsAt = slotStart,
+                EndsAt = slotStart.AddMinutes(30),
+                Capacity = 5,
+                Status = "OPEN",
+            });
+        await _db.SaveChangesAsync();
+
+        var compat = await _service.GetCompatibleRoomsAsync(5, "100");
+        var sharedRoom = Assert.Single(compat.CompatibleRooms, r => r.RoomCode == "RM-002");
+        Assert.Equal(2, sharedRoom.ActiveDoctorCount);
+        Assert.Null(sharedRoom.DefaultDoctorId);
+
+        var transferred = await _service.TransferToCompatibleRoomAsync(
+            actorUserId: 5,
+            idOrCode: "100",
+            request: new TransferVisitRoomRequest(
+                TargetRoomId: 2,
+                Reason: "Chuyển sang phòng dùng chung RM-002 chưa chọn bác sĩ"),
+            ipAddress: "127.0.0.1");
+
+        Assert.Equal(2L, transferred.CurrentRoomId);
+        Assert.Null(transferred.AssignedDoctorId);
+        Assert.Equal(15, transferred.QueueNumber);
     }
 }

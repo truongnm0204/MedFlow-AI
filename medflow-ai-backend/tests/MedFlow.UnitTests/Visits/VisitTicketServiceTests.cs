@@ -156,19 +156,23 @@ public sealed class VisitTicketServiceTests : IDisposable
             new Role { Id = 1, Code = "PATIENT", Name = "Bệnh nhân" },
             new Role { Id = 2, Code = "DOCTOR", Name = "Bác sĩ" },
             new Role { Id = 3, Code = "RECEPTION", Name = "Nhân viên tiếp đón" },
-            new Role { Id = 6, Code = "HOSPITAL_ADMIN", Name = "Quản trị bệnh viện" });
+            new Role { Id = 6, Code = "HOSPITAL_ADMIN", Name = "Quản trị bệnh viện" },
+            new Role { Id = 7, Code = "SYSTEM_ADMIN", Name = "Quản trị hệ thống" });
 
         _db.Permissions.AddRange(
             new Permission { Id = 1, Code = "PATIENT_PROFILE_READ" },
             new Permission { Id = 3, Code = "PATIENT_CHECKIN" },
             new Permission { Id = 4, Code = "VISIT_ASSIGN" },
-            new Permission { Id = 5, Code = "QUEUE_MANAGE" });
+            new Permission { Id = 5, Code = "QUEUE_MANAGE" },
+            new Permission { Id = 11, Code = "HOSPITAL_CONFIG" });
 
         _db.RolePermissions.AddRange(
             new RolePermission { RoleId = 3, PermissionId = 1 },
             new RolePermission { RoleId = 3, PermissionId = 3 },
             new RolePermission { RoleId = 3, PermissionId = 4 },
-            new RolePermission { RoleId = 3, PermissionId = 5 });
+            new RolePermission { RoleId = 3, PermissionId = 5 },
+            new RolePermission { RoleId = 6, PermissionId = 3 },
+            new RolePermission { RoleId = 7, PermissionId = 11 });
 
         _db.Hospitals.AddRange(
             new Hospital
@@ -239,13 +243,17 @@ public sealed class VisitTicketServiceTests : IDisposable
             new User { Id = 1, Email = "patient01@medflow.test", AccountStatus = AccountStatus.ACTIVE },
             new User { Id = 3, Email = "doctor01@medflow.test", AccountStatus = AccountStatus.ACTIVE },
             new User { Id = 5, Email = "reception01@medflow.test", AccountStatus = AccountStatus.ACTIVE },
-            new User { Id = 11, Email = "hospital_admin01@medflow.test", AccountStatus = AccountStatus.ACTIVE });
+            new User { Id = 11, Email = "hospital_admin01@medflow.test", AccountStatus = AccountStatus.ACTIVE },
+            new User { Id = 13, Email = "system_admin01@medflow.test", AccountStatus = AccountStatus.ACTIVE },
+            new User { Id = 25, Email = "hospital_admin02@medflow.test", AccountStatus = AccountStatus.ACTIVE });
 
         _db.UserRoles.AddRange(
             new UserRole { UserId = 1, RoleId = 1 },
             new UserRole { UserId = 3, RoleId = 2 },
             new UserRole { UserId = 5, RoleId = 3 },
-            new UserRole { UserId = 11, RoleId = 6 });
+            new UserRole { UserId = 11, RoleId = 6 },
+            new UserRole { UserId = 13, RoleId = 7 },
+            new UserRole { UserId = 25, RoleId = 6 });
 
         _db.Staff.AddRange(
             new Staff
@@ -266,6 +274,26 @@ public sealed class VisitTicketServiceTests : IDisposable
                 DepartmentId = 1,
                 StaffCode = "STF-003",
                 FullName = "Lễ tân Lê Lan",
+                Status = "ACTIVE",
+            },
+            new Staff
+            {
+                Id = 11,
+                UserId = 11,
+                HospitalId = 1,
+                DepartmentId = 1,
+                StaffCode = "STF-011",
+                FullName = "QLBV Cơ sở 1",
+                Status = "ACTIVE",
+            },
+            new Staff
+            {
+                Id = 25,
+                UserId = 25,
+                HospitalId = 2,
+                DepartmentId = 20,
+                StaffCode = "STF-025",
+                FullName = "QLBV Cơ sở 2",
                 Status = "ACTIVE",
             });
 
@@ -653,11 +681,27 @@ public sealed class VisitTicketServiceTests : IDisposable
     [Theory]
     [InlineData(1)]  // PATIENT
     [InlineData(3)]  // DOCTOR
-    [InlineData(11)] // HOSPITAL_ADMIN
-    public async Task GetExaminationTicketAsync_NonReceptionUser_ThrowsForbiddenException(long actorUserId)
+    [InlineData(25)] // Cross-hospital HOSPITAL_ADMIN
+    public async Task GetExaminationTicketAsync_NonReceptionOrCrossHospitalUser_ThrowsForbiddenException(long actorUserId)
     {
         await Assert.ThrowsAsync<ForbiddenException>(() =>
             _service.GetExaminationTicketAsync(actorUserId, "1"));
+    }
+
+    [Theory]
+    [InlineData(11)] // Same-hospital HOSPITAL_ADMIN
+    [InlineData(13)] // SYSTEM_ADMIN (without hospital-bound staff)
+    public async Task GetAndPrintExaminationTicketAsync_HospitalAdminAndSystemAdmin_Succeeds(long actorUserId)
+    {
+        var preview = await _service.GetExaminationTicketAsync(actorUserId, "1");
+        Assert.Equal(1L, preview.VisitId);
+
+        var printed = await _service.PrintExaminationTicketAsync(
+            actorUserId,
+            "1",
+            new MedFlow.Application.DTOs.Visits.PrintExaminationTicketRequest(Copies: 1));
+        Assert.Equal(1L, printed.VisitId);
+        Assert.False(string.IsNullOrWhiteSpace(printed.PrintedByStaffCode));
     }
 
     [Fact]

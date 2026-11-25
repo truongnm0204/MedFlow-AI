@@ -183,7 +183,7 @@ describe('TransferVisitRoomModal & visit-room-transfer API', () => {
     expect(transferResp.previousRoomCode).toBe('RM-001');
   });
 
-  it('hien thi thong tin benh nhan va khoa chon phong hien tai / bao tri / khac khoa', () => {
+  it('hien thi thong tin benh nhan va khoa chon phong hien tai / bao tri / khac khoa', async () => {
     setup();
 
     expect(
@@ -191,7 +191,7 @@ describe('TransferVisitRoomModal & visit-room-transfer API', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('Trần Thị Bích')).toBeInTheDocument();
 
-    const currentRoomBtn = screen.getByText('Khám Tiêu hóa 101').closest('button');
+    const currentRoomBtn = (await screen.findByText('Khám Tiêu hóa 101')).closest('button');
     expect(currentRoomBtn).toBeDisabled();
 
     const maintenanceRoomBtn = screen.getByText('Khám Tiêu hóa 103 (Bảo trì)').closest('button');
@@ -219,7 +219,7 @@ describe('TransferVisitRoomModal & visit-room-transfer API', () => {
   it('chon phong tuong thich RM-002, nhap ly do va submit thanh cong', async () => {
     const { user, onSubmitOverride, onTransferred } = setup();
 
-    const availableRoomBtn = screen.getByText('Khám Tiêu hóa 102').closest('button')!;
+    const availableRoomBtn = (await screen.findByText('Khám Tiêu hóa 102')).closest('button')!;
     await user.click(availableRoomBtn);
 
     await user.type(
@@ -239,6 +239,7 @@ describe('TransferVisitRoomModal & visit-room-transfer API', () => {
         targetRoomCode: 'RM-002',
         reason: 'Phòng khám hiện tại đang quá tải',
         notes: 'Bệnh nhân đồng ý chuyển sang phòng 102',
+        targetDoctorId: null,
       });
     });
 
@@ -251,6 +252,31 @@ describe('TransferVisitRoomModal & visit-room-transfer API', () => {
         queueNumber: 13,
       }),
     );
+  });
+
+  it('khong fallback sang COMPATIBLE_TRANSFER_ROOMS_MOCK khi API loi ma hien thi canh bao loi', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.mocked(apiClient.get).mockRejectedValueOnce(new Error('Không tải được danh sách phòng'));
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TransferVisitRoomModal
+          open
+          target={{
+            visitIdOrCode: 'VIS-202610-0002',
+            patientCode: 'BN-2024-0042',
+            patientName: 'Trần Thị Bích',
+            currentRoomCode: 'RM-001',
+            ticketNo: 'A013',
+          }}
+          onClose={vi.fn()}
+          onTransferred={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Không tải được danh sách phòng');
+    expect(screen.queryByText('Khám Tiêu hóa 102')).not.toBeInTheDocument();
   });
 
   it('hien thi thong bao khi khong co buong kham tuong thich va lich su dieu chuyen trong', async () => {

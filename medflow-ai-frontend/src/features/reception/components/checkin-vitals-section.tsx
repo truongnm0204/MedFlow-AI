@@ -14,11 +14,12 @@ export function CheckInVitalsSection({
   errors = {},
 }: CheckInVitalsSectionProps) {
   const priorities: Array<{ id: CheckInPriority; label: string; tone: string }> = [
-    { id: 'NORMAL', label: 'Bình thường', tone: 'text-slate-700 bg-slate-50' },
-    { id: 'ELDERLY', label: 'Người cao tuổi', tone: 'text-amber-700 bg-amber-50' },
+    { id: 'NORMAL', label: 'Bình thường', tone: 'text-ink bg-canvas' },
+    { id: 'ELDERLY', label: 'Người cao tuổi (≥75 tuổi)', tone: 'text-amber-700 bg-amber-50' },
     { id: 'PREGNANT', label: 'Phụ nữ có thai', tone: 'text-sky-700 bg-sky-50' },
-    { id: 'URGENT', label: 'Ưu tiên cấp cứu', tone: 'text-rose-700 bg-rose-50' },
   ];
+
+  const isElevatedPriority = formData.priority === 'ELDERLY' || formData.priority === 'PREGNANT';
 
   return (
     <div className="space-y-4 text-xs">
@@ -122,23 +123,57 @@ export function CheckInVitalsSection({
 
       {/* Priority Selection */}
       <div className="space-y-1.5">
-        <label className="font-bold text-slate-800">Mức độ ưu tiên tiếp nhận</label>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <label className="font-bold text-ink">Mức độ ưu tiên tiếp nhận</label>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           {priorities.map((item) => (
             <button
               key={item.id}
               type="button"
-              onClick={() => onChange({ priority: item.id })}
+              onClick={() =>
+                onChange({
+                  priority: item.id,
+                  priorityVerificationConfirmed:
+                    item.id === 'NORMAL' ? false : formData.priorityVerificationConfirmed,
+                })
+              }
               className={`p-2 rounded-xl border text-center transition-all ${
                 formData.priority === item.id
                   ? 'border-primary bg-primary/5 text-primary font-bold shadow-2xs'
-                  : 'border-slate-200 hover:border-slate-300 text-slate-600'
+                  : 'border-border hover:border-primary/40 text-sub'
               }`}
             >
               <div className="text-[11px] truncate">{item.label}</div>
             </button>
           ))}
         </div>
+
+        {isElevatedPriority && (
+          <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formData.priorityVerificationConfirmed === true}
+                onChange={(e) => onChange({ priorityVerificationConfirmed: e.target.checked })}
+                className="w-4 h-4 rounded text-primary border-border focus:ring-primary mt-0.5"
+              />
+              <div className="text-xs">
+                <span className="font-bold text-navy">
+                  Đã đối chiếu giấy tờ xác nhận đối tượng ưu tiên (ELDERLY / PREGNANT){' '}
+                  <span className="text-rose-500">*</span>
+                </span>
+                <p className="text-[11px] text-sub">
+                  Bắt buộc xác minh ngày sinh trên CCCD hoặc sổ khám thai trước khi áp dụng ưu tiên.
+                </p>
+              </div>
+            </label>
+            {errors.priorityVerificationConfirmed && (
+              <p className="text-[11px] text-rose-600 font-semibold pl-6 mt-1 flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                {errors.priorityVerificationConfirmed}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Verification Checkboxes */}

@@ -11,7 +11,7 @@ namespace MedFlow.API.Controllers;
 [ApiController]
 [Route("api/v1/reception/visits")]
 [Route("api/v1/visits")]
-[Authorize(Roles = RoleNames.Reception)]
+[Authorize(Roles = $"{RoleNames.Reception},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class ReceptionVisitsController : ControllerBase
 {
     private readonly IVisitTicketService _visitTicketService;

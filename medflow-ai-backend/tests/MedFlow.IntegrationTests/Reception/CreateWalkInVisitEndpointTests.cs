@@ -353,6 +353,14 @@ public sealed class CreateWalkInVisitEndpointTests : AuthTestBase
                     db.Payments.RemoveRange(payments);
                 }
 
+                var charges = await db.VisitCharges
+                    .Where(c => c.VisitId == createdVisitId.Value)
+                    .ToListAsync();
+                if (charges.Count > 0)
+                {
+                    db.VisitCharges.RemoveRange(charges);
+                }
+
                 var queues = await db.QueueEntries
                     .Where(q => q.VisitId == createdVisitId.Value)
                     .ToListAsync();

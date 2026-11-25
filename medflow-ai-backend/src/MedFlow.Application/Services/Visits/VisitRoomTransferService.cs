@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
@@ -96,8 +97,22 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
             .ThenBy(r => r.Id)
             .ToListAsync(ct);
 
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
+        var roomDoctorsMap = await ResolveActiveDoctorsByRoomAsync(
+            context.VisitHospitalId,
+            candidateRooms.Select(r => r.Id).ToHashSet(),
+            context.RequiredDepartmentId,
+            context.Appointment?.Slot?.ServiceId,
+            nowLocal,
+            ct);
+
         var compatibleRoomDtos = candidateRooms
-            .Select(r => MapCompatibleRoomItem(r, visit.ExaminationRoomId, context.RequiredDepartmentId, activeVisitCountByRoomId))
+            .Select(r => MapCompatibleRoomItem(
+                r,
+                visit.ExaminationRoomId,
+                context.RequiredDepartmentId,
+                activeVisitCountByRoomId,
+                roomDoctorsMap.GetValueOrDefault(r.Id, [])))
             .ToList();
 
         var transferHistory = await LoadTransferHistoryAsync(visit.Id, ct);
@@ -187,42 +202,183 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
             throw new ValidationException("ID bác sĩ phụ trách không hợp lệ.");
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var operatorAccess = await EnsureOperatorAccessAsync(actorUserId, nowUtc, ct);
 
-        var visit = visitId.HasValue
-            ? await _db.Visits.FirstOrDefaultAsync(v => v.Id == visitId.Value, ct)
-            : await _db.Visits.FirstOrDefaultAsync(
+        var preVisit = visitId.HasValue
+            ? await _db.Visits.AsNoTracking().FirstOrDefaultAsync(v => v.Id == visitId.Value, ct)
+            : await _db.Visits.AsNoTracking().FirstOrDefaultAsync(
                 v => v.VisitCode != null && v.VisitCode.ToUpper() == visitCode,
                 ct);
 
-        if (visit is null)
+        if (preVisit is null)
         {
             throw new NotFoundException("Visit", idOrCode.Trim());
         }
 
-        var context = await LoadVisitContextAsync(visit, operatorAccess, ct, trackQueueEntry: true);
+        var preContext = await LoadVisitContextAsync(preVisit, operatorAccess, ct, trackQueueEntry: false);
 
-        var normalizedVisitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
-        if (normalizedVisitStatus is "COMPLETED" or "CANCELLED" or "NO_SHOW" or "DONE" || visit.CompletedAt.HasValue)
+        EnsureVisitTransferable(preVisit, preContext.ActiveQueueEntry);
+
+        if (!preVisit.ExaminationRoomId.HasValue || preContext.CurrentRoom is null)
         {
-            throw new ConflictException("Không thể chuyển phòng cho lượt khám đã hoàn tất hoặc đã hủy.");
+            throw new ConflictException("Lượt khám chưa được gán phòng khám ban đầu. Vui lòng gán phòng khám trước khi chuyển phòng.");
         }
 
-        if (normalizedVisitStatus is "IN_CONSULTATION" or "IN_PROGRESS")
-        {
-            throw new ConflictException("Bệnh nhân đang trong quá trình khám lâm sàng, không thể chuyển phòng.");
-        }
+        var preCurrentRoom = preContext.CurrentRoom;
 
-        if (context.ActiveQueueEntry is not null)
+        HospitalRoom? preTargetRoom;
+        if (request.TargetRoomId.HasValue)
         {
-            var normalizedQueueStatus = AppointmentBookingRules.NormalizeStatusKey(context.ActiveQueueEntry.Status);
-            if ((context.ActiveQueueEntry.StartedAt.HasValue && !context.ActiveQueueEntry.CompletedAt.HasValue) ||
-                normalizedQueueStatus is "IN_CONSULTATION" or "IN_PROGRESS")
+            preTargetRoom = await _db.HospitalRooms
+                .AsNoTracking()
+                .Include(r => r.Department)
+                .FirstOrDefaultAsync(r => r.Id == request.TargetRoomId.Value, ct);
+
+            if (preTargetRoom is null)
             {
-                throw new ConflictException("Bệnh nhân đã bắt đầu khám tại phòng hiện tại, không thể chuyển phòng.");
+                throw new NotFoundException("HospitalRoom", request.TargetRoomId.Value);
+            }
+
+            if (targetRoomCode is not null &&
+                !string.Equals(preTargetRoom.RoomCode, targetRoomCode, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ValidationException("Mã phòng khám đích không khớp với ID phòng khám đã chọn.");
             }
         }
+        else
+        {
+            preTargetRoom = await _db.HospitalRooms
+                .AsNoTracking()
+                .Include(r => r.Department)
+                .Where(r => r.RoomCode.ToUpper() == targetRoomCode)
+                .OrderByDescending(r => r.HospitalId == preContext.VisitHospitalId)
+                .ThenBy(r => r.Id)
+                .FirstOrDefaultAsync(ct);
+
+            if (preTargetRoom is null)
+            {
+                throw new NotFoundException("HospitalRoom", targetRoomCode!);
+            }
+        }
+
+        if (!preTargetRoom.HospitalId.HasValue)
+        {
+            throw new ValidationException("Phòng khám đích chưa được cấu hình cơ sở y tế.");
+        }
+
+        var targetHospitalId = preTargetRoom.HospitalId.Value;
+        if (!operatorAccess.IsSystemAdmin && targetHospitalId != operatorAccess.ActorHospitalId!.Value)
+        {
+            throw new ForbiddenException("Không thể chuyển bệnh nhân sang phòng khám thuộc cơ sở y tế khác.");
+        }
+
+        if (targetHospitalId != preContext.VisitHospitalId)
+        {
+            throw new ValidationException("Phòng khám đích phải thuộc cùng cơ sở y tế với lượt khám.");
+        }
+
+        if (preTargetRoom.Id == preCurrentRoom.Id)
+        {
+            throw new ValidationException("Phòng khám đích trùng với phòng khám hiện tại của bệnh nhân.");
+        }
+
+        if (!string.Equals(preTargetRoom.RoomType, "EXAMINATION", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ValidationException("Phòng đích phải là buồng khám lâm sàng (EXAMINATION).");
+        }
+
+        if (preContext.RequiredDepartmentId.HasValue && preTargetRoom.DepartmentId != preContext.RequiredDepartmentId.Value)
+        {
+            throw new ValidationException("Phòng khám đích không tương thích chuyên khoa/khoa phòng với lượt khám hiện tại.");
+        }
+
+        if (!string.Equals(preTargetRoom.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException("Phòng khám đích hiện không hoạt động hoặc đang bảo trì.");
+        }
+
+        var targetDepartment = preTargetRoom.Department
+            ?? (preTargetRoom.DepartmentId.HasValue
+                ? await _db.Departments.AsNoTracking().FirstOrDefaultAsync(d => d.Id == preTargetRoom.DepartmentId.Value, ct)
+                : null);
+
+        if (targetDepartment is not null && targetDepartment.IsActive == false)
+        {
+            throw new ConflictException("Khoa phòng của buồng khám đích đang ngừng hoạt động.");
+        }
+
+        var preTargetDoctor = await ResolveTargetRoomDoctorAsync(
+            request.TargetDoctorId,
+            preTargetRoom,
+            preContext.VisitHospitalId,
+            preContext.Appointment?.Slot?.ServiceId,
+            nowLocal,
+            ct);
+
+        var prePreviousSpId = preContext.ActiveQueueEntry?.CurrentServicePointId ?? preContext.ActiveQueueEntry?.ServicePointId;
+        var preTargetSpId = await ResolveTargetServicePointIdAsync(
+            preTargetRoom.Id,
+            preTargetDoctor?.Id,
+            preContext.VisitHospitalId,
+            ct);
+
+        var doctorIdsToLock = new SortedSet<long>();
+        if (preVisit.AssignedDoctorId.HasValue)
+            doctorIdsToLock.Add(preVisit.AssignedDoctorId.Value);
+        if (request.TargetDoctorId.HasValue)
+            doctorIdsToLock.Add(request.TargetDoctorId.Value);
+        if (preTargetDoctor is not null)
+            doctorIdsToLock.Add(preTargetDoctor.Id);
+
+        var roomIdsToLock = new[] { preCurrentRoom.Id, preTargetRoom.Id }
+            .Distinct()
+            .OrderBy(id => id)
+            .ToArray();
+
+        var spIdsToLock = new[] { prePreviousSpId, preTargetSpId }
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToArray();
+
+        var queueIdsToLock = preContext.ActiveQueueEntry is not null
+            ? new[] { preContext.ActiveQueueEntry.Id }
+            : Array.Empty<long>();
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        // ADR-0059 strict lock order: doctors (05) -> hospital_rooms (06) -> visits (09) -> queue_service_points (10) -> queue_entries (11)
+        if (doctorIdsToLock.Count > 0)
+        {
+            await _db.TryLockDoctorsForUpdateAsync(doctorIdsToLock, ct);
+        }
+
+        await _db.TryLockRoomsForUpdateAsync(roomIdsToLock, ct);
+        await _db.TryLockVisitForUpdateAsync(preVisit.Id, ct);
+
+        if (spIdsToLock.Length > 0)
+        {
+            await _db.TryLockServicePointsForUpdateAsync(spIdsToLock, ct);
+        }
+
+        if (queueIdsToLock.Length > 0)
+        {
+            await _db.TryLockQueueEntriesForUpdateAsync(queueIdsToLock, ct);
+        }
+
+        if (_db is DbContext dbCtx && dbCtx.Database.ProviderName != "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            dbCtx.ChangeTracker.Clear();
+        }
+
+        var visit = await _db.Visits.FirstOrDefaultAsync(v => v.Id == preVisit.Id, ct)
+            ?? throw new NotFoundException("Visit", idOrCode.Trim());
+
+        var context = await LoadVisitContextAsync(visit, operatorAccess, ct, trackQueueEntry: true);
+        EnsureVisitTransferable(visit, context.ActiveQueueEntry);
 
         if (!visit.ExaminationRoomId.HasValue || context.CurrentRoom is null)
         {
@@ -230,86 +386,20 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
         }
 
         var currentRoom = context.CurrentRoom;
-
-        HospitalRoom? targetRoom;
-        if (request.TargetRoomId.HasValue)
-        {
-            targetRoom = await _db.HospitalRooms
-                .AsNoTracking()
-                .Include(r => r.Department)
-                .FirstOrDefaultAsync(r => r.Id == request.TargetRoomId.Value, ct);
-
-            if (targetRoom is null)
-            {
-                throw new NotFoundException("HospitalRoom", request.TargetRoomId.Value);
-            }
-
-            if (targetRoomCode is not null &&
-                !string.Equals(targetRoom.RoomCode, targetRoomCode, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ValidationException("Mã phòng khám đích không khớp với ID phòng khám đã chọn.");
-            }
-        }
-        else
-        {
-            targetRoom = await _db.HospitalRooms
-                .AsNoTracking()
-                .Include(r => r.Department)
-                .Where(r => r.RoomCode.ToUpper() == targetRoomCode)
-                .OrderByDescending(r => r.HospitalId == context.VisitHospitalId)
-                .ThenBy(r => r.Id)
-                .FirstOrDefaultAsync(ct);
-
-            if (targetRoom is null)
-            {
-                throw new NotFoundException("HospitalRoom", targetRoomCode!);
-            }
-        }
-
-        if (!targetRoom.HospitalId.HasValue)
-        {
-            throw new ValidationException("Phòng khám đích chưa được cấu hình cơ sở y tế.");
-        }
-
-        var targetHospitalId = targetRoom.HospitalId.Value;
-        if (!operatorAccess.IsSystemAdmin && targetHospitalId != operatorAccess.ActorHospitalId!.Value)
-        {
-            throw new ForbiddenException("Không thể chuyển bệnh nhân sang phòng khám thuộc cơ sở y tế khác.");
-        }
-
-        if (targetHospitalId != context.VisitHospitalId)
-        {
-            throw new ValidationException("Phòng khám đích phải thuộc cùng cơ sở y tế với lượt khám.");
-        }
-
-        if (targetRoom.Id == currentRoom.Id)
+        if (currentRoom.Id == preTargetRoom.Id)
         {
             throw new ValidationException("Phòng khám đích trùng với phòng khám hiện tại của bệnh nhân.");
         }
 
-        if (!string.Equals(targetRoom.RoomType, "EXAMINATION", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ValidationException("Phòng đích phải là buồng khám lâm sàng (EXAMINATION).");
-        }
-
-        if (context.RequiredDepartmentId.HasValue && targetRoom.DepartmentId != context.RequiredDepartmentId.Value)
-        {
-            throw new ValidationException("Phòng khám đích không tương thích chuyên khoa/khoa phòng với lượt khám hiện tại.");
-        }
+        var targetRoom = await _db.HospitalRooms
+            .AsNoTracking()
+            .Include(r => r.Department)
+            .FirstOrDefaultAsync(r => r.Id == preTargetRoom.Id, ct)
+            ?? throw new NotFoundException("HospitalRoom", preTargetRoom.Id);
 
         if (!string.Equals(targetRoom.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
         {
             throw new ConflictException("Phòng khám đích hiện không hoạt động hoặc đang bảo trì.");
-        }
-
-        var targetDepartment = targetRoom.Department
-            ?? (targetRoom.DepartmentId.HasValue
-                ? await _db.Departments.AsNoTracking().FirstOrDefaultAsync(d => d.Id == targetRoom.DepartmentId.Value, ct)
-                : null);
-
-        if (targetDepartment is not null && targetDepartment.IsActive == false)
-        {
-            throw new ConflictException("Khoa phòng của buồng khám đích đang ngừng hoạt động.");
         }
 
         var activeVisitCountByRoomId = await GetActiveVisitCountByRoomAsync(visit.Id, ct);
@@ -320,74 +410,30 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
             throw new ConflictException("Phòng khám đích đã đạt sức chứa tối đa cho các lượt khám đang hoạt động.");
         }
 
-        var effectiveDoctor = context.AssignedDoctor;
-        if (request.TargetDoctorId.HasValue)
-        {
-            var targetDoctor = await _db.Doctors
-                .AsNoTracking()
-                .Include(d => d.Staff)
-                    .ThenInclude(s => s!.Department)
-                .Include(d => d.Specialty)
-                .FirstOrDefaultAsync(d => d.Id == request.TargetDoctorId.Value, ct)
-                ?? throw new NotFoundException("Doctor", request.TargetDoctorId.Value);
-
-            var doctorHospitalId = targetDoctor.HospitalId ?? targetDoctor.Staff?.HospitalId;
-            if (!doctorHospitalId.HasValue || doctorHospitalId.Value != context.VisitHospitalId)
-            {
-                throw new ForbiddenException("Bác sĩ được chọn không thuộc cơ sở y tế của lượt khám.");
-            }
-
-            if (!targetDoctor.IsActive ||
-                (targetDoctor.Staff is not null &&
-                 !string.Equals(targetDoctor.Staff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase)))
-            {
-                throw new ConflictException("Bác sĩ được chọn hiện không ở trạng thái hoạt động.");
-            }
-
-            if (targetRoom.DepartmentId.HasValue &&
-                targetDoctor.Staff?.DepartmentId is long docDeptId &&
-                docDeptId != targetRoom.DepartmentId.Value)
-            {
-                throw new ValidationException("Bác sĩ được chọn không thuộc cùng khoa phòng với buồng khám đích.");
-            }
-
-            if (context.Appointment?.Slot?.ServiceId is long serviceId)
-            {
-                var hasAnyAuth = await _db.DoctorServiceAuthorizations
-                    .AsNoTracking()
-                    .AnyAsync(a => a.DoctorId == targetDoctor.Id, ct);
-
-                if (hasAnyAuth)
-                {
-                    var isAuthorized = await _db.DoctorServiceAuthorizations
-                        .AsNoTracking()
-                        .AnyAsync(
-                            a => a.DoctorId == targetDoctor.Id &&
-                                 a.ServiceId == serviceId &&
-                                 a.IsActive == true,
-                            ct);
-
-                    if (!isAuthorized)
-                    {
-                        throw new ValidationException("Bác sĩ được chọn chưa được phân quyền thực hiện dịch vụ khám của lượt khám này.");
-                    }
-                }
-            }
-
-            effectiveDoctor = targetDoctor;
-        }
+        var effectiveDoctor = await ResolveTargetRoomDoctorAsync(
+            request.TargetDoctorId,
+            targetRoom,
+            context.VisitHospitalId,
+            context.Appointment?.Slot?.ServiceId,
+            nowLocal,
+            ct);
 
         var previousRoomId = currentRoom.Id;
         var previousRoomCode = currentRoom.RoomCode;
         var previousRoomName = currentRoom.Name;
         var previousDoctorId = visit.AssignedDoctorId;
         var previousVisitStatus = visit.Status;
+        var previousSpId = context.ActiveQueueEntry?.CurrentServicePointId ?? context.ActiveQueueEntry?.ServicePointId;
 
+        var targetSpId = await ResolveTargetServicePointIdAsync(
+            targetRoom.Id,
+            effectiveDoctor?.Id,
+            context.VisitHospitalId,
+            ct);
+
+        var normalizedVisitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
         visit.ExaminationRoomId = targetRoom.Id;
-        if (request.TargetDoctorId.HasValue)
-        {
-            visit.AssignedDoctorId = request.TargetDoctorId.Value;
-        }
+        visit.AssignedDoctorId = effectiveDoctor?.Id;
 
         if (string.IsNullOrWhiteSpace(visit.Status) ||
             string.Equals(normalizedVisitStatus, "CALLED", StringComparison.OrdinalIgnoreCase))
@@ -398,11 +444,16 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
         if (context.ActiveQueueEntry is not null)
         {
             var normalizedQueueStatus = AppointmentBookingRules.NormalizeStatusKey(context.ActiveQueueEntry.Status);
+            context.ActiveQueueEntry.CurrentServicePointId = targetSpId;
             if (string.Equals(normalizedQueueStatus, "CALLED", StringComparison.OrdinalIgnoreCase))
             {
                 context.ActiveQueueEntry.Status = "WAITING";
                 context.ActiveQueueEntry.CalledAt = null;
             }
+
+            context.ActiveQueueEntry.StateVersion = (context.ActiveQueueEntry.StateVersion is > 0
+                ? context.ActiveQueueEntry.StateVersion.Value
+                : 1) + 1;
         }
 
         var resolvedDepartment = targetDepartment ?? context.Department;
@@ -450,21 +501,7 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
         });
 
         await _db.SaveChangesAsync(ct);
-
-        long? previousSpId = context.ActiveQueueEntry?.CurrentServicePointId ?? context.ActiveQueueEntry?.ServicePointId;
-        long? targetSpId = null;
-        try
-        {
-            targetSpId = await _db.QueueServicePoints.AsNoTracking()
-                .Where(sp => sp.RoomId == targetRoom.Id && sp.IsActive != false)
-                .OrderBy(sp => sp.Id)
-                .Select(sp => (long?)sp.Id)
-                .FirstOrDefaultAsync(ct);
-        }
-        catch (NotSupportedException)
-        {
-            targetSpId = null;
-        }
+        await tx.CommitAsync(ct);
 
         if (visit.AppointmentId is long transferredApptId)
         {
@@ -513,7 +550,7 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
             DepartmentCode: resolvedDepartment?.DepartmentCode,
             DepartmentName: resolvedDepartment?.Name,
             PreviousDoctorId: previousDoctorId,
-            AssignedDoctorId: visit.AssignedDoctorId ?? effectiveDoctor?.Id,
+            AssignedDoctorId: visit.AssignedDoctorId,
             AssignedDoctorCode: effectiveDoctor?.DoctorCode,
             AssignedDoctorName: effectiveDoctor?.Staff?.FullName,
             QueueNumber: context.ActiveQueueEntry?.QueueNumber,
@@ -755,8 +792,8 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
             .ToListAsync(ct);
 
         var activeQueueEntry = queueEntries.FirstOrDefault(q =>
-            string.IsNullOrWhiteSpace(q.QueueType) ||
-            string.Equals(q.QueueType.Trim(), "EXAMINATION", StringComparison.OrdinalIgnoreCase));
+            ClinicalQueueRules.IsClinicalExaminationQueueType(q.QueueType) &&
+            AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("CANCELLED" or "COMPLETED"));
 
         return new VisitContext(
             VisitHospitalId: visitHospitalId,
@@ -767,6 +804,306 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
             AssignedDoctor: assignedDoctor,
             Patient: patient,
             ActiveQueueEntry: activeQueueEntry);
+    }
+
+    private static void EnsureVisitTransferable(Visit visit, QueueEntry? activeQueueEntry)
+    {
+        var normalizedVisitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
+        if (normalizedVisitStatus is "COMPLETED" or "CANCELLED" or "NO_SHOW" or "DONE" || visit.CompletedAt.HasValue)
+        {
+            throw new ConflictException("Không thể chuyển phòng cho lượt khám đã hoàn tất hoặc đã hủy.");
+        }
+
+        if (normalizedVisitStatus is "IN_CONSULTATION" or "IN_PROGRESS")
+        {
+            throw new ConflictException("Bệnh nhân đang trong quá trình khám lâm sàng, không thể chuyển phòng.");
+        }
+
+        if (activeQueueEntry is not null)
+        {
+            var normalizedQueueStatus = AppointmentBookingRules.NormalizeStatusKey(activeQueueEntry.Status);
+            if ((activeQueueEntry.StartedAt.HasValue && !activeQueueEntry.CompletedAt.HasValue && normalizedQueueStatus != "WAITING") ||
+                normalizedQueueStatus is "IN_CONSULTATION" or "IN_PROGRESS")
+            {
+                throw new ConflictException("Bệnh nhân đã bắt đầu khám tại phòng hiện tại, không thể chuyển phòng.");
+            }
+        }
+    }
+
+    private async Task<Doctor?> ResolveTargetRoomDoctorAsync(
+        long? explicitTargetDoctorId,
+        HospitalRoom targetRoom,
+        long visitHospitalId,
+        long? requiredServiceId,
+        DateTime nowLocal,
+        CancellationToken ct)
+    {
+        if (explicitTargetDoctorId.HasValue)
+        {
+            var targetDoctor = await _db.Doctors
+                .AsNoTracking()
+                .Include(d => d.Staff)
+                    .ThenInclude(s => s!.Department)
+                .Include(d => d.Specialty)
+                .FirstOrDefaultAsync(d => d.Id == explicitTargetDoctorId.Value, ct)
+                ?? throw new NotFoundException("Doctor", explicitTargetDoctorId.Value);
+
+            var doctorHospitalId = targetDoctor.HospitalId ?? targetDoctor.Staff?.HospitalId;
+            if (!doctorHospitalId.HasValue || doctorHospitalId.Value != visitHospitalId)
+            {
+                throw new ForbiddenException("Bác sĩ được chọn không thuộc cơ sở y tế của lượt khám.");
+            }
+
+            if (!targetDoctor.IsActive ||
+                (targetDoctor.Staff is not null &&
+                 !string.Equals(targetDoctor.Staff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new ConflictException("Bác sĩ được chọn hiện không ở trạng thái hoạt động.");
+            }
+
+            if (targetRoom.DepartmentId.HasValue &&
+                targetDoctor.Staff?.DepartmentId is long docDeptId &&
+                docDeptId != targetRoom.DepartmentId.Value)
+            {
+                throw new ValidationException("Bác sĩ được chọn không thuộc cùng khoa phòng với buồng khám đích.");
+            }
+
+            if (requiredServiceId.HasValue)
+            {
+                var hasAnyAuth = await _db.DoctorServiceAuthorizations
+                    .AsNoTracking()
+                    .AnyAsync(a => a.DoctorId == targetDoctor.Id, ct);
+
+                if (hasAnyAuth)
+                {
+                    var isAuthorized = await _db.DoctorServiceAuthorizations
+                        .AsNoTracking()
+                        .AnyAsync(
+                            a => a.DoctorId == targetDoctor.Id &&
+                                 a.ServiceId == requiredServiceId.Value &&
+                                 a.IsActive == true,
+                            ct);
+
+                    if (!isAuthorized)
+                    {
+                        throw new ValidationException("Bác sĩ được chọn chưa được phân quyền thực hiện dịch vụ khám của lượt khám này.");
+                    }
+                }
+            }
+
+            return targetDoctor;
+        }
+
+        var byRoom = await ResolveActiveDoctorsByRoomAsync(
+            visitHospitalId,
+            new HashSet<long> { targetRoom.Id },
+            targetRoom.DepartmentId,
+            requiredServiceId,
+            nowLocal,
+            ct);
+
+        var roomDoctors = byRoom.GetValueOrDefault(targetRoom.Id, []);
+        return roomDoctors.Count == 1 ? roomDoctors[0] : null;
+    }
+
+    private async Task<Dictionary<long, List<Doctor>>> ResolveActiveDoctorsByRoomAsync(
+        long hospitalId,
+        IReadOnlySet<long> roomIds,
+        long? requiredDepartmentId,
+        long? requiredServiceId,
+        DateTime nowLocal,
+        CancellationToken ct)
+    {
+        var result = roomIds.ToDictionary(id => id, _ => new List<Doctor>());
+        if (roomIds.Count == 0)
+        {
+            return result;
+        }
+
+        var today = DateOnly.FromDateTime(nowLocal);
+        var dayStart = today.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+        var dayEnd = dayStart.AddDays(1);
+        var currentShift = HospitalShiftRules.ResolveShift(nowLocal);
+
+        var spMappings = new List<(long RoomId, long DoctorId)>();
+        try
+        {
+            var points = await _db.QueueServicePoints
+                .AsNoTracking()
+                .Where(sp =>
+                    sp.IsActive != false &&
+                    sp.RoomId.HasValue &&
+                    roomIds.Contains(sp.RoomId.Value) &&
+                    sp.DoctorId.HasValue &&
+                    (!sp.HospitalId.HasValue || sp.HospitalId.Value == hospitalId) &&
+                    (sp.PointType == null ||
+                     (sp.PointType.ToUpper() != "DIAGNOSTIC" &&
+                      sp.PointType.ToUpper() != "RECEPTION" &&
+                      sp.PointType.ToUpper() != "PHARMACY")))
+                .ToListAsync(ct);
+
+            foreach (var p in points)
+            {
+                spMappings.Add((p.RoomId!.Value, p.DoctorId!.Value));
+            }
+        }
+        catch (NotSupportedException)
+        {
+            // Ignore when QueueServicePoints DbSet is not configured in lightweight test double.
+        }
+
+        var todaySlots = await _db.ExaminationSlots
+            .AsNoTracking()
+            .Where(s =>
+                s.RoomId.HasValue &&
+                roomIds.Contains(s.RoomId.Value) &&
+                s.DoctorId.HasValue &&
+                s.StartsAt.HasValue &&
+                s.StartsAt.Value >= dayStart &&
+                s.StartsAt.Value < dayEnd &&
+                (s.Status == null || s.Status.ToUpper() != "CANCELLED"))
+            .ToListAsync(ct);
+
+        var candidateDoctorIds = spMappings.Select(m => m.DoctorId)
+            .Concat(todaySlots.Select(s => s.DoctorId!.Value))
+            .Distinct()
+            .ToList();
+
+        if (candidateDoctorIds.Count == 0)
+        {
+            return result;
+        }
+
+        var doctors = await _db.Doctors
+            .AsNoTracking()
+            .Include(d => d.Staff)
+                .ThenInclude(s => s!.Department)
+            .Include(d => d.Specialty)
+            .Where(d => candidateDoctorIds.Contains(d.Id))
+            .ToListAsync(ct);
+
+        HashSet<long>? authorizedDoctorIds = null;
+        if (requiredServiceId.HasValue)
+        {
+            try
+            {
+                var authRows = await _db.DoctorServiceAuthorizations
+                    .AsNoTracking()
+                    .Where(a => candidateDoctorIds.Contains(a.DoctorId))
+                    .ToListAsync(ct);
+
+                if (authRows.Count > 0)
+                {
+                    authorizedDoctorIds = candidateDoctorIds
+                        .Where(docId =>
+                        {
+                            var docAuths = authRows.Where(a => a.DoctorId == docId).ToList();
+                            return docAuths.Count == 0 || docAuths.Any(a => a.ServiceId == requiredServiceId.Value && a.IsActive == true);
+                        })
+                        .ToHashSet();
+                }
+            }
+            catch (NotSupportedException)
+            {
+                authorizedDoctorIds = null;
+            }
+        }
+
+        var validDoctorsById = doctors
+            .Where(d =>
+            {
+                var docHospId = d.HospitalId ?? d.Staff?.HospitalId;
+                if (docHospId.HasValue && docHospId.Value != hospitalId)
+                    return false;
+                if (!d.IsActive)
+                    return false;
+                if (d.Staff is not null && !string.Equals(d.Staff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+                    return false;
+                if (requiredDepartmentId.HasValue && d.Staff?.DepartmentId is long deptId && deptId != requiredDepartmentId.Value)
+                    return false;
+                if (authorizedDoctorIds is not null && !authorizedDoctorIds.Contains(d.Id))
+                    return false;
+                return true;
+            })
+            .ToDictionary(d => d.Id);
+
+        foreach (var roomId in roomIds)
+        {
+            var roomSlots = todaySlots.Where(s => s.RoomId == roomId).ToList();
+            var shiftSlots = roomSlots
+                .Where(s => HospitalShiftRules.ResolveShift(s.StartsAt!.Value) == currentShift)
+                .ToList();
+            var effectiveSlots = shiftSlots.Count > 0 ? shiftSlots : roomSlots;
+
+            var doctorIdsForRoom = spMappings
+                .Where(m => m.RoomId == roomId)
+                .Select(m => m.DoctorId)
+                .Concat(effectiveSlots.Select(s => s.DoctorId!.Value))
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+
+            foreach (var docId in doctorIdsForRoom)
+            {
+                if (validDoctorsById.TryGetValue(docId, out var doc))
+                {
+                    result[roomId].Add(doc);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private async Task<long?> ResolveTargetServicePointIdAsync(
+        long targetRoomId,
+        long? targetDoctorId,
+        long hospitalId,
+        CancellationToken ct)
+    {
+        try
+        {
+            var roomPoints = await _db.QueueServicePoints
+                .AsNoTracking()
+                .Where(sp =>
+                    sp.RoomId == targetRoomId &&
+                    sp.IsActive != false &&
+                    (!sp.HospitalId.HasValue || sp.HospitalId.Value == hospitalId) &&
+                    (sp.PointType == null ||
+                     (sp.PointType.ToUpper() != "DIAGNOSTIC" &&
+                      sp.PointType.ToUpper() != "RECEPTION" &&
+                      sp.PointType.ToUpper() != "PHARMACY")))
+                .OrderBy(sp => sp.Id)
+                .ToListAsync(ct);
+
+            if (roomPoints.Count == 0)
+            {
+                return null;
+            }
+
+            if (targetDoctorId.HasValue)
+            {
+                var exact = roomPoints.FirstOrDefault(sp => sp.DoctorId == targetDoctorId.Value);
+                if (exact is not null)
+                {
+                    return exact.Id;
+                }
+            }
+
+            var sharedPoint = roomPoints.FirstOrDefault(sp => !sp.DoctorId.HasValue);
+            if (sharedPoint is not null)
+            {
+                return sharedPoint.Id;
+            }
+
+            return targetDoctorId.HasValue || roomPoints.Select(sp => sp.DoctorId).Distinct().Count() <= 1
+                ? roomPoints[0].Id
+                : null;
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
     }
 
     private async Task<Dictionary<long, int>> GetActiveVisitCountByRoomAsync(
@@ -797,7 +1134,8 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
         HospitalRoom room,
         long? currentRoomId,
         long? requiredDepartmentId,
-        IReadOnlyDictionary<long, int> activeVisitCountByRoomId)
+        IReadOnlyDictionary<long, int> activeVisitCountByRoomId,
+        IReadOnlyList<Doctor> roomDoctors)
     {
         var capacity = room.Capacity is > 0 ? room.Capacity.Value : 1;
         var activeCount = activeVisitCountByRoomId.GetValueOrDefault(room.Id, 0);
@@ -828,6 +1166,8 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
             unavailableReason = "Phòng khám đã đạt sức chứa tối đa.";
         }
 
+        var singleDoctor = roomDoctors.Count == 1 ? roomDoctors[0] : null;
+
         return new CompatibleExaminationRoomItemDto(
             RoomId: room.Id,
             RoomCode: room.RoomCode,
@@ -845,7 +1185,11 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
             IsCurrentRoom: isCurrentRoom,
             IsCompatible: isCompatible,
             IsAvailable: isAvailable,
-            UnavailableReason: unavailableReason);
+            UnavailableReason: unavailableReason,
+            DefaultDoctorId: singleDoctor?.Id,
+            DefaultDoctorCode: singleDoctor?.DoctorCode,
+            DefaultDoctorName: singleDoctor?.Staff?.FullName,
+            ActiveDoctorCount: roomDoctors.Count);
     }
 
     private async Task<IReadOnlyList<VisitRoomTransferHistoryItemDto>> LoadTransferHistoryAsync(

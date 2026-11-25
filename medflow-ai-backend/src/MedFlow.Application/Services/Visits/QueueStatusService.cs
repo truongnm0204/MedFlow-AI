@@ -1,11 +1,13 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Realtime;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Application.Services.Payments;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Realtime;
 using MedFlow.Application.Services.Visits.Queueing;
@@ -22,7 +24,15 @@ public sealed class QueueStatusService : IQueueStatusService
     public const string QueueStatusUpdateAction = "QUEUE_STATUS_UPDATED";
     public const string QueuePriorityUpdateAction = "QUEUE_PRIORITY_UPDATED";
     public const string QueueEntryCancelAction = "QUEUE_ENTRY_CANCELLED";
+    public const string ExaminationChargeRefundPendingAction = "EXAMINATION_CHARGE_REFUND_PENDING";
     public const string QueueEntryEntityType = "QUEUE_ENTRY";
+
+    private static readonly HashSet<string> ValidCancelDispositions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        QueueCancelDispositions.PatientAbandoned,
+        QueueCancelDispositions.ReassignRequeue,
+        QueueCancelDispositions.TechnicalError,
+    };
 
     private static readonly string[] QueueManagerRoles =
     [
@@ -91,17 +101,20 @@ public sealed class QueueStatusService : IQueueStatusService
     private readonly TimeProvider _timeProvider;
     private readonly IRealtimeNotificationPublisher _realtimePublisher;
     private readonly IRealtimeAccessRevoker _accessRevoker;
+    private readonly IVisitChargeSettlementReader _settlementReader;
 
     public QueueStatusService(
         IApplicationDbContext db,
         TimeProvider? timeProvider = null,
         IRealtimeNotificationPublisher? realtimePublisher = null,
-        IRealtimeAccessRevoker? accessRevoker = null)
+        IRealtimeAccessRevoker? accessRevoker = null,
+        IVisitChargeSettlementReader? settlementReader = null)
     {
         _db = db;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
         _accessRevoker = accessRevoker ?? NullRealtimeAccessRevoker.Instance;
+        _settlementReader = settlementReader ?? new VisitChargeSettlementReader(_db, _timeProvider);
     }
 
     public async Task<QueueEntryStatusDetailDto> GetQueueEntryStatusAsync(
@@ -131,7 +144,8 @@ public sealed class QueueStatusService : IQueueStatusService
         var allowedTargets = GetAllowedTargetStatuses(currentStatus, context.Visit);
         var history = await LoadStatusHistoryAsync(queueEntry.Id, ct);
         var queueNumber = queueEntry.QueueNumber is > 0 ? queueEntry.QueueNumber.Value : 1;
-        var ticketNo = FormatTicketNo(queueNumber, context.Room?.RoomCode);
+        var originRoomCode = await ResolveOriginTicketRoomCodeAsync(queueEntry, context.Room?.RoomCode, ct);
+        var ticketNo = FormatTicketNo(queueNumber, originRoomCode);
 
         return new QueueEntryStatusDetailDto(
             QueueEntryId: queueEntry.Id,
@@ -215,13 +229,53 @@ public sealed class QueueStatusService : IQueueStatusService
             throw new ValidationException("Không thể bắt đầu khám khi trạng thái hiện diện của bệnh nhân là vắng mặt hoặc chưa đến.");
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var operatorAccess = await EnsureOperatorAccessAsync(actorUserId, nowUtc, ct);
 
-        var context = await ResolveQueueEntryContextAsync(
+        var preContext = await ResolveQueueEntryContextAsync(
             numericId,
             code,
+            idOrCode,
+            operatorAccess,
+            trackEntities: false,
+            ct);
+
+        var lockRoomId = preContext.Room?.Id ?? preContext.Visit?.ExaminationRoomId;
+        var lockVisitId = preContext.Visit?.Id ?? preContext.QueueEntry.VisitId;
+        var lockSpId = preContext.QueueEntry.CurrentServicePointId
+            ?? preContext.QueueEntry.ServicePointId
+            ?? preContext.ServicePoint?.Id;
+        var lockQueueEntryId = preContext.QueueEntry.Id;
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        // ADR-0059 strict lock order: hospital_rooms (06) -> visits (09) -> queue_service_points (10) -> queue_entries (11)
+        if (lockRoomId.HasValue)
+        {
+            await _db.TryLockRoomForUpdateAsync(lockRoomId.Value, ct);
+        }
+
+        if (lockVisitId.HasValue)
+        {
+            await _db.TryLockVisitForUpdateAsync(lockVisitId.Value, ct);
+        }
+
+        if (lockSpId.HasValue)
+        {
+            await _db.TryLockServicePointForUpdateAsync(lockSpId.Value, ct);
+        }
+
+        await _db.TryLockQueueEntryForUpdateAsync(lockQueueEntryId, ct);
+
+        if (_db is DbContext dbCtx && dbCtx.Database.ProviderName != "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            dbCtx.ChangeTracker.Clear();
+        }
+
+        var context = await ResolveQueueEntryContextAsync(
+            lockQueueEntryId,
+            null,
             idOrCode,
             operatorAccess,
             trackEntities: true,
@@ -270,18 +324,8 @@ public sealed class QueueStatusService : IQueueStatusService
             var policy = policySet.ForServicePoint(servicePointIdForPolicy);
             if (policy.FinalResultRequired)
             {
-                var hasOpenDiagnostics = await _db.QueueEntries
-                    .AsNoTracking()
-                    .AnyAsync(q =>
-                        q.VisitId == visit.Id &&
-                        q.QueueType != null &&
-                        q.QueueType.ToUpper() == "DIAGNOSTIC" &&
-                        q.CompletedAt == null &&
-                        (q.Status == null ||
-                         (q.Status.ToUpper() != "COMPLETED" && q.Status.ToUpper() != "CANCELLED")),
-                        ct);
-
-                if (hasOpenDiagnostics)
+                var hasPendingDiagnostics = await HasPendingDiagnosticResultsAsync(visit.Id, ct);
+                if (hasPendingDiagnostics)
                 {
                     throw new ConflictException(
                         "Chưa thể chuyển trạng thái lượt khám lại vì kết quả cận lâm sàng bắt buộc chưa sẵn sàng.");
@@ -307,11 +351,28 @@ public sealed class QueueStatusService : IQueueStatusService
             {
                 throw new ConflictException("Phòng khám của hàng đợi hiện không hoạt động hoặc đang bảo trì.");
             }
+
+            if (isExaminationQueue &&
+                resolvedQueueTypeForUpdate == ClinicalQueueRules.QueueTypeExamination &&
+                visit is not null)
+            {
+                var gate = await TryCheckExaminationEligibilitySafeAsync(visit.Id, ct);
+                if (gate is { IsUnlocked: false })
+                {
+                    throw new ConflictException(
+                        gate.Message ?? "Bệnh nhân chưa hoàn tất thanh toán phí khám trước khi gọi số hoặc bắt đầu khám.");
+                }
+            }
+
+            if (currentStatus is not ("CALLED" or "IN_PROGRESS") && context.Room is not null)
+            {
+                await EnsureRoomCallCapacityAsync(queueEntry, context.Room, ct);
+            }
         }
 
         if (targetStatus == "IN_PROGRESS")
         {
-            await EnsureNoOtherActiveInProgressEntryAsync(queueEntry, visit, ct);
+            await EnsureNoOtherActiveInProgressEntryAsync(queueEntry, visit, context.Room, ct);
         }
 
         ApplyStatusTransition(
@@ -364,6 +425,7 @@ public sealed class QueueStatusService : IQueueStatusService
 
         _db.AuditLogs.Add(auditLog);
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
 
         await _realtimePublisher.TryPublishQueueChangedSafeAsync(
             new QueueChangedNotification(
@@ -420,14 +482,45 @@ public sealed class QueueStatusService : IQueueStatusService
             throw new ValidationException("Phiên bản trạng thái (ExpectedStateVersion) là bắt buộc và phải lớn hơn hoặc bằng 1.");
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var operatorAccess = await EnsureOperatorAccessAsync(actorUserId, nowUtc, ct);
         EnsureQueueManagerAccess(operatorAccess, "Chỉ nhân viên tiếp đón hoặc quản trị được phép áp dụng mức ưu tiên.");
 
-        var context = await ResolveQueueEntryContextAsync(
+        var preContext = await ResolveQueueEntryContextAsync(
             numericId,
             code,
+            idOrCode,
+            operatorAccess,
+            trackEntities: false,
+            ct);
+
+        var lockVisitId = preContext.Visit?.Id ?? preContext.QueueEntry.VisitId;
+        var lockSpId = preContext.QueueEntry.CurrentServicePointId ?? preContext.QueueEntry.ServicePointId;
+        var lockQueueEntryId = preContext.QueueEntry.Id;
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        if (lockVisitId.HasValue)
+        {
+            await _db.TryLockVisitForUpdateAsync(lockVisitId.Value, ct);
+        }
+
+        if (lockSpId.HasValue)
+        {
+            await _db.TryLockServicePointForUpdateAsync(lockSpId.Value, ct);
+        }
+
+        await _db.TryLockQueueEntryForUpdateAsync(lockQueueEntryId, ct);
+
+        if (_db is DbContext dbCtx && dbCtx.Database.ProviderName != "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            dbCtx.ChangeTracker.Clear();
+        }
+
+        var context = await ResolveQueueEntryContextAsync(
+            lockQueueEntryId,
+            null,
             idOrCode,
             operatorAccess,
             trackEntities: true,
@@ -516,6 +609,7 @@ public sealed class QueueStatusService : IQueueStatusService
 
         _db.AuditLogs.Add(auditLog);
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
 
         await _realtimePublisher.TryPublishQueueChangedSafeAsync(
             new QueueChangedNotification(
@@ -526,7 +620,8 @@ public sealed class QueueStatusService : IQueueStatusService
             ct);
 
         var queueNumber = queueEntry.QueueNumber is > 0 ? queueEntry.QueueNumber.Value : 1;
-        var ticketNo = FormatTicketNo(queueNumber, context.Room?.RoomCode);
+        var originRoomCode = await ResolveOriginTicketRoomCodeAsync(queueEntry, context.Room?.RoomCode, ct);
+        var ticketNo = FormatTicketNo(queueNumber, originRoomCode);
         var visitCode = visit is not null
             ? (string.IsNullOrWhiteSpace(visit.VisitCode) ? $"VIS-{visit.Id:D4}" : visit.VisitCode)
             : null;
@@ -578,14 +673,173 @@ public sealed class QueueStatusService : IQueueStatusService
             throw new ValidationException("Phiên bản trạng thái (ExpectedStateVersion) là bắt buộc và phải lớn hơn hoặc bằng 1.");
         }
 
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+        var disposition = NormalizeAndValidateCancelDisposition(request.Disposition);
+        if (request.TargetRoomId.HasValue && request.TargetRoomId.Value <= 0)
+        {
+            throw new ValidationException("ID phòng khám đích phải lớn hơn 0.");
+        }
+
+        if (request.TargetDoctorId.HasValue && request.TargetDoctorId.Value <= 0)
+        {
+            throw new ValidationException("ID bác sĩ đích phải lớn hơn 0.");
+        }
+
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
         var operatorAccess = await EnsureOperatorAccessAsync(actorUserId, nowUtc, ct);
         EnsureQueueManagerAccess(operatorAccess, "Chỉ nhân viên tiếp đón hoặc quản trị được phép hủy lượt xếp hàng.");
 
-        var context = await ResolveQueueEntryContextAsync(
+        var preContext = await ResolveQueueEntryContextAsync(
             numericId,
             code,
+            idOrCode,
+            operatorAccess,
+            trackEntities: false,
+            ct);
+
+        var preVisitId = preContext.Visit?.Id ?? preContext.QueueEntry.VisitId;
+        var preApptId = preContext.QueueEntry.AppointmentId ?? preContext.Visit?.AppointmentId;
+        var preSourceSpId = preContext.QueueEntry.CurrentServicePointId
+            ?? preContext.QueueEntry.ServicePointId
+            ?? preContext.ServicePoint?.Id;
+        var preSourceRoomId = preContext.Room?.Id ?? preContext.Visit?.ExaminationRoomId;
+        var preQueueEntryId = preContext.QueueEntry.Id;
+
+        HospitalRoom? preReassignRoom = null;
+        Doctor? preReassignDoctor = null;
+        long? preReassignSpId = null;
+
+        if (disposition == QueueCancelDispositions.ReassignRequeue && request.TargetRoomId.HasValue)
+        {
+            preReassignRoom = await _db.HospitalRooms
+                .AsNoTracking()
+                .Include(r => r.Department)
+                .FirstOrDefaultAsync(r => r.Id == request.TargetRoomId.Value, ct)
+                ?? throw new NotFoundException("HospitalRoom", request.TargetRoomId.Value);
+
+            if (!preReassignRoom.HospitalId.HasValue || preReassignRoom.HospitalId.Value != preContext.HospitalId)
+            {
+                throw new ForbiddenException("Phòng khám điều phối lại không thuộc cùng cơ sở y tế.");
+            }
+
+            if (!string.Equals(preReassignRoom.RoomType, "EXAMINATION", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ValidationException("Phòng đích điều phối lại phải là buồng khám lâm sàng (EXAMINATION).");
+            }
+
+            if (preContext.Department?.Id is long reqDeptId &&
+                preReassignRoom.DepartmentId.HasValue &&
+                preReassignRoom.DepartmentId.Value != reqDeptId)
+            {
+                throw new ValidationException("Phòng đích điều phối lại không thuộc cùng khoa phòng với lượt khám.");
+            }
+
+            if (request.TargetDoctorId.HasValue)
+            {
+                preReassignDoctor = await _db.Doctors
+                    .AsNoTracking()
+                    .Include(d => d.Staff)
+                    .FirstOrDefaultAsync(d => d.Id == request.TargetDoctorId.Value, ct)
+                    ?? throw new NotFoundException("Doctor", request.TargetDoctorId.Value);
+
+                var docHospId = preReassignDoctor.HospitalId ?? preReassignDoctor.Staff?.HospitalId;
+                if (docHospId.HasValue && docHospId.Value != preContext.HospitalId)
+                {
+                    throw new ForbiddenException("Bác sĩ được chọn không thuộc cùng cơ sở y tế.");
+                }
+
+                if (!preReassignDoctor.IsActive ||
+                    (preReassignDoctor.Staff is not null &&
+                     !string.Equals(preReassignDoctor.Staff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase)))
+                {
+                    throw new ConflictException("Bác sĩ được chọn hiện không ở trạng thái hoạt động.");
+                }
+            }
+
+            preReassignSpId = await TryResolveRoomServicePointIdAsync(
+                preReassignRoom.Id,
+                preReassignDoctor?.Id,
+                preContext.HospitalId,
+                ct);
+        }
+
+        var chargeIdsToLock = preVisitId.HasValue
+            ? await TryLoadVisitChargeIdsForLockAsync(preVisitId.Value, ct)
+            : [];
+        var paymentIdsToLock = preVisitId.HasValue
+            ? await TryLoadPaymentIdsForLockAsync(preVisitId.Value, chargeIdsToLock, ct)
+            : [];
+
+        var doctorIdsToLock = new[] { preContext.Visit?.AssignedDoctorId, request.TargetDoctorId }
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToArray();
+        var roomIdsToLock = new[] { preSourceRoomId, request.TargetRoomId }
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToArray();
+        var spIdsToLock = new[] { preSourceSpId, preReassignSpId }
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToArray();
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        // ADR-0059 strict lock order: doctors (05) -> hospital_rooms (06) -> appointments (08) -> visits (09) -> queue_service_points (10) -> queue_entries (11) -> visit_charges (15) -> payments (16)
+        if (doctorIdsToLock.Length > 0 && disposition == QueueCancelDispositions.ReassignRequeue)
+        {
+            await _db.TryLockDoctorsForUpdateAsync(doctorIdsToLock, ct);
+        }
+
+        if (roomIdsToLock.Length > 0 && disposition == QueueCancelDispositions.ReassignRequeue)
+        {
+            await _db.TryLockRoomsForUpdateAsync(roomIdsToLock, ct);
+        }
+
+        if (preApptId.HasValue && disposition != QueueCancelDispositions.ReassignRequeue)
+        {
+            await _db.TryLockAppointmentForUpdateAsync(preApptId.Value, ct);
+        }
+
+        if (preVisitId.HasValue)
+        {
+            await _db.TryLockVisitForUpdateAsync(preVisitId.Value, ct);
+        }
+
+        if (spIdsToLock.Length > 0)
+        {
+            await _db.TryLockServicePointsForUpdateAsync(spIdsToLock, ct);
+        }
+
+        await _db.TryLockQueueEntryForUpdateAsync(preQueueEntryId, ct);
+
+        if (disposition != QueueCancelDispositions.ReassignRequeue)
+        {
+            if (chargeIdsToLock.Count > 0)
+            {
+                await _db.TryLockVisitChargesForUpdateAsync(chargeIdsToLock, ct);
+            }
+
+            if (paymentIdsToLock.Count > 0)
+            {
+                await _db.TryLockPaymentsForUpdateAsync(paymentIdsToLock, ct);
+            }
+        }
+
+        if (_db is DbContext dbCtx && dbCtx.Database.ProviderName != "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            dbCtx.ChangeTracker.Clear();
+        }
+
+        var context = await ResolveQueueEntryContextAsync(
+            preQueueEntryId,
+            null,
             idOrCode,
             operatorAccess,
             trackEntities: true,
@@ -622,20 +876,142 @@ public sealed class QueueStatusService : IQueueStatusService
             ? "PRESENT"
             : queueEntry.PresenceStatus.ToUpperInvariant();
         var previousPriority = ClinicalQueueRules.NormalizeStoredPriority(queueEntry.ManualPriority);
-
         var resolvedQueueType = ClinicalQueueRules.ResolveQueueType(queueEntry.QueueType, visit?.Status);
-        var visitToCancel = resolvedQueueType == ClinicalQueueRules.QueueTypeExamination ? visit : null;
 
-        var cancelPresence = previousPresenceStatus == "NOT_ARRIVED" ? "NOT_ARRIVED" : "LEFT";
+        var visitCancelled = false;
+        long? migratedTargetSpId = null;
+        long? migratedTargetRoomId = null;
 
-        ApplyStatusTransition(
-            queueEntry,
-            visitToCancel,
-            "CANCELLED",
-            cancelPresence,
-            reason,
-            previousStateVersion,
-            nowLocal);
+        if (disposition == QueueCancelDispositions.ReassignRequeue)
+        {
+            // Operational queue entry cancellation / re-routing: preserve Visit, Appointment, and VisitCharge!
+            ApplyStatusTransition(
+                queueEntry,
+                visit: null,
+                targetStatus: "CANCELLED",
+                requestedPresence: previousPresenceStatus == "NOT_ARRIVED" ? "NOT_ARRIVED" : "PRESENT",
+                effectiveBlockedReason: reason,
+                previousStateVersion: previousStateVersion,
+                nowLocal: nowLocal);
+
+            if (visit is not null)
+            {
+                if (preReassignRoom is not null)
+                {
+                    var latestReassignRoom = await _db.HospitalRooms
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(r => r.Id == preReassignRoom.Id, ct)
+                        ?? throw new NotFoundException("HospitalRoom", preReassignRoom.Id);
+
+                    if (!string.Equals(latestReassignRoom.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new ConflictException("Phòng khám đích điều phối lại hiện không hoạt động.");
+                    }
+
+                    var targetCap = latestReassignRoom.Capacity is > 0 ? latestReassignRoom.Capacity.Value : 1;
+                    var targetOcc = await CountActiveRoomVisitsExcludingAsync(latestReassignRoom.Id, visit.Id, ct);
+                    if (targetOcc >= targetCap)
+                    {
+                        throw new ConflictException("Phòng khám đích điều phối lại đã đạt sức chứa tối đa.");
+                    }
+
+                    visit.ExaminationRoomId = latestReassignRoom.Id;
+                    visit.AssignedDoctorId = preReassignDoctor?.Id;
+                    visit.Status = resolvedQueueType == ClinicalQueueRules.QueueTypeReturnConsultation
+                        ? "RETURN_CONSULTATION"
+                        : "WAITING";
+
+                    // Flush CANCELLED status on the previous QueueEntry inside the open transaction
+                    // before inserting the replacement QueueEntry so active-entry partial unique indexes never collide.
+                    await _db.SaveChangesAsync(ct);
+
+                    var today = DateOnly.FromDateTime(nowLocal);
+                    var nextQueueNo = await AllocateNextQueueNumberForServicePointAsync(preReassignSpId, today, ct);
+                    _db.QueueEntries.Add(new QueueEntry
+                    {
+                        VisitId = visit.Id,
+                        AppointmentId = queueEntry.AppointmentId ?? visit.AppointmentId,
+                        ServicePointId = preReassignSpId,
+                        CurrentServicePointId = preReassignSpId,
+                        QueueDate = today,
+                        QueueNumber = nextQueueNo,
+                        QueueType = resolvedQueueType,
+                        Status = "WAITING",
+                        ScheduledAt = queueEntry.ScheduledAt,
+                        PresenceStatus = "PRESENT",
+                        ArrivedAt = queueEntry.ArrivedAt ?? visit.CheckedInAt ?? nowLocal,
+                        ArrivalClass = queueEntry.ArrivalClass ?? "ON_TIME_OR_GRACE",
+                        ManualPriority = previousPriority,
+                        StateVersion = 1,
+                        ReadyAt = nowLocal,
+                    });
+
+                    migratedTargetSpId = preReassignSpId;
+                    migratedTargetRoomId = latestReassignRoom.Id;
+                }
+                else
+                {
+                    visit.ExaminationRoomId = null;
+                    visit.AssignedDoctorId = null;
+                    visit.Status = resolvedQueueType == ClinicalQueueRules.QueueTypeReturnConsultation
+                        ? "RETURN_CONSULTATION"
+                        : "CHECKED_IN";
+                }
+            }
+        }
+        else
+        {
+            var isPreConsultationVisit = resolvedQueueType == ClinicalQueueRules.QueueTypeExamination &&
+                visit is not null &&
+                AppointmentBookingRules.NormalizeStatusKey(visit.Status) is not (
+                    "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" or "RETURN_CONSULTATION" or "COMPLETED");
+
+            var visitToCancel = isPreConsultationVisit ? visit : null;
+            var cancelPresence = previousPresenceStatus == "NOT_ARRIVED" ? "NOT_ARRIVED" : "LEFT";
+
+            ApplyStatusTransition(
+                queueEntry,
+                visitToCancel,
+                "CANCELLED",
+                cancelPresence,
+                reason,
+                previousStateVersion,
+                nowLocal);
+
+            if (visitToCancel is not null)
+            {
+                visitCancelled = true;
+
+                if (disposition == QueueCancelDispositions.PatientAbandoned && preApptId.HasValue)
+                {
+                    var linkedAppt = await _db.Appointments
+                        .FirstOrDefaultAsync(a => a.Id == preApptId.Value, ct);
+                    if (linkedAppt is not null)
+                    {
+                        var apptStatus = AppointmentBookingRules.NormalizeStatusKey(linkedAppt.Status);
+                        if (apptStatus is not ("COMPLETED" or "CANCELLED" or "NO_SHOW"))
+                        {
+                            linkedAppt.Status = AppointmentBookingRules.CancelledStatus;
+                            linkedAppt.CancelledAt = nowLocal;
+                            linkedAppt.CancellationReason = string.IsNullOrWhiteSpace(linkedAppt.CancellationReason)
+                                ? reason
+                                : linkedAppt.CancellationReason;
+                        }
+                    }
+                }
+
+                await ReconcileCancelledPreConsultationChargesAsync(
+                    visitToCancel,
+                    disposition,
+                    actorUserId,
+                    context.HospitalId,
+                    reason,
+                    ipAddress,
+                    nowLocal,
+                    nowUtc,
+                    ct);
+            }
+        }
 
         var updatedByName = !string.IsNullOrWhiteSpace(operatorAccess.ActorStaff?.FullName)
             ? operatorAccess.ActorStaff.FullName
@@ -661,7 +1037,8 @@ public sealed class QueueStatusService : IQueueStatusService
             UpdatedByUserId: actorUserId,
             UpdatedByStaffCode: operatorAccess.ActorStaff?.StaffCode,
             UpdatedByName: updatedByName,
-            UpdatedAtUtc: nowUtc);
+            UpdatedAtUtc: nowUtc,
+            Disposition: disposition);
 
         var auditLog = new AuditLog
         {
@@ -678,17 +1055,37 @@ public sealed class QueueStatusService : IQueueStatusService
 
         _db.AuditLogs.Add(auditLog);
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
 
         var cancelledApptId = queueEntry.AppointmentId ?? visit?.AppointmentId;
         await _realtimePublisher.TryPublishQueueChangedSafeAsync(
             new QueueChangedNotification(
                 HospitalId: context.HospitalId,
-                ServicePointId: context.ServicePoint?.Id ?? queueEntry.CurrentServicePointId ?? queueEntry.ServicePointId,
-                RoomId: context.Room?.Id ?? visit?.ExaminationRoomId,
+                ServicePointId: preSourceSpId,
+                RoomId: preSourceRoomId,
                 AppointmentId: cancelledApptId),
             ct);
 
-        if (cancelledApptId is long revokedApptId)
+        if (migratedTargetRoomId.HasValue || migratedTargetSpId.HasValue)
+        {
+            if (cancelledApptId.HasValue)
+            {
+                await _accessRevoker.TryMigrateAppointmentBucketSafeAsync(
+                    cancelledApptId.Value,
+                    migratedTargetSpId,
+                    migratedTargetRoomId,
+                    ct);
+            }
+
+            await _realtimePublisher.TryPublishQueueChangedSafeAsync(
+                new QueueChangedNotification(
+                    HospitalId: context.HospitalId,
+                    ServicePointId: migratedTargetSpId,
+                    RoomId: migratedTargetRoomId,
+                    AppointmentId: cancelledApptId),
+                ct);
+        }
+        else if (visitCancelled && cancelledApptId is long revokedApptId)
         {
             await _accessRevoker.TryRevokeAppointmentTrackingSafeAsync(revokedApptId, ct);
         }
@@ -728,7 +1125,8 @@ public sealed class QueueStatusService : IQueueStatusService
         var nextAllowedTargets = GetAllowedTargetStatuses(currentStatus, visit);
         var statusHistory = await LoadStatusHistoryAsync(queueEntry.Id, ct);
         var queueNumber = queueEntry.QueueNumber is > 0 ? queueEntry.QueueNumber.Value : 1;
-        var ticketNo = FormatTicketNo(queueNumber, context.Room?.RoomCode);
+        var originRoomCode = await ResolveOriginTicketRoomCodeAsync(queueEntry, context.Room?.RoomCode, ct);
+        var ticketNo = FormatTicketNo(queueNumber, originRoomCode);
 
         return new UpdateQueueStatusResponseDto(
             QueueEntryId: queueEntry.Id,
@@ -1019,20 +1417,92 @@ public sealed class QueueStatusService : IQueueStatusService
                 if (visit is not null && isClinicalQueue)
                 {
                     visit.Status = "CANCELLED";
-                    visit.CompletedAt = nowLocal;
+                    visit.CompletedAt = null;
                 }
 
                 break;
         }
     }
 
+    private async Task EnsureRoomCallCapacityAsync(
+        QueueEntry currentEntry,
+        HospitalRoom room,
+        CancellationToken ct)
+    {
+        var effectiveRoomCapacity = room.Capacity is > 0 ? room.Capacity.Value : 1;
+
+        var activeEntries = await _db.QueueEntries
+            .AsNoTracking()
+            .Where(q =>
+                q.Id != currentEntry.Id &&
+                q.CompletedAt == null &&
+                (!currentEntry.QueueDate.HasValue || q.QueueDate == currentEntry.QueueDate) &&
+                q.Status != null &&
+                (q.Status.ToUpper() == "CALLED" ||
+                 q.Status.ToUpper() == "IN_PROGRESS" ||
+                 q.Status.ToUpper() == "IN_CONSULTATION" ||
+                 q.Status.ToUpper() == "SERVING"))
+            .ToListAsync(ct);
+
+        if (activeEntries.Count == 0)
+        {
+            return;
+        }
+
+        var roomSpIds = new HashSet<long>();
+        try
+        {
+            roomSpIds = (await _db.QueueServicePoints
+                    .AsNoTracking()
+                    .Where(sp => sp.RoomId == room.Id && sp.IsActive != false)
+                    .Select(sp => sp.Id)
+                    .ToListAsync(ct))
+                .ToHashSet();
+        }
+        catch (NotSupportedException)
+        {
+            // Ignore when QueueServicePoints DbSet is not configured in lightweight test double.
+        }
+
+        var activeVisitIds = activeEntries
+            .Where(q => q.VisitId.HasValue)
+            .Select(q => q.VisitId!.Value)
+            .Distinct()
+            .ToList();
+
+        var sameRoomVisitIds = activeVisitIds.Count == 0
+            ? new HashSet<long>()
+            : (await _db.Visits
+                    .AsNoTracking()
+                    .Where(v =>
+                        activeVisitIds.Contains(v.Id) &&
+                        v.ExaminationRoomId == room.Id &&
+                        v.CompletedAt == null)
+                    .Select(v => v.Id)
+                    .ToListAsync(ct))
+                .ToHashSet();
+
+        var sameRoomActiveCount = activeEntries.Count(q =>
+            (q.VisitId.HasValue && sameRoomVisitIds.Contains(q.VisitId.Value)) ||
+            (!q.VisitId.HasValue &&
+             ((q.CurrentServicePointId.HasValue && roomSpIds.Contains(q.CurrentServicePointId.Value)) ||
+              (q.ServicePointId.HasValue && roomSpIds.Contains(q.ServicePointId.Value)))));
+
+        if (sameRoomActiveCount >= effectiveRoomCapacity)
+        {
+            throw new ConflictException(
+                "Phòng khám đang có bệnh nhân được gọi hoặc đang khám đạt sức chứa tối đa. Hoàn tất hoặc đánh dấu qua lượt trước khi gọi bệnh nhân tiếp theo.");
+        }
+    }
+
     private async Task EnsureNoOtherActiveInProgressEntryAsync(
         QueueEntry currentEntry,
         Visit? currentVisit,
+        HospitalRoom? room,
         CancellationToken ct)
     {
         var effectiveServicePointId = currentEntry.CurrentServicePointId ?? currentEntry.ServicePointId;
-        var effectiveRoomId = currentVisit?.ExaminationRoomId;
+        var effectiveRoomId = currentVisit?.ExaminationRoomId ?? room?.Id;
 
         if (!effectiveServicePointId.HasValue && !effectiveRoomId.HasValue)
         {
@@ -1066,6 +1536,7 @@ public sealed class QueueStatusService : IQueueStatusService
 
         if (effectiveRoomId.HasValue)
         {
+            var effectiveRoomCapacity = room?.Capacity is > 0 ? room.Capacity.Value : 1;
             var candidateVisitIds = candidateEntries
                 .Where(q => q.VisitId.HasValue)
                 .Select(q => q.VisitId!.Value)
@@ -1074,20 +1545,353 @@ public sealed class QueueStatusService : IQueueStatusService
 
             if (candidateVisitIds.Count > 0)
             {
-                var hasSameRoomActiveVisit = await _db.Visits
+                var sameRoomActiveCount = await _db.Visits
                     .AsNoTracking()
-                    .AnyAsync(v =>
+                    .CountAsync(v =>
                         candidateVisitIds.Contains(v.Id) &&
                         v.ExaminationRoomId == effectiveRoomId.Value &&
                         v.CompletedAt == null,
                         ct);
 
-                if (hasSameRoomActiveVisit)
+                if (sameRoomActiveCount >= effectiveRoomCapacity)
                 {
                     throw new ConflictException("Điểm dịch vụ/phòng khám hiện đang có bệnh nhân khác trong trạng thái đang khám (IN_PROGRESS).");
                 }
             }
         }
+    }
+
+    private async Task<VisitChargeGateResult?> TryCheckExaminationEligibilitySafeAsync(
+        long visitId,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _settlementReader.CheckExaminationEligibilityAsync(visitId, ct);
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<bool> HasPendingDiagnosticResultsAsync(long visitId, CancellationToken ct)
+    {
+        var hasOpenDiagnostics = await _db.QueueEntries
+            .AsNoTracking()
+            .AnyAsync(q =>
+                q.VisitId == visitId &&
+                q.QueueType != null &&
+                q.QueueType.ToUpper() == "DIAGNOSTIC" &&
+                q.CompletedAt == null &&
+                (q.Status == null ||
+                 (q.Status.ToUpper() != "COMPLETED" && q.Status.ToUpper() != "CANCELLED")),
+                ct);
+
+        if (hasOpenDiagnostics)
+        {
+            return true;
+        }
+
+        try
+        {
+            var activeRequiredOrders = await _db.DiagnosticOrders
+                .AsNoTracking()
+                .Where(o =>
+                    o.VisitId == visitId &&
+                    o.RequiredForConclusion != false &&
+                    (o.Status == null || o.Status.ToUpper() != "CANCELLED"))
+                .Select(o => o.Id)
+                .ToListAsync(ct);
+
+            if (activeRequiredOrders.Count == 0)
+            {
+                return false;
+            }
+
+            var orderIdSet = activeRequiredOrders.ToHashSet();
+            var results = await _db.DiagnosticResults
+                .AsNoTracking()
+                .Where(r => r.DiagnosticOrderId.HasValue && orderIdSet.Contains(r.DiagnosticOrderId.Value))
+                .Select(r => new { OrderId = r.DiagnosticOrderId!.Value, r.Status, r.FinalizedAt })
+                .ToListAsync(ct);
+
+            var finalizedOrderIds = results
+                .Where(r => ExaminationQueueService.IsDiagnosticResultFinalized(r.Status, r.FinalizedAt))
+                .Select(r => r.OrderId)
+                .ToHashSet();
+
+            return activeRequiredOrders.Any(id => !finalizedOrderIds.Contains(id));
+        }
+        catch (NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static string NormalizeAndValidateCancelDisposition(string? rawDisposition)
+    {
+        if (string.IsNullOrWhiteSpace(rawDisposition))
+        {
+            return QueueCancelDispositions.PatientAbandoned;
+        }
+
+        var normalized = AppointmentBookingRules.NormalizeStatusKey(rawDisposition);
+        if (!ValidCancelDispositions.Contains(normalized))
+        {
+            throw new ValidationException(
+                "Phân loại hủy lượt (Disposition) không hợp lệ. Chỉ chấp nhận: PATIENT_ABANDONED, REASSIGN_REQUEUE, TECHNICAL_ERROR.");
+        }
+
+        return normalized;
+    }
+
+    private async Task<List<long>> TryLoadVisitChargeIdsForLockAsync(long visitId, CancellationToken ct)
+    {
+        try
+        {
+            return await _db.VisitCharges
+                .AsNoTracking()
+                .Where(c => c.VisitId == visitId)
+                .OrderBy(c => c.Id)
+                .Select(c => c.Id)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    private async Task<List<long>> TryLoadPaymentIdsForLockAsync(
+        long visitId,
+        IReadOnlyCollection<long> chargeIds,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _db.Payments
+                .AsNoTracking()
+                .Where(p =>
+                    p.VisitId == visitId ||
+                    (p.VisitChargeId.HasValue && chargeIds.Contains(p.VisitChargeId.Value)))
+                .OrderBy(p => p.Id)
+                .Select(p => p.Id)
+                .Distinct()
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    private async Task ReconcileCancelledPreConsultationChargesAsync(
+        Visit cancelledVisit,
+        string disposition,
+        long actorUserId,
+        long hospitalId,
+        string reason,
+        string? ipAddress,
+        DateTime nowLocal,
+        DateTime nowUtc,
+        CancellationToken ct)
+    {
+        List<VisitCharge> visitCharges;
+        try
+        {
+            visitCharges = await _db.VisitCharges
+                .Where(c => c.VisitId == cancelledVisit.Id)
+                .OrderBy(c => c.Id)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            return;
+        }
+
+        List<Payment> visitPayments;
+        try
+        {
+            var chargeIds = visitCharges.Select(c => c.Id).ToHashSet();
+            visitPayments = await _db.Payments
+                .Where(p =>
+                    p.VisitId == cancelledVisit.Id ||
+                    (p.VisitChargeId.HasValue && chargeIds.Contains(p.VisitChargeId.Value)))
+                .OrderBy(p => p.Id)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            visitPayments = [];
+        }
+
+        foreach (var p in visitPayments)
+        {
+            if (string.Equals(p.Status?.Trim(), PaymentStatuses.Pending, StringComparison.OrdinalIgnoreCase))
+            {
+                p.Status = PaymentStatuses.Expired;
+            }
+        }
+
+        var examCharges = visitCharges
+            .Where(c =>
+                string.IsNullOrWhiteSpace(c.ChargeType)
+                    ? !c.DiagnosticOrderId.HasValue
+                    : string.Equals(c.ChargeType.Trim(), VisitChargeTypes.Examination, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var legacyPaid = visitPayments.Any(p =>
+            !p.VisitChargeId.HasValue &&
+            string.Equals(p.Status?.Trim(), PaymentStatuses.Paid, StringComparison.OrdinalIgnoreCase));
+
+        foreach (var examCharge in examCharges)
+        {
+            var chargePaidPayments = visitPayments
+                .Where(p =>
+                    p.VisitChargeId == examCharge.Id &&
+                    string.Equals(p.Status?.Trim(), PaymentStatuses.Paid, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var isPaid = chargePaidPayments.Count > 0 || legacyPaid;
+            if (isPaid)
+            {
+                examCharge.Status = VisitChargeStatuses.CancelledRefundPending;
+                examCharge.CancelledAt ??= nowLocal;
+
+                _db.AuditLogs.Add(new AuditLog
+                {
+                    ActorUserId = actorUserId,
+                    HospitalId = hospitalId,
+                    Action = ExaminationChargeRefundPendingAction,
+                    EntityType = "VISIT_CHARGE",
+                    EntityId = examCharge.Id.ToString(CultureInfo.InvariantCulture),
+                    Reason = reason,
+                    ChangeData = JsonSerializer.Serialize(new
+                    {
+                        visitId = cancelledVisit.Id,
+                        visitCode = cancelledVisit.VisitCode,
+                        visitChargeId = examCharge.Id,
+                        unitPrice = examCharge.UnitPrice,
+                        chargeStatus = examCharge.Status,
+                        disposition,
+                        paidPaymentIds = chargePaidPayments.Select(p => p.Id).ToArray(),
+                        reason,
+                    }, JsonOptions),
+                    IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+                    OccurredAt = nowUtc,
+                });
+            }
+            else
+            {
+                examCharge.Status = VisitChargeStatuses.Cancelled;
+                examCharge.CancelledAt ??= nowLocal;
+            }
+        }
+    }
+
+    private async Task<long?> TryResolveRoomServicePointIdAsync(
+        long roomId,
+        long? doctorId,
+        long hospitalId,
+        CancellationToken ct)
+    {
+        try
+        {
+            var points = await _db.QueueServicePoints
+                .AsNoTracking()
+                .Where(sp =>
+                    sp.RoomId == roomId &&
+                    sp.IsActive != false &&
+                    (!sp.HospitalId.HasValue || sp.HospitalId.Value == hospitalId))
+                .OrderBy(sp => sp.Id)
+                .ToListAsync(ct);
+
+            if (points.Count == 0)
+            {
+                return null;
+            }
+
+            if (doctorId.HasValue)
+            {
+                var exact = points.FirstOrDefault(sp => sp.DoctorId == doctorId.Value);
+                if (exact is not null)
+                {
+                    return exact.Id;
+                }
+            }
+
+            return points.FirstOrDefault(sp => !sp.DoctorId.HasValue)?.Id
+                ?? (doctorId.HasValue || points.Select(p => p.DoctorId).Distinct().Count() <= 1 ? points[0].Id : null);
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<int> CountActiveRoomVisitsExcludingAsync(
+        long roomId,
+        long currentVisitId,
+        CancellationToken ct)
+        => await _db.Visits
+            .AsNoTracking()
+            .CountAsync(v =>
+                v.Id != currentVisitId &&
+                v.ExaminationRoomId == roomId &&
+                v.CompletedAt == null &&
+                v.Status != null &&
+                v.Status.ToUpper() != "COMPLETED" &&
+                v.Status.ToUpper() != "CANCELLED" &&
+                v.Status.ToUpper() != "NO_SHOW" &&
+                v.Status.ToUpper() != "DONE",
+                ct);
+
+    private async Task<int> AllocateNextQueueNumberForServicePointAsync(
+        long? servicePointId,
+        DateOnly today,
+        CancellationToken ct)
+    {
+        var max = await _db.QueueEntries
+            .AsNoTracking()
+            .Where(q =>
+                q.QueueDate == today &&
+                (q.QueueType == null ||
+                 q.QueueType.ToUpper() == "EXAMINATION" ||
+                 q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
+                (servicePointId == null
+                    ? (q.ServicePointId == null && q.CurrentServicePointId == null)
+                    : (q.ServicePointId == servicePointId || q.CurrentServicePointId == servicePointId)))
+            .Select(q => q.QueueNumber)
+            .MaxAsync(ct);
+
+        return (max ?? 0) + 1;
+    }
+
+    private async Task<string?> ResolveOriginTicketRoomCodeAsync(
+        QueueEntry queueEntry,
+        string? fallbackRoomCode,
+        CancellationToken ct)
+    {
+        if (queueEntry.ServicePointId.HasValue &&
+            queueEntry.CurrentServicePointId != queueEntry.ServicePointId)
+        {
+            var originSp = await TryGetServicePointAsync(queueEntry.ServicePointId.Value, ct);
+            if (originSp?.RoomId is long originRoomId)
+            {
+                var originRoomCode = await _db.HospitalRooms
+                    .AsNoTracking()
+                    .Where(r => r.Id == originRoomId)
+                    .Select(r => r.RoomCode)
+                    .FirstOrDefaultAsync(ct);
+                if (!string.IsNullOrWhiteSpace(originRoomCode))
+                {
+                    return originRoomCode;
+                }
+            }
+        }
+
+        return fallbackRoomCode;
     }
 
     private async Task<OperatorAccessContext> EnsureOperatorAccessAsync(
@@ -1544,7 +2348,8 @@ public sealed class QueueStatusService : IQueueStatusService
         long? UpdatedByUserId,
         string? UpdatedByStaffCode,
         string? UpdatedByName,
-        DateTime UpdatedAtUtc);
+        DateTime UpdatedAtUtc,
+        string? Disposition = null);
 
     private sealed record QueuePriorityChangeAuditPayload(
         long QueueEntryId,

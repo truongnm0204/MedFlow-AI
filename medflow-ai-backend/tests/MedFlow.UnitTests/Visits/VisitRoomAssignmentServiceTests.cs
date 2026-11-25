@@ -5,6 +5,7 @@ using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MedFlow.UnitTests.Visits;
@@ -116,6 +117,7 @@ public sealed class VisitRoomAssignmentServiceTests : IDisposable
     {
         var options = new DbContextOptionsBuilder<VisitRoutingTestDbContext>()
             .UseInMemoryDatabase($"VisitRoomAssignmentTests_{Guid.NewGuid():N}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         _db = new VisitRoutingTestDbContext(options);
