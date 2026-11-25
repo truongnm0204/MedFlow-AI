@@ -24,6 +24,8 @@ import type {
 
 const PAGE_SIZE = 8;
 
+const EMPTY_STAFF_ACCOUNTS: StaffAccountItem[] = [];
+
 const EMPTY_METRICS: StaffAccountMetrics = {
   total: 0,
   active: 0,
@@ -64,7 +66,7 @@ export function StaffAccountListPage() {
   const { data, isLoading, isError, error, refetch } = useAdminStaffAccounts();
   const deactivateMutation = useDeactivateStaffAccountMutation();
 
-  const accounts = data?.items ?? [];
+  const accounts = data?.items ?? EMPTY_STAFF_ACCOUNTS;
   const metrics = data?.metrics ?? EMPTY_METRICS;
 
   const [filters, setFilters] = useState<StaffAccountFilters>({

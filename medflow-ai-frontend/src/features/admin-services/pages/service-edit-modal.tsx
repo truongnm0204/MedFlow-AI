@@ -46,11 +46,12 @@ export function ServiceEditModal() {
     [serviceId, services],
   );
 
+  const serviceDepartment = service?.department;
   const departmentOptions = useMemo(() => {
     const set = new Set<string>(DEPARTMENTS);
-    if (service?.department) set.add(service.department);
+    if (serviceDepartment) set.add(serviceDepartment);
     return Array.from(set);
-  }, [service?.department]);
+  }, [serviceDepartment]);
 
   const [message, setMessage] = useState('');
 

@@ -237,7 +237,7 @@ describe('DoctorAssignedQueuePage', () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Hàng đợi phân công/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Hàng đợi phân công/ }));
 
     await waitFor(() => {
       expect(screen.getByTestId('location-probe')).toHaveTextContent('/doctor/assigned-queue');

@@ -167,4 +167,192 @@ describe('PrepareMedicinesPage (real API)', () => {
       ).toBeInTheDocument();
     });
   });
+
+  it('resets local prepared flag when background refetch reports insufficient batch stock', async () => {
+    let batchStock = 120;
+    vi.spyOn(apiClient, 'get').mockImplementation(
+      async () =>
+        ({
+          data: {
+            ...SAMPLE_PREPARE_CONTEXT,
+            items: [
+              {
+                ...SAMPLE_PREPARE_CONTEXT.items[0],
+                availableBatches: [
+                  {
+                    ...SAMPLE_PREPARE_CONTEXT.items[0].availableBatches[0],
+                    availableStock: batchStock,
+                  },
+                ],
+              },
+            ],
+          },
+        }) as AxiosResponse,
+    );
+
+    useAuthStore.setState({
+      user: {
+        id: 6,
+        email: 'duocsi@medflow.test',
+        fullName: 'DS. Trần Thu Hương',
+        roles: ['PHARMACY_STAFF'],
+        patientCode: null,
+      },
+      accessToken: 'tok',
+      refreshToken: 'rtok',
+      isAuthenticated: true,
+    });
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/pharmacy/prescriptions/RX-2026-0415-0088/prepare']}>
+          <Routes>
+            <Route
+              path="/pharmacy/prescriptions/:prescriptionCode/prepare"
+              element={<PrepareMedicinesPage />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('NGUYỄN VĂN AN')).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: /Xác nhận đã soạn Bismuth subsalicylate 300mg/i }),
+    );
+    expect(screen.getByText('1/1 khoản')).toBeInTheDocument();
+
+    // Background refetch drops batch stock below pickedQty (5 < 28) -> forces isPrepared back to false
+    batchStock = 5;
+    await qc.invalidateQueries({
+      queryKey: ['pharmacy', 'prepare-context', 'RX-2026-0415-0088'],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('0/1 khoản')).toBeInTheDocument();
+    });
+  });
+
+  it('resets local prepared flag when pinned default batch is locked/expired on refetch (both fallback batch shift and empty batches) and locks DISPENSED status', async () => {
+    let availableBatches = [
+      {
+        batchId: 1001,
+        batchCode: 'LO-2405',
+        expiryDate: '30/12/2027',
+        availableStock: 120,
+        shelfLocation: 'Kệ A-01',
+        isFefoRecommended: true,
+      },
+      {
+        batchId: 1002,
+        batchCode: 'LO-2412',
+        expiryDate: '30/06/2028',
+        availableStock: 90,
+        shelfLocation: 'Kệ A-02',
+        isFefoRecommended: false,
+      },
+    ];
+    let currentSelectedCode = 'LO-2405';
+    let currentStatus = 'ISSUED';
+
+    vi.spyOn(apiClient, 'get').mockImplementation(
+      async (url) =>
+        ({
+          data: {
+            ...SAMPLE_PREPARE_CONTEXT,
+            rxCode: String(url).includes('RX-SECOND-0099')
+              ? 'RX-SECOND-0099'
+              : SAMPLE_PREPARE_CONTEXT.rxCode,
+            status: currentStatus,
+            items: [
+              {
+                ...SAMPLE_PREPARE_CONTEXT.items[0],
+                selectedBatchId: availableBatches[0]?.batchId ?? null,
+                selectedBatchCode: currentSelectedCode,
+                availableBatches,
+              },
+            ],
+          },
+        }) as AxiosResponse,
+    );
+
+    useAuthStore.setState({
+      user: {
+        id: 6,
+        email: 'duocsi@medflow.test',
+        fullName: 'DS. Trần Thu Hương',
+        roles: ['PHARMACY_STAFF'],
+        patientCode: null,
+      },
+      accessToken: 'tok',
+      refreshToken: 'rtok',
+      isAuthenticated: true,
+    });
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { unmount } = render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/pharmacy/prescriptions/RX-2026-0415-0088/prepare']}>
+          <Routes>
+            <Route
+              path="/pharmacy/prescriptions/:prescriptionCode/prepare"
+              element={<PrepareMedicinesPage />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('NGUYỄN VĂN AN')).toBeInTheDocument();
+
+    // Pharmacist marks default batch LO-2405 as prepared WITHOUT touching batch <select>
+    fireEvent.click(
+      screen.getByRole('button', { name: /Xác nhận đã soạn Bismuth subsalicylate 300mg/i }),
+    );
+    expect(screen.getByText('1/1 khoản')).toBeInTheDocument();
+
+    // Case 1: LO-2405 expires/locks on server -> refetch returns only LO-2412; must NOT silently keep 1/1 prepared on LO-2412
+    availableBatches = [availableBatches[1]];
+    currentSelectedCode = 'LO-2412';
+    await qc.invalidateQueries({
+      queryKey: ['pharmacy', 'prepare-context', 'RX-2026-0415-0088'],
+    });
+    await waitFor(() => {
+      expect(screen.getByText('0/1 khoản')).toBeInTheDocument();
+    });
+
+    // Mark LO-2412 prepared, then Case 2: all batches expire/lock -> availableBatches: []
+    fireEvent.click(
+      screen.getByRole('button', { name: /Xác nhận đã soạn Bismuth subsalicylate 300mg/i }),
+    );
+    expect(screen.getByText('1/1 khoản')).toBeInTheDocument();
+
+    availableBatches = [];
+    currentSelectedCode = '';
+    await qc.invalidateQueries({
+      queryKey: ['pharmacy', 'prepare-context', 'RX-2026-0415-0088'],
+    });
+    await waitFor(() => {
+      expect(screen.getByText('0/1 khoản')).toBeInTheDocument();
+    });
+
+    // Case 3: Server DISPENSED disables primary confirm button
+    currentStatus = 'DISPENSED';
+    await qc.invalidateQueries({
+      queryKey: ['pharmacy', 'prepare-context', 'RX-2026-0415-0088'],
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Xác nhận Đã soạn xong & Chuyển Phát thuốc/i }),
+      ).toBeDisabled();
+    });
+    unmount();
+
+    // Case 4: Second prescription starts isolated
+    currentStatus = 'ISSUED';
+    renderPreparePage('/pharmacy/prescriptions/RX-SECOND-0099/prepare');
+    expect(await screen.findByText('NGUYỄN VĂN AN')).toBeInTheDocument();
+    expect(screen.getByText('0/1 khoản')).toBeInTheDocument();
+  });
 });

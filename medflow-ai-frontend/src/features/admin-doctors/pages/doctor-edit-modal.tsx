@@ -4,13 +4,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 
+import { formControlClass as doctorControlClass } from '@/shared/components/form/form-primitives';
 import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
 import { Button } from '@/shared/ui/button';
 
 import type { AdminDoctorRecord } from '../api/doctor-admin.api';
 import { DoctorDeactivateModal } from '../components/doctor-deactivate-modal';
 import { DoctorEditFooter, DoctorEditHeader } from '../components/doctor-edit-chrome';
-import { DoctorField, doctorControlClass } from '../components/doctor-form-primitives';
+import { DoctorField } from '../components/doctor-form-primitives';
 import { DEGREES, DEPARTMENTS } from '../data/doctor-demo-data';
 import { useAdminDoctors, useUpdateAdminDoctorMutation } from '../hooks/use-admin-doctors';
 import { doctorSchema, type DoctorFormValues } from '../schemas/doctor.schema';

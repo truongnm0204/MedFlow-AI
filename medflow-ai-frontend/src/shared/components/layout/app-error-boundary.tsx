@@ -10,11 +10,27 @@ export interface AppErrorBoundaryProps {
   resetKeys?: readonly unknown[];
   onReset?: () => void;
   onNavigateHome?: () => void;
+  onReloadPage?: () => void;
 }
 
 interface AppErrorBoundaryState {
   hasError: boolean;
+  isChunkError: boolean;
   remountKey: number;
+  prevResetKeys?: readonly unknown[];
+}
+
+function isChunkLoadError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const name = 'name' in error && typeof error.name === 'string' ? error.name : '';
+  const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
+  if (name === 'ChunkLoadError') return true;
+  return (
+    /Failed to fetch dynamically imported module/i.test(message) ||
+    /Importing a module script failed/i.test(message) ||
+    /error loading dynamically imported module/i.test(message) ||
+    /Unable to preload CSS/i.test(message)
+  );
 }
 
 function haveResetKeysChanged(
@@ -40,11 +56,34 @@ function haveResetKeysChanged(
 export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundaryState> {
   override state: AppErrorBoundaryState = {
     hasError: false,
+    isChunkError: false,
     remountKey: 0,
+    prevResetKeys: this.props.resetKeys,
   };
 
-  static getDerivedStateFromError(): Partial<AppErrorBoundaryState> {
-    return { hasError: true };
+  static getDerivedStateFromError(error: unknown): Partial<AppErrorBoundaryState> {
+    return {
+      hasError: true,
+      isChunkError: isChunkLoadError(error),
+    };
+  }
+
+  static getDerivedStateFromProps(
+    nextProps: AppErrorBoundaryProps,
+    prevState: AppErrorBoundaryState,
+  ): Partial<AppErrorBoundaryState> | null {
+    if (haveResetKeysChanged(prevState.prevResetKeys, nextProps.resetKeys)) {
+      if (prevState.hasError) {
+        return {
+          hasError: false,
+          isChunkError: false,
+          remountKey: prevState.remountKey + 1,
+          prevResetKeys: nextProps.resetKeys,
+        };
+      }
+      return { prevResetKeys: nextProps.resetKeys };
+    }
+    return null;
   }
 
   override componentDidCatch(error: Error, _errorInfo: ErrorInfo): void {
@@ -55,19 +94,21 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     }
   }
 
-  override componentDidUpdate(prevProps: AppErrorBoundaryProps): void {
-    if (this.state.hasError && haveResetKeysChanged(prevProps.resetKeys, this.props.resetKeys)) {
-      this.setState((prev) => ({
-        hasError: false,
-        remountKey: prev.remountKey + 1,
-      }));
-    }
-  }
-
   private handleRetry = (): void => {
     this.props.onReset?.();
+    if (this.state.isChunkError) {
+      if (this.props.onReloadPage) {
+        this.props.onReloadPage();
+        return;
+      }
+      if (typeof window !== 'undefined') {
+        window.location.reload();
+        return;
+      }
+    }
     this.setState((prev) => ({
       hasError: false,
+      isChunkError: false,
       remountKey: prev.remountKey + 1,
     }));
   };
@@ -80,6 +121,7 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
 
     this.setState((prev) => ({
       hasError: false,
+      isChunkError: false,
       remountKey: prev.remountKey + 1,
     }));
 

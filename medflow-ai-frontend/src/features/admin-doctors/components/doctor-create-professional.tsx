@@ -1,10 +1,12 @@
 import { Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import type { FieldErrors, UseFormRegister } from 'react-hook-form';
 
+import { formControlClass as doctorControlClass } from '@/shared/components/form/form-primitives';
+
 import { DEGREES } from '../data/doctor-demo-data';
 import type { DoctorFormValues } from '../schemas/doctor.schema';
 import type { WorkHistoryEntry } from '../types/doctor.types';
-import { DoctorCard, DoctorField, doctorControlClass } from './doctor-form-primitives';
+import { DoctorCard, DoctorField } from './doctor-form-primitives';
 
 interface Props {
   register: UseFormRegister<DoctorFormValues>;

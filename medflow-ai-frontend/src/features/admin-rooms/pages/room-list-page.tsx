@@ -17,6 +17,8 @@ import type {
   RoomMetrics as RoomMetricsType,
 } from '../types/room.types';
 
+const EMPTY_ROOMS: RoomItem[] = [];
+
 const EMPTY_METRICS: RoomMetricsType = {
   totalRooms: 0,
   activeRooms: 0,
@@ -29,7 +31,7 @@ export function RoomListPage() {
   const { data, isLoading, isError, error, refetch } = useAdminRooms();
   const updateRoomMutation = useUpdateRoomMutation();
 
-  const rooms = data?.rooms ?? [];
+  const rooms = data?.rooms ?? EMPTY_ROOMS;
   const metrics = data?.metrics ?? EMPTY_METRICS;
 
   const [filters, setFilters] = useState<RoomFiltersType>({

@@ -213,4 +213,87 @@ describe('FefoBatchSelectionPage (UC45 / GH-818 real /fefo-batches contract)', (
       ).toBeInTheDocument();
     });
   });
+
+  it('discards stale local batch override when server refetch reports depleted stock and isolates edits across prescriptions', async () => {
+    let availableStockFor1002 = 80;
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (String(url).includes('RX-OTHER-0099')) {
+        return {
+          data: {
+            ...SAMPLE_FEFO_CONTEXT,
+            prescriptionId: 99,
+            prescriptionCode: 'RX-OTHER-0099',
+            patientName: 'TRẦN THỊ BÌNH',
+          },
+        } as AxiosResponse;
+      }
+      return {
+        data: {
+          ...SAMPLE_FEFO_CONTEXT,
+          items: [
+            {
+              ...SAMPLE_FEFO_CONTEXT.items[0],
+              batches: SAMPLE_FEFO_CONTEXT.items[0].batches.map((b) =>
+                b.batchId === 1002 ? { ...b, availableStock: availableStockFor1002 } : b,
+              ),
+            },
+          ],
+        },
+      } as AxiosResponse;
+    });
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    useAuthStore.setState({
+      user: {
+        id: 6,
+        email: 'duocsi@medflow.test',
+        fullName: 'DS. Trần Thu Hương',
+        roles: ['PHARMACY_STAFF'],
+        patientCode: null,
+      },
+      accessToken: 'tok',
+      refreshToken: 'rtok',
+      isAuthenticated: true,
+    });
+
+    const { unmount } = render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/pharmacy/prescriptions/RX-2026-0415-0088/fefo-batches']}>
+          <Routes>
+            <Route
+              path="/pharmacy/prescriptions/:prescriptionCode/fefo-batches"
+              element={<FefoBatchSelectionPage />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('Bismuth subsalicylate 300mg')).toBeInTheDocument();
+
+    // Pharmacist selects batch LO-2412 locally -> override reason input appears
+    fireEvent.click(screen.getByRole('button', { name: /LO-2412/i }));
+    expect(
+      screen.getByLabelText(/Lý do chọn lô hạn dùng xa hơn lô ưu tiên FEFO/i),
+    ).toBeInTheDocument();
+
+    // Another pharmacist depletes LO-2412 below requiredQuantity (10 < 28), then background refetch occurs
+    availableStockFor1002 = 10;
+    await qc.invalidateQueries({
+      queryKey: ['pharmacy', 'fefo-batches', 'RX-2026-0415-0088'],
+    });
+
+    // Stale override for LO-2412 is invalidated -> falls back to server FEFO_RECOMMENDED LO-2405 (no override reason box)
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText(/Lý do chọn lô hạn dùng xa hơn lô ưu tiên FEFO/i),
+      ).not.toBeInTheDocument();
+    });
+    unmount();
+
+    // Opening a second prescription starts clean without leaking notices
+    renderFefoPage('/pharmacy/prescriptions/RX-OTHER-0099/fefo-batches');
+    expect(await screen.findByText('Bismuth subsalicylate 300mg')).toBeInTheDocument();
+    expect(screen.queryByText(/Đã chọn lô LO-2412/i)).not.toBeInTheDocument();
+  });
 });
