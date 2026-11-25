@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { useNavigate, useParams } from 'react-router-dom';
 
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
 import { Button } from '@/shared/ui/button';
 
 import type { AdminDoctorRecord } from '../api/doctor-admin.api';
@@ -36,18 +37,28 @@ function DoctorEditDialogForm({ doctor }: { doctor: AdminDoctorRecord }) {
     register,
     handleSubmit,
     setValue,
+    getValues,
+    reset,
     control,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<DoctorFormValues>({
     resolver: zodResolver(doctorSchema),
     defaultValues: doctor,
   });
+  const { isBlocked, confirmNavigation, cancelNavigation, allowNavigation, guardAction } =
+    useUnsavedChanges(isDirty);
   const isActive = useWatch({ control, name: 'active' });
   const biography = useWatch({ control, name: 'biography' }) ?? '';
 
+  const requestClose = () => {
+    guardAction(() => navigate('/admin/doctors'));
+  };
+
   useEffect(() => {
     const handleKeys = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') navigate('/admin/doctors');
+      if (event.key === 'Escape') {
+        guardAction(() => navigate('/admin/doctors'));
+      }
       if (event.ctrlKey && event.key.toLowerCase() === 's') {
         event.preventDefault();
         document.getElementById('doctor-edit-submit')?.click();
@@ -55,16 +66,24 @@ function DoctorEditDialogForm({ doctor }: { doctor: AdminDoctorRecord }) {
     };
     window.addEventListener('keydown', handleKeys);
     return () => window.removeEventListener('keydown', handleKeys);
-  }, [navigate]);
+  }, [guardAction, navigate]);
 
   const save = async (values: DoctorFormValues) => {
     setMessage('');
+    const rawSnapshot = structuredClone(getValues());
     try {
       await updateMutation.mutateAsync({
         idOrCode: doctor.backendId || doctor.id,
         doctor: { ...doctor, ...values },
       });
-      navigate('/admin/doctors');
+      const editedDuringSubmit = JSON.stringify(getValues()) !== JSON.stringify(rawSnapshot);
+      reset(rawSnapshot, { keepValues: true });
+      if (!editedDuringSubmit) {
+        allowNavigation();
+        navigate('/admin/doctors');
+      } else {
+        guardAction(() => navigate('/admin/doctors'));
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Không thể lưu hồ sơ bác sĩ.');
     }
@@ -75,7 +94,7 @@ function DoctorEditDialogForm({ doctor }: { doctor: AdminDoctorRecord }) {
       className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/60 p-3 backdrop-blur-[2px]"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) navigate('/admin/doctors');
+        if (event.target === event.currentTarget) requestClose();
       }}
     >
       <form
@@ -86,11 +105,7 @@ function DoctorEditDialogForm({ doctor }: { doctor: AdminDoctorRecord }) {
         noValidate
         className="my-auto flex max-h-[calc(100vh-24px)] w-full max-w-[896px] flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl"
       >
-        <DoctorEditHeader
-          doctor={doctor}
-          isActive={isActive}
-          onClose={() => navigate('/admin/doctors')}
-        />
+        <DoctorEditHeader doctor={doctor} isActive={isActive} onClose={requestClose} />
         <div className="overflow-y-auto">
           <div className="mx-6 mt-5 flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-[11px] leading-relaxed text-sky-900">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
@@ -224,7 +239,7 @@ function DoctorEditDialogForm({ doctor }: { doctor: AdminDoctorRecord }) {
           </div>
         </div>
         <DoctorEditFooter
-          onClose={() => navigate('/admin/doctors')}
+          onClose={requestClose}
           pendingAppointmentsCount={doctor.pendingAppointmentsCount ?? 0}
         />
       </form>
@@ -237,6 +252,7 @@ function DoctorEditDialogForm({ doctor }: { doctor: AdminDoctorRecord }) {
           setShowDeactivateModal(false);
         }}
       />
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </div>
   );
 }

@@ -13,7 +13,7 @@ import {
   Stethoscope,
   XCircle,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
@@ -40,8 +40,15 @@ interface DiagnosticResultEntryDetailPanelProps {
   statusHistory?: DiagnosticResultHistoryItemDto[];
   hasResultWritePermission: boolean;
   isSubmitting: boolean;
-  onEnterResult: (orderCode: string, payload: EnterDiagnosticResultRequest) => void;
-  onUpdateResult: (orderCode: string, payload: UpdateDiagnosticResultRequest) => void;
+  onEnterResult: (
+    orderCode: string,
+    payload: EnterDiagnosticResultRequest,
+  ) => Promise<boolean | void> | void;
+  onUpdateResult: (
+    orderCode: string,
+    payload: UpdateDiagnosticResultRequest,
+  ) => Promise<boolean | void> | void;
+  onDirtyChange?: (isDirty: boolean) => void;
 }
 
 const RESULT_ENTRY_ELIGIBILITY_CRITERIA: Array<{
@@ -145,12 +152,50 @@ function resultStatusMeta(resultStatus?: string | null): {
   }
 }
 
+interface EntryFormSnapshot {
+  resultText: string;
+  conclusion: string;
+  reportFileUrl: string;
+  draftStatus: string;
+  correctionReason: string;
+  notes: string;
+}
+
+function buildEntrySnapshot(order: DiagnosticResultEntryItemDto): EntryFormSnapshot {
+  return {
+    resultText: order.resultText ?? '',
+    conclusion: order.conclusion ?? '',
+    reportFileUrl: order.reportFileUrl ?? '',
+    draftStatus:
+      order.resultStatus === 'PRELIMINARY' || order.resultStatus === 'PENDING_VERIFY'
+        ? order.resultStatus
+        : 'DRAFT',
+    correctionReason: order.correctionReason ?? '',
+    notes: '',
+  };
+}
+
+function areEntrySnapshotsEqual(a: EntryFormSnapshot, b: EntryFormSnapshot): boolean {
+  return (
+    a.resultText === b.resultText &&
+    a.conclusion === b.conclusion &&
+    a.reportFileUrl === b.reportFileUrl &&
+    a.draftStatus === b.draftStatus &&
+    a.correctionReason === b.correctionReason &&
+    a.notes === b.notes
+  );
+}
+
 interface DiagnosticResultEntryFormProps {
   order: DiagnosticResultEntryItemDto;
   canSubmitResult: boolean;
   canFinalizeResult: boolean;
   isSubmitting: boolean;
-  onEnterResult: (orderCode: string, payload: EnterDiagnosticResultRequest) => void;
+  onEnterResult: (
+    orderCode: string,
+    payload: EnterDiagnosticResultRequest,
+  ) => Promise<boolean | void> | void;
+  onDirtyChange?: (isDirty: boolean) => void;
 }
 
 function DiagnosticResultEntryForm({
@@ -159,6 +204,7 @@ function DiagnosticResultEntryForm({
   canFinalizeResult,
   isSubmitting,
   onEnterResult,
+  onDirtyChange,
 }: DiagnosticResultEntryFormProps) {
   const hasExistingDraft = Boolean(
     order.hasResult &&
@@ -177,20 +223,81 @@ function DiagnosticResultEntryForm({
   );
   const [correctionReason, setCorrectionReason] = useState(order.correctionReason ?? '');
   const [notes, setNotes] = useState('');
+  const [baselineSnapshot, setBaselineSnapshot] = useState<EntryFormSnapshot>(() =>
+    buildEntrySnapshot(order),
+  );
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [hasBackgroundConflict, setHasBackgroundConflict] = useState(false);
+  const [pendingOwnSync, setPendingOwnSync] = useState(false);
 
-  const handleSubmit = (isFinalized: boolean) => {
+  const currentSnapshot: EntryFormSnapshot = {
+    resultText,
+    conclusion,
+    reportFileUrl,
+    draftStatus,
+    correctionReason,
+    notes,
+  };
+
+  const hasUnsavedChanges = !areEntrySnapshotsEqual(currentSnapshot, baselineSnapshot);
+  const isEditableOrder = !order.isResultFinalized && order.canEnterResult;
+  const isDirty = isEditableOrder && hasUnsavedChanges;
+
+  const serverVersionKey = `${order.orderCode}:${order.latestVersionNo ?? 0}:${order.stateVersion}`;
+  const [syncedVersionKey, setSyncedVersionKey] = useState(serverVersionKey);
+
+  const applyOrderBaseline = (targetOrder: DiagnosticResultEntryItemDto) => {
+    const fresh = buildEntrySnapshot(targetOrder);
+    setResultText(fresh.resultText);
+    setConclusion(fresh.conclusion);
+    setReportFileUrl(fresh.reportFileUrl);
+    setDraftStatus(fresh.draftStatus);
+    setCorrectionReason(fresh.correctionReason);
+    setNotes(fresh.notes);
+    setBaselineSnapshot(fresh);
+    setHasBackgroundConflict(false);
     setValidationError(null);
+  };
+
+  if (serverVersionKey !== syncedVersionKey) {
+    setSyncedVersionKey(serverVersionKey);
+    if (pendingOwnSync) {
+      setPendingOwnSync(false);
+      if (!hasUnsavedChanges) {
+        applyOrderBaseline(order);
+      }
+    } else if (!hasUnsavedChanges) {
+      applyOrderBaseline(order);
+    } else {
+      // Preserve technician's unsaved CLS result text on background refetch
+      setHasBackgroundConflict(true);
+    }
+  }
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+    return () => {
+      onDirtyChange?.(false);
+    };
+  }, [isDirty, onDirtyChange]);
+
+  const handleSubmit = async (isFinalized: boolean) => {
+    setValidationError(null);
+    const submittedSnapshot: EntryFormSnapshot = { ...currentSnapshot };
 
     const candidatePayload = {
-      resultText,
-      conclusion: conclusion.trim() ? conclusion : null,
-      reportFileUrl: reportFileUrl.trim() ? reportFileUrl : null,
-      status: draftStatus,
+      resultText: submittedSnapshot.resultText,
+      conclusion: submittedSnapshot.conclusion.trim() ? submittedSnapshot.conclusion : null,
+      reportFileUrl: submittedSnapshot.reportFileUrl.trim()
+        ? submittedSnapshot.reportFileUrl
+        : null,
+      status: submittedSnapshot.draftStatus,
       isFinalized,
       isVerified: isFinalized ? order.requiresResultVerification : false,
-      correctionReason: correctionReason.trim() ? correctionReason : null,
-      notes: notes.trim() ? notes : null,
+      correctionReason: submittedSnapshot.correctionReason.trim()
+        ? submittedSnapshot.correctionReason
+        : null,
+      notes: submittedSnapshot.notes.trim() ? submittedSnapshot.notes : null,
       expectedStateVersion: order.stateVersion,
     };
 
@@ -203,7 +310,8 @@ function DiagnosticResultEntryForm({
       return;
     }
 
-    onEnterResult(order.orderCode, {
+    setPendingOwnSync(true);
+    const outcome = await onEnterResult(order.orderCode, {
       orderId: order.orderId,
       resultText: parsed.data.resultText,
       conclusion: parsed.data.conclusion ?? null,
@@ -215,6 +323,13 @@ function DiagnosticResultEntryForm({
       notes: parsed.data.notes ?? null,
       expectedStateVersion: parsed.data.expectedStateVersion ?? order.stateVersion,
     });
+
+    if (outcome !== false) {
+      setBaselineSnapshot(submittedSnapshot);
+      setHasBackgroundConflict(false);
+    } else {
+      setPendingOwnSync(false);
+    }
   };
 
   return (
@@ -230,6 +345,24 @@ function DiagnosticResultEntryForm({
           </span>
         )}
       </div>
+
+      {hasBackgroundConflict && (
+        <Alert tone="warning">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              Phiếu chỉ định vừa có phiên bản mới trên máy chủ. Nội dung bạn đang nhập chưa lưu vẫn
+              được giữ nguyên.
+            </span>
+            <button
+              type="button"
+              onClick={() => applyOrderBaseline(order)}
+              className="rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-50"
+            >
+              Nạp lại từ máy chủ
+            </button>
+          </div>
+        </Alert>
+      )}
 
       {validationError && (
         <Alert tone="error">
@@ -363,7 +496,7 @@ function DiagnosticResultEntryForm({
           variant="secondary"
           loading={isSubmitting}
           disabled={!canSubmitResult || isSubmitting}
-          onClick={() => handleSubmit(false)}
+          onClick={() => void handleSubmit(false)}
         >
           <FileSignature className="h-4 w-4" aria-hidden="true" />
           <span>Lưu kết quả ({draftStatus})</span>
@@ -372,7 +505,7 @@ function DiagnosticResultEntryForm({
           type="button"
           loading={isSubmitting}
           disabled={!canSubmitResult || !canFinalizeResult || isSubmitting}
-          onClick={() => handleSubmit(true)}
+          onClick={() => void handleSubmit(true)}
         >
           <SendHorizonal className="h-4 w-4" aria-hidden="true" />
           <span>Duyệt &amp; trả kết quả</span>
@@ -388,32 +521,113 @@ function DiagnosticResultEntryForm({
   );
 }
 
+interface AmendFormSnapshot {
+  resultText: string;
+  conclusion: string;
+  reportFileUrl: string;
+  correctionReason: string;
+}
+
 interface DiagnosticResultAmendFormProps {
   order: DiagnosticResultEntryItemDto;
   isSubmitting: boolean;
-  onUpdateResult: (orderCode: string, payload: UpdateDiagnosticResultRequest) => void;
+  onUpdateResult: (
+    orderCode: string,
+    payload: UpdateDiagnosticResultRequest,
+  ) => Promise<boolean | void> | void;
+  onDirtyChange?: (isDirty: boolean) => void;
 }
 
 function DiagnosticResultAmendForm({
   order,
   isSubmitting,
   onUpdateResult,
+  onDirtyChange,
 }: DiagnosticResultAmendFormProps) {
   const [resultText, setResultText] = useState(order.resultText ?? '');
   const [conclusion, setConclusion] = useState(order.conclusion ?? '');
   const [reportFileUrl, setReportFileUrl] = useState(order.reportFileUrl ?? '');
   const [reportFileUrlTouched, setReportFileUrlTouched] = useState(false);
   const [correctionReason, setCorrectionReason] = useState('');
+  const [baselineSnapshot, setBaselineSnapshot] = useState<AmendFormSnapshot>(() => ({
+    resultText: order.resultText ?? '',
+    conclusion: order.conclusion ?? '',
+    reportFileUrl: order.reportFileUrl ?? '',
+    correctionReason: '',
+  }));
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [hasBackgroundConflict, setHasBackgroundConflict] = useState(false);
+  const [pendingOwnSync, setPendingOwnSync] = useState(false);
 
-  const handleSubmit = () => {
+  const currentSnapshot: AmendFormSnapshot = {
+    resultText,
+    conclusion,
+    reportFileUrl,
+    correctionReason,
+  };
+
+  const isDirty =
+    currentSnapshot.resultText !== baselineSnapshot.resultText ||
+    currentSnapshot.conclusion !== baselineSnapshot.conclusion ||
+    currentSnapshot.reportFileUrl !== baselineSnapshot.reportFileUrl ||
+    currentSnapshot.correctionReason !== baselineSnapshot.correctionReason;
+
+  const serverVersionKey = `${order.orderCode}:${order.latestVersionNo ?? 0}:${order.stateVersion}`;
+  const [syncedVersionKey, setSyncedVersionKey] = useState(serverVersionKey);
+
+  if (serverVersionKey !== syncedVersionKey) {
+    setSyncedVersionKey(serverVersionKey);
+    if (pendingOwnSync) {
+      setPendingOwnSync(false);
+      if (!isDirty) {
+        const fresh: AmendFormSnapshot = {
+          resultText: order.resultText ?? '',
+          conclusion: order.conclusion ?? '',
+          reportFileUrl: order.reportFileUrl ?? '',
+          correctionReason: '',
+        };
+        setResultText(fresh.resultText);
+        setConclusion(fresh.conclusion);
+        setReportFileUrl(fresh.reportFileUrl);
+        setReportFileUrlTouched(false);
+        setCorrectionReason('');
+        setBaselineSnapshot(fresh);
+      }
+    } else if (!isDirty) {
+      const fresh: AmendFormSnapshot = {
+        resultText: order.resultText ?? '',
+        conclusion: order.conclusion ?? '',
+        reportFileUrl: order.reportFileUrl ?? '',
+        correctionReason: '',
+      };
+      setResultText(fresh.resultText);
+      setConclusion(fresh.conclusion);
+      setReportFileUrl(fresh.reportFileUrl);
+      setReportFileUrlTouched(false);
+      setCorrectionReason('');
+      setBaselineSnapshot(fresh);
+      setHasBackgroundConflict(false);
+    } else {
+      setHasBackgroundConflict(true);
+    }
+  }
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+    return () => {
+      onDirtyChange?.(false);
+    };
+  }, [isDirty, onDirtyChange]);
+
+  const handleSubmit = async () => {
     setValidationError(null);
+    const submittedSnapshot: AmendFormSnapshot = { ...currentSnapshot };
 
     const candidatePayload = {
-      resultText,
-      conclusion,
-      reportFileUrl: reportFileUrlTouched ? reportFileUrl.trim() : undefined,
-      correctionReason,
+      resultText: submittedSnapshot.resultText,
+      conclusion: submittedSnapshot.conclusion,
+      reportFileUrl: reportFileUrlTouched ? submittedSnapshot.reportFileUrl.trim() : undefined,
+      correctionReason: submittedSnapshot.correctionReason,
       expectedStateVersion: order.stateVersion,
     };
 
@@ -427,7 +641,8 @@ function DiagnosticResultAmendForm({
       return;
     }
 
-    onUpdateResult(order.orderCode, {
+    setPendingOwnSync(true);
+    const outcome = await onUpdateResult(order.orderCode, {
       orderId: order.orderId,
       resultText: parsed.data.resultText,
       conclusion: parsed.data.conclusion,
@@ -435,6 +650,13 @@ function DiagnosticResultAmendForm({
       correctionReason: parsed.data.correctionReason,
       expectedStateVersion: parsed.data.expectedStateVersion,
     });
+
+    if (outcome !== false) {
+      setBaselineSnapshot(submittedSnapshot);
+      setHasBackgroundConflict(false);
+    } else {
+      setPendingOwnSync(false);
+    }
   };
 
   return (
@@ -443,6 +665,13 @@ function DiagnosticResultAmendForm({
       data-testid="result-amend-form"
     >
       <div className="font-bold text-navy">Sửa kết quả cận lâm sàng đã khóa</div>
+
+      {hasBackgroundConflict && (
+        <Alert tone="warning">
+          Phiếu chỉ định vừa có phiên bản mới trên máy chủ. Nội dung sửa đổi bạn đang nhập vẫn được
+          giữ nguyên.
+        </Alert>
+      )}
 
       {validationError && (
         <Alert tone="error">
@@ -525,7 +754,12 @@ function DiagnosticResultAmendForm({
         />
       </div>
 
-      <Button type="button" loading={isSubmitting} disabled={isSubmitting} onClick={handleSubmit}>
+      <Button
+        type="button"
+        loading={isSubmitting}
+        disabled={isSubmitting}
+        onClick={() => void handleSubmit()}
+      >
         <PencilLine className="h-4 w-4" aria-hidden="true" />
         <span>Sửa kết quả đã khóa</span>
       </Button>
@@ -547,6 +781,7 @@ export function DiagnosticResultEntryDetailPanel({
   isSubmitting,
   onEnterResult,
   onUpdateResult,
+  onDirtyChange,
 }: DiagnosticResultEntryDetailPanelProps) {
   if (!order) {
     return (
@@ -953,23 +1188,25 @@ export function DiagnosticResultEntryDetailPanel({
           </Alert>
         )}
 
-        {/* 8. Entry or amend form */}
+        {/* 8. Entry or amend form — keyed strictly by orderCode so background refetches never remount dirty forms */}
         {showAmendForm ? (
           <DiagnosticResultAmendForm
-            key={`${order.orderCode}-amend-${order.latestVersionNo ?? 0}-${order.stateVersion}`}
+            key={`${order.orderCode}-amend`}
             order={order}
             isSubmitting={isSubmitting}
             onUpdateResult={onUpdateResult}
+            onDirtyChange={onDirtyChange}
           />
         ) : (
           !isFinalized && (
             <DiagnosticResultEntryForm
-              key={`${order.orderCode}-${order.latestVersionNo ?? 0}-${order.stateVersion}`}
+              key={`${order.orderCode}-entry`}
               order={order}
               canSubmitResult={canSubmitResult}
               canFinalizeResult={canFinalizeResult}
               isSubmitting={isSubmitting}
               onEnterResult={onEnterResult}
+              onDirtyChange={onDirtyChange}
             />
           )
         )}

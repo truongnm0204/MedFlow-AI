@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+import { registerAdminDraftCleanup } from '@/shared/lib/admin-draft-storage';
+
 import {
   batchCloseAdminExaminationSlotsApi,
   closeAdminExaminationSlotApi,
@@ -203,3 +205,7 @@ export const useExaminationSlotStore = create<ExaminationSlotStore>((set) => ({
 
   clearDraft: () => set({ draft: null }),
 }));
+
+registerAdminDraftCleanup(() => {
+  useExaminationSlotStore.setState({ draft: null });
+});

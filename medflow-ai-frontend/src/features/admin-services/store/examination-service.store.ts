@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+import { registerAdminDraftCleanup } from '@/shared/lib/admin-draft-storage';
+
 import type {
   ColumnKey,
   ExaminationService,
@@ -176,3 +178,7 @@ export const useExaminationServiceStore = create<ExaminationServiceState>((set) 
   saveDraft: (draft) => set({ draft }),
   clearDraft: () => set({ draft: null }),
 }));
+
+registerAdminDraftCleanup(() => {
+  useExaminationServiceStore.setState({ draft: null });
+});

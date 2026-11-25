@@ -5,6 +5,7 @@ import { useForm, useWatch } from 'react-hook-form';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
 
 import { useAdminDepartments, useUpdateDepartmentMutation } from '../hooks/use-departments';
 import {
@@ -49,8 +50,10 @@ function DepartmentEditForm({
   const {
     register,
     handleSubmit,
+    getValues,
+    reset,
     control,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<DepartmentUpdateFormValues>({
     resolver: zodResolver(departmentUpdateSchema),
     defaultValues: {
@@ -61,9 +64,12 @@ function DepartmentEditForm({
     },
   });
   const watched = useWatch({ control });
+  const { isBlocked, confirmNavigation, cancelNavigation, allowNavigation, guardAction } =
+    useUnsavedChanges(isDirty);
 
   const onSubmit = async (values: DepartmentUpdateFormValues) => {
     setSubmitError(null);
+    const rawSnapshot = structuredClone(getValues());
     try {
       await updateMutation.mutateAsync({
         id: department.id,
@@ -73,7 +79,14 @@ function DepartmentEditForm({
           isActive: values.status === 'ACTIVE',
         },
       });
-      navigate(LIST_PATH);
+      const editedDuringSubmit = JSON.stringify(getValues()) !== JSON.stringify(rawSnapshot);
+      reset(rawSnapshot, { keepValues: true });
+      if (!editedDuringSubmit) {
+        allowNavigation();
+        navigate(LIST_PATH);
+      } else {
+        guardAction(() => navigate(LIST_PATH));
+      }
     } catch (error) {
       setSubmitError(
         error instanceof Error ? error.message : 'Không thể cập nhật thông tin khoa phòng.',
@@ -194,7 +207,7 @@ function DepartmentEditForm({
         <button
           type="button"
           aria-label="Hủy bỏ"
-          onClick={() => navigate(LIST_PATH)}
+          onClick={() => guardAction(() => navigate(LIST_PATH))}
           className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-navy"
         >
           Hủy bỏ
@@ -208,6 +221,8 @@ function DepartmentEditForm({
           Lưu thay đổi
         </button>
       </div>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </form>
   );
 }

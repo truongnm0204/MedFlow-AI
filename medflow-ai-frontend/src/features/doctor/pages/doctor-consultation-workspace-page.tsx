@@ -5,6 +5,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useRoleAccess } from '@/features/auth/hooks/use-role-access';
 import { useAuthStore } from '@/features/auth/store/auth.store';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert } from '@/shared/ui/alert';
 import { Card, CardContent } from '@/shared/ui/card';
@@ -80,6 +81,17 @@ export function DoctorConsultationWorkspacePage({
   const [isCompleteVisitFormOpen, setIsCompleteVisitFormOpen] =
     useState<boolean>(isCompleteVisitRoute);
   const [selectedActionNotice, setSelectedActionNotice] = useState<string | null>(null);
+  const [isClinicalFormDirty, setIsClinicalFormDirty] = useState(false);
+
+  const { isBlocked, confirmNavigation, cancelNavigation, guardAction } =
+    useUnsavedChanges(isClinicalFormDirty);
+
+  const navigateWithGuard = (target: string, onBeforeNavigate?: () => void) => {
+    guardAction(() => {
+      onBeforeNavigate?.();
+      navigate(target);
+    });
+  };
 
   const resetTransientState = (nextIdentifier: string) => {
     setLookupInput(nextIdentifier);
@@ -121,8 +133,10 @@ export function DoctorConsultationWorkspacePage({
       return;
     }
 
-    resetTransientState(parsed.data);
-    navigate(`/doctor/consultation/${encodeURIComponent(parsed.data)}`);
+    navigateWithGuard(`/doctor/consultation/${encodeURIComponent(parsed.data)}`, () => {
+      resetTransientState(parsed.data);
+      setIsClinicalFormDirty(false);
+    });
   };
 
   const handleOpenSession = async (notes?: string) => {
@@ -143,7 +157,9 @@ export function DoctorConsultationWorkspacePage({
     }
   };
 
-  const handleRecordClinicalExamination = async (payload: RecordClinicalExaminationRequest) => {
+  const handleRecordClinicalExamination = async (
+    payload: RecordClinicalExaminationRequest,
+  ): Promise<boolean> => {
     setRecordError(null);
     setOpenError(null);
     setSelectedActionNotice(null);
@@ -153,10 +169,12 @@ export function DoctorConsultationWorkspacePage({
         idOrCode: activeIdentifier,
         payload,
       });
+      return true;
     } catch (err) {
       setRecordError(
         getErrorMessage(err, 'Không thể lưu thông tin khám lâm sàng cho lượt khám này.'),
       );
+      return false;
     }
   };
 
@@ -215,7 +233,7 @@ export function DoctorConsultationWorkspacePage({
 
     if (action.id === 'view-medical-history' || action.ucCode === 'UC32') {
       const targetVisit = data?.visit.visitCode ?? activeIdentifier;
-      navigate(`/doctor/visits/${encodeURIComponent(targetVisit)}/medical-history`);
+      navigateWithGuard(`/doctor/visits/${encodeURIComponent(targetVisit)}/medical-history`);
       return;
     }
 
@@ -261,20 +279,24 @@ export function DoctorConsultationWorkspacePage({
 
     if (action.id === 'record-diagnosis' || action.ucCode === 'UC36') {
       if (!canWriteMedicalRecord || !data?.canEditClinical) return;
-      navigate(`/doctor/consultation/${encodeURIComponent(data.visit.visitCode)}/diagnosis`);
+      navigateWithGuard(
+        `/doctor/consultation/${encodeURIComponent(data.visit.visitCode)}/diagnosis`,
+      );
       return;
     }
 
     if (action.id === 'review-diagnostic-results' || action.ucCode === 'UC35') {
       const targetVisit = data?.visit.visitCode ?? activeIdentifier;
-      navigate(`/doctor/consultation/${encodeURIComponent(targetVisit)}/diagnostic-results`);
+      navigateWithGuard(
+        `/doctor/consultation/${encodeURIComponent(targetVisit)}/diagnostic-results`,
+      );
       return;
     }
 
     if (action.id === 'create-prescription' || action.ucCode === 'UC37') {
       if (!action.enabled) return;
       const targetVisit = data?.visit.visitCode ?? activeIdentifier;
-      navigate(`/doctor/consultation/${encodeURIComponent(targetVisit)}/prescription`);
+      navigateWithGuard(`/doctor/consultation/${encodeURIComponent(targetVisit)}/prescription`);
       return;
     }
 
@@ -320,11 +342,11 @@ export function DoctorConsultationWorkspacePage({
         roomLabel={roomLabel}
         onItemSelect={(item) => {
           if (item === 'dashboard') {
-            navigate('/doctor');
+            navigateWithGuard('/doctor');
             return;
           }
           if (item === 'assigned-queue') {
-            navigate('/doctor/assigned-queue');
+            navigateWithGuard('/doctor/assigned-queue');
           }
         }}
       />
@@ -334,7 +356,7 @@ export function DoctorConsultationWorkspacePage({
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"
-              onClick={() => navigate('/doctor/assigned-queue')}
+              onClick={() => navigateWithGuard('/doctor/assigned-queue')}
               aria-label="Quay lại hàng đợi được phân công"
               className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-white text-navy transition-colors hover:bg-canvas"
             >
@@ -398,8 +420,11 @@ export function DoctorConsultationWorkspacePage({
                       type="button"
                       aria-pressed={isCurrent}
                       onClick={() => {
-                        resetTransientState(item.visitCode);
-                        navigate(`/doctor/consultation/${item.visitCode}`);
+                        if (isCurrent) return;
+                        navigateWithGuard(`/doctor/consultation/${item.visitCode}`, () => {
+                          resetTransientState(item.visitCode);
+                          setIsClinicalFormDirty(false);
+                        });
                       }}
                       className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors ${
                         isCurrent
@@ -524,6 +549,7 @@ export function DoctorConsultationWorkspacePage({
                       onToggleForm={setIsClinicalFormOpen}
                       onSubmitExamination={handleRecordClinicalExamination}
                       onClearSubmitError={() => setRecordError(null)}
+                      onDirtyChange={setIsClinicalFormDirty}
                     />
                     <ConsultationDiagnosisAndOrdersCard
                       diagnoses={data.clinicalContext.diagnoses}
@@ -590,6 +616,8 @@ export function DoctorConsultationWorkspacePage({
           )}
         </main>
       </div>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </div>
   );
 }

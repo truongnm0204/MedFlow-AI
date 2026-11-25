@@ -4,7 +4,10 @@ import { useEffect, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { Link, useNavigate } from 'react-router-dom';
 
+import { useAuthStore } from '@/features/auth/store/auth.store';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
+import { loadAdminDraft, removeAdminDraft, saveAdminDraft } from '@/shared/lib/admin-draft-storage';
 
 import { ServiceCreateActionBar } from '../components/service-create-action-bar';
 import { ServiceCreateForm } from '../components/service-create-form';
@@ -29,6 +32,7 @@ const EMPTY_SERVICE_FORM_VALUES: ExaminationServiceFormValues = {
 
 export function ExaminationServiceCreatePage() {
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
   const draft = useExaminationServiceStore((state) => state.draft);
   const saveDraft = useExaminationServiceStore((state) => state.saveDraft);
   const clearDraft = useExaminationServiceStore((state) => state.clearDraft);
@@ -37,25 +41,38 @@ export function ExaminationServiceCreatePage() {
   const [message, setMessage] = useState<string | null>(null);
   const [isDraftSaved, setIsDraftSaved] = useState(false);
 
+  const [initialDefaults] = useState<ExaminationServiceFormValues>(() => {
+    const persisted =
+      draft ??
+      loadAdminDraft<Partial<ExaminationServiceFormValues>>('examination-service-create', {
+        userId: user?.id ?? null,
+      });
+    return {
+      code: persisted?.code ?? EMPTY_SERVICE_FORM_VALUES.code,
+      name: persisted?.name ?? EMPTY_SERVICE_FORM_VALUES.name,
+      category: persisted?.category ?? EMPTY_SERVICE_FORM_VALUES.category,
+      department: persisted?.department ?? EMPTY_SERVICE_FORM_VALUES.department,
+      description: persisted?.description ?? EMPTY_SERVICE_FORM_VALUES.description,
+      onlineBooking: persisted?.onlineBooking ?? EMPTY_SERVICE_FORM_VALUES.onlineBooking,
+      status: persisted?.status ?? EMPTY_SERVICE_FORM_VALUES.status,
+    };
+  });
+
   const {
     register,
     handleSubmit,
     setValue,
     getValues,
+    reset,
     control,
     formState: { errors, isDirty },
   } = useForm<ExaminationServiceFormValues>({
     resolver: zodResolver(examinationServiceSchema),
-    defaultValues: {
-      code: draft?.code ?? EMPTY_SERVICE_FORM_VALUES.code,
-      name: draft?.name ?? EMPTY_SERVICE_FORM_VALUES.name,
-      category: draft?.category ?? EMPTY_SERVICE_FORM_VALUES.category,
-      department: draft?.department ?? EMPTY_SERVICE_FORM_VALUES.department,
-      description: draft?.description ?? EMPTY_SERVICE_FORM_VALUES.description,
-      onlineBooking: draft?.onlineBooking ?? EMPTY_SERVICE_FORM_VALUES.onlineBooking,
-      status: draft?.status ?? EMPTY_SERVICE_FORM_VALUES.status,
-    },
+    defaultValues: initialDefaults,
   });
+
+  const { isBlocked, confirmNavigation, cancelNavigation, allowNavigation, guardAction } =
+    useUnsavedChanges(isDirty);
 
   const category = useWatch({ control, name: 'category' }) ?? 'Khám Lâm sàng';
   const onlineBooking = useWatch({ control, name: 'onlineBooking' }) ?? true;
@@ -64,15 +81,23 @@ export function ExaminationServiceCreatePage() {
   useEffect(() => {
     if (!isDirty) return;
     const timer = window.setInterval(() => {
-      saveDraft(getValues());
-      setIsDraftSaved(true);
+      const snapshot: ExaminationServiceFormValues = { ...getValues() };
+      const saved = saveAdminDraft('examination-service-create', snapshot, {
+        userId: user?.id ?? null,
+      });
+      if (saved.ok) {
+        saveDraft(snapshot);
+        setIsDraftSaved(true);
+      }
     }, 30_000);
     return () => window.clearInterval(timer);
-  }, [getValues, isDirty, saveDraft]);
+  }, [getValues, isDirty, saveDraft, user?.id]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') navigate('/admin/services');
+      if (e.key === 'Escape') {
+        guardAction(() => navigate('/admin/services'));
+      }
       if (e.ctrlKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
         document.getElementById('service-create-submit')?.click();
@@ -80,10 +105,19 @@ export function ExaminationServiceCreatePage() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [navigate]);
+  }, [guardAction, navigate]);
 
   const handleManualDraftSave = () => {
-    saveDraft(getValues());
+    const snapshot: ExaminationServiceFormValues = { ...getValues() };
+    const saved = saveAdminDraft('examination-service-create', snapshot, {
+      userId: user?.id ?? null,
+    });
+    if (!saved.ok) {
+      setMessage(saved.error);
+      return;
+    }
+    saveDraft(snapshot);
+    reset(snapshot, { keepValues: true });
     setIsDraftSaved(true);
     setMessage('Đã lưu bản nháp vào bộ nhớ tạm của phiên.');
     setTimeout(() => setMessage(null), 3000);
@@ -91,10 +125,19 @@ export function ExaminationServiceCreatePage() {
 
   const handleCreate = async (values: ExaminationServiceFormValues) => {
     setMessage(null);
+    const rawSnapshot = structuredClone(getValues());
     try {
       await createServiceMutation.mutateAsync(values);
+      const editedDuringSubmit = JSON.stringify(getValues()) !== JSON.stringify(rawSnapshot);
       clearDraft();
-      navigate('/admin/services');
+      removeAdminDraft('examination-service-create', { userId: user?.id ?? null });
+      reset(rawSnapshot, { keepValues: true });
+      if (!editedDuringSubmit) {
+        allowNavigation();
+        navigate('/admin/services');
+      } else {
+        guardAction(() => navigate('/admin/services'));
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Không thể tạo mới dịch vụ khám.');
     }
@@ -179,10 +222,12 @@ export function ExaminationServiceCreatePage() {
         </main>
 
         <ServiceCreateActionBar
-          onCancel={() => navigate('/admin/services')}
+          onCancel={() => guardAction(() => navigate('/admin/services'))}
           onSaveDraft={handleManualDraftSave}
         />
       </form>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </AdminPortalShell>
   );
 }

@@ -6,6 +6,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { useAdminDepartments } from '@/features/admin-departments/hooks/use-departments';
 import { AdminPortalShell } from '@/shared/components/layout/admin-portal-shell';
+import { UnsavedChangesModal, useUnsavedChanges } from '@/shared/hooks/use-unsaved-changes';
 
 import { useAdminRooms, useUpdateRoomMutation } from '../hooks/use-rooms';
 import { ROOM_DEPARTMENTS } from '../schemas/room-create.schema';
@@ -46,8 +47,10 @@ function RoomEditForm({ room }: { room: RoomRecord }) {
     register,
     handleSubmit,
     setValue,
+    getValues,
+    reset,
     control,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<RoomUpdateFormValues>({
     resolver: zodResolver(roomUpdateSchema),
     defaultValues: {
@@ -60,10 +63,14 @@ function RoomEditForm({ room }: { room: RoomRecord }) {
     },
   });
 
+  const { isBlocked, confirmNavigation, cancelNavigation, allowNavigation, guardAction } =
+    useUnsavedChanges(isDirty);
+
   const values = useWatch({ control });
 
   const onSubmit = async (formValues: RoomUpdateFormValues) => {
     setSubmitError(null);
+    const rawSnapshot = structuredClone(getValues());
     const matchedDepartment = apiDepartments.find((d) => d.name === formValues.department);
     const parsedDepartmentId = matchedDepartment ? Number(matchedDepartment.id) : null;
 
@@ -81,7 +88,14 @@ function RoomEditForm({ room }: { room: RoomRecord }) {
           status: formValues.status,
         },
       });
-      navigate('/admin/rooms');
+      const editedDuringSubmit = JSON.stringify(getValues()) !== JSON.stringify(rawSnapshot);
+      reset(rawSnapshot, { keepValues: true });
+      if (!editedDuringSubmit) {
+        allowNavigation();
+        navigate('/admin/rooms');
+      } else {
+        guardAction(() => navigate('/admin/rooms'));
+      }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Không thể cập nhật buồng khám.');
     }
@@ -285,7 +299,7 @@ function RoomEditForm({ room }: { room: RoomRecord }) {
             <button
               type="button"
               aria-label="Hủy bỏ"
-              onClick={() => navigate('/admin/rooms')}
+              onClick={() => guardAction(() => navigate('/admin/rooms'))}
               className="rounded-lg border border-border bg-white px-4 py-2 text-sm text-sub"
             >
               Hủy bỏ
@@ -301,6 +315,8 @@ function RoomEditForm({ room }: { room: RoomRecord }) {
           </div>
         </div>
       </form>
+
+      <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </AdminPortalShell>
   );
 }

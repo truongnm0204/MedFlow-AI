@@ -8,6 +8,8 @@ import {
   REFRESH_COOLDOWN_KEY,
   REFRESH_TOKEN_KEY,
 } from '@/shared/lib/auth-storage';
+import { clearAllAdminDrafts } from '@/shared/lib/admin-draft-storage';
+import { notifyAuthSessionInvalidated } from '@/shared/lib/navigation-guard-manager';
 import { queryClient } from '@/shared/lib/query-client';
 
 import type { UserDto } from '../types/auth.types';
@@ -168,6 +170,8 @@ export const useAuthStore = create<AuthState>()(
       },
 
       clearAuth: () => {
+        notifyAuthSessionInvalidated();
+        clearAllAdminDrafts();
         clearRefreshCooldownStorage();
         syncTokenStorage(null, null);
         const nextEpoch = get().sessionEpoch + 1;
@@ -248,6 +252,8 @@ export function syncAuthStateFromStorage(): void {
 
     isApplyingExternalSync = true;
     try {
+      notifyAuthSessionInvalidated();
+      clearAllAdminDrafts();
       useAuthStore.setState({
         user: null,
         accessToken: null,
