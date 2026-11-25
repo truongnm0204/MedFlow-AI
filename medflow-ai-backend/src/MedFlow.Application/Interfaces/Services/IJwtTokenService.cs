@@ -12,4 +12,7 @@ public class JwtTokenResult
 public interface IJwtTokenService
 {
     JwtTokenResult GenerateAccessToken(User user, IEnumerable<string> roles);
+
+    JwtTokenResult GenerateAccessToken(User user, IEnumerable<string> roles, long? sessionId)
+        => GenerateAccessToken(user, roles);
 }

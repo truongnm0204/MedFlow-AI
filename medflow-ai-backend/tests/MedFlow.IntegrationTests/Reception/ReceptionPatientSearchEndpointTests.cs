@@ -23,7 +23,10 @@ public sealed class ReceptionPatientSearchEndpointTests : AuthTestBase
 
     private sealed class StubSearchService : IReceptionPatientSearchService
     {
-        public Task<SearchPatientsResponseDto> SearchPatientsAsync(SearchPatientsRequest request, CancellationToken ct = default)
+        public Task<SearchPatientsResponseDto> SearchPatientsAsync(
+            SearchPatientsRequest request,
+            CancellationToken ct = default,
+            long? actorUserId = null)
         {
             if (request.Tab == "BOGUS")
                 throw new ValidationException("Tab không hợp lệ.");
@@ -33,8 +36,14 @@ public sealed class ReceptionPatientSearchEndpointTests : AuthTestBase
                 0,
                 request.Page,
                 request.PageSize,
-                new SearchTabCountsDto(0, 0, 0, 0)));
+                new SearchTabCountsDto(0, 0, 0, 0),
+                new ReceptionDashboardSummaryDto(3, 2, 1, 4)));
         }
+
+        public Task<ReceptionDashboardSummaryDto> GetDashboardSummaryAsync(
+            long actorUserId,
+            CancellationToken ct = default)
+            => Task.FromResult(new ReceptionDashboardSummaryDto(3, 2, 1, 4));
     }
 
     private HttpClient CreateStubbedClient() =>
@@ -92,5 +101,37 @@ public sealed class ReceptionPatientSearchEndpointTests : AuthTestBase
         var response = await CreateStubbedClient().SendAsync(request);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DashboardSummary_NoToken_Returns401_AndPatientRole_Returns403()
+    {
+        var unauth = await Client.GetAsync("/api/v1/reception/dashboard-summary");
+        Assert.Equal(HttpStatusCode.Unauthorized, unauth.StatusCode);
+
+        using var patientReq = AuthedGet("/api/v1/reception/dashboard-summary", 1, "patient01@medflow.test", "PATIENT");
+        var forbidden = await Client.SendAsync(patientReq);
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
+    public async Task DashboardSummary_SeededReceptionStaff_Returns200MatchingEmbeddedSearchSummary()
+    {
+        var tokens = await LoginAsync("reception01@medflow.test", "Demo@12345");
+
+        using var summaryReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/reception/dashboard-summary");
+        summaryReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        var summaryRes = await Client.SendAsync(summaryReq);
+        Assert.Equal(HttpStatusCode.OK, summaryRes.StatusCode);
+        var summary = await summaryRes.Content.ReadFromJsonAsync<ReceptionDashboardSummaryDto>();
+        Assert.NotNull(summary);
+
+        using var searchReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/reception/patients/search?tab=ALL&page=1&pageSize=5");
+        searchReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        var searchRes = await Client.SendAsync(searchReq);
+        Assert.Equal(HttpStatusCode.OK, searchRes.StatusCode);
+        var searchBody = await searchRes.Content.ReadFromJsonAsync<SearchPatientsResponseDto>();
+        Assert.NotNull(searchBody);
+        Assert.Equal(summary, searchBody.DashboardSummary);
     }
 }

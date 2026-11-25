@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertCircle, ChevronRight, Home, LayoutDashboard, RefreshCw } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronRight,
+  Home,
+  LayoutDashboard,
+  RefreshCw,
+} from 'lucide-react';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import {
@@ -16,8 +23,11 @@ import { PatientContactCard } from '../components/patient-contact-card';
 import { PatientMedicalIdentityCard } from '../components/patient-medical-identity-card';
 import { PatientProfileActions } from '../components/patient-profile-actions';
 import { PatientProfileSidebar } from '../components/patient-profile-sidebar';
-import { usePatientProfileQuery } from '../hooks/use-patient-profile';
-import type { PatientContact, PatientProfile } from '../types/patient-profile.types';
+import {
+  usePatientProfileQuery,
+  useUpdatePatientProfileMutation,
+} from '../hooks/use-patient-profile';
+import type { UpdateMyPatientProfileInput } from '../types/patient-profile.types';
 
 export function PatientProfilePage() {
   const navigate = useNavigate();
@@ -25,18 +35,20 @@ export function PatientProfilePage() {
   const isStaffAccount = isStaffRole(authUser?.roles) && !authUser?.roles?.includes('PATIENT');
   const roleLabel = getRoleDisplayLabel(authUser?.roles);
   const workbenchRoute = getRoleLandingRoute(authUser?.roles);
-  const { data: remoteProfile, isPending, isError, error, refetch } = usePatientProfileQuery();
-  const [contactOverride, setContactOverride] = useState<PatientContact | null>(null);
+  const { data: profile, isPending, isError, error, refetch } = usePatientProfileQuery();
+  const updateProfileMutation = useUpdatePatientProfileMutation();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [saveSuccessBanner, setSaveSuccessBanner] = useState<string | null>(null);
 
-  const profile: PatientProfile | null = remoteProfile
-    ? contactOverride
-      ? { ...remoteProfile, contact: contactOverride }
-      : remoteProfile
-    : null;
+  const handleSaveProfile = async (payload: UpdateMyPatientProfileInput) => {
+    await updateProfileMutation.mutateAsync(payload);
+    setSaveSuccessBanner('Đã lưu thông tin hồ sơ cá nhân thành công.');
+  };
 
-  const handleSaveContact = (updatedContact: PatientContact) => {
-    setContactOverride(updatedContact);
+  const handleOpenEditModal = () => {
+    if (isStaffAccount) return;
+    setSaveSuccessBanner(null);
+    setIsEditModalOpen(true);
   };
 
   const handleDownloadPdf = () => {
@@ -47,7 +59,7 @@ export function PatientProfilePage() {
     <div className="flex min-h-screen flex-col bg-canvas font-sans text-ink antialiased">
       <AppHeader />
 
-      <main className="flex-1 pb-16 pt-5">
+      <main className="flex-1 pt-5 pb-16">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <nav aria-label="Breadcrumb" className="mb-6 flex items-center gap-2 text-xs text-sub">
             <Link to="/" className="flex items-center gap-1.5 transition-colors hover:text-primary">
@@ -65,7 +77,7 @@ export function PatientProfilePage() {
           {isStaffAccount && (
             <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-sky-200/80 bg-sky-50/70 px-5 py-4">
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-sky-700">
+                <p className="text-xs font-bold tracking-wider text-sky-700 uppercase">
                   Tài khoản nhân sự nội bộ • {roleLabel}
                 </p>
                 <p className="mt-1 text-xs text-sub">
@@ -83,6 +95,16 @@ export function PatientProfilePage() {
                 <LayoutDashboard className="h-4 w-4" aria-hidden="true" />
                 <span>Mở Bàn làm việc ({roleLabel})</span>
               </Link>
+            </div>
+          )}
+
+          {saveSuccessBanner && (
+            <div
+              role="status"
+              className="mb-6 flex items-center gap-2.5 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3.5 text-xs font-semibold text-emerald-800"
+            >
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+              <span>{saveSuccessBanner}</span>
             </div>
           )}
 
@@ -139,37 +161,46 @@ export function PatientProfilePage() {
                   <PatientMedicalIdentityCard identity={profile.identity} />
                   <PatientContactCard
                     contact={profile.contact}
-                    onEditContact={() => setIsEditModalOpen(true)}
+                    onEditContact={isStaffAccount ? undefined : handleOpenEditModal}
                   />
-                  <PatientProfileActions
-                    onEditContact={() => setIsEditModalOpen(true)}
-                    onDownloadPdf={handleDownloadPdf}
-                  />
+                  {!isStaffAccount && (
+                    <PatientProfileActions
+                      onEditContact={handleOpenEditModal}
+                      onDownloadPdf={handleDownloadPdf}
+                    />
+                  )}
 
-                  <div className="mt-6 rounded-2xl border border-border bg-white p-5">
-                    <h2 className="text-sm font-bold text-ink">Đã từng khám tại bệnh viện?</h2>
-                    <p className="mt-1 text-xs leading-relaxed text-sub">
-                      Liên kết tài khoản với hồ sơ bệnh nhân cũ để xem lại lịch sử khám và viện phí.
-                      Cần xác thực OTP và nhân viên đối chiếu giấy tờ.
-                    </p>
-                    <Link
-                      to="/patient/identity-claims"
-                      className="mt-3 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-dark focus-visible:ring-2 focus-visible:ring-primary"
-                    >
-                      <span>Liên kết hồ sơ đã có</span>
-                      <ChevronRight className="h-4 w-4" aria-hidden="true" />
-                    </Link>
-                  </div>
+                  {!isStaffAccount && (
+                    <div className="mt-6 rounded-2xl border border-border bg-white p-5">
+                      <h2 className="text-sm font-bold text-ink">Đã từng khám tại bệnh viện?</h2>
+                      <p className="mt-1 text-xs leading-relaxed text-sub">
+                        Liên kết tài khoản với hồ sơ bệnh nhân cũ để xem lại lịch sử khám và viện
+                        phí. Cần xác thực OTP và nhân viên đối chiếu giấy tờ.
+                      </p>
+                      <Link
+                        to="/patient/identity-claims"
+                        className="mt-3 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-dark focus-visible:ring-2 focus-visible:ring-primary"
+                      >
+                        <span>Liên kết hồ sơ đã có</span>
+                        <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                      </Link>
+                    </div>
+                  )}
                 </section>
               </div>
 
-              <EditContactModal
-                open={isEditModalOpen}
-                onClose={() => setIsEditModalOpen(false)}
-                identity={profile.identity}
-                contact={profile.contact}
-                onSave={handleSaveContact}
-              />
+              {isEditModalOpen && (
+                <EditContactModal
+                  key={`${profile.id}-${profile.contact.phone}-${profile.vitals.bloodType}`}
+                  open={isEditModalOpen}
+                  onClose={() => setIsEditModalOpen(false)}
+                  identity={profile.identity}
+                  vitals={profile.vitals}
+                  contact={profile.contact}
+                  isSubmitting={updateProfileMutation.isPending}
+                  onSave={handleSaveProfile}
+                />
+              )}
             </>
           )}
         </div>

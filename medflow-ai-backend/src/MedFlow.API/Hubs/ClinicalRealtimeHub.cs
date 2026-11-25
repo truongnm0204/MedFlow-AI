@@ -45,7 +45,7 @@ public sealed class ClinicalRealtimeHub : Hub
             throw TranslateDomainException(ex);
         }
 
-        _registry.RegisterConnection(Context.ConnectionId, userId);
+        _registry.RegisterConnection(Context.ConnectionId, userId, ExtractOptionalSessionId());
         await base.OnConnectedAsync();
     }
 
@@ -182,6 +182,16 @@ public sealed class ClinicalRealtimeHub : Hub
         }
 
         return userId;
+    }
+
+    private long? ExtractOptionalSessionId()
+    {
+        var rawSid = Context.User?.FindFirstValue("sid");
+        return !string.IsNullOrWhiteSpace(rawSid) &&
+               long.TryParse(rawSid, NumberStyles.None, CultureInfo.InvariantCulture, out var sid) &&
+               sid > 0
+            ? sid
+            : null;
     }
 
     private static bool IsDomainAccessException(Exception ex) =>

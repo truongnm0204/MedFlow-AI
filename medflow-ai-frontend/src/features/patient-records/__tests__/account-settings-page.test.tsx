@@ -11,6 +11,7 @@ import { AccountSettingsPage } from '../pages/account-settings-page';
 vi.mock('@/features/auth/api/auth.api', () => ({
   getMe: vi.fn(),
   logout: vi.fn(),
+  changePassword: vi.fn(),
 }));
 
 function renderSettingsPage() {
@@ -96,5 +97,54 @@ describe('AccountSettingsPage', () => {
       screen.queryByRole('link', { name: /Hồ sơ gia đình & Xác minh PHI/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Mở Bàn làm việc/i })).toBeInTheDocument();
+  });
+
+  it('submits ChangePasswordCard with active session refresh token and resets form on success', async () => {
+    const patientUser = {
+      id: 1,
+      email: 'patient@medflow.vn',
+      fullName: 'Nguyễn Văn An',
+      roles: ['PATIENT'],
+      patientCode: 'PAT-001',
+    };
+    useAuthStore.setState({
+      user: patientUser,
+      accessToken: 'access-1',
+      refreshToken: 'active-laptop-rt',
+      isAuthenticated: true,
+      sessionEpoch: 4,
+    });
+    vi.mocked(authApi.getMe).mockResolvedValue(patientUser);
+    vi.mocked(authApi.changePassword).mockResolvedValue({
+      message: 'Đổi mật khẩu thành công. Các phiên đăng nhập khác đã được thu hồi.',
+      keptCurrentSession: true,
+    });
+
+    renderSettingsPage();
+
+    fireEvent.change(screen.getByLabelText('Mật khẩu hiện tại'), {
+      target: { value: 'OldPassword123' },
+    });
+    fireEvent.change(screen.getByLabelText('Mật khẩu mới'), {
+      target: { value: 'NewPassword456' },
+    });
+    fireEvent.change(screen.getByLabelText('Xác nhận mật khẩu mới'), {
+      target: { value: 'NewPassword456' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cập nhật mật khẩu' }));
+
+    await waitFor(() => {
+      expect(authApi.changePassword).toHaveBeenCalledWith({
+        currentPassword: 'OldPassword123',
+        newPassword: 'NewPassword456',
+        currentRefreshToken: 'active-laptop-rt',
+      });
+    });
+
+    expect(
+      await screen.findByText('Đổi mật khẩu thành công. Các phiên đăng nhập khác đã được thu hồi.'),
+    ).toBeInTheDocument();
+    expect((screen.getByLabelText('Mật khẩu hiện tại') as HTMLInputElement).value).toBe('');
   });
 });

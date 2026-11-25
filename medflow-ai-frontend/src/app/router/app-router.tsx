@@ -413,6 +413,13 @@ const AccountSettingsPage = withRouteSuspense(
     })),
   ),
 );
+const ForgotPasswordPage = withRouteSuspense(
+  lazy(() =>
+    import('@/features/auth/pages/forgot-password-page').then((m) => ({
+      default: m.ForgotPasswordPage,
+    })),
+  ),
+);
 const MedicalRecordDetailPage = withRouteSuspense(
   lazy(() =>
     import('@/features/patient-records/pages/medical-record-detail-page').then((m) => ({
@@ -710,6 +717,14 @@ function AppRoutes() {
         element={
           <GuestOnly>
             <LoginPage />
+          </GuestOnly>
+        }
+      />
+      <Route
+        path="/forgot-password"
+        element={
+          <GuestOnly>
+            <ForgotPasswordPage />
           </GuestOnly>
         }
       />

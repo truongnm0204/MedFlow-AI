@@ -43,6 +43,33 @@ internal static class PatientSelfResolver
         return patient;
     }
 
+    public static async Task<Patient> LoadActiveTrackedAsync(
+        IApplicationDbContext db,
+        long userId,
+        CancellationToken ct)
+    {
+        var ids = await db.Patients
+            .AsNoTracking()
+            .Where(p => p.UserId == userId)
+            .OrderBy(p => p.Id)
+            .Take(2)
+            .Select(p => p.Id)
+            .ToListAsync(ct);
+
+        var patientId = RequireSinglePatientId(ids, userId);
+
+        var patient = await db.Patients
+            .Include(p => p.User)
+            .FirstAsync(p => p.Id == patientId, ct);
+        if (patient.User is null || patient.User.AccountStatus != AccountStatus.ACTIVE)
+            throw new UnauthorizedAccessException("Tài khoản bệnh nhân chưa kích hoạt hoặc đã bị khóa.");
+
+        if (!string.Equals(patient.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+            throw new UnauthorizedAccessException("Hồ sơ bệnh nhân đang ngừng hoạt động.");
+
+        return patient;
+    }
+
     internal static long RequireSinglePatientId(IReadOnlyList<long> ids, long userId)
     {
         if (ids.Count == 0)

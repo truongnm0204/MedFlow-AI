@@ -24,6 +24,7 @@ import {
   useCheckInMutation,
   useCreatePatientMutation,
   usePatientDetail,
+  useReceptionDashboardSummary,
   useReceptionPatientSearch,
   useUpdatePatientMutation,
 } from '../hooks/use-reception-api';
@@ -101,6 +102,7 @@ export function ReceptionDashboardPage() {
   const selectedPatient = patientDetailQuery.data ?? null;
   const canAssignVisit = hasPermission(user?.roles, 'VISIT_ASSIGN');
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
+  const summaryQuery = useReceptionDashboardSummary();
   const searchQuery = useReceptionPatientSearch('', 'ALL');
   const checkInMutation = useCheckInMutation();
   const createPatientMutation = useCreatePatientMutation();
@@ -126,18 +128,8 @@ export function ReceptionDashboardPage() {
   );
 
   const patientRows = searchQuery.data?.items ?? [];
-  const counts = searchQuery.data?.counts ?? {
-    all: 0,
-    hasAppointment: 0,
-    checkedIn: 0,
-    noAppointment: 0,
-  };
-  const stats: ReceptionStats = {
-    waitingCheckIn: Math.max(0, counts.hasAppointment - counts.checkedIn),
-    inQueue: counts.checkedIn,
-    inConsultation: 0,
-    completedToday: 0,
-  };
+  const stats: ReceptionStats | null =
+    summaryQuery.data ?? searchQuery.data?.dashboardSummary ?? null;
   const appointments = patientRows
     .filter((row) => row.todayAppointment)
     .map((row) => ({
@@ -260,7 +252,11 @@ export function ReceptionDashboardPage() {
             <Alert tone="error">{getErrorMessage(searchQuery.error)}</Alert>
           ) : null}
 
-          <ReceptionStatCards stats={stats} />
+          <ReceptionStatCards
+            stats={stats}
+            isLoading={stats === null && summaryQuery.isPending}
+            isError={summaryQuery.isError && stats === null}
+          />
 
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             {/* Queue preview */}

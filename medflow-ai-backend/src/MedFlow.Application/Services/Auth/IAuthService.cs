@@ -10,5 +10,13 @@ public interface IAuthService
     Task LogoutAsync(long userId, string refreshToken, string? ipAddress, CancellationToken ct = default);
     Task<VerifyOtpResponse> VerifyOtpAsync(VerifyOtpRequest request, CancellationToken ct = default);
     Task<ResendOtpResponse> ResendOtpAsync(ResendOtpRequest request, CancellationToken ct = default);
+    Task<ForgotPasswordResponse> ForgotPasswordAsync(ForgotPasswordRequest request, string? ipAddress, CancellationToken ct = default);
+    Task<ResetPasswordResponse> ResetPasswordAsync(ResetPasswordRequest request, string? ipAddress, CancellationToken ct = default);
+    Task<ChangePasswordResponse> ChangePasswordAsync(
+        long userId,
+        ChangePasswordRequest request,
+        long? currentSessionId,
+        string? ipAddress,
+        CancellationToken ct = default);
     Task<UserDto> GetMeAsync(long userId, CancellationToken ct = default);
 }

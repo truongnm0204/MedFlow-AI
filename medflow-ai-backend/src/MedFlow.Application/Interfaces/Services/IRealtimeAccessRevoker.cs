@@ -21,4 +21,13 @@ public interface IRealtimeAccessRevoker
         long userId,
         string reasonCode = "ACCOUNT_REVOKED",
         CancellationToken ct = default);
+
+    Task RevokeUserConnectionsExceptSessionAsync(
+        long userId,
+        long? keepSessionId,
+        string reasonCode = "SESSION_REVOKED",
+        CancellationToken ct = default)
+        => keepSessionId.HasValue
+            ? Task.CompletedTask
+            : RevokeUserConnectionsAsync(userId, reasonCode, ct);
 }

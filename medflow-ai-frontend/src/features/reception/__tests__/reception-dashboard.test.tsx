@@ -37,6 +37,16 @@ describe('ReceptionDashboardPage', () => {
       if (url === '/reception/examination-queue') {
         return { data: buildMockExaminationQueueResponse() };
       }
+      if (url === '/reception/dashboard-summary') {
+        return {
+          data: {
+            waitingCheckIn: 24,
+            inQueue: 18,
+            inConsultation: 8,
+            completedToday: 46,
+          },
+        };
+      }
       if (url === '/reception/patients/search') {
         return {
           data: {
@@ -112,6 +122,46 @@ describe('ReceptionDashboardPage', () => {
     // "Đang khám" xuất hiện ở cả stat card và queue status badge.
     expect(screen.getAllByText('Đang khám').length).toBeGreaterThan(0);
     expect(screen.getByText('Hoàn tất hôm nay')).toBeInTheDocument();
+  });
+
+  it('hien thi so lieu KPI thuc tu endpoint /reception/dashboard-summary va khong hien so 0 gia khi loi', async () => {
+    useAuthStore.setState({
+      user: {
+        id: 5,
+        email: 'letan@medflow.test',
+        fullName: 'Lê Tân',
+        roles: ['RECEPTION'],
+        patientCode: null,
+      },
+      accessToken: 'tok',
+      refreshToken: 'rtok',
+      isAuthenticated: true,
+    });
+
+    const { unmount } = renderPage();
+
+    expect(await screen.findByText('24')).toBeInTheDocument();
+    expect(screen.getByTestId('reception-stat-waitingCheckIn')).toHaveTextContent('24');
+    expect(screen.getByTestId('reception-stat-inQueue')).toHaveTextContent('18');
+    expect(screen.getByTestId('reception-stat-inConsultation')).toHaveTextContent('8');
+    expect(screen.getByTestId('reception-stat-completedToday')).toHaveTextContent('46');
+    unmount();
+
+    // Khi API dashboard-summary bị lỗi, hiển thị ký hiệu — chứ không giả lập số 0
+    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (url === '/reception/examination-queue') {
+        return { data: buildMockExaminationQueueResponse() };
+      }
+      if (url === '/reception/dashboard-summary') {
+        throw new Error('Backend unavailable');
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    renderPage();
+
+    expect(await screen.findByLabelText('Chờ check-in: chưa có dữ liệu')).toHaveTextContent('—');
+    expect(screen.getByLabelText('Hoàn tất hôm nay: chưa có dữ liệu')).toHaveTextContent('—');
   });
 
   it('render queue table voi mock entries', async () => {

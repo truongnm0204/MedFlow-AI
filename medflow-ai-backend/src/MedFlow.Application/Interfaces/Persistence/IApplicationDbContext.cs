@@ -55,4 +55,8 @@ public interface IApplicationDbContext
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);
     Task<bool> TryLockAppointmentForUpdateAsync(long appointmentId, CancellationToken ct = default)
         => Task.FromResult(false);
+    Task<bool> TryLockUserForUpdateAsync(long userId, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockPatientForUpdateAsync(long patientId, CancellationToken ct = default)
+        => Task.FromResult(false);
 }

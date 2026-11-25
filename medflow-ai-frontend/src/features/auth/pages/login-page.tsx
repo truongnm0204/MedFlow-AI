@@ -13,6 +13,7 @@ import { loginSchema, type LoginFormValues } from '../schemas/auth.schemas';
 export function LoginPage() {
   const [params] = useSearchParams();
   const verified = params.get('verified') === '1';
+  const passwordReset = params.get('reset') === '1';
   const login = useLogin();
 
   const {
@@ -48,6 +49,11 @@ export function LoginPage() {
               Tài khoản đã được kích hoạt. Vui lòng đăng nhập.
             </Alert>
           )}
+          {passwordReset && (
+            <Alert tone="success" className="mt-5">
+              Đặt lại mật khẩu thành công. Vui lòng đăng nhập bằng mật khẩu mới.
+            </Alert>
+          )}
           {login.isError && (
             <Alert tone="error" className="mt-5">
               {getErrorMessage(login.error, 'Đăng nhập thất bại.')}
@@ -81,9 +87,12 @@ export function LoginPage() {
                 />
                 Ghi nhớ đăng nhập
               </label>
-              <a href="#" className="font-medium text-primary hover:text-primary-dark">
+              <Link
+                to="/forgot-password"
+                className="font-medium text-primary hover:text-primary-dark"
+              >
                 Quên mật khẩu?
-              </a>
+              </Link>
             </div>
 
             <Button type="submit" size="lg" loading={login.isPending} className="w-full">

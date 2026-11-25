@@ -99,6 +99,16 @@ public sealed class SignalRRealtimeAccessRevoker : IRealtimeAccessRevoker
         await ApplyEvictionsAsync(evicted, reasonCode);
     }
 
+    public async Task RevokeUserConnectionsExceptSessionAsync(
+        long userId,
+        long? keepSessionId,
+        string reasonCode = "SESSION_REVOKED",
+        CancellationToken ct = default)
+    {
+        var evicted = _registry.EvictUserSubscriptionsExceptSession(userId, keepSessionId);
+        await ApplyEvictionsAsync(evicted, reasonCode);
+    }
+
     private async Task ApplyEvictionsAsync(
         IReadOnlyList<EvictedSubscriptionItem> evicted,
         string reasonCode)

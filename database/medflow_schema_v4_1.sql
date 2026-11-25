@@ -64,7 +64,10 @@ CREATE TABLE "patients" (
     "identification_hash" varchar(128),
     "status" varchar(16),
     "address" text,
-    "blood_type" varchar(8) CHECK ("blood_type" IS NULL OR "blood_type" IN ('A+','A-','B+','B-','AB+','AB-','O+','O-'))
+    "blood_type" varchar(8) CHECK ("blood_type" IS NULL OR "blood_type" IN ('A+','A-','B+','B-','AB+','AB-','O+','O-')),
+    "emergency_contact_name" varchar(200),
+    "emergency_contact_relationship" varchar(60),
+    "emergency_contact_phone" varchar(30)
 );
 
 CREATE TABLE "patient_family_links" (

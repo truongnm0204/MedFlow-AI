@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using MedFlow.Application.DTOs.Reception;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Domain.Constants;
@@ -31,7 +32,29 @@ public sealed class ReceptionPatientSearchController : ControllerBase
         [FromQuery] SearchPatientsRequest request,
         CancellationToken ct)
     {
-        var result = await _searchService.SearchPatientsAsync(request, ct);
+        var result = await _searchService.SearchPatientsAsync(request, ct, GetUserId());
         return Ok(result);
+    }
+
+    /// <summary>
+    /// GET /api/v1/reception/dashboard-summary — Thống kê thực tế trong ngày trên Tổng quan Quầy Tiếp đón (#12).
+    /// </summary>
+    [HttpGet("/api/v1/reception/dashboard-summary")]
+    [ProducesResponseType<ReceptionDashboardSummaryDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ReceptionDashboardSummaryDto>> GetDashboardSummary(CancellationToken ct)
+        => Ok(await _searchService.GetDashboardSummaryAsync(GetUserId(), ct));
+
+    private long GetUserId()
+    {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue("sub");
+
+        if (string.IsNullOrWhiteSpace(sub) || !long.TryParse(sub, out var userId) || userId <= 0)
+            throw new UnauthorizedAccessException("Token không hợp lệ");
+
+        return userId;
     }
 }

@@ -3,9 +3,20 @@ import type { UserDto } from '@/features/auth/types/auth.types';
 import { getRoleDisplayLabel, isStaffRole } from '@/features/auth/utils/role-landing';
 import { apiClient } from '@/shared/lib/axios';
 
-import type { GenderType, PatientProfile } from '../types/patient-profile.types';
+import type {
+  GenderCode,
+  GenderType,
+  PatientProfile,
+  UpdateMyPatientProfileInput,
+} from '../types/patient-profile.types';
 
 const UNSET_LABEL = 'Chưa cập nhật';
+
+export interface PatientEmergencyContactDto {
+  fullName?: string | null;
+  relationship?: string | null;
+  phone?: string | null;
+}
 
 export interface PatientProfileResponseDto {
   id: number;
@@ -24,6 +35,7 @@ export interface PatientProfileResponseDto {
   address: string | null;
   bloodType: string | null;
   allowedActions: string[];
+  emergencyContact?: PatientEmergencyContactDto | null;
 }
 
 function mapGender(gender: string | null): GenderType {
@@ -33,6 +45,15 @@ function mapGender(gender: string | null): GenderType {
   if (normalized === 'FEMALE' || normalized === 'NỮ' || normalized === 'NU') return 'Nữ';
   if (normalized === 'OTHER' || normalized === 'KHÁC' || normalized === 'KHAC') return 'Khác';
   return UNSET_LABEL;
+}
+
+function mapGenderCode(gender: string | null): GenderCode | null {
+  if (!gender) return null;
+  const normalized = gender.trim().toUpperCase();
+  if (normalized === 'MALE' || normalized === 'NAM') return 'MALE';
+  if (normalized === 'FEMALE' || normalized === 'NỮ' || normalized === 'NU') return 'FEMALE';
+  if (normalized === 'OTHER' || normalized === 'KHÁC' || normalized === 'KHAC') return 'OTHER';
+  return null;
 }
 
 function formatIsoDateToDisplay(dateOfBirth: string | null): string {
@@ -46,6 +67,7 @@ function formatIsoDateToDisplay(dateOfBirth: string | null): string {
 export function mapPatientProfileDtoToModel(dto: PatientProfileResponseDto): PatientProfile {
   const pid = dto.patientCode?.trim() || String(dto.id);
   const fullName = (dto.fullName?.trim() || UNSET_LABEL).toUpperCase();
+  const ec = dto.emergencyContact;
 
   return {
     id: pid,
@@ -53,8 +75,10 @@ export function mapPatientProfileDtoToModel(dto: PatientProfileResponseDto): Pat
     identity: {
       fullName,
       dateOfBirth: formatIsoDateToDisplay(dto.dateOfBirth),
+      rawDateOfBirthIso: dto.dateOfBirth?.trim() || null,
       age: dto.age ?? null,
       gender: mapGender(dto.gender),
+      rawGenderCode: mapGenderCode(dto.gender),
       nationality: UNSET_LABEL,
       identityNumber: dto.maskedIdentification?.trim() || 'Chưa cập nhật CCCD',
       identityIssueDate: UNSET_LABEL,
@@ -79,9 +103,9 @@ export function mapPatientProfileDtoToModel(dto: PatientProfileResponseDto): Pat
       isEmailVerified: Boolean(dto.isEmailVerified),
       permanentAddress: dto.address?.trim() || UNSET_LABEL,
       emergencyContact: {
-        fullName: UNSET_LABEL,
-        relationship: UNSET_LABEL,
-        phone: UNSET_LABEL,
+        fullName: ec?.fullName?.trim() || UNSET_LABEL,
+        relationship: ec?.relationship?.trim() || UNSET_LABEL,
+        phone: ec?.phone?.trim() || UNSET_LABEL,
       },
     },
   };
@@ -98,8 +122,10 @@ export function mapStaffUserToProfileModel(user: UserDto): PatientProfile {
     identity: {
       fullName,
       dateOfBirth: UNSET_LABEL,
+      rawDateOfBirthIso: null,
       age: null,
       gender: UNSET_LABEL,
+      rawGenderCode: null,
       nationality: UNSET_LABEL,
       identityNumber: `${staffCode} (${roleLabel})`,
       identityIssueDate: UNSET_LABEL,
@@ -142,5 +168,36 @@ export async function getMyPatientProfileApi(): Promise<PatientProfile> {
   }
 
   const { data } = await apiClient.get<PatientProfileResponseDto>('/patients/me/profile');
+  return mapPatientProfileDtoToModel(data);
+}
+
+export async function updateMyPatientProfileApi(
+  payload: UpdateMyPatientProfileInput,
+): Promise<PatientProfile> {
+  const body: Record<string, unknown> = {
+    phone: payload.phone,
+    address: payload.address,
+    bloodType: payload.bloodType,
+    emergencyContact: payload.emergencyContact,
+  };
+
+  if (payload.dateOfBirth !== undefined) {
+    body.dateOfBirth = payload.dateOfBirth;
+  }
+  if (payload.gender !== undefined) {
+    body.gender = payload.gender;
+  }
+
+  const { data } = await apiClient.put<PatientProfileResponseDto>('/patients/me/profile', body);
+  return mapPatientProfileDtoToModel(data);
+}
+
+export async function patchMyPatientProfileApi(
+  payload: Partial<UpdateMyPatientProfileInput>,
+): Promise<PatientProfile> {
+  const { data } = await apiClient.patch<PatientProfileResponseDto>(
+    '/patients/me/profile',
+    payload,
+  );
   return mapPatientProfileDtoToModel(data);
 }

@@ -1,10 +1,14 @@
 export type GenderType = 'Nam' | 'Nữ' | 'Khác' | 'Chưa cập nhật';
 
+export type GenderCode = 'MALE' | 'FEMALE' | 'OTHER';
+
 export interface PatientIdentity {
   fullName: string;
   dateOfBirth: string;
+  rawDateOfBirthIso?: string | null;
   age: number | null;
   gender: GenderType;
+  rawGenderCode?: GenderCode | null;
   nationality: string;
   identityNumber: string;
   identityIssueDate: string;
@@ -47,4 +51,19 @@ export interface PatientProfile {
   vitals: PatientVitals;
   shortcuts: PatientShortcuts;
   contact: PatientContact;
+}
+
+export interface UpdateEmergencyContactInput {
+  fullName: string;
+  relationship: string;
+  phone: string;
+}
+
+export interface UpdateMyPatientProfileInput {
+  phone: string;
+  address: string | null;
+  bloodType: string | null;
+  dateOfBirth?: string | null;
+  gender?: GenderCode | null;
+  emergencyContact: UpdateEmergencyContactInput | null;
 }

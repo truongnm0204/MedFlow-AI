@@ -1,9 +1,13 @@
+using MedFlow.Application.Common.Serialization;
+using MedFlow.Application.DTOs.Patients;
 using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Patients;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MedFlow.UnitTests.Patients;
@@ -87,17 +91,35 @@ public sealed class PatientProfileServiceTests : IDisposable
             => new("DbSet này không được dùng trong PatientProfileServiceTests.");
     }
 
+    private sealed class RecordingAuditLogger : IAuditLogger
+    {
+        public List<(long? Actor, string Action, string EntityType, string? EntityId, object? Data, string? Ip)> Entries { get; } = [];
+
+        public void Add(
+            long? actorUserId,
+            string action,
+            string entityType,
+            string? entityId,
+            object? changeData,
+            string? ipAddress)
+        {
+            Entries.Add((actorUserId, action, entityType, entityId, changeData, ipAddress));
+        }
+    }
+
     private readonly ProfileTestDbContext _db;
+    private readonly RecordingAuditLogger _audit = new();
     private readonly PatientProfileService _sut;
 
     public PatientProfileServiceTests()
     {
         var options = new DbContextOptionsBuilder<ProfileTestDbContext>()
             .UseInMemoryDatabase($"patient-profile-{Guid.NewGuid():N}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         _db = new ProfileTestDbContext(options);
-        _sut = new PatientProfileService(_db);
+        _sut = new PatientProfileService(_db, _audit);
     }
 
     public void Dispose() => _db.Dispose();
@@ -302,10 +324,241 @@ public sealed class PatientProfileServiceTests : IDisposable
         // 2026-11-08 18:00 UTC == 2026-11-09 01:00 Vietnam time -> already turned 26 in Vietnam!
         var sutWithClock = new PatientProfileService(
             _db,
+            _audit,
             new FixedTimeProvider(new DateTimeOffset(2026, 11, 8, 18, 0, 0, TimeSpan.Zero)));
 
         var profile = await sutWithClock.GetPersonalProfileAsync(5);
         Assert.Equal(26, profile.Age);
+    }
+
+    [Fact]
+    public void Constructor_NullAuditLogger_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() => new PatientProfileService(_db, null!));
+    }
+
+    [Fact]
+    public async Task UpdatePersonalProfileAsync_PutFullUpdate_PersistsContactBloodTypeEmergencyContactAndAudits()
+    {
+        var user = new User
+        {
+            Id = 11,
+            Email = "update-put@medflow.test",
+            AccountStatus = AccountStatus.ACTIVE,
+            EmailVerifiedAt = DateTime.UtcNow,
+        };
+        var patient = new Patient
+        {
+            Id = 110,
+            UserId = 11,
+            PatientCode = "PAT-0110",
+            FullName = "Nguyễn Minh Khoa",
+            DateOfBirth = new DateOnly(1992, 4, 10),
+            Gender = "MALE",
+            Phone = "0901234567",
+            IdentificationHash = "verified-hash-110",
+            Status = "ACTIVE",
+            User = user,
+        };
+        _db.Users.Add(user);
+        _db.Patients.Add(patient);
+        await _db.SaveChangesAsync();
+
+        var updated = await _sut.UpdatePersonalProfileAsync(
+            11,
+            new UpdateMyPatientProfileRequest
+            {
+                Phone = OptionalField<string?>.FromValue("0988112233"),
+                Address = OptionalField<string?>.FromValue("  123 Nguyễn Trãi, Quận 1, TP.HCM  "),
+                BloodType = OptionalField<string?>.FromValue("ab+"),
+                EmergencyContact = OptionalField<UpdateEmergencyContactRequest?>.FromValue(
+                    new UpdateEmergencyContactRequest
+                    {
+                        FullName = OptionalField<string?>.FromValue("Nguyễn Thị Lan"),
+                        Relationship = OptionalField<string?>.FromValue("Vợ/Chồng"),
+                        Phone = OptionalField<string?>.FromValue("0912334455"),
+                    }),
+            },
+            isPatch: false,
+            ipAddress: "203.0.113.55");
+
+        Assert.Equal("0988112233", updated.Phone);
+        Assert.Equal("123 Nguyễn Trãi, Quận 1, TP.HCM", updated.Address);
+        Assert.Equal("AB+", updated.BloodType);
+        Assert.NotNull(updated.EmergencyContact);
+        Assert.Equal("Nguyễn Thị Lan", updated.EmergencyContact!.FullName);
+        Assert.Equal("Vợ/Chồng", updated.EmergencyContact.Relationship);
+        Assert.Equal("0912334455", updated.EmergencyContact.Phone);
+
+        var audit = Assert.Single(_audit.Entries);
+        Assert.Equal(11L, audit.Actor);
+        Assert.Equal(PatientProfileService.ProfileUpdatedAuditAction, audit.Action);
+        Assert.Equal("PATIENT", audit.EntityType);
+        Assert.Equal("110", audit.EntityId);
+        Assert.Equal("203.0.113.55", audit.Ip);
+        var auditJson = System.Text.Json.JsonSerializer.Serialize(audit.Data);
+        Assert.Contains("PATIENT_SELF_REPORTED", auditJson);
+    }
+
+    [Fact]
+    public async Task UpdatePersonalProfileAsync_PatchOmittedVsExplicitNull_PreservesOmittedAndClearsExplicitNull()
+    {
+        var user = new User
+        {
+            Id = 12,
+            Email = "update-patch@medflow.test",
+            AccountStatus = AccountStatus.ACTIVE,
+        };
+        var patient = new Patient
+        {
+            Id = 120,
+            UserId = 12,
+            PatientCode = "PAT-0120",
+            FullName = "Lê Thu Hà",
+            Phone = "0911222333",
+            Address = "Số 9 Hai Bà Trưng, Hà Nội",
+            BloodType = "O+",
+            EmergencyContactName = "Lê Văn Nam",
+            EmergencyContactRelationship = "Anh trai",
+            EmergencyContactPhone = "0933444555",
+            Status = "ACTIVE",
+            User = user,
+        };
+        _db.Users.Add(user);
+        _db.Patients.Add(patient);
+        await _db.SaveChangesAsync();
+
+        // 1. PATCH only phone -> address, bloodType, emergencyContact stay intact
+        var afterPhonePatch = await _sut.UpdatePersonalProfileAsync(
+            12,
+            new UpdateMyPatientProfileRequest
+            {
+                Phone = OptionalField<string?>.FromValue("0977888999"),
+            },
+            isPatch: true);
+
+        Assert.Equal("0977888999", afterPhonePatch.Phone);
+        Assert.Equal("Số 9 Hai Bà Trưng, Hà Nội", afterPhonePatch.Address);
+        Assert.Equal("O+", afterPhonePatch.BloodType);
+        Assert.NotNull(afterPhonePatch.EmergencyContact);
+        Assert.Equal("Lê Văn Nam", afterPhonePatch.EmergencyContact!.FullName);
+
+        // 2. PATCH explicit null on address + emergencyContact -> clears both while keeping phone & bloodType
+        var afterClearPatch = await _sut.UpdatePersonalProfileAsync(
+            12,
+            new UpdateMyPatientProfileRequest
+            {
+                Address = OptionalField<string?>.FromValue(null),
+                EmergencyContact = OptionalField<UpdateEmergencyContactRequest?>.FromValue(null),
+            },
+            isPatch: true);
+
+        Assert.Equal("0977888999", afterClearPatch.Phone);
+        Assert.Null(afterClearPatch.Address);
+        Assert.Equal("O+", afterClearPatch.BloodType);
+        Assert.Null(afterClearPatch.EmergencyContact);
+    }
+
+    [Fact]
+    public async Task UpdatePersonalProfileAsync_VerifiedIdentity_LocksFullNameIdentityCardDobAndGender()
+    {
+        var user = new User
+        {
+            Id = 13,
+            Email = "verified-lock@medflow.test",
+            AccountStatus = AccountStatus.ACTIVE,
+        };
+        var patient = new Patient
+        {
+            Id = 130,
+            UserId = 13,
+            PatientCode = "PAT-0130",
+            FullName = "Phạm Quốc Bảo",
+            DateOfBirth = new DateOnly(1985, 6, 20),
+            Gender = "MALE",
+            Phone = "0905111222",
+            IdentificationHash = "verified-cccd-hash",
+            Status = "ACTIVE",
+            User = user,
+        };
+        _db.Users.Add(user);
+        _db.Patients.Add(patient);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.UpdatePersonalProfileAsync(
+                13,
+                new UpdateMyPatientProfileRequest
+                {
+                    FullName = OptionalField<string?>.FromValue("Tên Giả Mạo"),
+                },
+                isPatch: true));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.UpdatePersonalProfileAsync(
+                13,
+                new UpdateMyPatientProfileRequest
+                {
+                    IdentityCard = OptionalField<string?>.FromValue("001085012345"),
+                },
+                isPatch: true));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.UpdatePersonalProfileAsync(
+                13,
+                new UpdateMyPatientProfileRequest
+                {
+                    DateOfBirth = OptionalField<DateOnly?>.FromValue(new DateOnly(1990, 1, 1)),
+                },
+                isPatch: true));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.UpdatePersonalProfileAsync(
+                13,
+                new UpdateMyPatientProfileRequest
+                {
+                    Gender = OptionalField<string?>.FromValue("FEMALE"),
+                },
+                isPatch: true));
+    }
+
+    [Fact]
+    public async Task UpdatePersonalProfileAsync_UnverifiedIdentity_AllowsUpdatingDobAndGender()
+    {
+        var user = new User
+        {
+            Id = 14,
+            Email = "unverified-dob@medflow.test",
+            AccountStatus = AccountStatus.ACTIVE,
+        };
+        var patient = new Patient
+        {
+            Id = 140,
+            UserId = 14,
+            PatientCode = "PAT-0140",
+            FullName = "Đặng Thùy Trang",
+            DateOfBirth = new DateOnly(1999, 1, 1),
+            Gender = "OTHER",
+            Phone = "0906111222",
+            IdentificationHash = null,
+            Status = "ACTIVE",
+            User = user,
+        };
+        _db.Users.Add(user);
+        _db.Patients.Add(patient);
+        await _db.SaveChangesAsync();
+
+        var updated = await _sut.UpdatePersonalProfileAsync(
+            14,
+            new UpdateMyPatientProfileRequest
+            {
+                DateOfBirth = OptionalField<DateOnly?>.FromValue(new DateOnly(1998, 12, 25)),
+                Gender = OptionalField<string?>.FromValue("female"),
+            },
+            isPatch: true);
+
+        Assert.Equal(new DateOnly(1998, 12, 25), updated.DateOfBirth);
+        Assert.Equal("FEMALE", updated.Gender);
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider

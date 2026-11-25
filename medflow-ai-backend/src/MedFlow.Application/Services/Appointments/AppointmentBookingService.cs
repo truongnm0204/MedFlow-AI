@@ -26,6 +26,7 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
     private readonly IAppointmentBookingLock _bookingLock;
     private readonly IAuditLogger _audit;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
 
     public AppointmentBookingService(
         IApplicationDbContext db,
@@ -34,7 +35,8 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
         IAppointmentPolicyService policyService,
         IAppointmentBookingLock bookingLock,
         IAuditLogger audit,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IRealtimeNotificationPublisher? realtimePublisher = null)
     {
         _db = db;
         _doctorCatalog = doctorCatalog;
@@ -43,6 +45,7 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
         _bookingLock = bookingLock;
         _audit = audit;
         _timeProvider = timeProvider;
+        _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
     }
 
     public async Task<CreateAppointmentResponse> CreateAsync(
@@ -121,6 +124,18 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
         var queueNumber = await AppointmentBookingRules.ComputeQueueNumberAsync(_db, appointment.Id, slot, ct);
 
         await tx.CommitAsync(ct);
+
+        if (DateOnly.FromDateTime(slot.StartsAt!.Value) == selection.Today && selection.HospitalId > 0)
+        {
+            await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+                _realtimePublisher,
+                new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                    HospitalId: selection.HospitalId,
+                    ServicePointId: null,
+                    RoomId: slot.RoomId,
+                    AppointmentId: appointment.Id),
+                ct);
+        }
 
         return new CreateAppointmentResponse(
             AppointmentId: appointmentIdStr,
@@ -381,6 +396,7 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
             IsDoctorMode: isDoctorMode,
             IsMorningShift: isMorningShift,
             HasExplicitSlotId: isDoctorMode || requestedSlotId > 0,
+            HospitalId: hospitalId,
             PatientId: patientId,
             SymptomNote: symptomNote,
             Service: serviceDto,
@@ -461,6 +477,7 @@ public sealed class AppointmentBookingService : IAppointmentBookingService
         bool IsDoctorMode,
         bool IsMorningShift,
         bool HasExplicitSlotId,
+        long HospitalId,
         long PatientId,
         string? SymptomNote,
         ExaminationServiceDto Service,

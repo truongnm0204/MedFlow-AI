@@ -47,6 +47,24 @@ public sealed class PatientsController : ControllerBase
     public async Task<ActionResult<PatientProfileResponse>> GetMyProfile(CancellationToken ct)
         => Ok(await _profileService.GetPersonalProfileAsync(GetUserId(), ct));
 
+    /// <summary>PUT/PATCH /api/v1/patients/me/profile — Cập nhật thông tin liên hệ và y tế cá nhân của bệnh nhân đang đăng nhập (UC05).</summary>
+    [HttpPut("me/profile")]
+    [HttpPatch("me/profile")]
+    [ProducesResponseType<PatientProfileResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PatientProfileResponse>> UpdateMyProfile(
+        [FromBody] UpdateMyPatientProfileRequest request,
+        CancellationToken ct)
+        => Ok(await _profileService.UpdatePersonalProfileAsync(
+            GetUserId(),
+            request,
+            isPatch: HttpMethods.IsPatch(Request.Method),
+            ipAddress: GetIp(),
+            ct: ct));
+
     /// <summary>GET /api/v1/patients/me/visits — Danh sách lượt khám thuộc quyền xem của bệnh nhân (UC18 / #778).</summary>
     [HttpGet("me/visits")]
     [ProducesResponseType<PatientVisitListResponseDto>(StatusCodes.Status200OK)]

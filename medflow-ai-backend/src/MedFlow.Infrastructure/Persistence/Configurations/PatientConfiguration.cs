@@ -48,5 +48,8 @@ public class PatientConfiguration : IEntityTypeConfiguration<Patient>
         builder.Property(p => p.Address).HasColumnName("address");
         builder.Property(p => p.Status).HasColumnName("status").HasMaxLength(16);
         builder.Property(p => p.BloodType).HasColumnName("blood_type").HasMaxLength(8);
+        builder.Property(p => p.EmergencyContactName).HasColumnName("emergency_contact_name").HasMaxLength(200);
+        builder.Property(p => p.EmergencyContactRelationship).HasColumnName("emergency_contact_relationship").HasMaxLength(60);
+        builder.Property(p => p.EmergencyContactPhone).HasColumnName("emergency_contact_phone").HasMaxLength(30);
     }
 }

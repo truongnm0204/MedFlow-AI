@@ -1,4 +1,9 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback } from 'react';
+
+import { useAuthStore } from '@/features/auth/store/auth.store';
+import { useRealtimeSubscription } from '@/shared/hooks/use-realtime-subscription';
+import { scheduleCoalescedInvalidation, type RealtimeChannel } from '@/shared/lib/realtime-client';
 
 import {
   assignDoctorToVisit,
@@ -9,6 +14,7 @@ import {
   fetchAssignableDoctors,
   fetchAvailableRooms,
   fetchPatientDetail,
+  fetchReceptionDashboardSummary,
   fetchWalkInCatalog,
   searchReceptionPatients,
   updatePatientAtReception,
@@ -20,6 +26,40 @@ import type { PatientEditableFields } from '../types/update-patient.types';
 import type { ClinicalPriority, PaymentMethod, WalkInPatient } from '../types/walk-in-visit.types';
 
 const searchKey = (query: string, tab: string) => ['reception', 'search', query, tab] as const;
+export const RECEPTION_DASHBOARD_SUMMARY_QUERY_KEY = ['reception', 'dashboard-summary'] as const;
+const HOSPITAL_QUEUE_CHANNEL: RealtimeChannel = { type: 'hospital-queue' };
+const DASHBOARD_SUMMARY_CONNECTED_POLL_MS = 30_000;
+const DASHBOARD_SUMMARY_FALLBACK_POLL_MS = 15_000;
+
+export function useReceptionDashboardSummary(enabled = true) {
+  const queryClient = useQueryClient();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+
+  const handleQueueChanged = useCallback(() => {
+    scheduleCoalescedInvalidation(queryClient, RECEPTION_DASHBOARD_SUMMARY_QUERY_KEY);
+  }, [queryClient]);
+
+  const { isLive } = useRealtimeSubscription({
+    channel: HOSPITAL_QUEUE_CHANNEL,
+    event: 'QueueChanged',
+    onEvent: handleQueueChanged,
+    onReconnected: handleQueueChanged,
+    enabled: enabled && isAuthenticated,
+  });
+
+  return useQuery({
+    queryKey: RECEPTION_DASHBOARD_SUMMARY_QUERY_KEY,
+    queryFn: fetchReceptionDashboardSummary,
+    enabled,
+    staleTime: 30_000,
+    refetchInterval:
+      enabled && isAuthenticated
+        ? isLive
+          ? DASHBOARD_SUMMARY_CONNECTED_POLL_MS
+          : DASHBOARD_SUMMARY_FALLBACK_POLL_MS
+        : false,
+  });
+}
 
 export function useReceptionPatientSearch(query: string, tab: string) {
   return useQuery({
@@ -34,7 +74,10 @@ export function useCheckInMutation() {
   return useMutation({
     mutationFn: (input: { appointmentIdOrCode: string; form: CheckInFormData }) =>
       checkInScheduledPatient(input.appointmentIdOrCode, input.form),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['reception', 'search'] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['reception', 'search'] });
+      void queryClient.invalidateQueries({ queryKey: RECEPTION_DASHBOARD_SUMMARY_QUERY_KEY });
+    },
   });
 }
 
@@ -60,7 +103,10 @@ export function useCreateWalkInMutation() {
       serviceName: string;
       priceFormatted: string;
     }) => createWalkInVisit(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['reception', 'search'] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['reception', 'search'] });
+      void queryClient.invalidateQueries({ queryKey: RECEPTION_DASHBOARD_SUMMARY_QUERY_KEY });
+    },
   });
 }
 
@@ -116,6 +162,9 @@ export function useCreatePatientMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: CreatePatientFormData) => createPatientAtReception(data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['reception', 'search'] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['reception', 'search'] });
+      void queryClient.invalidateQueries({ queryKey: RECEPTION_DASHBOARD_SUMMARY_QUERY_KEY });
+    },
   });
 }

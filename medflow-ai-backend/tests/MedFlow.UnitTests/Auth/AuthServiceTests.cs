@@ -176,8 +176,10 @@ public sealed class AuthServiceTests : IDisposable
         public List<(string RawToken, string? IpAddress)> RotatedTokens { get; } = [];
         public List<(string RawToken, string? IpAddress)> RevokedTokens { get; } = [];
         public List<(long UserId, string? IpAddress)> RevokedUsers { get; } = [];
+        public List<(long UserId, string? CandidateToken, long? ExpectedJwtSid, string? IpAddress)> RevokedOtherSessions { get; } = [];
 
         public RotateResult NextRotateResult { get; set; } = new() { Success = false };
+        public RevokeOtherSessionsOutcome NextRevokeOtherOutcome { get; set; } = new(null, 0);
 
         public Task<AuthSessionResult> GenerateAsync(long userId, string? createdByIp, CancellationToken ct = default)
         {
@@ -210,6 +212,17 @@ public sealed class AuthServiceTests : IDisposable
         {
             RevokedUsers.Add((userId, ipAddress));
             return Task.CompletedTask;
+        }
+
+        public Task<RevokeOtherSessionsOutcome> RevokeOtherSessionsForUserAsync(
+            long userId,
+            string? candidateKeepRawToken,
+            long? expectedJwtSessionId,
+            string? ipAddress,
+            CancellationToken ct = default)
+        {
+            RevokedOtherSessions.Add((userId, candidateKeepRawToken, expectedJwtSessionId, ipAddress));
+            return Task.FromResult(NextRevokeOtherOutcome);
         }
     }
 
@@ -804,5 +817,115 @@ public sealed class AuthServiceTests : IDisposable
             _sut.GetMeAsync(999));
 
         Assert.Equal("User with key '999' not found.", ex.Message);
+    }
+
+    // ── Password Recovery & Change Password ───────────────────────────────
+
+    [Fact]
+    public async Task ResetPasswordAsync_ValidOtp_UpdatesPasswordClearsLockoutRevokesAllSessionsAndAudits()
+    {
+        var user = await SeedUserAsync(
+            email: "reset@medflow.test",
+            password: DefaultPassword,
+            failedLoginAttempts: 3,
+            lockedUntil: DateTime.UtcNow.AddMinutes(10));
+
+        await _sut.ForgotPasswordAsync(new ForgotPasswordRequest { Email = user.Email }, "10.0.0.21");
+        var sentOtp = Assert.Single(_emailSender.Sent).ExtractedOtp!;
+        _audit.Entries.Clear();
+
+        var res = await _sut.ResetPasswordAsync(
+            new ResetPasswordRequest
+            {
+                Email = user.Email,
+                OtpCode = sentOtp,
+                NewPassword = "BrandNewPass123",
+            },
+            "10.0.0.21");
+
+        Assert.NotNull(res.Message);
+        Assert.Equal(0, user.FailedLoginAttempts);
+        Assert.Null(user.LockedUntil);
+        Assert.Equal(
+            PasswordVerificationResult.Success,
+            _passwordHasher.VerifyHashedPassword(user, user.PasswordHash!, "BrandNewPass123"));
+
+        var revoked = Assert.Single(_sessions.RevokedUsers);
+        Assert.Equal(user.Id, revoked.UserId);
+        Assert.Contains(_audit.Entries, e => e.Action == "PASSWORD_RESET_COMPLETED" && e.Actor == user.Id);
+    }
+
+    [Fact]
+    public async Task ChangePasswordAsync_ValidCurrentPasswordAndVerifiedSession_KeepsCurrentSessionAndAudits()
+    {
+        var user = await SeedUserAsync(email: "changepass@medflow.test", password: DefaultPassword);
+        _sessions.NextRevokeOtherOutcome = new RevokeOtherSessionsOutcome(KeptSessionId: 77L, RevokedCount: 2);
+
+        var res = await _sut.ChangePasswordAsync(
+            user.Id,
+            new ChangePasswordRequest
+            {
+                CurrentPassword = DefaultPassword,
+                NewPassword = "NewPassword456",
+                CurrentRefreshToken = "valid-laptop-rt",
+            },
+            currentSessionId: 77L,
+            ipAddress: "10.0.0.30");
+
+        Assert.True(res.KeptCurrentSession);
+        var call = Assert.Single(_sessions.RevokedOtherSessions);
+        Assert.Equal(user.Id, call.UserId);
+        Assert.Equal("valid-laptop-rt", call.CandidateToken);
+        Assert.Equal(77L, call.ExpectedJwtSid);
+        Assert.Contains(_audit.Entries, e => e.Action == "PASSWORD_CHANGED" && e.Actor == user.Id);
+    }
+
+    [Fact]
+    public async Task ChangePasswordAsync_FifthWrongCurrentPassword_LocksAccountRevokesAllSessionsAndThrowsValidation()
+    {
+        var user = await SeedUserAsync(
+            email: "bruteforce-cp@medflow.test",
+            password: DefaultPassword,
+            failedLoginAttempts: 4);
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.ChangePasswordAsync(
+                user.Id,
+                new ChangePasswordRequest
+                {
+                    CurrentPassword = "WrongCurrent999",
+                    NewPassword = "NewPassword456",
+                    CurrentRefreshToken = "rt",
+                },
+                currentSessionId: 10L,
+                ipAddress: "10.0.0.31"));
+
+        Assert.Equal("Mật khẩu hiện tại không chính xác.", ex.Message);
+        Assert.Equal(0, user.FailedLoginAttempts);
+        Assert.NotNull(user.LockedUntil);
+        Assert.Single(_sessions.RevokedUsers);
+        Assert.Contains(_audit.Entries, e => e.Action == "PASSWORD_CHANGE_FAILED" && e.Actor == user.Id);
+    }
+
+    [Fact]
+    public async Task ChangePasswordAsync_SameAsCurrentPassword_ThrowsValidationWithoutMutatingSessions()
+    {
+        var user = await SeedUserAsync(email: "samepass@medflow.test", password: DefaultPassword);
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _sut.ChangePasswordAsync(
+                user.Id,
+                new ChangePasswordRequest
+                {
+                    CurrentPassword = DefaultPassword,
+                    NewPassword = DefaultPassword,
+                    CurrentRefreshToken = "rt",
+                },
+                currentSessionId: 10L,
+                ipAddress: "10.0.0.32"));
+
+        Assert.Equal("Mật khẩu mới không được trùng với mật khẩu hiện tại.", ex.Message);
+        Assert.Empty(_sessions.RevokedOtherSessions);
+        Assert.Empty(_sessions.RevokedUsers);
     }
 }

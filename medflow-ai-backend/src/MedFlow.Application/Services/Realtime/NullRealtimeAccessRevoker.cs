@@ -25,6 +25,12 @@ public sealed class NullRealtimeAccessRevoker : IRealtimeAccessRevoker
         long userId,
         string reasonCode = "ACCOUNT_REVOKED",
         CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task RevokeUserConnectionsExceptSessionAsync(
+        long userId,
+        long? keepSessionId,
+        string reasonCode = "SESSION_REVOKED",
+        CancellationToken ct = default) => Task.CompletedTask;
 }
 
 public static class RealtimeRevokeSafeExtensions
@@ -90,6 +96,23 @@ public static class RealtimeRevokeSafeExtensions
         catch
         {
             // Best-effort session eviction.
+        }
+    }
+
+    public static async Task TryRevokeUserConnectionsExceptSessionSafeAsync(
+        this IRealtimeAccessRevoker revoker,
+        long userId,
+        long? keepSessionId,
+        string reasonCode = "SESSION_REVOKED",
+        CancellationToken ct = default)
+    {
+        try
+        {
+            await revoker.RevokeUserConnectionsExceptSessionAsync(userId, keepSessionId, reasonCode, ct);
+        }
+        catch
+        {
+            // Best-effort selective session eviction.
         }
     }
 }

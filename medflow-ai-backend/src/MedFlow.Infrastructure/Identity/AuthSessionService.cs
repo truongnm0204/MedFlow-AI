@@ -63,14 +63,21 @@ public class AuthSessionService : IAuthSessionService
 
         var now = _timeProvider.GetUtcNow().UtcDateTime;
 
-        // Reuse: token đã bị revoke nhưng vẫn được gửi lên → thu hồi toàn bộ family (không có grace period).
+        // Reuse: token đã từng rotate (có ReplacedByTokenHash) nhưng bị gửi lại → thu hồi toàn bộ phiên đang hoạt động.
+        // Nếu session bị thu hồi chủ động (logout / change-password trên thiết bị khác, ReplacedByTokenHash == null)
+        // thì từ chối 401 nhưng KHÔNG hủy phiên hợp lệ đang giữ lại trên thiết bị đổi mật khẩu.
         if (existing.RevokedAt is not null)
         {
-            await RevokeActiveSessionsCoreAsync(existing.UserId, ipAddress, now, isRelational, ct);
-            if (transaction is not null)
-                await transaction.CommitAsync(ct);
+            if (!string.IsNullOrEmpty(existing.ReplacedByTokenHash))
+            {
+                await RevokeActiveSessionsCoreAsync(existing.UserId, ipAddress, now, isRelational, ct);
+                if (transaction is not null)
+                    await transaction.CommitAsync(ct);
 
-            return new RotateResult { ReuseDetected = true, User = existing.User };
+                return new RotateResult { ReuseDetected = true, User = existing.User };
+            }
+
+            return new RotateResult { User = existing.User };
         }
 
         if (existing.ExpiresAt <= now)
@@ -118,11 +125,16 @@ public class AuthSessionService : IAuthSessionService
 
             if (latest?.RevokedAt is not null)
             {
-                await RevokeActiveSessionsCoreAsync(existing.UserId, ipAddress, now, isRelational, ct);
-                if (transaction is not null)
-                    await transaction.CommitAsync(ct);
+                if (!string.IsNullOrEmpty(latest.ReplacedByTokenHash))
+                {
+                    await RevokeActiveSessionsCoreAsync(existing.UserId, ipAddress, now, isRelational, ct);
+                    if (transaction is not null)
+                        await transaction.CommitAsync(ct);
 
-                return new RotateResult { ReuseDetected = true, User = existing.User };
+                    return new RotateResult { ReuseDetected = true, User = existing.User };
+                }
+
+                return new RotateResult { User = existing.User };
             }
 
             return new RotateResult { User = existing.User };
@@ -174,6 +186,74 @@ public class AuthSessionService : IAuthSessionService
 
     public Task RevokeAllForUserAsync(long userId, string? ipAddress, CancellationToken ct = default)
         => RevokeActiveSessionsCoreAsync(userId, ipAddress, _timeProvider.GetUtcNow().UtcDateTime, _db.Database.IsRelational(), ct);
+
+    public async Task<RevokeOtherSessionsOutcome> RevokeOtherSessionsForUserAsync(
+        long userId,
+        string? candidateKeepRawToken,
+        long? expectedJwtSessionId,
+        string? ipAddress,
+        CancellationToken ct = default)
+    {
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var isRelational = _db.Database.IsRelational();
+        long? keptSessionId = null;
+
+        if (!string.IsNullOrWhiteSpace(candidateKeepRawToken))
+        {
+            var keepHash = ComputeHash(candidateKeepRawToken.Trim());
+            var candidate = await _db.AuthSessions
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.RefreshTokenHash == keepHash, ct);
+
+            if (candidate is not null &&
+                candidate.UserId == userId &&
+                candidate.RevokedAt is null &&
+                candidate.ExpiresAt > now &&
+                (!expectedJwtSessionId.HasValue || candidate.Id == expectedJwtSessionId.Value))
+            {
+                keptSessionId = candidate.Id;
+            }
+        }
+
+        if (isRelational)
+        {
+            var query = _db.AuthSessions.Where(s => s.UserId == userId && s.RevokedAt == null);
+            if (keptSessionId.HasValue)
+            {
+                var keepId = keptSessionId.Value;
+                query = query.Where(s => s.Id != keepId);
+            }
+
+            var revokedCount = await query.ExecuteUpdateAsync(
+                s => s
+                    .SetProperty(x => x.RevokedAt, now)
+                    .SetProperty(x => x.RevokedByIp, ipAddress),
+                ct);
+
+            return new RevokeOtherSessionsOutcome(keptSessionId, revokedCount);
+        }
+
+        var inMemoryQuery = _db.AuthSessions.Where(s => s.UserId == userId && s.RevokedAt == null);
+        if (keptSessionId.HasValue)
+        {
+            var keepId = keptSessionId.Value;
+            inMemoryQuery = inMemoryQuery.Where(s => s.Id != keepId);
+        }
+
+        var tokensToRevoke = await inMemoryQuery.ToListAsync(ct);
+        foreach (var token in tokensToRevoke)
+        {
+            token.RevokedAt = now;
+            token.RevokedByIp = ipAddress;
+        }
+
+        if (tokensToRevoke.Count > 0)
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+
+        return new RevokeOtherSessionsOutcome(keptSessionId, tokensToRevoke.Count);
+    }
 
     private async Task RevokeActiveSessionsCoreAsync(
         long userId,

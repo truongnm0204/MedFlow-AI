@@ -57,6 +57,7 @@ public sealed class ClinicalRealtimeConnectionRegistry
     {
         public readonly object SyncRoot = new();
         public required long UserId { get; init; }
+        public long? SessionId { get; init; }
         public readonly Dictionary<string, TrackedSubscriptionEntry> Subscriptions = new(StringComparer.OrdinalIgnoreCase);
         public readonly Queue<DateTime> InvocationTimestampsUtc = new();
     }
@@ -73,11 +74,12 @@ public sealed class ClinicalRealtimeConnectionRegistry
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    public void RegisterConnection(string connectionId, long userId)
+    public void RegisterConnection(string connectionId, long userId, long? sessionId = null)
     {
         _connections[connectionId] = new ConnectionSessionState
         {
             UserId = userId,
+            SessionId = sessionId,
         };
     }
 
@@ -370,12 +372,20 @@ public sealed class ClinicalRealtimeConnectionRegistry
     }
 
     public IReadOnlyList<EvictedSubscriptionItem> EvictUserSubscriptions(long userId)
+        => EvictUserSubscriptionsExceptSession(userId, keepSessionId: null);
+
+    public IReadOnlyList<EvictedSubscriptionItem> EvictUserSubscriptionsExceptSession(
+        long userId,
+        long? keepSessionId)
     {
         var evicted = new List<EvictedSubscriptionItem>();
 
         foreach (var (connId, session) in _connections)
         {
             if (session.UserId != userId)
+                continue;
+
+            if (keepSessionId.HasValue && session.SessionId == keepSessionId.Value)
                 continue;
 
             lock (session.SyncRoot)

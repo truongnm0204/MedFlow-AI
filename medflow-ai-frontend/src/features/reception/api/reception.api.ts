@@ -8,6 +8,7 @@ import type {
 import type { AvailableRoomItem } from '../types/assign-room.types';
 import type { CheckInFormData, CheckInSuccessResult } from '../types/checkin.types';
 import type { PatientSearchResultItem } from '../types/patient-search.types';
+import type { ReceptionStats } from '../types/reception.types';
 import type {
   ClinicalPriority,
   CreatedWalkInVisitResult,
@@ -40,12 +41,20 @@ interface PatientSearchItemDto {
   totalPastVisits: number;
 }
 
+interface ReceptionDashboardSummaryDto {
+  waitingCheckIn: number;
+  inQueue: number;
+  inConsultation: number;
+  completedToday: number;
+}
+
 interface SearchPatientsResponseDto {
   items: PatientSearchItemDto[];
   totalCount: number;
   page: number;
   pageSize: number;
   counts: { all: number; hasAppointment: number; checkedIn: number; noAppointment: number };
+  dashboardSummary?: ReceptionDashboardSummaryDto | null;
 }
 
 export interface ReceptionSearchParams {
@@ -59,6 +68,28 @@ export interface ReceptionSearchResult {
   items: PatientSearchResultItem[];
   counts: { all: number; hasAppointment: number; checkedIn: number; noAppointment: number };
   totalCount: number;
+  dashboardSummary: ReceptionStats | null;
+}
+
+function mapDashboardSummary(
+  raw?: Partial<ReceptionDashboardSummaryDto> | null,
+): ReceptionStats | null {
+  if (
+    !raw ||
+    typeof raw.waitingCheckIn !== 'number' ||
+    typeof raw.inQueue !== 'number' ||
+    typeof raw.inConsultation !== 'number' ||
+    typeof raw.completedToday !== 'number'
+  ) {
+    return null;
+  }
+
+  return {
+    waitingCheckIn: raw.waitingCheckIn,
+    inQueue: raw.inQueue,
+    inConsultation: raw.inConsultation,
+    completedToday: raw.completedToday,
+  };
 }
 
 const APPOINTMENT_STATUS_MAP: Record<
@@ -116,7 +147,15 @@ export async function searchReceptionPatients(
     items: (data.items ?? []).map(mapSearchItem),
     counts: data.counts ?? { all: 0, hasAppointment: 0, checkedIn: 0, noAppointment: 0 },
     totalCount: data.totalCount ?? 0,
+    dashboardSummary: mapDashboardSummary(data.dashboardSummary),
   };
+}
+
+export async function fetchReceptionDashboardSummary(): Promise<ReceptionStats | null> {
+  const { data } = await apiClient.get<Partial<ReceptionDashboardSummaryDto>>(
+    '/reception/dashboard-summary',
+  );
+  return mapDashboardSummary(data);
 }
 
 // --- Check-in --------------------------------------------------------------

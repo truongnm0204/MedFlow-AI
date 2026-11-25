@@ -377,7 +377,44 @@ export async function getValidAccessTokenForRealtime(): Promise<string> {
 }
 
 function isAuthEndpoint(url?: string): boolean {
-  return !!url && /\/auth\/(login|register|refresh|verify-otp|resend-otp|logout)/.test(url);
+  return (
+    !!url &&
+    /\/auth\/(login|register|refresh|verify-otp|resend-otp|forgot-password|reset-password|logout)/.test(
+      url,
+    )
+  );
+}
+
+function syncChangePasswordRetryRefreshToken(config: RetriableConfig): void {
+  if (!config.url || !/\/auth\/change-password$/.test(config.url) || !config.data) {
+    return;
+  }
+
+  const latestRefreshToken =
+    typeof localStorage !== 'undefined' ? localStorage.getItem(REFRESH_TOKEN_KEY) : null;
+  if (!latestRefreshToken) {
+    return;
+  }
+
+  if (typeof config.data === 'string') {
+    try {
+      const parsed = JSON.parse(config.data) as Record<string, unknown>;
+      if (parsed && typeof parsed === 'object' && 'currentRefreshToken' in parsed) {
+        parsed.currentRefreshToken = latestRefreshToken;
+        config.data = JSON.stringify(parsed);
+      }
+    } catch {
+      // Ignore non-JSON body.
+    }
+    return;
+  }
+
+  if (typeof config.data === 'object') {
+    const body = config.data as Record<string, unknown>;
+    if ('currentRefreshToken' in body) {
+      body.currentRefreshToken = latestRefreshToken;
+    }
+  }
 }
 
 function redirectToLoginPreservingUrl(): void {
@@ -435,6 +472,7 @@ async function handleUnauthorized(error: AxiosError): Promise<unknown> {
     }
 
     config.headers.Authorization = `Bearer ${newToken}`;
+    syncChangePasswordRetryRefreshToken(config);
     return apiClient(config);
   } catch (refreshError) {
     if (refreshError instanceof StaleRefreshDiscardedError) {

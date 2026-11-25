@@ -48,6 +48,16 @@ describe('PrintExaminationTicketModal & ReceptionDashboardPage (UC29)', () => {
       if (url === '/reception/examination-queue') {
         return { data: buildMockExaminationQueueResponse() };
       }
+      if (url === '/reception/dashboard-summary') {
+        return {
+          data: {
+            waitingCheckIn: 4,
+            inQueue: 6,
+            inConsultation: 2,
+            completedToday: 11,
+          },
+        };
+      }
       if (url === '/reception/patients/search') {
         return {
           data: {

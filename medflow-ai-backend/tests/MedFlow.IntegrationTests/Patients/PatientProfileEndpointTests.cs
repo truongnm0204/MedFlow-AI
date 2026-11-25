@@ -1,8 +1,10 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using MedFlow.Application.DTOs.Patients;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Patients;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.IntegrationTests.Auth;
@@ -184,5 +186,107 @@ public sealed class PatientProfileEndpointTests : AuthTestBase
         var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
         Assert.NotNull(problem);
         Assert.Equal(401, problem.Status);
+    }
+
+    [Fact]
+    public async Task PutAndPatchMyProfile_RawJson_DistinguishesOmittedFromExplicitNull_PersistsEmergencyContactAndAudits()
+    {
+        var (_, tokens) = await RegisterVerifyLoginAsync();
+
+        // 1. PUT full contact + bloodType + emergencyContact
+        using var putReq = new HttpRequestMessage(HttpMethod.Put, "/api/v1/patients/me/profile")
+        {
+            Content = new StringContent(
+                """
+                {
+                  "phone": "0988776655",
+                  "address": "88 Lý Thường Kiệt, Hoàn Kiếm, Hà Nội",
+                  "bloodType": "O-",
+                  "emergencyContact": {
+                    "fullName": "Nguyễn Thị Mai",
+                    "relationship": "Mẹ",
+                    "phone": "0912349999"
+                  }
+                }
+                """,
+                Encoding.UTF8,
+                "application/json"),
+        };
+        putReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
+        var putRes = await Client.SendAsync(putReq);
+        Assert.Equal(HttpStatusCode.OK, putRes.StatusCode);
+        var afterPut = await putRes.Content.ReadFromJsonAsync<PatientProfileResponse>();
+        Assert.NotNull(afterPut);
+        Assert.Equal("0988776655", afterPut.Phone);
+        Assert.Equal("88 Lý Thường Kiệt, Hoàn Kiếm, Hà Nội", afterPut.Address);
+        Assert.Equal("O-", afterPut.BloodType);
+        Assert.NotNull(afterPut.EmergencyContact);
+        Assert.Equal("Nguyễn Thị Mai", afterPut.EmergencyContact!.FullName);
+        Assert.Equal("Mẹ", afterPut.EmergencyContact.Relationship);
+        Assert.Equal("0912349999", afterPut.EmergencyContact.Phone);
+
+        // 2. PATCH omitting bloodType & emergencyContact, explicitly setting address: null
+        using var patchReq = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/patients/me/profile")
+        {
+            Content = new StringContent(
+                """{"address": null}""",
+                Encoding.UTF8,
+                "application/json"),
+        };
+        patchReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
+        var patchRes = await Client.SendAsync(patchReq);
+        Assert.Equal(HttpStatusCode.OK, patchRes.StatusCode);
+        var afterPatch = await patchRes.Content.ReadFromJsonAsync<PatientProfileResponse>();
+        Assert.NotNull(afterPatch);
+        Assert.Null(afterPatch.Address);
+        Assert.Equal("0988776655", afterPatch.Phone);
+        Assert.Equal("O-", afterPatch.BloodType);
+        Assert.NotNull(afterPatch.EmergencyContact);
+        Assert.Equal("Nguyễn Thị Mai", afterPatch.EmergencyContact!.FullName);
+
+        // Verify DB persistence, zero family link creation, and audit trail
+        var dbPatient = await Db.Patients.AsNoTracking().SingleAsync(p => p.Id == afterPatch.Id);
+        Assert.Null(dbPatient.Address);
+        Assert.Equal("O-", dbPatient.BloodType);
+        Assert.Equal("Nguyễn Thị Mai", dbPatient.EmergencyContactName);
+
+        var familyLinkCount = await Db.PatientFamilyLinks.CountAsync(l => l.OwnerPatientId == afterPatch.Id);
+        Assert.Equal(0, familyLinkCount);
+
+        var auditCount = await Db.AuditLogs.CountAsync(a =>
+            a.Action == PatientProfileService.ProfileUpdatedAuditAction &&
+            a.EntityType == "PATIENT" &&
+            a.EntityId == afterPatch.Id.ToString());
+        Assert.Equal(2, auditCount);
+    }
+
+    [Fact]
+    public async Task PatchMyProfile_SeededVerifiedPatient_RejectsTamperingLockedFieldsWith400()
+    {
+        var tokens = await LoginAsync("patient01@medflow.test", "Demo@12345");
+
+        using var patchDob = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/patients/me/profile")
+        {
+            Content = new StringContent(
+                """{"dateOfBirth": "1999-01-01"}""",
+                Encoding.UTF8,
+                "application/json"),
+        };
+        patchDob.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        var dobRes = await Client.SendAsync(patchDob);
+        Assert.Equal(HttpStatusCode.BadRequest, dobRes.StatusCode);
+
+        using var patchCccd = new HttpRequestMessage(HttpMethod.Patch, "/api/v1/patients/me/profile")
+        {
+            Content = new StringContent(
+                """{"identityCard": "001090123456"}""",
+                Encoding.UTF8,
+                "application/json"),
+        };
+        patchCccd.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+        var cccdRes = await Client.SendAsync(patchCccd);
+        Assert.Equal(HttpStatusCode.BadRequest, cccdRes.StatusCode);
     }
 }

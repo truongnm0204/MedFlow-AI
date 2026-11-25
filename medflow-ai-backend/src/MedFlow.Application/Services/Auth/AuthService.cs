@@ -227,8 +227,8 @@ public class AuthService : IAuthService
         IssueTokensAsync(User user, string? ipAddress, CancellationToken ct)
     {
         var roles = user.UserRoles.Select(ur => ur.Role.Code).ToArray();
-        var accessToken = _jwtService.GenerateAccessToken(user, roles);
         var refresh = await _sessionService.GenerateAsync(user.Id, ipAddress, ct);
+        var accessToken = _jwtService.GenerateAccessToken(user, roles, refresh.Entity?.Id);
         var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         return (accessToken.AccessToken,
             (int)(accessToken.ExpiresAt - nowUtc).TotalSeconds,
@@ -286,7 +286,7 @@ public class AuthService : IAuthService
             .Select(ur => ur.Role.Code)
             .ToArrayAsync(ct);
 
-        var accessToken = _jwtService.GenerateAccessToken(result.User, roles);
+        var accessToken = _jwtService.GenerateAccessToken(result.User, roles, result.Entity.Id);
 
         return new RefreshResponse(
             accessToken.AccessToken,
@@ -314,6 +314,218 @@ public class AuthService : IAuthService
 
     public Task<ResendOtpResponse> ResendOtpAsync(ResendOtpRequest request, CancellationToken ct = default)
         => _otpService.ResendOtpAsync(request, ct);
+
+    // ── Password Recovery & Change Password ───────────────────────────────
+    public Task<ForgotPasswordResponse> ForgotPasswordAsync(
+        ForgotPasswordRequest request,
+        string? ipAddress,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return _otpService.SendPasswordResetOtpAsync(request.Email, ipAddress, ct);
+    }
+
+    public async Task<ResetPasswordResponse> ResetPasswordAsync(
+        ResetPasswordRequest request,
+        string? ipAddress,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        var otpCode = (request.OtpCode ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(email) || otpCode.Length != 6 || !otpCode.All(char.IsAsciiDigit))
+            throw new ValidationException("Mã OTP phải gồm 6 chữ số.");
+
+        EnsureStrongPassword(request.NewPassword);
+
+        var userLookup = await _db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Email == email, ct);
+
+        if (userLookup is null ||
+            userLookup.AccountStatus != AccountStatus.ACTIVE ||
+            !string.Equals(userLookup.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(userLookup.PasswordHash))
+        {
+            var otpSecret = AuthCryptoHelpers.GetOtpSecret(_configuration);
+            _ = AuthCryptoHelpers.ComputeHmacHex(otpCode, otpSecret);
+            throw new ValidationException("Mã OTP không hợp lệ hoặc đã hết hạn.");
+        }
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+        await _db.TryLockUserForUpdateAsync(userLookup.Id, ct);
+
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userLookup.Id, ct)
+            ?? throw new ValidationException("Mã OTP không hợp lệ hoặc đã hết hạn.");
+
+        if (user.AccountStatus != AccountStatus.ACTIVE ||
+            !string.Equals(user.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(user.PasswordHash))
+        {
+            throw new ValidationException("Mã OTP không hợp lệ hoặc đã hết hạn.");
+        }
+
+        await _otpService.ConsumePasswordResetOtpInTransactionAsync(user.Id, otpCode, tx, ct);
+
+        user.PasswordHash = _passwordHasher.HashPassword(user, request.NewPassword);
+        user.FailedLoginAttempts = 0;
+        user.LockedUntil = null;
+
+        await _sessionService.RevokeAllForUserAsync(user.Id, ipAddress, ct);
+        _audit.Add(user.Id, "PASSWORD_RESET_COMPLETED", "USER", user.Id.ToString(), null, ipAddress);
+
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
+            _accessRevoker,
+            user.Id,
+            "PASSWORD_RESET",
+            ct);
+
+        return new ResetPasswordResponse();
+    }
+
+    public async Task<ChangePasswordResponse> ChangePasswordAsync(
+        long userId,
+        ChangePasswordRequest request,
+        long? currentSessionId,
+        string? ipAddress,
+        CancellationToken ct = default)
+    {
+        if (userId <= 0)
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (string.IsNullOrEmpty(request.CurrentPassword))
+            throw new ValidationException("Mật khẩu hiện tại là bắt buộc.");
+
+        EnsureStrongPassword(request.NewPassword);
+
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        long? keptSessionId;
+        var lockedNow = false;
+
+        await using (var tx = await _db.BeginTransactionAsync(ct))
+        {
+            await _db.TryLockUserForUpdateAsync(userId, ct);
+
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct)
+                ?? throw new UnauthorizedAccessException("Tài khoản không hợp lệ.");
+
+            if (user.AccountStatus != AccountStatus.ACTIVE ||
+                !string.Equals(user.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(user.PasswordHash))
+            {
+                throw new UnauthorizedAccessException("Tài khoản hiện không hỗ trợ đổi mật khẩu nội bộ.");
+            }
+
+            ApplyLockoutRules(user);
+
+            var verifyCurrent = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash!, request.CurrentPassword);
+            if (verifyCurrent == PasswordVerificationResult.Failed)
+            {
+                user.FailedLoginAttempts++;
+                if (user.FailedLoginAttempts >= _options.MaxLoginAttempts)
+                {
+                    user.LockedUntil = nowUtc.AddMinutes(_options.LockoutDurationMinutes);
+                    user.FailedLoginAttempts = 0;
+                    lockedNow = true;
+                    await _sessionService.RevokeAllForUserAsync(user.Id, ipAddress, ct);
+                }
+
+                _audit.Add(
+                    user.Id,
+                    "PASSWORD_CHANGE_FAILED",
+                    "USER",
+                    user.Id.ToString(),
+                    new { Locked = lockedNow },
+                    ipAddress);
+
+                await _db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+
+                if (lockedNow)
+                {
+                    await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeUserConnectionsSafeAsync(
+                        _accessRevoker,
+                        user.Id,
+                        "ACCOUNT_LOCKED",
+                        ct);
+                }
+
+                throw new ValidationException("Mật khẩu hiện tại không chính xác.");
+            }
+
+            if (string.Equals(request.CurrentPassword, request.NewPassword, StringComparison.Ordinal) ||
+                _passwordHasher.VerifyHashedPassword(user, user.PasswordHash!, request.NewPassword) != PasswordVerificationResult.Failed)
+            {
+                throw new ValidationException("Mật khẩu mới không được trùng với mật khẩu hiện tại.");
+            }
+
+            user.PasswordHash = _passwordHasher.HashPassword(user, request.NewPassword);
+            user.FailedLoginAttempts = 0;
+            user.LockedUntil = null;
+
+            var revokeOutcome = await _sessionService.RevokeOtherSessionsForUserAsync(
+                user.Id,
+                request.CurrentRefreshToken,
+                currentSessionId,
+                ipAddress,
+                ct);
+            keptSessionId = revokeOutcome.KeptSessionId;
+
+            _audit.Add(
+                user.Id,
+                "PASSWORD_CHANGED",
+                "USER",
+                user.Id.ToString(),
+                new
+                {
+                    KeptCurrentSession = keptSessionId.HasValue,
+                    RevokedSessionsCount = revokeOutcome.RevokedCount,
+                },
+                ipAddress);
+
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+
+        await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions
+            .TryRevokeUserConnectionsExceptSessionSafeAsync(
+                _accessRevoker,
+                userId,
+                keptSessionId,
+                "PASSWORD_CHANGED",
+                ct);
+
+        return new ChangePasswordResponse(
+            Message: keptSessionId.HasValue
+                ? "Đổi mật khẩu thành công. Các phiên đăng nhập khác đã được thu hồi."
+                : "Đổi mật khẩu thành công. Toàn bộ phiên đăng nhập cũ đã được thu hồi.",
+            KeptCurrentSession: keptSessionId.HasValue);
+    }
+
+    private static void EnsureStrongPassword(string? password)
+    {
+        if (string.IsNullOrEmpty(password) || password.Length < 8)
+            throw new ValidationException("Mật khẩu tối thiểu 8 ký tự");
+
+        var hasLower = false;
+        var hasUpper = false;
+        var hasDigit = false;
+        foreach (var ch in password)
+        {
+            if (char.IsAsciiLetterLower(ch)) hasLower = true;
+            else if (char.IsAsciiLetterUpper(ch)) hasUpper = true;
+            else if (char.IsAsciiDigit(ch)) hasDigit = true;
+        }
+
+        if (!hasLower || !hasUpper || !hasDigit)
+            throw new ValidationException("Mật khẩu cần có chữ hoa, chữ thường và số");
+    }
 
     // ── GetMe ─────────────────────────────────────────────────────────────
     public async Task<UserDto> GetMeAsync(long userId, CancellationToken ct = default)
