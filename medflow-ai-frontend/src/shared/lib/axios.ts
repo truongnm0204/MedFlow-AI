@@ -317,6 +317,65 @@ function requestNewAccessToken(
   return refreshPromise;
 }
 
+const REALTIME_TOKEN_REFRESH_LEEWAY_MS = 30_000;
+
+function decodeJwtExpiryMs(token: string): number | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || !parts[1]) return null;
+  try {
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+    const json = atob(padded);
+    const parsed = JSON.parse(json) as { exp?: unknown };
+    if (typeof parsed.exp === 'number' && Number.isFinite(parsed.exp)) {
+      return parsed.exp * 1_000;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lấy access token mới nhất cho kết nối SignalR; tự động xoay vòng qua cơ chế
+ * single-flight + Web Locks nếu token sắp/đã hết hạn và còn refresh token hợp lệ.
+ */
+export async function getValidAccessTokenForRealtime(): Promise<string> {
+  if (typeof localStorage === 'undefined') return '';
+
+  const currentAccessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+  const currentRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+
+  if (!currentAccessToken && !currentRefreshToken) {
+    return '';
+  }
+
+  if (currentAccessToken) {
+    const expMs = decodeJwtExpiryMs(currentAccessToken);
+    if (expMs === null || expMs - Date.now() > REALTIME_TOKEN_REFRESH_LEEWAY_MS) {
+      return currentAccessToken;
+    }
+  }
+
+  if (!currentRefreshToken) {
+    return currentAccessToken ?? '';
+  }
+
+  try {
+    return await requestNewAccessToken(currentAccessToken, currentRefreshToken);
+  } catch (err) {
+    if (shouldInvalidateSessionOnRefreshError(err)) {
+      const useAuthStore = await loadAuthStore();
+      const latestState = useAuthStore.getState();
+      if (latestState.isAuthenticated) {
+        latestState.clearAuth();
+      }
+      return '';
+    }
+    return localStorage.getItem(ACCESS_TOKEN_KEY) ?? '';
+  }
+}
+
 function isAuthEndpoint(url?: string): boolean {
   return !!url && /\/auth\/(login|register|refresh|verify-otp|resend-otp|logout)/.test(url);
 }

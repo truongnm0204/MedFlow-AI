@@ -1,4 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback } from 'react';
+
+import { useAuthStore } from '@/features/auth/store/auth.store';
+import { useRealtimeSubscription } from '@/shared/hooks/use-realtime-subscription';
+import { scheduleCoalescedInvalidation, type RealtimeChannel } from '@/shared/lib/realtime-client';
 
 import {
   applyEarlyArrivalBackfill,
@@ -24,12 +29,37 @@ import type {
   UpdateExaminationQueueStatusPayload,
   UpdateExaminationQueueStatusResponseDto,
 } from '../types/examination-queue.types';
+const HOSPITAL_QUEUE_CHANNEL: RealtimeChannel = { type: 'hospital-queue' };
+const STAFF_QUEUE_CONNECTED_POLL_MS = 30_000;
+const STAFF_QUEUE_FALLBACK_POLL_MS = 15_000;
+
 export function useExaminationQueue(params?: ExaminationQueueQueryParams, enabled = true) {
+  const queryClient = useQueryClient();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+
+  const handleRealtimeQueueChanged = useCallback(() => {
+    scheduleCoalescedInvalidation(queryClient, ['reception', 'examination-queue']);
+  }, [queryClient]);
+
+  const { isLive } = useRealtimeSubscription({
+    channel: HOSPITAL_QUEUE_CHANNEL,
+    event: 'QueueChanged',
+    onEvent: handleRealtimeQueueChanged,
+    onReconnected: handleRealtimeQueueChanged,
+    enabled: enabled && isAuthenticated,
+  });
+
   return useQuery({
     queryKey: ['reception', 'examination-queue', params ?? null],
     queryFn: () => fetchExaminationQueue(params),
     enabled,
     staleTime: 30_000,
+    refetchInterval:
+      enabled && isAuthenticated
+        ? isLive
+          ? STAFF_QUEUE_CONNECTED_POLL_MS
+          : STAFF_QUEUE_FALLBACK_POLL_MS
+        : false,
   });
 }
 

@@ -76,13 +76,16 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
 
     public CreateWalkInVisitService(
         IApplicationDbContext db,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IRealtimeNotificationPublisher? realtimePublisher = null)
     {
         _db = db;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
     }
 
     public async Task<CreateWalkInVisitResponseDto> CreateWalkInVisitAsync(
@@ -457,6 +460,14 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: effectiveHospitalId,
+                ServicePointId: effectiveSpId,
+                RoomId: visit.ExaminationRoomId ?? room?.Id),
+            ct);
 
         var waitingCountBefore = await CountWaitingBeforeAsync(
             queueEntry.Id,

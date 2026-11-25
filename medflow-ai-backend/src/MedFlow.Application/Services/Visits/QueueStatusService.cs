@@ -1,11 +1,13 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using MedFlow.Application.DTOs.Realtime;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Policies;
+using MedFlow.Application.Services.Realtime;
 using MedFlow.Application.Services.Visits.Queueing;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
@@ -87,13 +89,19 @@ public sealed class QueueStatusService : IQueueStatusService
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
+    private readonly IRealtimeAccessRevoker _accessRevoker;
 
     public QueueStatusService(
         IApplicationDbContext db,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IRealtimeNotificationPublisher? realtimePublisher = null,
+        IRealtimeAccessRevoker? accessRevoker = null)
     {
         _db = db;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
+        _accessRevoker = accessRevoker ?? NullRealtimeAccessRevoker.Instance;
     }
 
     public async Task<QueueEntryStatusDetailDto> GetQueueEntryStatusAsync(
@@ -357,6 +365,19 @@ public sealed class QueueStatusService : IQueueStatusService
         _db.AuditLogs.Add(auditLog);
         await _db.SaveChangesAsync(ct);
 
+        await _realtimePublisher.TryPublishQueueChangedSafeAsync(
+            new QueueChangedNotification(
+                HospitalId: context.HospitalId,
+                ServicePointId: context.ServicePoint?.Id ?? queueEntry.CurrentServicePointId ?? queueEntry.ServicePointId,
+                RoomId: context.Room?.Id ?? visit?.ExaminationRoomId,
+                AppointmentId: queueEntry.AppointmentId ?? visit?.AppointmentId),
+            ct);
+
+        if (targetStatus == "COMPLETED" && (queueEntry.AppointmentId ?? visit?.AppointmentId) is long completedApptId)
+        {
+            await _accessRevoker.TryMigrateAppointmentBucketSafeAsync(completedApptId, null, null, ct);
+        }
+
         return await BuildStatusResponseAsync(
             context,
             currentStatus,
@@ -495,6 +516,14 @@ public sealed class QueueStatusService : IQueueStatusService
 
         _db.AuditLogs.Add(auditLog);
         await _db.SaveChangesAsync(ct);
+
+        await _realtimePublisher.TryPublishQueueChangedSafeAsync(
+            new QueueChangedNotification(
+                HospitalId: context.HospitalId,
+                ServicePointId: context.ServicePoint?.Id ?? queueEntry.CurrentServicePointId ?? queueEntry.ServicePointId,
+                RoomId: context.Room?.Id ?? visit?.ExaminationRoomId,
+                AppointmentId: queueEntry.AppointmentId ?? visit?.AppointmentId),
+            ct);
 
         var queueNumber = queueEntry.QueueNumber is > 0 ? queueEntry.QueueNumber.Value : 1;
         var ticketNo = FormatTicketNo(queueNumber, context.Room?.RoomCode);
@@ -649,6 +678,20 @@ public sealed class QueueStatusService : IQueueStatusService
 
         _db.AuditLogs.Add(auditLog);
         await _db.SaveChangesAsync(ct);
+
+        var cancelledApptId = queueEntry.AppointmentId ?? visit?.AppointmentId;
+        await _realtimePublisher.TryPublishQueueChangedSafeAsync(
+            new QueueChangedNotification(
+                HospitalId: context.HospitalId,
+                ServicePointId: context.ServicePoint?.Id ?? queueEntry.CurrentServicePointId ?? queueEntry.ServicePointId,
+                RoomId: context.Room?.Id ?? visit?.ExaminationRoomId,
+                AppointmentId: cancelledApptId),
+            ct);
+
+        if (cancelledApptId is long revokedApptId)
+        {
+            await _accessRevoker.TryRevokeAppointmentTrackingSafeAsync(revokedApptId, ct);
+        }
 
         return await BuildStatusResponseAsync(
             context,

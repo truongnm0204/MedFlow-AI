@@ -148,6 +148,13 @@ public sealed partial class ExaminationQueueService
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
+        await PublishExaminationQueueChangedAsync(
+            hospitalId: board.Hospital.Id,
+            servicePointId: after.Bucket.Bucket.RawServicePointId,
+            roomId: after.Bucket.Bucket.RoomId ?? visit?.ExaminationRoomId,
+            appointmentId: target.AppointmentId ?? visit?.AppointmentId,
+            ct: ct);
+
         return new QueueTurnActionResponseDto(
             QueueEntryId: after.Entry.Dto.Id,
             TicketNo: after.Entry.Dto.TicketNo,
@@ -320,6 +327,13 @@ public sealed partial class ExaminationQueueService
         _db.AuditLogs.Add(auditLog);
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+
+        await PublishExaminationQueueChangedAsync(
+            hospitalId: board.Hospital.Id,
+            servicePointId: after.Bucket.Bucket.RawServicePointId,
+            roomId: after.Bucket.Bucket.RoomId ?? visit?.ExaminationRoomId,
+            appointmentId: target.AppointmentId ?? visit?.AppointmentId,
+            ct: ct);
 
         return new QueueTurnActionResponseDto(
             QueueEntryId: after.Entry.Dto.Id,

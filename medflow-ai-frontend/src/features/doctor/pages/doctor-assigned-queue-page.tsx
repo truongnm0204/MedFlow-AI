@@ -1,5 +1,5 @@
 import { ArrowLeft, ListOrdered, RefreshCw } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
@@ -54,6 +54,16 @@ export function DoctorAssignedQueuePage() {
 
   const queryParams = useMemo(() => (queueDate ? { queueDate } : undefined), [queueDate]);
   const { data, isPending, isError, error, refetch } = useDoctorAssignedQueue(queryParams);
+
+  const lastGeneratedAtRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const nextStamp = data?.generatedAtUtc;
+    if (!nextStamp) return;
+    if (lastGeneratedAtRef.current !== undefined && lastGeneratedAtRef.current !== nextStamp) {
+      setEntryOverridesByServicePoint({});
+    }
+    lastGeneratedAtRef.current = nextStamp;
+  }, [data?.generatedAtUtc]);
 
   const doctorDisplayName =
     data?.doctorName?.trim() || user?.fullName?.trim() || DOCTOR_WORKBENCH_META.defaultDoctorName;

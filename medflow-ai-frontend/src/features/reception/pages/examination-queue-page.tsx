@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Building2, ListOrdered, RefreshCw, ShieldAlert } from 'lucide-react';
 
@@ -128,6 +128,18 @@ export function ExaminationQueuePage() {
   const { data, isPending, isError, error, refetch } = useExaminationQueue({
     queueDate: appliedFilters.queueDate,
   });
+
+  // Dọn các bản ghi override lạc hậu trên bảng khi có snapshot mới từ server (giữ nguyên toàn bộ modal/form đang mở #825).
+  const lastGeneratedAtRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const nextStamp = data?.generatedAtUtc;
+    if (!nextStamp) return;
+    if (lastGeneratedAtRef.current !== undefined && lastGeneratedAtRef.current !== nextStamp) {
+      setEntryOverridesByServicePoint({});
+      setStatusOverrides({});
+    }
+    lastGeneratedAtRef.current = nextStamp;
+  }, [data?.generatedAtUtc]);
 
   const handleFilterChange = (patch: Partial<ExaminationQueueFilterFormValues>) => {
     const nextFilters = { ...filters, ...patch };

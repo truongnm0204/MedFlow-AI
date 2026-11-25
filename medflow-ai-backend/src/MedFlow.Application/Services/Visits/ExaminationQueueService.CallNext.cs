@@ -233,6 +233,13 @@ public sealed partial class ExaminationQueueService
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
+        await PublishExaminationQueueChangedAsync(
+            hospitalId: board.Hospital.Id,
+            servicePointId: rawServicePointId,
+            roomId: after.Bucket.Bucket.RoomId ?? visit?.ExaminationRoomId,
+            appointmentId: target.AppointmentId ?? visit?.AppointmentId,
+            ct: ct);
+
         return new CallNextPatientResponseDto(
             ServicePointId: after.Bucket.Bucket.ServicePointId,
             Outcome: "CALLED",

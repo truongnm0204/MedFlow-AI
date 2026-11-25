@@ -1,9 +1,11 @@
 using System.Globalization;
 using MedFlow.Application.Common.Time;
+using MedFlow.Application.DTOs.Realtime;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Application.Services.Realtime;
 using MedFlow.Application.Services.Visits.Queueing;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
@@ -56,14 +58,31 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
 
     public ExaminationQueueService(
         IApplicationDbContext db,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IRealtimeNotificationPublisher? realtimePublisher = null)
     {
         _db = db;
         _timeProvider = timeProvider;
+        _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
     }
+
+    private Task PublishExaminationQueueChangedAsync(
+        long hospitalId,
+        long? servicePointId,
+        long? roomId,
+        long? appointmentId,
+        CancellationToken ct) =>
+        _realtimePublisher.TryPublishQueueChangedSafeAsync(
+            new QueueChangedNotification(
+                HospitalId: hospitalId,
+                ServicePointId: servicePointId,
+                RoomId: roomId,
+                AppointmentId: appointmentId),
+            ct);
 
     public async Task<ExaminationQueueResponseDto> GetExaminationQueueAsync(
         long actorUserId,

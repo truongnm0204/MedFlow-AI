@@ -21,6 +21,8 @@ public sealed class AppointmentCancelService : IAppointmentCancelService
     private readonly IAuditLogger _audit;
     private readonly IAppointmentDetailService _detailService;
     private readonly TimeProvider _timeProvider;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
+    private readonly IRealtimeAccessRevoker _accessRevoker;
 
     public AppointmentCancelService(
         IApplicationDbContext db,
@@ -28,7 +30,9 @@ public sealed class AppointmentCancelService : IAppointmentCancelService
         IAppointmentBookingLock bookingLock,
         IAuditLogger audit,
         IAppointmentDetailService detailService,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IRealtimeNotificationPublisher? realtimePublisher = null,
+        IRealtimeAccessRevoker? accessRevoker = null)
     {
         _db = db;
         _policyService = policyService;
@@ -36,6 +40,8 @@ public sealed class AppointmentCancelService : IAppointmentCancelService
         _audit = audit;
         _detailService = detailService;
         _timeProvider = timeProvider;
+        _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
+        _accessRevoker = accessRevoker ?? MedFlow.Application.Services.Realtime.NullRealtimeAccessRevoker.Instance;
     }
 
     public async Task<AppointmentDetailDto> CancelMyAppointmentAsync(
@@ -164,6 +170,18 @@ public sealed class AppointmentCancelService : IAppointmentCancelService
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: hospitalId,
+                RoomId: appointment.Slot.RoomId,
+                AppointmentId: tracked.Id),
+            ct);
+        await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeAppointmentTrackingSafeAsync(
+            _accessRevoker,
+            tracked.Id,
+            ct);
 
         return await _detailService.GetMyAppointmentDetailAsync(userId, appointmentIdStr, ct);
     }
