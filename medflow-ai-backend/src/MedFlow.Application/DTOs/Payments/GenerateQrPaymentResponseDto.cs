@@ -20,4 +20,5 @@ public sealed record GenerateQrPaymentResponseDto(
     string AccountNumber,
     string AccountName,
     string TransferContent,
-    string IssueKind);
+    string IssueKind,
+    long? VisitChargeId = null);

@@ -124,6 +124,7 @@ public sealed class PrepareMedicinesServiceTests : IDisposable
     {
         var options = new DbContextOptionsBuilder<PrepareTestDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
         _db = new PrepareTestDbContext(options);
@@ -492,7 +493,7 @@ public sealed class PrepareMedicinesServiceTests : IDisposable
         var nexiumDisp = items.First(i => i.PrescriptionItemId == 201);
         Assert.Equal(11, nexiumDisp.MedicineBatchId);
         Assert.Equal(28, nexiumDisp.PlannedQuantity);
-        Assert.Equal(0, nexiumDisp.DispensedQuantity);
+        Assert.Null(nexiumDisp.DispensedQuantity);
 
         // Check Audit Log
         var audit = await _db.AuditLogs.FirstOrDefaultAsync(a => a.Action == "PRESCRIPTION_PREPARED");

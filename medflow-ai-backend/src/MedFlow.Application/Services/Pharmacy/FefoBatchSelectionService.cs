@@ -335,15 +335,21 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
             throw new ValidationException("Danh sách lựa chọn lô thuốc FEFO không được để trống.");
         }
 
-        var duplicateItemIds = request.Items
-            .GroupBy(i => i.PrescriptionItemId)
+        var duplicatePairKeys = request.Items
+            .Select(i => (
+                i.PrescriptionItemId,
+                BatchKey: i.MedicineBatchId.HasValue && i.MedicineBatchId.Value > 0
+                    ? $"ID:{i.MedicineBatchId.Value}"
+                    : (!string.IsNullOrWhiteSpace(i.BatchCode)
+                        ? $"CODE:{i.BatchCode.Trim().ToUpperInvariant()}"
+                        : "UNSPECIFIED")))
+            .GroupBy(x => x)
             .Where(g => g.Count() > 1)
-            .Select(g => g.Key)
             .ToList();
 
-        if (duplicateItemIds.Count > 0)
+        if (duplicatePairKeys.Count > 0)
         {
-            throw new ValidationException("Không được gửi trùng lặp khoản thuốc trong cùng một yêu cầu chọn lô FEFO.");
+            throw new ValidationException("Không được gửi trùng lặp cùng một lô cho cùng một khoản thuốc trong yêu cầu chọn lô FEFO.");
         }
 
         var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
@@ -351,17 +357,37 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
         var today = HospitalClock.GetToday(_timeProvider);
         var staffContext = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
 
-        var prescription = await ResolveScopedPrescriptionAsync(idOrCode, staffContext.HospitalId, ct);
+        var preCheckPrescription = await ResolveScopedPrescriptionAsync(idOrCode, staffContext.HospitalId, ct);
+        var visitId = preCheckPrescription.VisitId
+            ?? throw new NotFoundException("Visit", 0);
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        await _db.TryLockVisitForUpdateAsync(visitId, ct);
+        await _db.TryLockPrescriptionForUpdateAsync(preCheckPrescription.Id, ct);
+
+        if (_db is DbContext trackerCtx)
+        {
+            trackerCtx.ChangeTracker.Clear();
+        }
+
+        var visit = await _db.Visits
+            .AsNoTracking()
+            .FirstOrDefaultAsync(v => v.Id == visitId, ct)
+            ?? throw new NotFoundException("Visit", visitId);
+
+        EnsureVisitActiveForPharmacy(visit);
+
+        var prescription = await _db.Prescriptions
+            .FirstOrDefaultAsync(p => p.Id == preCheckPrescription.Id, ct)
+            ?? throw new NotFoundException("Prescription", preCheckPrescription.Id);
+
+        EnsurePrescriptionEligibleForPreparation(prescription, allowAlreadyDispensedRead: false);
 
         var currentStatus = prescription.Status?.Trim().ToUpperInvariant();
         if (currentStatus == "DISPENSED")
         {
             throw new ConflictException("Đơn thuốc đã được hoàn tất cấp phát, không thể thay đổi lô thuốc FEFO.");
-        }
-
-        if (currentStatus == "CANCELLED")
-        {
-            throw new ConflictException("Đơn thuốc đã bị hủy, không thể thực hiện chọn lô thuốc FEFO.");
         }
 
         var prescriptionItems = await (
@@ -398,7 +424,20 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
         }
 
         var medicineIds = prescriptionItems.Select(x => x.Medicine.Id).Distinct().ToList();
+        var candidateBatchIds = await _db.MedicineBatches
+            .AsNoTracking()
+            .Where(b => b.MedicineId.HasValue && medicineIds.Contains(b.MedicineId.Value))
+            .OrderBy(b => b.Id)
+            .Select(b => b.Id)
+            .ToListAsync(ct);
+
+        if (candidateBatchIds.Count > 0)
+        {
+            await _db.TryLockMedicineBatchesForUpdateAsync(candidateBatchIds, ct);
+        }
+
         var allMedicineBatches = await _db.MedicineBatches
+            .AsNoTracking()
             .Where(b => b.MedicineId.HasValue && medicineIds.Contains(b.MedicineId.Value))
             .OrderBy(b => b.ExpiryDate ?? DateOnly.MaxValue)
             .ThenBy(b => b.Id)
@@ -408,6 +447,7 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
             .GroupBy(b => b.MedicineId!.Value)
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        var cumulativeAllocatedByBatchId = new Dictionary<long, decimal>();
         var validatedSelections = new List<(
             PrescriptionItem Item,
             Medicine Medicine,
@@ -469,19 +509,23 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
                 throw new ConflictException($"Lô thuốc {batchLabel} của thuốc {med.Name} đã hết hạn sử dụng ({expStr}).");
             }
 
+            cumulativeAllocatedByBatchId.TryGetValue(selectedBatch.Id, out var priorOnSelectedBatch);
+            var totalRequestedForBatch = priorOnSelectedBatch + allocatedQty;
             var availableStock = selectedBatch.QuantityOnHand ?? 0m;
-            if (availableStock < allocatedQty)
+            if (availableStock < totalRequestedForBatch)
             {
                 throw new ConflictException(
-                    $"Lô thuốc {batchLabel} không đủ tồn kho khả dụng ({availableStock:0.###} < {allocatedQty:0.###}) cho thuốc {med.Name}.");
+                    $"Lô thuốc {batchLabel} không đủ tồn kho khả dụng ({availableStock:0.###} < {totalRequestedForBatch:0.###}) cho thuốc {med.Name}.");
             }
 
             var eligibleBatches = medBatches
                 .Where(b =>
-                    b.IsBlocked != true &&
-                    b.ExpiryDate.HasValue &&
-                    b.ExpiryDate.Value >= today &&
-                    (b.QuantityOnHand ?? 0m) >= allocatedQty)
+                {
+                    if (b.IsBlocked == true || !b.ExpiryDate.HasValue || b.ExpiryDate.Value < today)
+                        return false;
+                    cumulativeAllocatedByBatchId.TryGetValue(b.Id, out var priorOnCandidate);
+                    return (b.QuantityOnHand ?? 0m) - priorOnCandidate >= allocatedQty;
+                })
                 .OrderBy(b => b.ExpiryDate!.Value)
                 .ThenBy(b => b.Id)
                 .ToList();
@@ -516,6 +560,13 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
                     $"Lô {batchLabel} (HSD {chosenExp}) có hạn dùng xa hơn lô ưu tiên FEFO {earliestCode} (HSD {earliestExp}) đang còn đủ tồn kho. Vui lòng nhập lý do hợp lệ (tối thiểu {MinOverrideReasonLength} ký tự).");
             }
 
+            if (validatedSelections.Any(s => s.Item.Id == pi.Id && s.Batch.Id == selectedBatch.Id))
+            {
+                throw new ValidationException($"Không được chọn trùng lô {batchLabel} cho cùng khoản thuốc {med.Name}.");
+            }
+
+            cumulativeAllocatedByBatchId[selectedBatch.Id] = totalRequestedForBatch;
+
             validatedSelections.Add((
                 pi,
                 med,
@@ -523,10 +574,8 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
                 allocatedQty,
                 isFefoRecommended,
                 isFefoOverride,
-                isFefoOverride ? normalizedReason : normalizedReason));
+                normalizedReason));
         }
-
-        await using var tx = await _db.BeginTransactionAsync(ct);
 
         var nextStatus = string.Equals(currentStatus, "READY", StringComparison.OrdinalIgnoreCase)
             ? "READY"
@@ -534,6 +583,13 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
 
         var dispense = await _db.MedicationDispenses
             .FirstOrDefaultAsync(md => md.PrescriptionId == prescription.Id, ct);
+
+        if (dispense is not null &&
+            (string.Equals(dispense.Status, "DISPENSED", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(dispense.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new ConflictException("Đơn thuốc đã được hoàn tất cấp phát, không thể thay đổi lô thuốc FEFO.");
+        }
 
         if (dispense is null)
         {
@@ -560,22 +616,30 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
 
         var existingDispenseItems = await _db.DispenseItems
             .Where(di => di.DispenseId == dispense.Id)
+            .OrderBy(di => di.Id)
             .ToListAsync(ct);
 
-        var existingByPrescriptionItemId = existingDispenseItems
-            .Where(di => di.PrescriptionItemId.HasValue)
-            .GroupBy(di => di.PrescriptionItemId!.Value)
-            .ToDictionary(g => g.Key, g => g.First());
-
+        var retainedDispenseItems = new HashSet<DispenseItem>();
         var allocationDtos = new List<SelectedFefoBatchItemResultDto>(validatedSelections.Count);
 
         foreach (var sel in validatedSelections)
         {
-            if (existingByPrescriptionItemId.TryGetValue(sel.Item.Id, out var existingDi))
+            var existingMatch = existingDispenseItems.FirstOrDefault(di =>
+                !retainedDispenseItems.Contains(di) &&
+                di.PrescriptionItemId == sel.Item.Id &&
+                di.MedicineBatchId == sel.Batch.Id);
+
+            existingMatch ??= existingDispenseItems.FirstOrDefault(di =>
+                !retainedDispenseItems.Contains(di) &&
+                di.PrescriptionItemId == sel.Item.Id &&
+                validatedSelections.Count(v => v.Item.Id == sel.Item.Id) == 1);
+
+            if (existingMatch is not null)
             {
-                existingDi.MedicineBatchId = sel.Batch.Id;
-                existingDi.PlannedQuantity = sel.AllocatedQty;
-                existingDi.DispensedQuantity ??= 0m;
+                retainedDispenseItems.Add(existingMatch);
+                existingMatch.MedicineBatchId = sel.Batch.Id;
+                existingMatch.PlannedQuantity = sel.AllocatedQty;
+                existingMatch.DispensedQuantity = null;
             }
             else
             {
@@ -585,7 +649,7 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
                     PrescriptionItemId = sel.Item.Id,
                     MedicineBatchId = sel.Batch.Id,
                     PlannedQuantity = sel.AllocatedQty,
-                    DispensedQuantity = 0m,
+                    DispensedQuantity = null,
                 });
             }
 
@@ -600,6 +664,14 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
                 IsFefoRecommended: sel.IsFefoRecommended,
                 IsFefoOverride: sel.IsFefoOverride,
                 OverrideReason: sel.OverrideReason));
+        }
+
+        var obsoleteItems = existingDispenseItems
+            .Where(di => !retainedDispenseItems.Contains(di))
+            .ToList();
+        if (obsoleteItems.Count > 0)
+        {
+            _db.DispenseItems.RemoveRange(obsoleteItems);
         }
 
         prescription.Status = nextStatus;
@@ -823,15 +895,6 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
             throw new NotFoundException("Prescription", trimmed);
         }
 
-        if (!string.IsNullOrWhiteSpace(candidate.FulfillmentChoice))
-        {
-            var choice = candidate.FulfillmentChoice.Trim().ToUpperInvariant();
-            if (choice is not ("HOSPITAL" or "HOSPITAL_PHARMACY"))
-            {
-                throw new NotFoundException("Prescription", trimmed);
-            }
-        }
-
         var visit = candidate.VisitId.HasValue
             ? await _db.Visits.AsNoTracking().FirstOrDefaultAsync(v => v.Id == candidate.VisitId.Value, ct)
             : null;
@@ -884,7 +947,54 @@ public sealed class FefoBatchSelectionService : IFefoBatchSelectionService
             throw new ForbiddenException("Bạn không có quyền truy cập đơn thuốc thuộc cơ sở y tế khác.");
         }
 
+        if (visit is null)
+        {
+            throw new NotFoundException("Visit", candidate.VisitId ?? 0);
+        }
+
+        EnsureVisitActiveForPharmacy(visit);
+        EnsurePrescriptionEligibleForPreparation(candidate, allowAlreadyDispensedRead: true);
+
         return candidate;
+    }
+
+    private static void EnsureVisitActiveForPharmacy(Visit visit)
+    {
+        var visitStatus = visit.Status?.Trim().ToUpperInvariant();
+        if (visitStatus is "CANCELLED" or "NO_SHOW")
+        {
+            throw new ConflictException("Lượt khám đã hủy hoặc không đến, không thể xử lý đơn thuốc tại nhà thuốc.");
+        }
+    }
+
+    private static void EnsurePrescriptionEligibleForPreparation(
+        Prescription prescription,
+        bool allowAlreadyDispensedRead)
+    {
+        var rxStatus = prescription.Status?.Trim().ToUpperInvariant();
+        if (rxStatus == "DRAFT")
+        {
+            throw new ConflictException("Đơn thuốc đang ở trạng thái nháp (DRAFT), chưa được bác sĩ phát hành.");
+        }
+
+        if (rxStatus == "CANCELLED")
+        {
+            throw new ConflictException("Đơn thuốc đã bị hủy (CANCELLED), không thể thực hiện chọn lô thuốc FEFO.");
+        }
+
+        if (!allowAlreadyDispensedRead && rxStatus == "DISPENSED")
+        {
+            throw new ConflictException("Đơn thuốc đã được hoàn tất cấp phát, không thể thay đổi lô thuốc FEFO.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(prescription.FulfillmentChoice))
+        {
+            var choice = prescription.FulfillmentChoice.Trim().ToUpperInvariant();
+            if (choice is not ("HOSPITAL" or "HOSPITAL_PHARMACY"))
+            {
+                throw new ConflictException("Đơn thuốc mua ngoài viện (EXTERNAL_PHARMACY), không thuộc phạm vi cấp phát tại nhà thuốc bệnh viện.");
+            }
+        }
     }
 
     private sealed record FefoSelectionAuditPayload(

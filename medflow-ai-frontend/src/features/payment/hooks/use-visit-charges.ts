@@ -12,13 +12,18 @@ const PAYMENT_CONNECTED_POLL_INTERVAL_MS = 15_000;
 
 function isTerminalPaymentState(data: VisitChargesResponseDto | undefined): boolean {
   if (!data) return false;
-  const status = data.paymentStatus?.toUpperCase() ?? '';
-  return (
-    data.settlementStatus === 'PAID' ||
-    status === 'PAID' ||
-    status === 'CANCELLED' ||
-    status === 'FAILED'
-  );
+  if (data.settlementStatus === 'PAID') return true;
+  if (data.charges.length === 0) {
+    const status = data.paymentStatus?.toUpperCase() ?? '';
+    return status === 'CANCELLED' || status === 'FAILED';
+  }
+  return false;
+}
+
+function hasAnyPendingPayment(data: VisitChargesResponseDto | undefined): boolean {
+  if (!data) return false;
+  if (data.paymentStatus?.toUpperCase() === 'PENDING') return true;
+  return data.charges.some((line) => line.paymentStatus?.toUpperCase() === 'PENDING');
 }
 
 export function useVisitChargesQuery(visitIdOrCode: string) {
@@ -55,7 +60,7 @@ export function useVisitChargesQuery(visitIdOrCode: string) {
     enabled: Boolean(trimmed),
     retry: false,
     refetchInterval: (query) => {
-      if (query.state.data?.paymentStatus?.toUpperCase() !== 'PENDING') {
+      if (!hasAnyPendingPayment(query.state.data)) {
         return false;
       }
       return isLive ? PAYMENT_CONNECTED_POLL_INTERVAL_MS : PAYMENT_POLL_INTERVAL_MS;

@@ -1,7 +1,10 @@
 using System.Security.Claims;
+using System.Text.Json;
 using MedFlow.Application.DTOs.Payments;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Payments;
 using MedFlow.Domain.Constants;
+using MedFlow.Domain.Exceptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -12,6 +15,8 @@ namespace MedFlow.API.Controllers;
 [Authorize(Roles = RoleNames.Patient)]
 public sealed class VisitQrPaymentsController : ControllerBase
 {
+    private static readonly JsonSerializerOptions RequestJsonOptions = new(JsonSerializerDefaults.Web);
+
     private readonly IGenerateQrPaymentService _service;
 
     public VisitQrPaymentsController(IGenerateQrPaymentService service)
@@ -19,7 +24,7 @@ public sealed class VisitQrPaymentsController : ControllerBase
         _service = service;
     }
 
-    /// <summary>POST /api/v1/visits/{idOrCode}/payments/qr — Phát hành QR thanh toán cho bệnh nhân (UC18 / #162).</summary>
+    /// <summary>POST /api/v1/visits/{idOrCode}/payments/qr — Phát hành QR thanh toán theo từng khoản phí (UC18 / ADR-0059).</summary>
     [HttpPost("/api/v1/visits/{idOrCode}/payments/qr")]
     [HttpPost("/api/v1/patients/visits/{idOrCode}/payments/qr")]
     [EnableRateLimiting("payment-qr-generate")]
@@ -35,10 +40,49 @@ public sealed class VisitQrPaymentsController : ControllerBase
         [FromRoute] string idOrCode,
         CancellationToken ct)
     {
-        var result = await _service.CreateAsync(GetUserId(), idOrCode, GetIp(), ct);
+        var request = await TryReadOptionalBodyAsync(ct);
+
+        GenerateQrPaymentResponseDto result;
+        if (_service is GenerateQrPaymentService perChargeService)
+        {
+            result = await perChargeService.CreateAsync(GetUserId(), idOrCode, GetIp(), request, ct);
+        }
+        else
+        {
+            result = await _service.CreateAsync(GetUserId(), idOrCode, GetIp(), ct);
+        }
+
         if (result.IssueKind == QrPaymentIssueKind.Created)
             return StatusCode(StatusCodes.Status201Created, result);
         return Ok(result);
+    }
+
+    private async Task<GenerateQrPaymentRequestDto?> TryReadOptionalBodyAsync(CancellationToken ct)
+    {
+        var httpRequest = HttpContext.Request;
+        if (httpRequest.ContentLength is 0)
+            return null;
+
+        if (httpRequest.ContentLength is null &&
+            !httpRequest.Headers.ContainsKey("Transfer-Encoding") &&
+            string.IsNullOrWhiteSpace(httpRequest.ContentType))
+        {
+            return null;
+        }
+
+        using var reader = new StreamReader(httpRequest.Body, leaveOpen: true);
+        var raw = await reader.ReadToEndAsync(ct);
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<GenerateQrPaymentRequestDto>(raw, RequestJsonOptions);
+        }
+        catch (JsonException)
+        {
+            throw new ValidationException("Dữ liệu yêu cầu tạo mã QR không hợp lệ.");
+        }
     }
 
     private long GetUserId()

@@ -165,4 +165,75 @@ describe('VisitPaymentPage', () => {
 
     expect(await screen.findByText('Lượt khám được thu tại quầy.')).toBeInTheDocument();
   });
+
+  it('never renders Đã thanh toán when exam payment is PAID while diagnostic charge remains UNPAID', async () => {
+    const user = userEvent.setup();
+    renderPage({
+      ...baseCharges,
+      settlementStatus: 'UNPAID',
+      payableTotal: 270000,
+      recognizedPaidTotal: 120000,
+      amountDue: 150000,
+      paymentId: 5,
+      paymentCode: 'MF5',
+      paymentStatus: 'PAID',
+      paymentAmount: 120000,
+      canPayByQr: true,
+      charges: [
+        {
+          chargeId: 201,
+          chargeSource: 'PERSISTED',
+          serviceId: 1,
+          serviceCode: 'KHAM-01',
+          serviceName: 'Khám Nội',
+          diagnosticOrderId: null,
+          unitPrice: 120000,
+          paymentRequirement: 'REQUIRED',
+          payable: true,
+          chargeDataStatus: 'VALID',
+          chargeType: 'EXAMINATION',
+          chargeStatus: 'ACTIVE',
+          lineSettlementStatus: 'PAID',
+          canPayByQr: false,
+        },
+        {
+          chargeId: 202,
+          chargeSource: 'PERSISTED',
+          serviceId: 2,
+          serviceCode: 'XN-01',
+          serviceName: 'Xét nghiệm máu',
+          diagnosticOrderId: 901,
+          unitPrice: 150000,
+          paymentRequirement: 'REQUIRED',
+          payable: true,
+          chargeDataStatus: 'VALID',
+          chargeType: 'DIAGNOSTIC',
+          chargeStatus: 'ACTIVE',
+          lineSettlementStatus: 'UNPAID',
+          canPayByQr: true,
+        },
+      ],
+    });
+
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: {
+        ...qrResponse,
+        paymentId: 66,
+        paymentCode: 'MF66',
+        amount: 150000,
+        transferContent: 'MF66',
+        visitChargeId: 202,
+      },
+    });
+
+    expect(await screen.findByText('Xét nghiệm máu')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Đã thanh toán' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Tạo mã VietQR/i }));
+
+    expect(post).toHaveBeenCalledWith(`/patients/visits/${visitCode}/payments/qr`, {
+      visitChargeId: 202,
+    });
+    expect(await screen.findByRole('img', { name: 'Mã QR thanh toán MF66' })).toBeInTheDocument();
+  });
 });

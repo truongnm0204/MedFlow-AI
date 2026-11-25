@@ -289,7 +289,15 @@ public sealed class PharmacyDashboardService : IPharmacyDashboardService
             .GroupBy(pi => pi.PrescriptionId!.Value)
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        var supersededIds = allPrescriptions
+            .Where(p => p.ReplacesPrescriptionId.HasValue &&
+                        !string.Equals(p.Status?.Trim(), "CANCELLED", StringComparison.OrdinalIgnoreCase))
+            .Select(p => p.ReplacesPrescriptionId!.Value)
+            .ToHashSet();
+
         var scopedPrescriptions = allPrescriptions
+            .Where(p => !supersededIds.Contains(p.Id))
+            .Where(p => IsEligibleForPharmacyQueue(p, visitsById))
             .Where(p => IsPrescriptionInHospitalScope(
                 p,
                 visitsById,
@@ -356,10 +364,10 @@ public sealed class PharmacyDashboardService : IPharmacyDashboardService
                 .ToListAsync(ct)
             : [];
 
-        var dispenseItemByPrescriptionItemId = dispenseItems
+        var dispenseItemsByPrescriptionItemId = dispenseItems
             .Where(di => di.PrescriptionItemId.HasValue)
             .GroupBy(di => di.PrescriptionItemId!.Value)
-            .ToDictionary(g => g.Key, g => g.First());
+            .ToDictionary(g => g.Key, g => g.ToList());
 
         var dispenseItemIds = dispenseItems.Select(di => di.Id).ToHashSet();
         var batchIdsSet = batchesById.Keys.ToHashSet();
@@ -444,11 +452,28 @@ public sealed class PharmacyDashboardService : IPharmacyDashboardService
                     : null;
 
                 MedicineBatch? resolvedBatch = null;
-                if (dispenseItemByPrescriptionItemId.TryGetValue(item.Id, out var dispItem) &&
-                    dispItem.MedicineBatchId.HasValue &&
-                    batchesById.TryGetValue(dispItem.MedicineBatchId.Value, out var batchFromDispense))
+                string? multiBatchLabel = null;
+                if (dispenseItemsByPrescriptionItemId.TryGetValue(item.Id, out var dispItemsForLine) &&
+                    dispItemsForLine.Count > 0)
                 {
-                    resolvedBatch = batchFromDispense;
+                    var matchedBatches = dispItemsForLine
+                        .Where(di => di.MedicineBatchId.HasValue && batchesById.ContainsKey(di.MedicineBatchId.Value))
+                        .Select(di => batchesById[di.MedicineBatchId!.Value])
+                        .ToList();
+
+                    if (matchedBatches.Count > 0)
+                    {
+                        resolvedBatch = matchedBatches[0];
+                        if (matchedBatches.Count > 1)
+                        {
+                            multiBatchLabel = string.Join(
+                                ", ",
+                                matchedBatches
+                                    .Select(b => b.BatchNumber)
+                                    .Where(code => !string.IsNullOrWhiteSpace(code))
+                                    .Distinct(StringComparer.OrdinalIgnoreCase));
+                        }
+                    }
                 }
                 else if (item.MedicineId.HasValue &&
                     batchesByMedicineId.TryGetValue(item.MedicineId.Value, out var candidateBatches) &&
@@ -471,9 +496,11 @@ public sealed class PharmacyDashboardService : IPharmacyDashboardService
                 var dosageInstruction = FormatDosageInstruction(item);
                 var unitLabel = (medicine?.DispensingUnit ?? item.SingleDoseUnit ?? "viên").ToLowerInvariant();
                 var quantityLabel = $"{FormatQuantity(item.PrescribedQuantity)} {unitLabel}";
-                var batchCode = !string.IsNullOrWhiteSpace(resolvedBatch?.BatchNumber)
-                    ? resolvedBatch.BatchNumber
-                    : "Chưa phân lô";
+                var batchCode = !string.IsNullOrWhiteSpace(multiBatchLabel)
+                    ? multiBatchLabel
+                    : (!string.IsNullOrWhiteSpace(resolvedBatch?.BatchNumber)
+                        ? resolvedBatch.BatchNumber
+                        : "Chưa phân lô");
                 var expiryDate = resolvedBatch?.ExpiryDate?.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)
                     ?? "Chưa cập nhật";
 
@@ -490,8 +517,8 @@ public sealed class PharmacyDashboardService : IPharmacyDashboardService
             if (status == "DISPENSED")
             {
                 var prescriptionDispenseItemIds = rawItems
-                    .Where(ri => dispenseItemByPrescriptionItemId.ContainsKey(ri.Id))
-                    .Select(ri => dispenseItemByPrescriptionItemId[ri.Id].Id)
+                    .Where(ri => dispenseItemsByPrescriptionItemId.ContainsKey(ri.Id))
+                    .SelectMany(ri => dispenseItemsByPrescriptionItemId[ri.Id].Select(di => di.Id))
                     .ToHashSet();
 
                 var matchingTx = stockTransactions.FirstOrDefault(st =>
@@ -584,6 +611,40 @@ public sealed class PharmacyDashboardService : IPharmacyDashboardService
             FefoBatchAlerts: fefoBatchAlerts,
             PharmacistProfile: pharmacistProfile,
             GeneratedAtUtc: nowUtc);
+    }
+
+    private static bool IsEligibleForPharmacyQueue(
+        Prescription prescription,
+        IReadOnlyDictionary<long, Visit> visitsById)
+    {
+        var rxStatus = prescription.Status?.Trim().ToUpperInvariant();
+        if (rxStatus is "DRAFT" or "CANCELLED")
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(prescription.FulfillmentChoice))
+        {
+            var choice = prescription.FulfillmentChoice.Trim().ToUpperInvariant();
+            if (choice is not ("HOSPITAL" or "HOSPITAL_PHARMACY"))
+            {
+                return false;
+            }
+        }
+
+        if (!prescription.VisitId.HasValue ||
+            !visitsById.TryGetValue(prescription.VisitId.Value, out var visit))
+        {
+            return false;
+        }
+
+        var visitStatus = visit.Status?.Trim().ToUpperInvariant();
+        if (visitStatus is "CANCELLED" or "NO_SHOW")
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static bool IsPrescriptionInHospitalScope(

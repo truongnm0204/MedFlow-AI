@@ -6,7 +6,8 @@ export function useCreateQrPaymentMutation(visitIdOrCode: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: () => generateQrPaymentApi(visitIdOrCode),
+    mutationFn: (visitChargeId?: number | null) =>
+      generateQrPaymentApi(visitIdOrCode, visitChargeId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['visit-charges', visitIdOrCode] });
     },

@@ -202,4 +202,137 @@ describe('DispenseConfirmPage (real API)', () => {
       screen.getByRole('button', { name: /Xác nhận Hoàn tất Bàn giao & Trừ tồn kho/i }),
     ).not.toBeDisabled();
   });
+
+  it('preserves scoped idempotencyKey across network retry and rotates after 409 conflict', async () => {
+    const networkErr = new Error('Network timeout');
+    const conflictErr = Object.assign(new Error('Conflict'), {
+      isAxiosError: true,
+      response: { status: 409, data: { detail: 'Số lượng tồn không đủ.' } },
+    });
+
+    const postSpy = vi
+      .spyOn(apiClient, 'post')
+      .mockRejectedValueOnce(networkErr)
+      .mockRejectedValueOnce(conflictErr)
+      .mockResolvedValueOnce({
+        data: {
+          dispenseCode: 'DISP-2026-1125-0088',
+          rxCode: 'RX-2026-0415-0088',
+          visitCode: 'VIS-2026-0501',
+          ticketNo: 'PHA-012',
+          patientName: 'NGUYỄN VĂN AN',
+          patientCode: 'PAT-2024-0108',
+          receiverName: 'NGUYỄN VĂN AN',
+          receiverIdentityMasked: '001088******',
+          prescribingDoctor: 'TS.BS Nguyễn Minh Đức',
+          dispensingPharmacist: 'DS. Trần Thu Hương',
+          dispensedAt: '25/11/2026 09:10',
+          statusLabel: 'DISPENSED',
+          paymentSummary: 'Chưa có dữ liệu',
+          totalAmountFormatted: 'Chưa có dữ liệu',
+          items: [],
+          auditNote: 'Audit OK',
+        },
+      } as AxiosResponse);
+
+    renderDispensePage();
+    expect((await screen.findAllByText('NGUYỄN VĂN AN')).length).toBeGreaterThan(0);
+
+    for (const cb of screen.getAllByRole('checkbox')) {
+      if (!(cb as HTMLInputElement).checked) {
+        fireEvent.click(cb);
+      }
+    }
+
+    const submitBtn = screen.getByRole('button', {
+      name: /Xác nhận Hoàn tất Bàn giao & Trừ tồn kho/i,
+    });
+
+    // Attempt 1 fails with transient network error
+    fireEvent.click(submitBtn);
+    expect(await screen.findByText('Network timeout')).toBeInTheDocument();
+    expect(postSpy).toHaveBeenCalledTimes(1);
+    const key1 = (postSpy.mock.calls[0]?.[1] as { idempotencyKey: string }).idempotencyKey;
+    expect(key1.startsWith('88:')).toBe(true);
+
+    // Attempt 2 retries same submit -> MUST reuse identical idempotencyKey, then fails with 409
+    fireEvent.click(submitBtn);
+    expect(await screen.findByText('Số lượng tồn không đủ.')).toBeInTheDocument();
+    expect(postSpy).toHaveBeenCalledTimes(2);
+    const key2 = (postSpy.mock.calls[1]?.[1] as { idempotencyKey: string }).idempotencyKey;
+    expect(key2).toBe(key1);
+
+    // Attempt 3 after 409 conflict -> MUST rotate to a fresh idempotencyKey
+    fireEvent.click(submitBtn);
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(3));
+    const key3 = (postSpy.mock.calls[2]?.[1] as { idempotencyKey: string }).idempotencyKey;
+    expect(key3.startsWith('88:')).toBe(true);
+    expect(key3).not.toBe(key1);
+  });
+
+  it('requires shortageReason when dispensedQuantity is 0 and sends explicit 0 without fallback', async () => {
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: {
+        dispenseCode: 'DISP-2026-1125-0089',
+        rxCode: 'RX-2026-0415-0088',
+        visitCode: 'VIS-2026-0501',
+        ticketNo: 'PHA-012',
+        patientName: 'NGUYỄN VĂN AN',
+        patientCode: 'PAT-2024-0108',
+        receiverName: 'NGUYỄN VĂN AN',
+        receiverIdentityMasked: '001088******',
+        prescribingDoctor: 'TS.BS Nguyễn Minh Đức',
+        dispensingPharmacist: 'DS. Trần Thu Hương',
+        dispensedAt: '25/11/2026 09:15',
+        statusLabel: 'DISPENSED',
+        paymentSummary: 'Chưa có dữ liệu',
+        totalAmountFormatted: 'Chưa có dữ liệu',
+        items: [],
+        auditNote: 'Audit OK',
+      },
+    } as AxiosResponse);
+
+    renderDispensePage();
+    expect((await screen.findAllByText('NGUYỄN VĂN AN')).length).toBeGreaterThan(0);
+
+    for (const cb of screen.getAllByRole('checkbox')) {
+      if (!(cb as HTMLInputElement).checked) {
+        fireEvent.click(cb);
+      }
+    }
+
+    const qtyInput = screen.getByLabelText(/Số lượng thực xuất \(Viên\)/i);
+    fireEvent.change(qtyInput, { target: { value: '0' } });
+
+    const submitBtn = screen.getByRole('button', {
+      name: /Xác nhận Hoàn tất Bàn giao & Trừ tồn kho/i,
+    });
+    fireEvent.click(submitBtn);
+
+    expect(
+      await screen.findByText(/nhỏ hơn kê đơn.*Vui lòng nhập lý do cấp thiếu thuốc/i),
+    ).toBeInTheDocument();
+    expect(postSpy).not.toHaveBeenCalled();
+
+    const reasonInput = screen.getByLabelText(/Lý do cấp thiếu \/ bằng 0/i);
+    fireEvent.change(reasonInput, { target: { value: 'Tạm hết lô thuốc tại quầy' } });
+
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        '/pharmacy/prescriptions/RX-2026-0415-0088/dispense',
+        expect.objectContaining({
+          items: [
+            expect.objectContaining({
+              prescriptionItemId: 101,
+              medicineBatchId: 1001,
+              dispensedQuantity: 0,
+              shortageReason: 'Tạm hết lô thuốc tại quầy',
+            }),
+          ],
+        }),
+      );
+    });
+  });
 });
