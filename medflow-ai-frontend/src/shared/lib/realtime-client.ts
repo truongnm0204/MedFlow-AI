@@ -102,6 +102,9 @@ const SESSION_REVOCATION_REASONS = new Set([
   'STAFF_SCOPE_CHANGED',
   'REFRESH_REUSE_DETECTED',
   'LOGOUT',
+  'PASSWORD_RESET',
+  'PASSWORD_CHANGED',
+  'SESSION_REVOKED',
 ]);
 
 let connection: HubConnectionLike | null = null;
@@ -305,7 +308,11 @@ async function joinSingleChannel(
   entry.joining = true;
   try {
     const ack = await invokeChannelJoin(connection, entry.channel);
-    if (entry.subscribers.size === 0) {
+    if (entry.subscribers.size === 0 || channels.get(entry.key) !== entry) {
+      entry.serverResourceKey = ack?.resourceKey ?? entry.serverResourceKey;
+      if (connection && connection.state === HubConnectionState.Connected) {
+        void invokeChannelLeave(connection, entry).catch(() => {});
+      }
       return;
     }
 

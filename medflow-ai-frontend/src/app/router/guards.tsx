@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate, useLocation, useSearchParams } from 'react-router-dom';
 
 import { useAuthStore } from '@/features/auth/store/auth.store';
-import { hasAnyRole } from '@/features/auth/utils/rbac';
+import { hasAnyRole, hasPermission } from '@/features/auth/utils/rbac';
 import { getRoleLandingRoute, resolvePostLoginRedirect } from '@/features/auth/utils/role-landing';
 /** Chặn route cần đăng nhập — chưa login → /login?returnUrl=<current>. */
 export function RequireAuth({ children }: { children: ReactNode }) {
@@ -22,7 +22,12 @@ export function GuestOnly({ children }: { children: ReactNode }) {
   const user = useAuthStore((s) => s.user);
   const [params] = useSearchParams();
   if (isAuthenticated) {
-    return <Navigate to={resolvePostLoginRedirect(params.get('returnUrl'), user?.roles)} replace />;
+    return (
+      <Navigate
+        to={resolvePostLoginRedirect(params.get('returnUrl'), user?.roles, user?.permissions)}
+        replace
+      />
+    );
   }
   return children;
 }
@@ -75,4 +80,31 @@ export function RequireDiagnostic({ children }: { children: ReactNode }) {
 /** Client-side navigation guard for Pharmacy workbench; API authorization remains server-side. */
 export function RequirePharmacy({ children }: { children: ReactNode }) {
   return <RequireRole allowedRoles={['PHARMACY_STAFF']}>{children}</RequireRole>;
+}
+
+/**
+ * Client-side navigation guard for Patient Identity Claim verification queue.
+ * Enforces `PATIENT_IDENTITY_VERIFY` permission alongside staff role eligibility.
+ */
+export function RequireIdentityClaimVerify({
+  children,
+  adminOnly = false,
+}: {
+  children: ReactNode;
+  adminOnly?: boolean;
+}) {
+  const user = useAuthStore((state) => state.user);
+  const roles = user?.roles ?? [];
+  const allowedRoles = adminOnly
+    ? ['HOSPITAL_ADMIN', 'SYSTEM_ADMIN']
+    : ['RECEPTION', 'HOSPITAL_ADMIN', 'SYSTEM_ADMIN'];
+
+  if (
+    !hasAnyRole(roles, allowedRoles) ||
+    !hasPermission(roles, 'PATIENT_IDENTITY_VERIFY', user?.permissions)
+  ) {
+    return <Navigate to={getRoleLandingRoute(roles)} replace />;
+  }
+
+  return children;
 }

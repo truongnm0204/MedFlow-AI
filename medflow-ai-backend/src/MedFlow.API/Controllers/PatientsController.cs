@@ -4,6 +4,7 @@ using MedFlow.Application.Interfaces.Services;
 using MedFlow.Domain.Constants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace MedFlow.API.Controllers;
 
@@ -76,18 +77,22 @@ public sealed class PatientsController : ControllerBase
         => Ok(await _visitListService.GetMyVisitsAsync(GetUserId(), limit, ct));
     /// <summary>POST /api/v1/patients/me/identity-claims/otp — Gửi OTP step-up cho yêu cầu liên kết hồ sơ.</summary>
     [HttpPost("me/identity-claims/otp")]
+    [EnableRateLimiting("otp-resend")]
     [ProducesResponseType<SendIdentityClaimOtpResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<SendIdentityClaimOtpResponse>> SendIdentityClaimOtp(CancellationToken ct)
         => Ok(await _identityClaimService.SendOtpAsync(GetUserId(), ct));
 
     /// <summary>POST /api/v1/patients/me/identity-claims — Gửi yêu cầu liên kết hồ sơ đã có.</summary>
     [HttpPost("me/identity-claims")]
+    [EnableRateLimiting("otp-verify")]
     [ProducesResponseType<IdentityClaimResponse>(StatusCodes.Status201Created)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests)]
     public async Task<ActionResult<IdentityClaimResponse>> CreateIdentityClaim(
         [FromBody] CreateIdentityClaimRequest request,
         CancellationToken ct)
@@ -183,7 +188,7 @@ public sealed class PatientsController : ControllerBase
     public async Task<ActionResult<PatientDiagnosticResultListResponseDto>> GetMyDiagnosticResults(
         [FromQuery] GetPatientDiagnosticResultsRequest? request,
         CancellationToken ct)
-        => Ok(await _diagnosticResultService.GetMyResultsAsync(GetUserId(), request, ct));
+        => Ok(await _diagnosticResultService.GetMyResultsAsync(GetUserId(), request, ct, GetIp()));
 
     /// <summary>GET /api/v1/patients/me/diagnostic-results/{idOrCode} — Xem chi tiết kết quả cận lâm sàng theo mã chỉ định.</summary>
     [HttpGet("me/diagnostic-results/{idOrCode}")]
@@ -195,7 +200,7 @@ public sealed class PatientsController : ControllerBase
     public async Task<ActionResult<PatientDiagnosticResultDetailDto>> GetMyDiagnosticResult(
         string idOrCode,
         CancellationToken ct)
-        => Ok(await _diagnosticResultService.GetMyResultAsync(GetUserId(), idOrCode, ct));
+        => Ok(await _diagnosticResultService.GetMyResultAsync(GetUserId(), idOrCode, ct, GetIp()));
 
     /// <summary>GET /api/v1/patients/me/prescriptions — Xem danh sách đơn thuốc của bệnh nhân đang đăng nhập.</summary>
     [HttpGet("me/prescriptions")]

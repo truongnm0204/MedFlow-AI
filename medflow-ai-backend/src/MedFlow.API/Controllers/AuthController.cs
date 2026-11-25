@@ -45,7 +45,7 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> Logout(
         [FromBody] RefreshRequest request, CancellationToken ct)
     {
-        await _authService.LogoutAsync(GetUserId(), request.RefreshToken, GetIp(), ct);
+        await _authService.LogoutAsync(GetUserId(), request.RefreshToken, GetSessionId(), GetIp(), ct);
         return NoContent();
     }
 

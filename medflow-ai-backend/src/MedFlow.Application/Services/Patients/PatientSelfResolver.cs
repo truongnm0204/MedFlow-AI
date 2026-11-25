@@ -1,3 +1,4 @@
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
@@ -18,7 +19,8 @@ internal static class PatientSelfResolver
     public static async Task<Patient> LoadActiveAsync(
         IApplicationDbContext db,
         long userId,
-        CancellationToken ct)
+        CancellationToken ct,
+        TimeProvider? timeProvider = null)
     {
         var ids = await db.Patients
             .AsNoTracking()
@@ -34,19 +36,16 @@ internal static class PatientSelfResolver
             .AsNoTracking()
             .Include(p => p.User)
             .FirstAsync(p => p.Id == patientId, ct);
-        if (patient.User is null || patient.User.AccountStatus != AccountStatus.ACTIVE)
-            throw new UnauthorizedAccessException("Tài khoản bệnh nhân chưa kích hoạt hoặc đã bị khóa.");
 
-        if (!string.Equals(patient.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
-            throw new UnauthorizedAccessException("Hồ sơ bệnh nhân đang ngừng hoạt động.");
-
+        EnsureUserAndPatientActive(patient, timeProvider);
         return patient;
     }
 
     public static async Task<Patient> LoadActiveTrackedAsync(
         IApplicationDbContext db,
         long userId,
-        CancellationToken ct)
+        CancellationToken ct,
+        TimeProvider? timeProvider = null)
     {
         var ids = await db.Patients
             .AsNoTracking()
@@ -61,13 +60,23 @@ internal static class PatientSelfResolver
         var patient = await db.Patients
             .Include(p => p.User)
             .FirstAsync(p => p.Id == patientId, ct);
-        if (patient.User is null || patient.User.AccountStatus != AccountStatus.ACTIVE)
+
+        EnsureUserAndPatientActive(patient, timeProvider);
+        return patient;
+    }
+
+    private static void EnsureUserAndPatientActive(Patient patient, TimeProvider? timeProvider)
+    {
+        var nowUtc = HospitalClock.GetUtcNow(timeProvider ?? TimeProvider.System);
+        if (patient.User is null ||
+            patient.User.AccountStatus != AccountStatus.ACTIVE ||
+            (patient.User.LockedUntil.HasValue && patient.User.LockedUntil.Value > nowUtc))
+        {
             throw new UnauthorizedAccessException("Tài khoản bệnh nhân chưa kích hoạt hoặc đã bị khóa.");
+        }
 
         if (!string.Equals(patient.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
             throw new UnauthorizedAccessException("Hồ sơ bệnh nhân đang ngừng hoạt động.");
-
-        return patient;
     }
 
     internal static long RequireSinglePatientId(IReadOnlyList<long> ids, long userId)

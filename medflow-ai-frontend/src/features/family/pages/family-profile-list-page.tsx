@@ -21,7 +21,7 @@ export function FamilyProfileListPage() {
   const [removingMember, setRemovingMember] = useState<FamilyMember | null>(null);
 
   const handleBookAppointment = (member: FamilyMember) => {
-    navigate(`/booking?patientId=${encodeURIComponent(member.id)}`);
+    navigate(`/booking?patientId=${encodeURIComponent(String(member.memberPatientId))}`);
   };
 
   return (

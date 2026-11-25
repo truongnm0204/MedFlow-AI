@@ -8,6 +8,7 @@ import {
   RequireAuth,
   RequireDiagnostic,
   RequireDoctor,
+  RequireIdentityClaimVerify,
   RequirePharmacy,
   RequireReception,
   RequireRole,
@@ -225,6 +226,7 @@ describe('Role-specific Route Guards & CanAccess', () => {
       'HOSPITAL_CONFIG',
       'USER_MANAGE',
       'AUDIT_READ',
+      'PATIENT_IDENTITY_VERIFY',
     ]);
     expect(hasPermission(['DOCTOR'], 'PRESCRIPTION_ISSUE')).toBe(true);
     expect(hasPermission(['DOCTOR'], 'USER_MANAGE')).toBe(false);
@@ -256,5 +258,54 @@ describe('Role-specific Route Guards & CanAccess', () => {
     expect(screen.getByRole('button', { name: 'Kê đơn thuốc' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Xóa vai trò' })).toBeNull();
     expect(screen.getByText('Không đủ quyền quản trị')).toBeDefined();
+  });
+
+  it('RequireIdentityClaimVerify và canAccessRoute kiểm tra đúng quyền PATIENT_IDENTITY_VERIFY', () => {
+    expect(canAccessRoute('/reception/identity-claims', ['RECEPTION'])).toBe(false);
+    expect(
+      canAccessRoute('/reception/identity-claims', ['RECEPTION'], ['PATIENT_IDENTITY_VERIFY']),
+    ).toBe(true);
+    expect(canAccessRoute('/admin/identity-claims', ['HOSPITAL_ADMIN'])).toBe(true);
+    expect(
+      canAccessRoute('/admin/identity-claims', ['RECEPTION'], ['PATIENT_IDENTITY_VERIFY']),
+    ).toBe(false);
+
+    // Default RECEPTION without PATIENT_IDENTITY_VERIFY is redirected to /reception
+    useAuthStore.setState({
+      isAuthenticated: true,
+      user: {
+        id: 11,
+        email: 'reception@medflow.test',
+        fullName: 'Lễ tân A',
+        roles: ['RECEPTION'],
+        patientCode: null,
+        staffCode: 'STF-011',
+      },
+    });
+    const { unmount: u1 } = renderWithRouter(
+      <RequireIdentityClaimVerify>IDENTITY QUEUE</RequireIdentityClaimVerify>,
+    );
+    expect(screen.queryByText('IDENTITY QUEUE')).toBeNull();
+    expect(screen.getByText('RECEPTION WORKBENCH')).toBeDefined();
+    u1();
+
+    // RECEPTION explicitly granted PATIENT_IDENTITY_VERIFY is allowed on /reception/identity-claims
+    useAuthStore.setState({
+      isAuthenticated: true,
+      user: {
+        id: 12,
+        email: 'reception.verify@medflow.test',
+        fullName: 'Lễ tân B',
+        roles: ['RECEPTION'],
+        permissions: ['PATIENT_CHECKIN', 'PATIENT_IDENTITY_VERIFY'],
+        patientCode: null,
+        staffCode: 'STF-012',
+      },
+    });
+    const { unmount: u2 } = renderWithRouter(
+      <RequireIdentityClaimVerify>IDENTITY QUEUE</RequireIdentityClaimVerify>,
+    );
+    expect(screen.getByText('IDENTITY QUEUE')).toBeDefined();
+    u2();
   });
 });

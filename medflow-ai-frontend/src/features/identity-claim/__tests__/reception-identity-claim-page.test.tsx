@@ -4,14 +4,21 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { useAuthStore } from '@/features/auth/store/auth.store';
+import { ReceptionSidebar } from '@/features/reception/components/reception-sidebar';
 import { apiClient } from '@/shared/lib/axios';
 
 import { ReceptionIdentityClaimPage } from '../pages/reception-identity-claim-page';
 import type { StaffIdentityClaim } from '../types/identity-claim.types';
 
-vi.mock('@/features/reception/components/reception-sidebar', () => ({
-  ReceptionSidebar: () => <div data-testid="reception-sidebar" />,
-}));
+vi.mock('@/features/reception/components/reception-sidebar', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/features/reception/components/reception-sidebar')>();
+  return {
+    ...actual,
+    ReceptionSidebar: actual.ReceptionSidebar,
+  };
+});
 
 const claim: StaffIdentityClaim = {
   claimId: 15,
@@ -69,5 +76,55 @@ describe('ReceptionIdentityClaimPage', () => {
     expect(post).toHaveBeenCalledWith('/reception/patient-identity-claims/15/reject', {
       reason: 'Giấy tờ không khớp hồ sơ',
     });
+  });
+
+  it('hides Xác minh hồ sơ in ReceptionSidebar without PATIENT_IDENTITY_VERIFY and renders AdminPortalShell on /admin/identity-claims', async () => {
+    useAuthStore.setState({
+      isAuthenticated: true,
+      user: {
+        id: 30,
+        email: 'rec@medflow.test',
+        fullName: 'Lễ tân Thường',
+        roles: ['RECEPTION'],
+        patientCode: null,
+        staffCode: 'STF-030',
+      },
+    });
+    const { unmount } = render(
+      <MemoryRouter>
+        <ReceptionSidebar />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText('Xác minh hồ sơ')).not.toBeInTheDocument();
+    unmount();
+
+    useAuthStore.setState({
+      isAuthenticated: true,
+      user: {
+        id: 31,
+        email: 'hadmin@medflow.test',
+        fullName: 'Quản trị Cơ sở',
+        roles: ['HOSPITAL_ADMIN'],
+        patientCode: null,
+        staffCode: 'STF-031',
+      },
+    });
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: [{ ...claim, status: 'NEEDS_RECONCILIATION' }],
+    } as never);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/admin/identity-claims']}>
+          <ReceptionIdentityClaimPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('link', { name: 'Xác minh hồ sơ' })).toHaveAttribute(
+      'href',
+      '/admin/identity-claims',
+    );
+    expect(await screen.findByRole('button', { name: /Từ chối/i })).toBeInTheDocument();
   });
 });

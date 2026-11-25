@@ -12,6 +12,7 @@ export type SystemRoleCode = (typeof SYSTEM_ROLE_CODES)[number];
 
 export const SYSTEM_PERMISSION_CODES = [
   'PATIENT_PROFILE_READ',
+  'PATIENT_IDENTITY_VERIFY',
   'APPOINTMENT_BOOK',
   'PATIENT_CHECKIN',
   'VISIT_ASSIGN',
@@ -30,8 +31,14 @@ export const SYSTEM_PERMISSION_CODES = [
 export type SystemPermissionCode = (typeof SYSTEM_PERMISSION_CODES)[number];
 
 export const ROLE_DEFAULT_PERMISSIONS: Readonly<Record<string, readonly SystemPermissionCode[]>> = {
-  SYSTEM_ADMIN: ['HOSPITAL_CONFIG', 'USER_MANAGE', 'AUDIT_READ'],
-  HOSPITAL_ADMIN: ['VISIT_ASSIGN', 'QUEUE_MANAGE', 'HOSPITAL_CONFIG', 'PAYMENT_VIEW'],
+  SYSTEM_ADMIN: ['HOSPITAL_CONFIG', 'USER_MANAGE', 'AUDIT_READ', 'PATIENT_IDENTITY_VERIFY'],
+  HOSPITAL_ADMIN: [
+    'VISIT_ASSIGN',
+    'QUEUE_MANAGE',
+    'HOSPITAL_CONFIG',
+    'PAYMENT_VIEW',
+    'PATIENT_IDENTITY_VERIFY',
+  ],
   DOCTOR: [
     'PATIENT_PROFILE_READ',
     'MEDICAL_RECORD_WRITE',
@@ -119,6 +126,13 @@ export const ROUTE_ROLE_ACCESS_RULES: readonly RouteRoleAccessRule[] = [
     requiredPermission: 'HOSPITAL_CONFIG',
   },
   {
+    prefix: '/admin/identity-claims',
+    label: 'Xác minh liên kết hồ sơ bệnh nhân',
+    guardName: 'RequireIdentityClaimVerify',
+    allowedRoles: ['HOSPITAL_ADMIN', 'SYSTEM_ADMIN'],
+    requiredPermission: 'PATIENT_IDENTITY_VERIFY',
+  },
+  {
     prefix: '/admin',
     label: 'Cổng Quản trị Cơ sở & Danh mục',
     guardName: 'RequireAdmin',
@@ -131,6 +145,13 @@ export const ROUTE_ROLE_ACCESS_RULES: readonly RouteRoleAccessRule[] = [
     guardName: 'RequireDoctor',
     allowedRoles: ['DOCTOR'],
     requiredPermission: 'MEDICAL_RECORD_WRITE',
+  },
+  {
+    prefix: '/reception/identity-claims',
+    label: 'Xác minh liên kết hồ sơ bệnh nhân',
+    guardName: 'RequireIdentityClaimVerify',
+    allowedRoles: ['RECEPTION', 'HOSPITAL_ADMIN', 'SYSTEM_ADMIN'],
+    requiredPermission: 'PATIENT_IDENTITY_VERIFY',
   },
   {
     prefix: '/reception',
@@ -259,8 +280,16 @@ export function getRequiredRolesForPath(pathname: string): readonly SystemRoleCo
   return rule ? rule.allowedRoles : null;
 }
 
-export function canAccessRoute(pathname: string, roles?: readonly string[] | null): boolean {
+export function canAccessRoute(
+  pathname: string,
+  roles?: readonly string[] | null,
+  explicitPermissions?: readonly string[] | null,
+): boolean {
   const rule = matchRouteAccessRule(pathname);
   if (!rule) return true;
-  return hasAnyRole(roles, rule.allowedRoles);
+  if (!hasAnyRole(roles, rule.allowedRoles)) return false;
+  if (rule.requiredPermission === 'PATIENT_IDENTITY_VERIFY') {
+    return hasPermission(roles, rule.requiredPermission, explicitPermissions);
+  }
+  return true;
 }

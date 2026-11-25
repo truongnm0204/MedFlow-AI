@@ -52,7 +52,7 @@ internal sealed class PatientIdentityClaimStore : IPatientIdentityClaimStore
 
     public Task<int> TryLinkPatientUserAsync(long patientId, long userId, CancellationToken ct) =>
         _db.Database.ExecuteSqlInterpolatedAsync(
-            $"UPDATE patients SET user_id = {userId} WHERE id = {patientId} AND user_id IS NULL", ct);
+            $"UPDATE patients SET user_id = {userId} WHERE id = {patientId} AND user_id IS NULL AND upper(coalesce(status, '')) = 'ACTIVE'", ct);
 
     public Task<int> ArchivePatientAsync(long patientId, CancellationToken ct) =>
         _db.Database.ExecuteSqlInterpolatedAsync(
@@ -75,5 +75,5 @@ internal sealed class PatientIdentityClaimStore : IPatientIdentityClaimStore
 
     public Task<int> ExpirePendingAsync(DateTime nowUtc, CancellationToken ct) =>
         _db.Database.ExecuteSqlInterpolatedAsync(
-            $"UPDATE patient_identity_claims SET status = 'EXPIRED' WHERE status = 'PENDING' AND expires_at < {nowUtc}", ct);
+            $"UPDATE patient_identity_claims SET status = 'EXPIRED' WHERE status = 'PENDING' AND expires_at <= {nowUtc}", ct);
 }

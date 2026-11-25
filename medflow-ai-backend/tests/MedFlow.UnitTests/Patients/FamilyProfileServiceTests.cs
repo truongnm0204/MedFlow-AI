@@ -839,8 +839,10 @@ public sealed class FamilyProfileServiceTests : IDisposable
         Assert.Equal("Chưa cập nhật CCCD", result.IdentificationNo);
         Assert.Equal("Chỉ đọc", result.SubStatus);
         Assert.False(result.Permissions!.CanManage);
+        Assert.False(result.Permissions.CanBookAppointments);
         Assert.False(result.Permissions.CanViewMedicalRecords);
-        Assert.Equal("O+", result.Vitals?.BloodType);
+        Assert.Null(result.PatientCode);
+        Assert.Null(result.Vitals?.BloodType);
 
         var link = await _db.PatientFamilyLinks.FirstAsync(l => l.OwnerPatientId == owner.Id && l.MemberPatientId == result.MemberPatientId);
         Assert.Equal("PENDING", link.VerificationStatus);
@@ -979,7 +981,7 @@ public sealed class FamilyProfileServiceTests : IDisposable
 
         Assert.NotNull(result);
         Assert.Equal(555, result.MemberPatientId);
-        Assert.Equal("PAT-0555", result.PatientCode);
+        Assert.Null(result.PatientCode);
         Assert.Equal("Chồng", result.Relationship);
         Assert.Equal("rose", result.RelationshipBadgeColor);
 

@@ -47,8 +47,10 @@ export function FamilyMemberIdentityCard({ member }: FamilyMemberIdentityCardPro
         <div className="mt-5 flex items-start gap-3 rounded-xl border border-amber-200/70 bg-amber-50/60 p-4">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
           <p className="text-xs leading-relaxed text-amber-800">
-            Mã bệnh nhân ({member.patientCode}) cố định trên toàn hệ thống. Vui lòng mang theo giấy
-            tờ tùy thân hoặc giấy khai sinh khi đến quầy tiếp đón.
+            {member.patientCode
+              ? `Mã bệnh nhân (${member.patientCode}) cố định trên toàn hệ thống.`
+              : 'Hồ sơ đang chờ xác minh liên kết định danh.'}{' '}
+            Vui lòng mang theo giấy tờ tùy thân hoặc giấy khai sinh khi đến quầy tiếp đón.
           </p>
         </div>
       )}

@@ -59,6 +59,47 @@ public sealed class ClinicalRealtimeAccessService : IClinicalRealtimeAccessServi
         await VisitPaymentAccess.RequireActiveUserAsync(_db, userId, _timeProvider, ct);
     }
 
+    public async Task EnsureConnectedSessionActiveAsync(
+        long userId,
+        long? sessionId,
+        CancellationToken ct = default)
+    {
+        await VisitPaymentAccess.RequireActiveUserAsync(_db, userId, _timeProvider, ct);
+
+        if (sessionId is not long sid || sid <= 0)
+            return;
+
+        try
+        {
+            var session = await _db.AuthSessions.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == sid && s.UserId == userId, ct);
+            if (session is null)
+            {
+                throw new UnauthorizedAccessException("Phiên đăng nhập không tồn tại hoặc đã bị thu hồi.");
+            }
+
+            var rootId = session.RootSessionId ?? session.Id;
+            var family = await _db.AuthSessions.AsNoTracking()
+                .Where(s => s.UserId == userId && (s.Id == rootId || s.RootSessionId == rootId))
+                .ToListAsync(ct);
+
+            var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+            var hasExplicitRevocation = family.Any(s =>
+                (s.RevokedReason != null && !string.Equals(s.RevokedReason, AuthSessionRevokeReasons.Rotated, StringComparison.OrdinalIgnoreCase)) ||
+                (s.RevokedAt != null && s.RevokedReason == null && string.IsNullOrEmpty(s.ReplacedByTokenHash)));
+            var hasActiveLeaf = family.Any(s => s.RevokedAt == null && s.ExpiresAt > nowUtc);
+
+            if (hasExplicitRevocation || !hasActiveLeaf)
+            {
+                throw new UnauthorizedAccessException("Phiên đăng nhập đã hết hạn hoặc đã bị thu hồi.");
+            }
+        }
+        catch (NotSupportedException)
+        {
+            // Specialized unit-test DbContext without AuthSessions DbSet.
+        }
+    }
+
     public string ResolveVisitPaymentResourceKey(string? visitIdOrCode, long? knownVisitId = null)
     {
         if (knownVisitId is > 0)

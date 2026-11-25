@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using MedFlow.Application.DTOs.Patients;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
@@ -6,11 +8,16 @@ using MedFlow.Application.Services.Doctors;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace MedFlow.Application.Services.Patients;
 
 public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultService
 {
+    public const string AuditActionResultsViewed = "PATIENT_DIAGNOSTIC_RESULTS_VIEWED";
+    public const string AuditActionResultViewed = "PATIENT_DIAGNOSTIC_RESULT_VIEWED";
+    public const string AuditActionVisitOwnershipConflict = "PATIENT_VISIT_OWNERSHIP_CONFLICT";
+
     private const int MaxIdentifierLength = 40;
     private const int MaxPageSize = 50;
     private const string PublishedStatus = "PUBLISHED";
@@ -19,21 +26,30 @@ public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultSer
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
+    private readonly IAuditLogger? _auditLogger;
+    private readonly ILogger<PatientDiagnosticResultService>? _logger;
 
-    public PatientDiagnosticResultService(IApplicationDbContext db, TimeProvider timeProvider)
+    public PatientDiagnosticResultService(
+        IApplicationDbContext db,
+        TimeProvider timeProvider,
+        IAuditLogger? auditLogger = null,
+        ILogger<PatientDiagnosticResultService>? logger = null)
     {
         _db = db;
         _timeProvider = timeProvider;
+        _auditLogger = auditLogger;
+        _logger = logger;
     }
 
     public async Task<PatientDiagnosticResultListResponseDto> GetMyResultsAsync(
         long actorUserId,
         GetPatientDiagnosticResultsRequest? request,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? ipAddress = null)
     {
         EnsureActor(actorUserId);
         var paging = NormalizeListRequest(request);
-        var scope = await LoadScopeAsync(actorUserId, ct);
+        var (selfId, scope) = await LoadScopeAsync(actorUserId, ct);
 
         if (paging.PatientId is long requestedPatientId)
         {
@@ -42,7 +58,7 @@ public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultSer
                 throw new ForbiddenException("Bạn không có quyền xem kết quả cận lâm sàng của hồ sơ này.");
         }
 
-        var bundles = await LoadScopedBundlesAsync(scope, paging.VisitId, paging.VisitCode, ct);
+        var bundles = await LoadScopedBundlesAsync(actorUserId, scope, paging.VisitId, paging.VisitCode, ipAddress, ct);
         var visible = new List<VisibleResult>(bundles.Count);
         foreach (var bundle in bundles)
         {
@@ -63,6 +79,23 @@ public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultSer
             .Take(paging.PageSize)
             .ToList();
 
+        await TryWriteAuditAsync(
+            actorUserId,
+            AuditActionResultsViewed,
+            "PATIENT",
+            (paging.PatientId ?? selfId).ToString(CultureInfo.InvariantCulture),
+            new
+            {
+                scope = "LIST",
+                page = paging.Page,
+                pageSize = paging.PageSize,
+                patientId = paging.PatientId,
+                visitId = paging.VisitId,
+                resultCount = pageItems.Count,
+            },
+            ipAddress,
+            ct);
+
         return new PatientDiagnosticResultListResponseDto(
             pageItems,
             paging.Page,
@@ -73,11 +106,12 @@ public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultSer
     public async Task<PatientDiagnosticResultDetailDto> GetMyResultAsync(
         long actorUserId,
         string? idOrCode,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? ipAddress = null)
     {
         EnsureActor(actorUserId);
         var identifier = ParseOrderIdentifier(idOrCode);
-        var scope = await LoadScopeAsync(actorUserId, ct);
+        var (_, scope) = await LoadScopeAsync(actorUserId, ct);
 
         var order = identifier.Id is long orderId
             ? await _db.DiagnosticOrders.AsNoTracking().FirstOrDefaultAsync(o => o.Id == orderId, ct)
@@ -90,10 +124,14 @@ public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultSer
 
         var visit = await _db.Visits.AsNoTracking()
             .FirstOrDefaultAsync(v => v.Id == order.VisitId.Value, ct);
-        if (visit?.PatientId is null)
+        if (visit is null)
             throw new NotFoundException(NotFoundMessage);
 
-        var member = scope.FirstOrDefault(item => item.Patient.Id == visit.PatientId.Value);
+        var resolvedPatientId = await ResolveVisitPatientIdStrictAsync(actorUserId, visit, ipAddress, ct);
+        if (!resolvedPatientId.HasValue)
+            throw new NotFoundException(NotFoundMessage);
+
+        var member = scope.FirstOrDefault(item => item.Patient.Id == resolvedPatientId.Value);
         if (member is null)
             throw new ForbiddenException("Bạn không có quyền xem kết quả cận lâm sàng này.");
 
@@ -110,50 +148,116 @@ public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultSer
         var queue = order.QueueEntryId is long queueId
             ? await _db.QueueEntries.AsNoTracking().FirstOrDefaultAsync(q => q.Id == queueId, ct)
             : null;
+        var service = order.ServiceId is long serviceId
+            ? await _db.Services.AsNoTracking().FirstOrDefaultAsync(s => s.Id == serviceId, ct)
+            : null;
 
-        var bundle = new OrderBundle(order, visit, result, versions, queue);
+        var bundle = new OrderBundle(order, visit, resolvedPatientId.Value, result, versions, queue, service);
         if (TryRead(bundle) is not { } visible)
             throw new NotFoundException(NotFoundMessage);
 
         var lookups = await LoadLookupsAsync([visible], ct);
-        return MapDetail(visible, member, lookups);
+        var detail = MapDetail(visible, member, lookups);
+
+        await TryWriteAuditAsync(
+            actorUserId,
+            AuditActionResultViewed,
+            "DIAGNOSTIC_ORDER",
+            order.Id.ToString(CultureInfo.InvariantCulture),
+            new
+            {
+                scope = "DETAIL",
+                visitId = visit.Id,
+                patientId = member.Patient.Id,
+                isPublished = detail.IsPublishedToPatient,
+            },
+            ipAddress,
+            ct);
+
+        return detail;
     }
 
-    private async Task<List<AppointmentReadModel.ScopeMember>> LoadScopeAsync(
+    private async Task<(long SelfId, List<AppointmentReadModel.ScopeMember> Members)> LoadScopeAsync(
         long actorUserId,
         CancellationToken ct)
     {
+        var self = await PatientSelfResolver.LoadActiveAsync(_db, actorUserId, ct, _timeProvider);
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
-        var owned = await AppointmentBookingRules.LoadOwnedPatientsPhiAsync(_db, actorUserId, nowLocal, ct);
-        return AppointmentReadModel.BuildScopeMembers(
-            owned.Self,
-            owned.FamilyLinks,
-            DateOnly.FromDateTime(nowLocal));
+        var familyLinks = await _db.PatientFamilyLinks
+            .AsNoTracking()
+            .Include(l => l.MemberPatient)
+            .WherePhiMemberOf(self.Id, nowLocal)
+            .OrderBy(l => l.MemberPatientId)
+            .ToListAsync(ct);
+
+        return (
+            self.Id,
+            AppointmentReadModel.BuildScopeMembers(
+                self,
+                familyLinks,
+                DateOnly.FromDateTime(nowLocal)));
     }
 
     private async Task<List<OrderBundle>> LoadScopedBundlesAsync(
+        long actorUserId,
         IReadOnlyList<AppointmentReadModel.ScopeMember> scope,
         long? visitId,
         string? visitCode,
+        string? ipAddress,
         CancellationToken ct)
     {
-        var patientIds = scope.Select(member => member.Patient.Id).Distinct().ToList();
+        var patientIds = scope.Select(member => member.Patient.Id).Distinct().ToHashSet();
         if (patientIds.Count == 0)
             return [];
 
+        var ownedAppointmentIds = await TryLoadOwnedAppointmentIdsAsync(patientIds, ct);
+
         var visitsQuery = _db.Visits.AsNoTracking()
-            .Where(v => v.PatientId != null && patientIds.Contains(v.PatientId.Value));
+            .Where(v =>
+                (v.PatientId != null && patientIds.Contains(v.PatientId.Value)) ||
+                (v.PatientId == null && v.AppointmentId != null && ownedAppointmentIds.Contains(v.AppointmentId.Value)));
         if (visitId is long requestedVisitId)
             visitsQuery = visitsQuery.Where(v => v.Id == requestedVisitId);
         if (visitCode is not null)
             visitsQuery = visitsQuery.Where(v => v.VisitCode != null && v.VisitCode.ToUpper() == visitCode);
 
-        var visits = await visitsQuery.ToListAsync(ct);
-        if (visits.Count == 0)
+        var candidateVisits = await visitsQuery.ToListAsync(ct);
+        if (candidateVisits.Count == 0)
             return [];
 
-        var visitsById = visits.ToDictionary(v => v.Id);
-        var visitIds = visitsById.Keys.ToList();
+        var appointmentIds = candidateVisits
+            .Where(v => v.AppointmentId.HasValue)
+            .Select(v => v.AppointmentId!.Value)
+            .Distinct()
+            .ToList();
+        var appointmentsById = await TryLoadAppointmentsByIdAsync(appointmentIds, ct);
+
+        var validVisits = new Dictionary<long, (Visit Visit, long EffectivePatientId)>();
+        foreach (var visit in candidateVisits)
+        {
+            Appointment? appt = null;
+            if (visit.AppointmentId is long apptId)
+                appointmentsById.TryGetValue(apptId, out appt);
+
+            if (visit.PatientId.HasValue &&
+                appt?.PatientId is long apptPatientId &&
+                visit.PatientId.Value != apptPatientId)
+            {
+                await RecordOwnershipConflictAsync(actorUserId, visit, apptPatientId, ipAddress, ct);
+                continue;
+            }
+
+            var effectivePatientId = visit.PatientId ?? appt?.PatientId;
+            if (effectivePatientId is long pid && patientIds.Contains(pid))
+            {
+                validVisits[visit.Id] = (visit, pid);
+            }
+        }
+
+        if (validVisits.Count == 0)
+            return [];
+
+        var visitIds = validVisits.Keys.ToList();
         var orders = await _db.DiagnosticOrders.AsNoTracking()
             .Where(o => o.VisitId != null && visitIds.Contains(o.VisitId.Value))
             .ToListAsync(ct);
@@ -189,11 +293,22 @@ public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultSer
                 .Where(q => queueIds.Contains(q.Id))
                 .ToDictionaryAsync(q => q.Id, ct);
 
+        var serviceIds = orders
+            .Where(o => o.ServiceId.HasValue)
+            .Select(o => o.ServiceId!.Value)
+            .Distinct()
+            .ToList();
+        var servicesById = serviceIds.Count == 0
+            ? new Dictionary<long, Service>()
+            : await _db.Services.AsNoTracking()
+                .Where(s => serviceIds.Contains(s.Id))
+                .ToDictionaryAsync(s => s.Id, ct);
+
         var bundles = new List<OrderBundle>(resultByOrderId.Count);
         foreach (var order in orders)
         {
             if (order.VisitId is not long orderVisitId ||
-                !visitsById.TryGetValue(orderVisitId, out var visit) ||
+                !validVisits.TryGetValue(orderVisitId, out var visitEntry) ||
                 !resultByOrderId.TryGetValue(order.Id, out var result))
             {
                 continue;
@@ -203,16 +318,147 @@ public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultSer
             QueueEntry? queue = null;
             if (order.QueueEntryId is long queueId)
                 queuesById.TryGetValue(queueId, out queue);
+            Service? service = null;
+            if (order.ServiceId is long svcId)
+                servicesById.TryGetValue(svcId, out service);
 
             bundles.Add(new OrderBundle(
                 order,
-                visit,
+                visitEntry.Visit,
+                visitEntry.EffectivePatientId,
                 result,
                 resultVersions ?? [],
-                queue));
+                queue,
+                service));
         }
 
         return bundles;
+    }
+
+    private async Task<long?> ResolveVisitPatientIdStrictAsync(
+        long actorUserId,
+        Visit visit,
+        string? ipAddress,
+        CancellationToken ct)
+    {
+        Appointment? appointment = null;
+        if (visit.AppointmentId is long appointmentId)
+        {
+            var dict = await TryLoadAppointmentsByIdAsync([appointmentId], ct);
+            dict.TryGetValue(appointmentId, out appointment);
+        }
+
+        if (visit.PatientId.HasValue &&
+            appointment?.PatientId is long appointmentPatientId &&
+            visit.PatientId.Value != appointmentPatientId)
+        {
+            await RecordOwnershipConflictAsync(actorUserId, visit, appointmentPatientId, ipAddress, ct);
+            throw new NotFoundException(NotFoundMessage);
+        }
+
+        return visit.PatientId ?? appointment?.PatientId;
+    }
+
+    private async Task RecordOwnershipConflictAsync(
+        long actorUserId,
+        Visit visit,
+        long appointmentPatientId,
+        string? ipAddress,
+        CancellationToken ct)
+    {
+        _logger?.LogWarning(
+            "PHI ownership conflict detected on Visit {VisitId}: Visit.PatientId={VisitPatientId} != Appointment.PatientId={AppointmentPatientId}.",
+            visit.Id,
+            visit.PatientId,
+            appointmentPatientId);
+
+        await TryWriteAuditAsync(
+            actorUserId,
+            AuditActionVisitOwnershipConflict,
+            "VISIT",
+            visit.Id.ToString(CultureInfo.InvariantCulture),
+            new
+            {
+                visitId = visit.Id,
+                visitPatientId = visit.PatientId,
+                appointmentId = visit.AppointmentId,
+                appointmentPatientId,
+            },
+            ipAddress,
+            ct);
+    }
+
+    private async Task<HashSet<long>> TryLoadOwnedAppointmentIdsAsync(
+        IReadOnlySet<long> patientIds,
+        CancellationToken ct)
+    {
+        try
+        {
+            var ids = await _db.Appointments.AsNoTracking()
+                .Where(a => a.PatientId != null && patientIds.Contains(a.PatientId.Value))
+                .Select(a => a.Id)
+                .ToListAsync(ct);
+            return ids.ToHashSet();
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    private async Task<Dictionary<long, Appointment>> TryLoadAppointmentsByIdAsync(
+        IReadOnlyCollection<long> appointmentIds,
+        CancellationToken ct)
+    {
+        if (appointmentIds.Count == 0)
+            return [];
+
+        try
+        {
+            return await _db.Appointments.AsNoTracking()
+                .Where(a => appointmentIds.Contains(a.Id))
+                .ToDictionaryAsync(a => a.Id, ct);
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    private async Task TryWriteAuditAsync(
+        long actorUserId,
+        string action,
+        string entityType,
+        string entityId,
+        object metadata,
+        string? ipAddress,
+        CancellationToken ct)
+    {
+        try
+        {
+            if (_auditLogger is not null)
+            {
+                _auditLogger.Add(actorUserId, action, entityType, entityId, metadata, ipAddress);
+                await _db.SaveChangesAsync(ct);
+                return;
+            }
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                ActorUserId = actorUserId,
+                Action = action,
+                EntityType = entityType,
+                EntityId = entityId,
+                ChangeData = JsonSerializer.Serialize(metadata),
+                IpAddress = System.Net.IPAddress.TryParse(ipAddress, out var parsedIp) ? parsedIp : null,
+                OccurredAt = _timeProvider.GetUtcNow().UtcDateTime,
+            });
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            // Specialized unit-test DbContext without AuditLogs DbSet.
+        }
     }
 
     private async Task<DisplayLookups> LoadLookupsAsync(
@@ -370,12 +616,23 @@ public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultSer
         if (IsCancelled(bundle))
             return null;
 
+        var requiresVerification = bundle.Service?.RequiresResultVerification == true;
         var latest = ChooseLatestVersion(bundle.Versions);
-        var publishedVersion = ChoosePublishedVersion(bundle.Versions);
-        var rowFinalized = IsDiagnosticResultRowFinalized(bundle.Result, latest);
+        var publishedVersion = requiresVerification
+            ? ChooseVerifiedVersion(bundle.Result, bundle.Versions)
+            : ChoosePublishedVersion(bundle.Versions);
+        var rowFinalized = requiresVerification
+            ? IsDiagnosticResultVerified(bundle.Result, latest)
+            : IsDiagnosticResultRowFinalized(bundle.Result, latest);
+
         var isPublished = rowFinalized || publishedVersion is not null;
-        var content = isPublished ? publishedVersion ?? latest : null;
-        var signedAt = content?.VerifiedAt ?? bundle.Result.FinalizedAt;
+        var content = isPublished
+            ? publishedVersion ?? (requiresVerification && IsDiagnosticResultVerified(bundle.Result, latest) ? latest : (!requiresVerification ? latest : null))
+            : null;
+        if (requiresVerification && content is null)
+            isPublished = false;
+
+        var signedAt = isPublished ? content?.VerifiedAt ?? bundle.Result.FinalizedAt : null;
 
         return new VisibleResult(bundle, null!, isPublished, content, signedAt);
     }
@@ -383,19 +640,48 @@ public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultSer
     private static VisibleResult? TryRead(OrderBundle bundle, IReadOnlyList<AppointmentReadModel.ScopeMember> scope)
     {
         var visible = TryRead(bundle);
-        if (visible is null || bundle.Visit.PatientId is not long patientId)
+        if (visible is null)
             return null;
 
-        var member = scope.FirstOrDefault(item => item.Patient.Id == patientId);
+        var member = scope.FirstOrDefault(item => item.Patient.Id == bundle.EffectivePatientId);
         return member is null ? null : visible with { Member = member };
     }
 
     private static bool IsCancelled(OrderBundle bundle)
     {
+        var visitStatus = AppointmentBookingRules.NormalizeStatusKey(bundle.Visit.Status);
         var orderStatus = AppointmentBookingRules.NormalizeStatusKey(bundle.Order.Status);
         var queueStatus = AppointmentBookingRules.NormalizeStatusKey(bundle.Queue?.Status);
         var resultStatus = AppointmentBookingRules.NormalizeStatusKey(bundle.Result.Status);
-        return orderStatus == "CANCELLED" || queueStatus == "CANCELLED" || resultStatus == "CANCELLED";
+        return visitStatus is "CANCELLED" or "NO_SHOW" ||
+               orderStatus == "CANCELLED" ||
+               queueStatus == "CANCELLED" ||
+               resultStatus == "CANCELLED";
+    }
+
+    private static bool IsDiagnosticResultVerified(
+        DiagnosticResult? result,
+        DiagnosticResultVersion? latestVersion)
+    {
+        if (result is null)
+            return false;
+
+        var rawResultStatus = AppointmentBookingRules.NormalizeStatusKey(result.Status);
+        return rawResultStatus == "VERIFIED" || latestVersion?.VerifiedByStaffId.HasValue == true;
+    }
+
+    private static DiagnosticResultVersion? ChooseVerifiedVersion(
+        DiagnosticResult result,
+        IReadOnlyList<DiagnosticResultVersion> versions)
+    {
+        var resultIsVerified = AppointmentBookingRules.NormalizeStatusKey(result.Status) == "VERIFIED";
+        return versions
+            .Where(v =>
+                v.VerifiedByStaffId.HasValue ||
+                (resultIsVerified && (v.IsFinalized == true || v.VerifiedAt.HasValue)))
+            .OrderByDescending(v => v.VersionNo ?? 0)
+            .ThenByDescending(v => v.Id)
+            .FirstOrDefault();
     }
 
     /// <summary>
@@ -586,9 +872,11 @@ public sealed class PatientDiagnosticResultService : IPatientDiagnosticResultSer
     private sealed record OrderBundle(
         DiagnosticOrder Order,
         Visit Visit,
+        long EffectivePatientId,
         DiagnosticResult Result,
         IReadOnlyList<DiagnosticResultVersion> Versions,
-        QueueEntry? Queue);
+        QueueEntry? Queue,
+        Service? Service);
 
     private sealed record VisibleResult(
         OrderBundle Bundle,

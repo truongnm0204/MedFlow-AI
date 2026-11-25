@@ -24,10 +24,11 @@ export interface FamilyMemberPermissions {
 
 export interface FamilyMember {
   id: string;
+  memberPatientId: number;
   fullName: string;
   relationship: RelationshipType;
   relationshipBadgeColor?: 'slate' | 'blue' | 'rose' | 'amber';
-  patientCode: string;
+  patientCode: string | null;
   subStatus: string;
   isPrimaryAccount: boolean;
   avatarUrl?: string | null;
