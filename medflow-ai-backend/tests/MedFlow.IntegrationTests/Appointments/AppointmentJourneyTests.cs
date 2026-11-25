@@ -141,20 +141,7 @@ public sealed class AppointmentJourneyTests : AuthTestBase
         }
         finally
         {
-            var apptIds = await Db.Appointments
-                .Where(a => a.SlotId == slot.Id)
-                .Select(a => a.Id.ToString())
-                .ToListAsync();
-
-            if (apptIds.Count > 0)
-            {
-                await Db.AuditLogs
-                    .Where(l => l.EntityType == "APPOINTMENT" && l.EntityId != null && apptIds.Contains(l.EntityId))
-                    .ExecuteDeleteAsync();
-            }
-
-            await Db.Appointments.Where(a => a.SlotId == slot.Id).ExecuteDeleteAsync();
-            await Db.ExaminationSlots.Where(s => s.Id == slot.Id).ExecuteDeleteAsync();
+            await NotificationTestCleanupHelper.CleanupSlotsAndAppointmentsAsync(Db, slot.Id);
         }
     }
 
@@ -242,24 +229,7 @@ public sealed class AppointmentJourneyTests : AuthTestBase
         }
         finally
         {
-            var apptIds = await Db.Appointments
-                .Where(a => a.SlotId == slotA.Id || a.SlotId == slotB.Id)
-                .Select(a => a.Id.ToString())
-                .ToListAsync();
-
-            if (apptIds.Count > 0)
-            {
-                await Db.AuditLogs
-                    .Where(l => l.EntityType == "APPOINTMENT" && l.EntityId != null && apptIds.Contains(l.EntityId))
-                    .ExecuteDeleteAsync();
-            }
-
-            await Db.Appointments
-                .Where(a => a.SlotId == slotA.Id || a.SlotId == slotB.Id)
-                .ExecuteDeleteAsync();
-            await Db.ExaminationSlots
-                .Where(s => s.Id == slotA.Id || s.Id == slotB.Id)
-                .ExecuteDeleteAsync();
+            await NotificationTestCleanupHelper.CleanupSlotsAndAppointmentsAsync(Db, slotA.Id, slotB.Id);
         }
     }
 
@@ -319,20 +289,7 @@ public sealed class AppointmentJourneyTests : AuthTestBase
         }
         finally
         {
-            var apptIds = await Db.Appointments
-                .Where(a => a.SlotId == slot.Id)
-                .Select(a => a.Id.ToString())
-                .ToListAsync();
-
-            if (apptIds.Count > 0)
-            {
-                await Db.AuditLogs
-                    .Where(l => l.EntityType == "APPOINTMENT" && l.EntityId != null && apptIds.Contains(l.EntityId))
-                    .ExecuteDeleteAsync();
-            }
-
-            await Db.Appointments.Where(a => a.SlotId == slot.Id).ExecuteDeleteAsync();
-            await Db.ExaminationSlots.Where(s => s.Id == slot.Id).ExecuteDeleteAsync();
+            await NotificationTestCleanupHelper.CleanupSlotsAndAppointmentsAsync(Db, slot.Id);
         }
     }
 

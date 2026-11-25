@@ -325,7 +325,7 @@ public sealed class SystemAdminDashboardService : ISystemAdminDashboardService
                 ModuleCode: "APPOINTMENT_POLICIES",
                 Title: "Chính sách & Tích hợp hệ thống",
                 Description: "Thiết lập quy tắc đặt lịch, hàng đợi và cấu hình tích hợp dịch vụ.",
-                Route: "/admin/reports",
+                Route: "/admin/integrations",
                 RequiredPermission: PermissionCodes.HospitalConfig,
                 BadgeCount: metrics.TotalHospitals),
             new(

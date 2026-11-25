@@ -103,8 +103,8 @@ public sealed class AppointmentQueueTrackingEndpointTests : AuthTestBase
             ServiceId = 1,
             DoctorId = 1,
             RoomId = 1,
-            StartsAt = targetDate.ToDateTime(new TimeOnly(9, 0), DateTimeKind.Unspecified),
-            EndsAt = targetDate.ToDateTime(new TimeOnly(9, 30), DateTimeKind.Unspecified),
+            StartsAt = targetDate.ToDateTime(new TimeOnly(6, 0), DateTimeKind.Unspecified),
+            EndsAt = targetDate.ToDateTime(new TimeOnly(6, 30), DateTimeKind.Unspecified),
             Capacity = 2,
             Status = "OPEN",
         };
@@ -148,7 +148,7 @@ public sealed class AppointmentQueueTrackingEndpointTests : AuthTestBase
     public async Task GetQueueStatus_LiveQueueBucketWithServingAndEligibleWaiting_ReturnsEngineOrderedStatus()
     {
         var vnNow = DateTime.SpecifyKind(DateTime.UtcNow.AddHours(7), DateTimeKind.Unspecified);
-        var queueDate = DateOnly.FromDateTime(vnNow).AddDays(5);
+        var queueDate = DateOnly.FromDateTime(vnNow).AddDays(45);
 
         var slot = new ExaminationSlot
         {

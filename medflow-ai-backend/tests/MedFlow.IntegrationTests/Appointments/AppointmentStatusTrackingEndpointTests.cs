@@ -94,7 +94,7 @@ public sealed class AppointmentStatusTrackingEndpointTests : AuthTestBase
     public async Task GetStatusTracking_WithInsertedBookedAppointmentPlus3Days_ReturnsCheckInNextStep()
     {
         var vnNow = DateTime.SpecifyKind(DateTime.UtcNow.AddHours(7), DateTimeKind.Unspecified);
-        var targetDate = DateOnly.FromDateTime(vnNow).AddDays(3);
+        var targetDate = DateOnly.FromDateTime(vnNow).AddDays(45);
 
         var slot = new ExaminationSlot
         {

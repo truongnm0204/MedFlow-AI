@@ -99,8 +99,8 @@ public sealed class CancelAppointmentEndpointTests : AuthTestBase
             ServiceId = 1,
             DoctorId = 1,
             RoomId = 1,
-            StartsAt = targetDate.ToDateTime(new TimeOnly(9, 0), DateTimeKind.Unspecified),
-            EndsAt = targetDate.ToDateTime(new TimeOnly(9, 30), DateTimeKind.Unspecified),
+            StartsAt = targetDate.ToDateTime(new TimeOnly(6, 0), DateTimeKind.Unspecified),
+            EndsAt = targetDate.ToDateTime(new TimeOnly(6, 30), DateTimeKind.Unspecified),
             Capacity = 2,
             Status = "OPEN",
         };
@@ -172,9 +172,7 @@ public sealed class CancelAppointmentEndpointTests : AuthTestBase
         }
         finally
         {
-            await Db.AuditLogs
-                .Where(l => l.EntityType == "APPOINTMENT" && l.EntityId == appointmentIdStr)
-                .ExecuteDeleteAsync();
+            await NotificationTestCleanupHelper.CleanupAppointmentDependentsAsync(Db, [appointment.Id]);
             await Db.Appointments.Where(a => a.Id == appointment.Id).ExecuteDeleteAsync();
             await Db.ExaminationSlots.Where(s => s.Id == slot.Id).ExecuteDeleteAsync();
         }

@@ -50,6 +50,7 @@ public sealed class TestWebAppFactory : WebApplicationFactory<Program>
                 ["Smtp:Host"] = "localhost",
                 ["Identity:HashKey"] = "IntegrationTest_IdentityHash_Key_2026",
                 ["Identity:Mode"] = "dual",
+                ["ScheduleJobs:Enabled"] = "false",
             }));
 
         builder.ConfigureTestServices(services =>

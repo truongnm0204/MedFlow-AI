@@ -118,20 +118,7 @@ public sealed class BookAppointmentEndpointTests : AuthTestBase
         }
         finally
         {
-            var apptIds = await Db.Appointments
-                .Where(a => a.SlotId == slot.Id)
-                .Select(a => a.Id.ToString())
-                .ToListAsync();
-
-            if (apptIds.Count > 0)
-            {
-                await Db.AuditLogs
-                    .Where(l => l.EntityType == "APPOINTMENT" && l.EntityId != null && apptIds.Contains(l.EntityId))
-                    .ExecuteDeleteAsync();
-            }
-
-            await Db.Appointments.Where(a => a.SlotId == slot.Id).ExecuteDeleteAsync();
-            await Db.ExaminationSlots.Where(s => s.Id == slot.Id).ExecuteDeleteAsync();
+            await NotificationTestCleanupHelper.CleanupSlotsAndAppointmentsAsync(Db, slot.Id);
         }
     }
 
@@ -246,20 +233,7 @@ public sealed class BookAppointmentEndpointTests : AuthTestBase
         }
         finally
         {
-            var apptIds = await Db.Appointments
-                .Where(a => a.SlotId == slot.Id)
-                .Select(a => a.Id.ToString())
-                .ToListAsync();
-
-            if (apptIds.Count > 0)
-            {
-                await Db.AuditLogs
-                    .Where(l => l.EntityType == "APPOINTMENT" && l.EntityId != null && apptIds.Contains(l.EntityId))
-                    .ExecuteDeleteAsync();
-            }
-
-            await Db.Appointments.Where(a => a.SlotId == slot.Id).ExecuteDeleteAsync();
-            await Db.ExaminationSlots.Where(s => s.Id == slot.Id).ExecuteDeleteAsync();
+            await NotificationTestCleanupHelper.CleanupSlotsAndAppointmentsAsync(Db, slot.Id);
         }
     }
 
@@ -323,20 +297,7 @@ public sealed class BookAppointmentEndpointTests : AuthTestBase
         }
         finally
         {
-            var apptIds = await Db.Appointments
-                .Where(a => a.SlotId == slot.Id)
-                .Select(a => a.Id.ToString())
-                .ToListAsync();
-
-            if (apptIds.Count > 0)
-            {
-                await Db.AuditLogs
-                    .Where(l => l.EntityType == "APPOINTMENT" && l.EntityId != null && apptIds.Contains(l.EntityId))
-                    .ExecuteDeleteAsync();
-            }
-
-            await Db.Appointments.Where(a => a.SlotId == slot.Id).ExecuteDeleteAsync();
-            await Db.ExaminationSlots.Where(s => s.Id == slot.Id).ExecuteDeleteAsync();
+            await NotificationTestCleanupHelper.CleanupSlotsAndAppointmentsAsync(Db, slot.Id);
         }
     }
 
@@ -427,24 +388,7 @@ public sealed class BookAppointmentEndpointTests : AuthTestBase
         }
         finally
         {
-            var apptIds = await Db.Appointments
-                .Where(a => a.SlotId == earliestSlot.Id || a.SlotId == laterSlot.Id)
-                .Select(a => a.Id.ToString())
-                .ToListAsync();
-
-            if (apptIds.Count > 0)
-            {
-                await Db.AuditLogs
-                    .Where(l => l.EntityType == "APPOINTMENT" && l.EntityId != null && apptIds.Contains(l.EntityId))
-                    .ExecuteDeleteAsync();
-            }
-
-            await Db.Appointments
-                .Where(a => a.SlotId == earliestSlot.Id || a.SlotId == laterSlot.Id)
-                .ExecuteDeleteAsync();
-            await Db.ExaminationSlots
-                .Where(s => s.Id == earliestSlot.Id || s.Id == laterSlot.Id)
-                .ExecuteDeleteAsync();
+            await NotificationTestCleanupHelper.CleanupSlotsAndAppointmentsAsync(Db, earliestSlot.Id, laterSlot.Id);
         }
     }
 
@@ -599,8 +543,8 @@ public sealed class BookAppointmentEndpointTests : AuthTestBase
             ServiceId = 1,
             DoctorId = 1,
             RoomId = 1,
-            StartsAt = targetDate.ToDateTime(new TimeOnly(8, 0), DateTimeKind.Unspecified),
-            EndsAt = targetDate.ToDateTime(new TimeOnly(8, 30), DateTimeKind.Unspecified),
+            StartsAt = targetDate.ToDateTime(new TimeOnly(5, 0), DateTimeKind.Unspecified),
+            EndsAt = targetDate.ToDateTime(new TimeOnly(5, 30), DateTimeKind.Unspecified),
             Capacity = 3,
             Status = "OPEN",
         };
@@ -609,8 +553,8 @@ public sealed class BookAppointmentEndpointTests : AuthTestBase
             ServiceId = 1,
             DoctorId = 1,
             RoomId = 1,
-            StartsAt = targetDate.ToDateTime(new TimeOnly(10, 0), DateTimeKind.Unspecified),
-            EndsAt = targetDate.ToDateTime(new TimeOnly(10, 30), DateTimeKind.Unspecified),
+            StartsAt = targetDate.ToDateTime(new TimeOnly(6, 30), DateTimeKind.Unspecified),
+            EndsAt = targetDate.ToDateTime(new TimeOnly(7, 0), DateTimeKind.Unspecified),
             Capacity = 3,
             Status = "OPEN",
         };
@@ -658,24 +602,7 @@ public sealed class BookAppointmentEndpointTests : AuthTestBase
         }
         finally
         {
-            var apptIds = await Db.Appointments
-                .Where(a => a.SlotId == slotA.Id || a.SlotId == slotB.Id)
-                .Select(a => a.Id.ToString())
-                .ToListAsync();
-
-            if (apptIds.Count > 0)
-            {
-                await Db.AuditLogs
-                    .Where(l => l.EntityType == "APPOINTMENT" && l.EntityId != null && apptIds.Contains(l.EntityId))
-                    .ExecuteDeleteAsync();
-            }
-
-            await Db.Appointments
-                .Where(a => a.SlotId == slotA.Id || a.SlotId == slotB.Id)
-                .ExecuteDeleteAsync();
-            await Db.ExaminationSlots
-                .Where(s => s.Id == slotA.Id || s.Id == slotB.Id)
-                .ExecuteDeleteAsync();
+            await NotificationTestCleanupHelper.CleanupSlotsAndAppointmentsAsync(Db, slotA.Id, slotB.Id);
         }
     }
 }
