@@ -20,13 +20,16 @@ public sealed class ExaminationQueueServiceTests : IDisposable
     private sealed class ExaminationQueueTestDbContext : DbContext, IApplicationDbContext
     {
         private readonly bool _throwOnQueueServicePoints;
+        private readonly bool _enableBillingAndDiagnosticSets;
 
         public ExaminationQueueTestDbContext(
             DbContextOptions<ExaminationQueueTestDbContext> options,
-            bool throwOnQueueServicePoints = false)
+            bool throwOnQueueServicePoints = false,
+            bool enableBillingAndDiagnosticSets = false)
             : base(options)
         {
             _throwOnQueueServicePoints = throwOnQueueServicePoints;
+            _enableBillingAndDiagnosticSets = enableBillingAndDiagnosticSets;
         }
 
         private static NotSupportedException NotUsed() =>
@@ -50,13 +53,16 @@ public sealed class ExaminationQueueServiceTests : IDisposable
         public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => Set<Service>();
-        public DbSet<ServicePrice> ServicePrices => throw NotUsed();
+        public DbSet<ServicePrice> ServicePrices => _enableBillingAndDiagnosticSets ? Set<ServicePrice>() : throw NotUsed();
         public DbSet<HospitalPolicy> HospitalPolicies => Set<HospitalPolicy>();
         public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
+        public DbSet<VisitCharge> VisitCharges => _enableBillingAndDiagnosticSets ? Set<VisitCharge>() : throw NotUsed();
+        public DbSet<DiagnosticOrder> DiagnosticOrders => _enableBillingAndDiagnosticSets ? Set<DiagnosticOrder>() : throw NotUsed();
+        public DbSet<DiagnosticResult> DiagnosticResults => _enableBillingAndDiagnosticSets ? Set<DiagnosticResult>() : throw NotUsed();
         public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
-        public DbSet<Payment> Payments => throw NotUsed();
+        public DbSet<Payment> Payments => _enableBillingAndDiagnosticSets ? Set<Payment>() : throw NotUsed();
 
         public DbSet<QueueServicePoint> QueueServicePoints =>
             _throwOnQueueServicePoints
@@ -71,10 +77,14 @@ public sealed class ExaminationQueueServiceTests : IDisposable
         {
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<ServicePrice>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<PatientFamilyLink>();
-            modelBuilder.Ignore<Payment>();
+
+            modelBuilder.Entity<ServicePrice>().HasKey(p => p.Id);
+            modelBuilder.Entity<VisitCharge>().HasKey(c => c.Id);
+            modelBuilder.Entity<Payment>().HasKey(p => p.Id);
+            modelBuilder.Entity<DiagnosticOrder>().HasKey(o => o.Id);
+            modelBuilder.Entity<DiagnosticResult>().HasKey(r => r.Id);
 
             modelBuilder.Entity<User>().HasKey(u => u.Id);
             modelBuilder.Entity<Role>().HasKey(r => r.Id);
@@ -2569,5 +2579,144 @@ public sealed class ExaminationQueueServiceTests : IDisposable
 
         await Assert.ThrowsAsync<ForbiddenException>(() =>
             _service.GetDoctorAssignedQueueAsync(actorUserId: 3));
+    }
+
+    [Fact]
+    public async Task Phase05_PayBeforeServiceUnroutedIsolationAndDiagnosticResultGate_Enforced()
+    {
+        var opts = new DbContextOptionsBuilder<ExaminationQueueTestDbContext>()
+            .UseInMemoryDatabase($"ExamQueuePhase05_{Guid.NewGuid():N}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+
+        using var db = new ExaminationQueueTestDbContext(opts, enableBillingAndDiagnosticSets: true);
+        db.Hospitals.Add(new Hospital { Id = 1, HospitalCode = "H1", Name = "BV 1", IsActive = true });
+        db.Departments.Add(new Department { Id = 2, HospitalId = 1, DepartmentCode = "GI", Name = "Tiêu hóa", IsActive = true });
+        db.Specialties.Add(new Specialty { Id = 1, SpecialtyCode = "GI", Name = "Tiêu hóa", IsActive = true });
+        db.Roles.Add(new Role { Id = 3, Code = "RECEPTION", Name = "Lễ tân" });
+        db.Permissions.Add(new Permission { Id = 5, Code = "QUEUE_MANAGE" });
+        db.RolePermissions.Add(new RolePermission { RoleId = 3, PermissionId = 5 });
+        db.Users.Add(new User { Id = 5, Email = "rec@medflow.test", AccountStatus = AccountStatus.ACTIVE });
+        db.UserRoles.Add(new UserRole { UserId = 5, RoleId = 3 });
+        db.Staff.AddRange(
+            new Staff { Id = 1, HospitalId = 1, DepartmentId = 2, StaffCode = "STF-1", FullName = "BS Đức", Status = "ACTIVE" },
+            new Staff { Id = 3, UserId = 5, HospitalId = 1, DepartmentId = 2, StaffCode = "STF-3", FullName = "Lễ tân", Status = "ACTIVE" });
+        db.Doctors.Add(new Doctor { Id = 1, StaffId = 1, HospitalId = 1, DoctorCode = "DOC-1", SpecialtyId = 1, IsActive = true });
+        db.HospitalRooms.Add(new HospitalRoom { Id = 1, HospitalId = 1, DepartmentId = 2, RoomCode = "RM-001", Name = "Phòng 101", RoomType = "EXAMINATION", Capacity = 1, Status = "ACTIVE" });
+        db.QueueServicePoints.Add(new QueueServicePoint { Id = 1, HospitalId = 1, RoomId = 1, DoctorId = 1, PointType = "DOCTOR", Name = "SP 1", IsActive = true });
+        db.Services.Add(new Service { Id = 1, HospitalId = 1, DepartmentId = 2, SpecialtyId = 1, ServiceCode = "EX-01", Name = "Khám Tiêu hóa", ServiceType = "EXAMINATION", IsActive = true });
+        db.Patients.AddRange(
+            new Patient { Id = 1, PatientCode = "PAT-1", FullName = "BN Chưa Đóng Phí", Status = "ACTIVE" },
+            new Patient { Id = 2, PatientCode = "PAT-2", FullName = "BN Chưa Phân Buồng", Status = "ACTIVE" },
+            new Patient { Id = 3, PatientCode = "PAT-3", FullName = "BN Đã Đóng Phí", Status = "ACTIVE" },
+            new Patient { Id = 4, PatientCode = "PAT-4", FullName = "BN Chờ Kết Quả CLS", Status = "ACTIVE" });
+
+        var nowLocal = new DateTime(2026, 10, 22, 9, 0, 0);
+        var queueDate = new DateOnly(2026, 10, 22);
+
+        // Visit 1: Routed to SP 1, UNPAID required charge (#1 in queue)
+        // Visit 2: Unrouted walk-in (RoomId = null, DoctorId = null, ServicePointId = null) with WAIVED charge -> must NOT leak into SP 1!
+        // Visit 3: Routed to SP 1, PAID required charge (#2 in queue)
+        // Visit 4: AWAITING_RESULTS with unfinalized DiagnosticOrder -> cannot activate RETURN_CONSULTATION to READY
+        db.Visits.AddRange(
+            new Visit { Id = 1, VisitCode = "VIS-UNPAID", PatientId = 1, AssignedDoctorId = 1, ExaminationRoomId = 1, CheckedInByStaffId = 3, Status = "WAITING", CheckedInAt = nowLocal.AddMinutes(-20) },
+            new Visit { Id = 2, VisitCode = "VIS-UNROUTED", PatientId = 2, AssignedDoctorId = null, ExaminationRoomId = null, CheckedInByStaffId = 3, Status = "CHECKED_IN", CheckedInAt = nowLocal.AddMinutes(-18) },
+            new Visit { Id = 3, VisitCode = "VIS-PAID", PatientId = 3, AssignedDoctorId = 1, ExaminationRoomId = 1, CheckedInByStaffId = 3, Status = "WAITING", CheckedInAt = nowLocal.AddMinutes(-10) },
+            new Visit { Id = 4, VisitCode = "VIS-CLS", PatientId = 4, AssignedDoctorId = 1, ExaminationRoomId = 1, CheckedInByStaffId = 3, Status = "AWAITING_RESULTS", CheckedInAt = nowLocal.AddMinutes(-40) });
+
+        var c1 = VisitCharge.CreateExamination(1, 1, 200_000m, nowLocal, waived: false);
+        c1.Id = 101;
+        var c2 = VisitCharge.CreateExamination(2, 1, 0m, nowLocal, waived: true);
+        c2.Id = 102;
+        var c3 = VisitCharge.CreateExamination(3, 1, 200_000m, nowLocal, waived: false);
+        c3.Id = 103;
+        var c4 = VisitCharge.CreateExamination(4, 1, 0m, nowLocal, waived: true);
+        c4.Id = 104;
+        db.VisitCharges.AddRange(c1, c2, c3, c4);
+
+        var p3 = Payment.CreateForCharge(3, 103, 200_000m, nowLocal);
+        p3.Id = 301;
+        p3.PaymentCode = "MF301";
+        p3.Status = "PAID";
+        p3.PaidAt = nowLocal;
+        db.Payments.Add(p3);
+
+        db.QueueEntries.AddRange(
+            new QueueEntry { Id = 1, VisitId = 1, ServicePointId = 1, CurrentServicePointId = 1, QueueDate = queueDate, QueueNumber = 1, QueueType = "EXAMINATION", Status = "WAITING", PresenceStatus = "PRESENT", ArrivalClass = "WALK_IN", ManualPriority = "NORMAL", StateVersion = 1, ArrivedAt = nowLocal.AddMinutes(-20) },
+            new QueueEntry { Id = 2, VisitId = 2, ServicePointId = null, CurrentServicePointId = null, QueueDate = queueDate, QueueNumber = 2, QueueType = "EXAMINATION", Status = "WAITING", PresenceStatus = "PRESENT", ArrivalClass = "WALK_IN", ManualPriority = "NORMAL", StateVersion = 1, ArrivedAt = nowLocal.AddMinutes(-18) },
+            new QueueEntry { Id = 3, VisitId = 3, ServicePointId = 1, CurrentServicePointId = 1, QueueDate = queueDate, QueueNumber = 3, QueueType = "EXAMINATION", Status = "WAITING", PresenceStatus = "PRESENT", ArrivalClass = "WALK_IN", ManualPriority = "NORMAL", StateVersion = 1, ArrivedAt = nowLocal.AddMinutes(-10) },
+            new QueueEntry { Id = 4, VisitId = 4, ServicePointId = 1, CurrentServicePointId = 1, QueueDate = queueDate, QueueNumber = 4, QueueType = "EXAMINATION", Status = "COMPLETED", PresenceStatus = "PRESENT", StateVersion = 2, CompletedAt = nowLocal.AddMinutes(-30) });
+
+        db.DiagnosticOrders.Add(new DiagnosticOrder { Id = 900, VisitId = 4, ServiceId = 1, OrderingDoctorId = 1, Status = "IN_PROGRESS", RequiredForConclusion = true, OrderedAt = nowLocal.AddMinutes(-25) });
+        await db.SaveChangesAsync();
+
+        var svc = new ExaminationQueueService(db, _timeProvider);
+
+        // Queue board exposes UNPAID_EXAMINATION_FEE on Visit 1 and excludes unrouted Visit 2 from SP 1
+        var board = await svc.GetExaminationQueueAsync(actorUserId: 5);
+        var allBoardEntries = board.ServicePoints.SelectMany(sp => sp.Entries).ToList();
+        Assert.DoesNotContain(allBoardEntries, e => e.VisitCode == "VIS-UNROUTED");
+        var unpaidDto = Assert.Single(allBoardEntries, e => e.VisitCode == "VIS-UNPAID");
+        Assert.Equal("UNPAID_EXAMINATION_FEE", unpaidDto.BlockedReason);
+
+        // CallNext skips unpaid Visit 1 and calls paid Visit 3!
+        var callPaid = await svc.CallNextPatientAsync(actorUserId: 5, servicePointId: "sp-1");
+        Assert.Equal("CALLED", callPaid.Outcome);
+        Assert.Equal("VIS-PAID", callPaid.CalledEntry!.VisitCode);
+
+        // Complete Visit 3 so room is idle; now ONLY unpaid Visit 1 remains -> CallNext throws 409 Conflict!
+        var q3 = await db.QueueEntries.SingleAsync(q => q.Id == 3);
+        q3.Status = "COMPLETED";
+        q3.CompletedAt = nowLocal;
+        var v3 = await db.Visits.SingleAsync(v => v.Id == 3);
+        v3.Status = "COMPLETED";
+        v3.CompletedAt = nowLocal;
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            svc.CallNextPatientAsync(actorUserId: 5, servicePointId: "sp-1"));
+
+        // RETURN_CONSULTATION gate:
+        // 1) First call with unfinalized DiagnosticOrder creates a WAITING return entry (NOT READY!)
+        var pendingReturn = await svc.CreateReturnToDoctorQueueEntryAsync(
+            actorUserId: 5,
+            idOrCode: "VIS-CLS",
+            request: new CreateReturnToDoctorQueueEntryRequest(
+                ServicePointId: "sp-1",
+                ConfirmPresent: true,
+                DiagnosticResultsReady: true,
+                Reason: "Tạo lượt khám lại khi chưa có kết quả CLS hoàn tất"));
+        Assert.Equal("WAITING", pendingReturn.CurrentStatus);
+
+        // 2) Attempting to activate that WAITING return entry to READY while DiagnosticResult is still unfinalized -> 409 Conflict
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            svc.CreateReturnToDoctorQueueEntryAsync(
+                actorUserId: 5,
+                idOrCode: "VIS-CLS",
+                request: new CreateReturnToDoctorQueueEntryRequest(
+                    ServicePointId: "sp-1",
+                    ConfirmPresent: true,
+                    DiagnosticResultsReady: true,
+                    Reason: "Thử kích hoạt khi chưa có kết quả CLS hoàn tất")));
+
+        // Once DiagnosticResult is finalized, activation to READY succeeds!
+        db.DiagnosticResults.Add(new DiagnosticResult
+        {
+            Id = 901,
+            DiagnosticOrderId = 900,
+            Status = "FINALIZED",
+            FinalizedAt = nowLocal,
+        });
+        await db.SaveChangesAsync();
+
+        var activatedReturn = await svc.CreateReturnToDoctorQueueEntryAsync(
+            actorUserId: 5,
+            idOrCode: "VIS-CLS",
+            request: new CreateReturnToDoctorQueueEntryRequest(
+                ServicePointId: "sp-1",
+                ConfirmPresent: true,
+                DiagnosticResultsReady: true,
+                Reason: "Đã có kết quả CLS hoàn tất"));
+        Assert.Equal("READY", activatedReturn.CurrentStatus);
     }
 }

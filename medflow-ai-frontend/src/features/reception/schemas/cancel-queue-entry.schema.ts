@@ -3,6 +3,9 @@ import { z } from 'zod';
 const SAFE_TEXT_REGEX = /^[^<>]*$/;
 
 export const cancelQueueEntrySchema = z.object({
+  disposition: z
+    .enum(['PATIENT_ABANDONED', 'REASSIGN_REQUEUE', 'TECHNICAL_ERROR'])
+    .default('PATIENT_ABANDONED'),
   reason: z
     .string()
     .trim()

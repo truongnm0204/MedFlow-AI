@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Visits.Queueing;
@@ -32,23 +33,17 @@ public sealed partial class ExaminationQueueService
         }
 
         var notes = ValidateCoordinationNotes(request?.Notes);
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+        var today = HospitalClock.GetToday(_timeProvider);
 
         var (hospital, ownerDoctorId) = await ResolveCallNextActorAsync(actorUserId, nowUtc, ct);
 
-        await using var tx = await _db.BeginTransactionAsync(ct);
+        var preBoard = await BuildQueueBoardForHospitalAsync(hospital, today, ct);
+        var preBucket = FindRawBoardBucketForCallNext(preBoard, filter);
 
-        var today = DateOnly.FromDateTime(AppointmentBookingRules.GetVietnamNow(_timeProvider));
-        var board = await BuildQueueBoardForHospitalAsync(hospital, today, ct);
-
-        var boardBucket = board.Buckets.FirstOrDefault(b =>
-            b.Bucket.RawServicePointId is long raw &&
-            (filter == raw.ToString(CultureInfo.InvariantCulture) ||
-             string.Equals(filter, $"sp-{raw}", StringComparison.OrdinalIgnoreCase)));
-
-        if (boardBucket is null)
+        if (preBucket is null)
         {
-            if (board.Buckets.Any(b => MatchesServicePointFilter(b.Bucket, filter)))
+            if (preBoard.Buckets.Any(b => MatchesServicePointFilter(b.Bucket, filter)))
             {
                 throw new ConflictException(
                     "Phòng khám chưa được cấu hình điểm phục vụ hàng đợi; không thể gọi bệnh nhân tự động.");
@@ -56,6 +51,60 @@ public sealed partial class ExaminationQueueService
 
             throw new NotFoundException("Không tìm thấy điểm phục vụ / phòng khám.");
         }
+
+        if (ownerDoctorId is long preDocId && preBucket.Bucket.DoctorId != preDocId)
+        {
+            throw new ForbiddenException("Bác sĩ chỉ được gọi bệnh nhân tại điểm phục vụ được phân công.");
+        }
+
+        if (!preBucket.Bucket.IsActive)
+        {
+            throw new ConflictException("Điểm phục vụ đang ngừng hoạt động.");
+        }
+
+        var lockRoomId = preBucket.Bucket.RoomId;
+        var lockServicePointId = preBucket.Bucket.RawServicePointId!.Value;
+        var lockVisitIds = preBucket.Entries
+            .Where(e => e.QueueEntry?.VisitId.HasValue == true)
+            .Select(e => e.QueueEntry!.VisitId!.Value)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToArray();
+        var lockQueueEntryIds = preBucket.Entries
+            .Where(e => e.QueueEntry is not null && e.Dto.Status is not "COMPLETED")
+            .Select(e => e.QueueEntry!.Id)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToArray();
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        // ADR-0059 strict lock order: hospital_rooms (06) -> visits (09) -> queue_service_points (10) -> queue_entries (11)
+        if (lockRoomId.HasValue)
+        {
+            await _db.TryLockRoomForUpdateAsync(lockRoomId.Value, ct);
+        }
+
+        foreach (var vId in lockVisitIds)
+        {
+            await _db.TryLockVisitForUpdateAsync(vId, ct);
+        }
+
+        await _db.TryLockServicePointForUpdateAsync(lockServicePointId, ct);
+
+        if (lockQueueEntryIds.Length > 0)
+        {
+            await _db.TryLockQueueEntriesForUpdateAsync(lockQueueEntryIds, ct);
+        }
+
+        if (_db is DbContext dbCtx && dbCtx.Database.ProviderName != "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            dbCtx.ChangeTracker.Clear();
+        }
+
+        var board = await BuildQueueBoardForHospitalAsync(hospital, today, ct);
+        var boardBucket = FindRawBoardBucketForCallNext(board, filter)
+            ?? throw new NotFoundException("Không tìm thấy điểm phục vụ / phòng khám.");
 
         if (ownerDoctorId is long docId && boardBucket.Bucket.DoctorId != docId)
         {
@@ -73,10 +122,21 @@ public sealed partial class ExaminationQueueService
                 "Phòng khám đang có bệnh nhân được gọi hoặc đang khám. Hoàn tất hoặc đánh dấu qua lượt trước khi gọi bệnh nhân tiếp theo.");
         }
 
-        var selected = SelectCallNextCandidate(boardBucket);
+        if (boardBucket.Bucket.RoomId is long physicalRoomId)
+        {
+            await EnsureRoomHasAvailableCallCapacityAsync(board, physicalRoomId, ct);
+        }
+
+        var selected = await SelectVerifiedCallNextCandidateAsync(boardBucket, ct);
         if (selected is null)
         {
             var firstEligible = boardBucket.Entries.FirstOrDefault(e => e.Evaluation.IsEligible);
+            if (firstEligible is null && HasPresentUnpaidWaitingCandidate(boardBucket))
+            {
+                throw new ConflictException(
+                    "Bệnh nhân đang chờ tại điểm phục vụ chưa hoàn tất thanh toán phí khám (UNPAID_EXAMINATION_FEE). Vui lòng thanh toán trước khi gọi khám.");
+            }
+
             var outcome = firstEligible is not null ? "HOLD_FOR_SLOT" : "NO_ELIGIBLE_PATIENT";
             var message = firstEligible is not null
                 ? firstEligible.Evaluation.HoldReason ?? "Đang giữ khoảng trống cho lịch hẹn được bảo vệ tiếp theo."
@@ -105,6 +165,30 @@ public sealed partial class ExaminationQueueService
         if (IsTerminalVisit(visit))
         {
             throw new ConflictException("Không thể thao tác trên lượt khám đã hoàn tất, đã hủy hoặc vắng mặt (NO_SHOW).");
+        }
+
+        if (visit is not null)
+        {
+            if (!visit.ExaminationRoomId.HasValue)
+            {
+                throw new ConflictException("Lượt khám chưa được gán phòng khám lâm sàng, không thể gọi bệnh nhân.");
+            }
+
+            if (boardBucket.Bucket.RoomId.HasValue && visit.ExaminationRoomId.Value != boardBucket.Bucket.RoomId.Value)
+            {
+                throw new ConflictException(
+                    "Bệnh nhân vừa được điều chuyển sang phòng khám khác. Vui lòng tải lại hàng đợi.");
+            }
+
+            if (selected.Dto.QueueType == ClinicalQueueRules.QueueTypeExamination)
+            {
+                var gate = await TryCheckExaminationEligibilitySafeAsync(visit.Id, ct);
+                if (gate is { IsUnlocked: false })
+                {
+                    throw new ConflictException(
+                        gate.Message ?? "Bệnh nhân chưa hoàn tất thanh toán phí khám trước khi gọi vào phòng khám.");
+                }
+            }
         }
 
         var normalizedStatus = AppointmentBookingRules.NormalizeStatusKey(target.Status);
@@ -281,11 +365,84 @@ public sealed partial class ExaminationQueueService
         return (doctorHospital, doctor.Id);
     }
 
-    private static QueueBoardEntry? SelectCallNextCandidate(QueueBoardBucket bucket)
-        => bucket.Entries.FirstOrDefault(e =>
-            e.Evaluation.IsEligible &&
+    private static QueueBoardBucket? FindRawBoardBucketForCallNext(QueueBoard board, string filter)
+        => board.Buckets.FirstOrDefault(b =>
+            b.Bucket.RawServicePointId is long raw &&
+            (filter == raw.ToString(CultureInfo.InvariantCulture) ||
+             string.Equals(filter, $"sp-{raw}", StringComparison.OrdinalIgnoreCase)));
+
+    private async Task EnsureRoomHasAvailableCallCapacityAsync(
+        QueueBoard board,
+        long roomId,
+        CancellationToken ct)
+    {
+        var room = await _db.HospitalRooms
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == roomId, ct);
+
+        if (room is not null && !string.Equals(room.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException("Phòng khám của điểm phục vụ hiện đang ngừng hoạt động hoặc bảo trì.");
+        }
+
+        var effectiveRoomCapacity = room?.Capacity is > 0 ? room.Capacity.Value : 1;
+        var activeInRoom = board.Buckets
+            .Where(b => b.Bucket.RoomId == roomId)
+            .SelectMany(b => b.Entries)
+            .Where(e => e.Dto.Status is "CALLED" or "IN_PROGRESS")
+            .Select(e => e.Dto.Id)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+        if (activeInRoom >= effectiveRoomCapacity)
+        {
+            throw new ConflictException(
+                "Phòng khám đang có bệnh nhân được gọi hoặc đang khám đạt sức chứa tối đa. Hoàn tất hoặc đánh dấu qua lượt trước khi gọi bệnh nhân tiếp theo.");
+        }
+    }
+
+    private async Task<QueueBoardEntry?> SelectVerifiedCallNextCandidateAsync(
+        QueueBoardBucket bucket,
+        CancellationToken ct)
+    {
+        foreach (var entry in bucket.Entries)
+        {
+            if (!entry.Evaluation.IsEligible ||
+                entry.QueueEntry is null ||
+                !(entry.Evaluation.IsDueProtected || entry.Evaluation.CanSafeBackfill))
+            {
+                continue;
+            }
+
+            if (entry.QueueEntry.VisitId is long visitId)
+            {
+                var v = await _db.Visits.AsNoTracking().FirstOrDefaultAsync(x => x.Id == visitId, ct);
+                if (v is not null && !v.ExaminationRoomId.HasValue)
+                {
+                    continue;
+                }
+
+                if (v is not null &&
+                    bucket.Bucket.RoomId.HasValue &&
+                    v.ExaminationRoomId.HasValue &&
+                    v.ExaminationRoomId.Value != bucket.Bucket.RoomId.Value)
+                {
+                    continue;
+                }
+            }
+
+            return entry;
+        }
+
+        return null;
+    }
+
+    private static bool HasPresentUnpaidWaitingCandidate(QueueBoardBucket bucket)
+        => bucket.Entries.Any(e =>
             e.QueueEntry is not null &&
-            (e.Evaluation.IsDueProtected || e.Evaluation.CanSafeBackfill));
+            e.Dto.Status is "WAITING" or "READY" &&
+            string.Equals(e.Dto.PresenceStatus, "PRESENT", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(e.Dto.BlockedReason, UnpaidExaminationFeeReason, StringComparison.OrdinalIgnoreCase));
 
     private static string ResolveSelectionReason(QueueBoardEntry selected)
     {

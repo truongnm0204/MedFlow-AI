@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 
 import { FormField, formControlClass } from '@/shared/components/form/form-primitives';
+import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Button } from '@/shared/ui/button';
 
 import { updateServicePriceApi } from '../api/examination-service.api';
@@ -21,8 +22,19 @@ import {
 } from '../schemas/service-price.schema';
 import { useExaminationServiceStore } from '../store/examination-service.store';
 
-function getTodayDateString(): string {
-  return new Date().toISOString().split('T')[0];
+export function getHospitalLocalDateIso(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+
+  const year = parts.find((part) => part.type === 'year')?.value ?? '1970';
+  const month = parts.find((part) => part.type === 'month')?.value ?? '01';
+  const day = parts.find((part) => part.type === 'day')?.value ?? '01';
+
+  return `${year}-${month}-${day}`;
 }
 
 export function ServicePriceUpdateModal() {
@@ -50,7 +62,7 @@ export function ServicePriceUpdateModal() {
     defaultValues: {
       price: service?.price ?? 0,
       decisionNumber: service?.decisionNumber ?? '',
-      effectiveDate: getTodayDateString(),
+      effectiveDate: getHospitalLocalDateIso(),
       validTo: '',
       appliedBy: 'Hội đồng Giá Bệnh viện',
       note: 'Điều chỉnh định mức chi phí dịch vụ theo quyết định mới',
@@ -62,7 +74,7 @@ export function ServicePriceUpdateModal() {
       reset({
         price: service.price,
         decisionNumber: service.decisionNumber ?? '',
-        effectiveDate: getTodayDateString(),
+        effectiveDate: getHospitalLocalDateIso(),
         validTo: '',
         appliedBy: service.appliedBy ?? 'Hội đồng Giá Bệnh viện',
         note: `Điều chỉnh giá dịch vụ ${service.name} theo quyết định mới`,
@@ -129,8 +141,7 @@ export function ServicePriceUpdateModal() {
         setUpdatePriceService(null);
       }, 700);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Có lỗi xảy ra khi cập nhật giá dịch vụ.';
-      setErrorMessage(msg);
+      setErrorMessage(getErrorMessage(err, 'Có lỗi xảy ra khi cập nhật giá dịch vụ.'));
     } finally {
       setIsSubmitting(false);
     }

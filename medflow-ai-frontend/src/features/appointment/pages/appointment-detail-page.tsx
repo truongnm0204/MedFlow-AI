@@ -41,8 +41,7 @@ import { useBookingStore } from '../store/booking.store';
 export function AppointmentDetailPage() {
   const { appointmentId = '' } = useParams<{ appointmentId: string }>();
   const navigate = useNavigate();
-  const selectService = useBookingStore((s) => s.selectService);
-  const selectDoctor = useBookingStore((s) => s.selectDoctor);
+  const prepareRebook = useBookingStore((s) => s.prepareRebook);
 
   const {
     data: appointment,
@@ -66,17 +65,27 @@ export function AppointmentDetailPage() {
 
   const isCompleted = appointment ? COMPLETED_STATUSES.includes(appointment.status) : false;
   const isCancelled = appointment ? CANCELLED_STATUSES.includes(appointment.status) : false;
-  const canModify = appointment
+  const legacyCanModify = appointment
     ? ['CONFIRMED', 'BOOKED', 'PENDING'].includes(appointment.status)
     : false;
-  const canPrintSlip = appointment ? !isCancelled : false;
+  const availableActions = appointment?.availableActions;
+  const hasAvailableAction = (action: string, fallback: boolean): boolean =>
+    Array.isArray(availableActions) ? availableActions.includes(action) : fallback;
+
+  const canCancel = appointment ? hasAvailableAction('CANCEL', legacyCanModify) : false;
+  const canReschedule = appointment ? hasAvailableAction('RESCHEDULE', legacyCanModify) : false;
+  const canUpdateReason = appointment
+    ? hasAvailableAction('UPDATE_REASON', legacyCanModify)
+    : false;
+  const canPrintSlip = appointment ? hasAvailableAction('PRINT_SLIP', !isCancelled) : false;
+  const canTrackQueue = appointment
+    ? hasAvailableAction('TRACK_QUEUE', !isCancelled && !isCompleted)
+    : false;
+  const canRebook = appointment ? hasAvailableAction('REBOOK', isCompleted || isCancelled) : false;
 
   const handleOpenEditReason = () => {
     if (!appointment) return;
-    setReasonDraft(
-      appointment.reasonForVisit ??
-        'Đau tức vùng thượng vị từng cơn sau ăn, ợ chua liên tục 5 ngày gần đây.',
-    );
+    setReasonDraft(appointment.reasonForVisit ?? '');
     setReasonError(null);
     setIsEditingReason(true);
   };
@@ -161,8 +170,16 @@ export function AppointmentDetailPage() {
 
   const handleRebookSpecialty = () => {
     if (!appointment) return;
-    selectDoctor(appointment.doctorId);
-    selectService(appointment.serviceId, appointment.serviceName);
+    prepareRebook({
+      doctorId: appointment.doctorId,
+      serviceId: appointment.serviceId,
+      serviceName: appointment.serviceName,
+      patientId: appointment.patientId,
+    });
+    if (!appointment.doctorId?.trim() && appointment.serviceId?.trim()) {
+      navigate(`/appointment/services/${encodeURIComponent(appointment.serviceId)}/booking`);
+      return;
+    }
     navigate(`/appointment/doctors?specialty=${encodeURIComponent(appointment.specialtyId)}`);
   };
 
@@ -324,7 +341,7 @@ export function AppointmentDetailPage() {
 
                 {/* Status-aware Valid Actions (Unauthorized/invalid actions hidden per DoD) */}
                 <div className="flex flex-wrap items-center gap-2.5">
-                  {canModify && (
+                  {canCancel && (
                     <button
                       type="button"
                       onClick={() => setIsCancelModalOpen(true)}
@@ -346,7 +363,7 @@ export function AppointmentDetailPage() {
                     </button>
                   )}
 
-                  {canModify && (
+                  {canReschedule && (
                     <button
                       type="button"
                       onClick={() => setIsRescheduleModalOpen(true)}
@@ -357,7 +374,7 @@ export function AppointmentDetailPage() {
                     </button>
                   )}
 
-                  {(isCompleted || isCancelled) && (
+                  {canRebook && (
                     <button
                       type="button"
                       onClick={handleRebookSpecialty}
@@ -451,7 +468,7 @@ export function AppointmentDetailPage() {
                         </h2>
                       </div>
 
-                      {canModify && !isEditingReason && (
+                      {canUpdateReason && !isEditingReason && (
                         <button
                           type="button"
                           onClick={handleOpenEditReason}
@@ -475,8 +492,9 @@ export function AppointmentDetailPage() {
                       <div>
                         <p className="text-xs font-medium text-sub">Năm sinh / Tuổi</p>
                         <p className="mt-1 text-sm font-extrabold text-ink">
-                          {appointment.patientBirthYearLabel ??
-                            `1986 (${appointment.patientAgeLabel})`}
+                          {appointment.patientBirthYearLabel?.trim() ||
+                            appointment.patientAgeLabel?.trim() ||
+                            'Chưa cập nhật'}
                         </p>
                       </div>
 
@@ -490,7 +508,7 @@ export function AppointmentDetailPage() {
                       <div>
                         <p className="text-xs font-medium text-sub">CCCD / Định danh</p>
                         <p className="mt-1 font-mono text-sm font-extrabold text-ink">
-                          {appointment.patientNationalId ?? '001086001234'}
+                          {appointment.patientNationalId?.trim() || 'Đã bảo mật'}
                         </p>
                       </div>
                     </div>
@@ -544,8 +562,8 @@ export function AppointmentDetailPage() {
                         </form>
                       ) : (
                         <div className="mt-2 rounded-xl border border-slate-100 bg-canvas p-4 text-xs font-medium leading-relaxed text-ink">
-                          {appointment.reasonForVisit ??
-                            'Đau tức vùng thượng vị từng cơn sau ăn, ợ chua liên tục 5 ngày gần đây.'}
+                          {appointment.reasonForVisit?.trim() ||
+                            'Chưa ghi nhận triệu chứng ban đầu.'}
                         </div>
                       )}
                     </div>
@@ -623,17 +641,19 @@ export function AppointmentDetailPage() {
                         </p>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setIsPrintModalOpen(true)}
-                        aria-label="Mở mã QR và phiếu hẹn khám"
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-navy font-mono text-xs font-extrabold text-white transition-opacity hover:opacity-90"
-                      >
-                        <QrCode className="h-5 w-5" aria-hidden="true" />
-                      </button>
+                      {canPrintSlip && (
+                        <button
+                          type="button"
+                          onClick={() => setIsPrintModalOpen(true)}
+                          aria-label="Mở mã QR và phiếu hẹn khám"
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-navy font-mono text-xs font-extrabold text-white transition-opacity hover:opacity-90"
+                        >
+                          <QrCode className="h-5 w-5" aria-hidden="true" />
+                        </button>
+                      )}
                     </div>
 
-                    {!isCancelled && !isCompleted && (
+                    {canTrackQueue && (
                       <Link
                         to={`/appointments/${appointment.id}/queue`}
                         className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-sky-700 px-4 py-2.5 text-xs font-bold text-white hover:bg-sky-600"

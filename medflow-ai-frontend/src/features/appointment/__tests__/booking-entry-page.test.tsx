@@ -3,6 +3,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient } from '@/shared/lib/axios';
+
 import * as hospitalApi from '../api/hospital.api';
 import { MOCK_HOSPITALS } from '../data/hospital-mock';
 import { BookingEntryPage } from '../pages/booking-entry-page';
@@ -105,5 +107,45 @@ describe('BookingEntryPage (#619)', () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Thử lại/ })).toBeInTheDocument();
+  });
+
+  it('xác thực ?patientId=103 thuộc family-members hợp lệ và chặn ?patientId bị thu hồi / không thuộc quyền sở hữu', async () => {
+    const getSpy = vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
+      if (url === '/patients/me/family-members') {
+        return {
+          data: [
+            {
+              memberPatientId: 103,
+              permissions: { canBookAppointments: true, relationshipStatus: 'VERIFIED' },
+            },
+            {
+              memberPatientId: 109,
+              permissions: { canBookAppointments: false, relationshipStatus: 'REVOKED' },
+            },
+          ],
+        };
+      }
+      if (url === '/patients/me') {
+        return { data: { id: 1, status: 'ACTIVE' } };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    const first = renderBookingEntry('/booking?patientId=103');
+    fireEvent.click(await screen.findByRole('radio', { name: /Cơ sở Hà Nội/ }));
+    await waitFor(() => expect(useBookingStore.getState().selectedPatientId).toBe('103'));
+
+    fireEvent.click(screen.getByRole('button', { name: /Khám theo Bác sĩ/ }));
+    expect(await screen.findByText('Danh bạ Bác sĩ Mock')).toBeInTheDocument();
+    expect(screen.getByTestId('location-search')).toHaveTextContent(
+      '?hospitalId=hos-01&patientId=103',
+    );
+    expect(getSpy).toHaveBeenCalledWith('/patients/me/family-members');
+    first.unmount();
+
+    useBookingStore.getState().reset();
+    renderBookingEntry('/booking?patientId=109');
+    fireEvent.click(await screen.findByRole('radio', { name: /Cơ sở Hà Nội/ }));
+    await waitFor(() => expect(useBookingStore.getState().selectedPatientId).toBe('pat-self'));
   });
 });

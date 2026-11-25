@@ -197,6 +197,8 @@ export const CANCELLABLE_QUEUE_STATUSES: readonly ExaminationQueueStatus[] = [
   'SKIPPED',
 ];
 
+export type QueueCancelDisposition = 'PATIENT_ABANDONED' | 'REASSIGN_REQUEUE' | 'TECHNICAL_ERROR';
+
 export interface CancelQueueEntryTarget {
   entry: ExaminationQueueEntryDto;
   servicePoint: ServicePointQueueDto;
@@ -206,6 +208,9 @@ export interface CancelQueueEntryRequestPayload {
   reason: string;
   expectedStateVersion: number;
   notes: string | null;
+  disposition?: QueueCancelDisposition;
+  targetRoomId?: number | null;
+  targetDoctorId?: number | null;
 }
 
 export type CancelQueueEntryResponseDto = Omit<

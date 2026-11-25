@@ -99,6 +99,7 @@ export function useCreateWalkInMutation() {
       reasonForVisit: string;
       symptoms: string[];
       clinicalPriority: ClinicalPriority;
+      priorityVerificationConfirmed?: boolean;
       paymentMethod: PaymentMethod;
       serviceName: string;
       priceFormatted: string;

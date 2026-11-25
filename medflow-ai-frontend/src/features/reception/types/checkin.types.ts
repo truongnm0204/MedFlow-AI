@@ -1,4 +1,4 @@
-export type CheckInPriority = 'NORMAL' | 'URGENT' | 'ELDERLY' | 'PREGNANT';
+export type CheckInPriority = 'NORMAL' | 'ELDERLY' | 'PREGNANT';
 
 export interface ScheduledCheckInAppointment {
   id: string;
@@ -28,6 +28,7 @@ export interface CheckInFormData {
   isIdentityVerified: boolean;
   isInsuranceVerified: boolean;
   priority: CheckInPriority;
+  priorityVerificationConfirmed?: boolean;
 }
 
 export interface CheckInSuccessResult {

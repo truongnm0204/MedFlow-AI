@@ -37,7 +37,14 @@ export function AppointmentCard({
   const isCompleted = COMPLETED_STATUSES.includes(appointment.status);
   const isOverdue = appointment.statusBannerLabel.includes('QUÁ HẠN');
   const isCancelled = CANCELLED_STATUSES.includes(appointment.status) || isOverdue;
-  const canModify = ['BOOKED', 'CONFIRMED', 'PENDING'].includes(appointment.status) && !isOverdue;
+  const legacyCanModify =
+    ['BOOKED', 'CONFIRMED', 'PENDING'].includes(appointment.status) && !isOverdue;
+  const canCancel = Array.isArray(appointment.availableActions)
+    ? appointment.availableActions.includes('CANCEL')
+    : legacyCanModify;
+  const canReschedule = Array.isArray(appointment.availableActions)
+    ? appointment.availableActions.includes('RESCHEDULE')
+    : legacyCanModify;
   if (isCompleted) {
     return (
       <article
@@ -327,7 +334,7 @@ export function AppointmentCard({
 
       {/* Upcoming Footer Actions */}
       <div className="mt-5 flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 pt-4">
-        {canModify && onCancelRequest && (
+        {canCancel && onCancelRequest && (
           <button
             type="button"
             onClick={() => onCancelRequest(appointment)}
@@ -338,7 +345,7 @@ export function AppointmentCard({
           </button>
         )}
 
-        {canModify && onReschedule && (
+        {canReschedule && onReschedule && (
           <button
             type="button"
             onClick={() => onReschedule(appointment)}

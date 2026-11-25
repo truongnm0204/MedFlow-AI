@@ -16,6 +16,10 @@ export interface CompatibleExaminationRoomItemDto {
   isCompatible: boolean;
   isAvailable: boolean;
   unavailableReason: string | null;
+  defaultDoctorId?: number | null;
+  defaultDoctorCode?: string | null;
+  defaultDoctorName?: string | null;
+  activeDoctorCount?: number;
 }
 
 export interface VisitRoomTransferHistoryItemDto {

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { apiClient } from '@/shared/lib/axios';
 import { ServicePriceHistoryModal } from '../components/service-price-history-modal';
@@ -50,6 +50,10 @@ describe('ServicePriceUpdateModal (UC52 / GH-818 real API)', () => {
         ],
       },
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   const renderComponent = () =>
@@ -109,5 +113,19 @@ describe('ServicePriceUpdateModal (UC52 / GH-818 real API)', () => {
       expect(updated?.price).toBe(450000);
       expect(updated?.decisionNumber).toBe('QĐ-888/BV-KH');
     });
+  });
+
+  it('defaults effectiveDate to Asia/Ho_Chi_Minh date (2026-11-26) when UTC is 2026-11-25T17:30:00Z (00:30 VN)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-25T17:30:00Z'));
+
+    const testService = { ...INITIAL_SERVICES[0], id: '1' };
+    useExaminationServiceStore.setState({ updatePriceService: testService });
+    renderComponent();
+
+    const effectiveDateInput = screen.getByLabelText(
+      /Ngày bắt đầu có hiệu lực/i,
+    ) as HTMLInputElement;
+    expect(effectiveDateInput.value).toBe('2026-11-26');
   });
 });

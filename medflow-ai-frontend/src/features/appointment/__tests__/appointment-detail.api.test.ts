@@ -8,6 +8,7 @@ import {
   cancelAppointmentApi,
   fetchAppointmentDetailByIdApi,
   fetchProposedRescheduleSlotsApi,
+  fetchRescheduleScheduleApi,
   rescheduleAppointmentApi,
   updateAppointmentReasonApi,
 } from '../api/appointment-detail.api';
@@ -193,5 +194,82 @@ describe('appointment-detail.api (pure HTTP + contract seams S2/S3)', () => {
         reasonForVisit: 'Triệu chứng cập nhật mới',
       }),
     ).rejects.toBe(notFoundError);
+  });
+
+  it('fetchRescheduleScheduleApi calls /appointments/service-shifts when doctorId is blank, preserves >3 slots, and sets estimatedQueueNumber to null', async () => {
+    const serviceOnlyAppt: AppointmentListItem = {
+      ...MOCK_APPOINTMENTS[0]!,
+      doctorId: '',
+      doctorName: '',
+      serviceId: 'EX-GI-01',
+      scheduledDate: '2026-11-26',
+      scheduledTimeRange: '07:30 - 08:00',
+    };
+
+    const getSpy = vi.spyOn(apiClient, 'get').mockResolvedValueOnce({
+      data: {
+        monthLabel: 'Tháng 11, 2026',
+        dates: [
+          {
+            dateIso: '2026-11-27',
+            dayTopLabel: 'THỨ SÁU',
+            subDateLabel: '27/11',
+            fullDateDisplay: 'Thứ Sáu, 27/11/2026',
+            status: 'AVAILABLE',
+          },
+        ],
+        morningSlots: [
+          {
+            id: '101',
+            timeRange: '08:00 - 08:30',
+            shift: 'MORNING',
+            status: 'AVAILABLE',
+            remainingSlots: 3,
+          },
+          {
+            id: '102',
+            timeRange: '08:30 - 09:00',
+            shift: 'MORNING',
+            status: 'AVAILABLE',
+            remainingSlots: 2,
+          },
+          {
+            id: '103',
+            timeRange: '09:00 - 09:30',
+            shift: 'MORNING',
+            status: 'AVAILABLE',
+            remainingSlots: 4,
+          },
+          {
+            id: '104',
+            timeRange: '09:30 - 10:00',
+            shift: 'MORNING',
+            status: 'AVAILABLE',
+            remainingSlots: 1,
+          },
+        ],
+        afternoonSlots: [
+          {
+            id: '105',
+            timeRange: '14:00 - 14:30',
+            shift: 'AFTERNOON',
+            status: 'AVAILABLE',
+            remainingSlots: 2,
+          },
+        ],
+      },
+    });
+
+    const schedule = await fetchRescheduleScheduleApi(serviceOnlyAppt, '2026-11-27');
+
+    expect(getSpy).toHaveBeenCalledWith('/appointments/service-shifts', {
+      params: {
+        serviceId: 'EX-GI-01',
+        dateIso: '2026-11-27',
+      },
+    });
+    expect(schedule.slots).toHaveLength(5);
+    expect(schedule.slots.every((s) => s.estimatedQueueNumber === null)).toBe(true);
+    expect(schedule.slots[0]?.doctorName).toContain('Bác sĩ điều phối theo ca khám');
   });
 });

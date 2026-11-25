@@ -160,6 +160,14 @@ public sealed class EarlyArrivalBackfillEndpointTests : AuthTestBase
             await Db.SaveChangesAsync();
             createdVisitId = seededVisit.Id;
 
+            Db.VisitCharges.Add(VisitCharge.CreateExamination(
+                seededVisit.Id,
+                serviceId: 1,
+                unitPrice: 0m,
+                createdAtLocal: checkedInAt,
+                waived: true));
+            await Db.SaveChangesAsync();
+
             var seededQueue = new QueueEntry
             {
                 VisitId = seededVisit.Id,
@@ -260,6 +268,9 @@ public sealed class EarlyArrivalBackfillEndpointTests : AuthTestBase
 
             if (createdVisitId.HasValue)
             {
+                await Db.VisitCharges
+                    .Where(c => c.VisitId == createdVisitId.Value)
+                    .ExecuteDeleteAsync();
                 await Db.Visits
                     .Where(v => v.Id == createdVisitId.Value)
                     .ExecuteDeleteAsync();

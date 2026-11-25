@@ -44,8 +44,15 @@ internal static class NotificationTestCleanupHelper
             .Select(id => id.ToString(CultureInfo.InvariantCulture))
             .ToList();
 
+        var visitIds = await db.Visits
+            .Where(v => v.AppointmentId != null && appointmentIds.Contains(v.AppointmentId.Value))
+            .Select(v => v.Id)
+            .ToListAsync();
+
         var queueIds = await db.QueueEntries
-            .Where(q => q.AppointmentId != null && appointmentIds.Contains(q.AppointmentId.Value))
+            .Where(q =>
+                (q.AppointmentId != null && appointmentIds.Contains(q.AppointmentId.Value)) ||
+                (q.VisitId != null && visitIds.Contains(q.VisitId.Value)))
             .Select(q => q.Id)
             .ToListAsync();
 
@@ -61,6 +68,29 @@ internal static class NotificationTestCleanupHelper
 
             await db.QueueEntries
                 .Where(q => queueIds.Contains(q.Id))
+                .ExecuteDeleteAsync();
+        }
+
+        if (visitIds.Count > 0)
+        {
+            var visitIdStrings = visitIds
+                .Select(id => id.ToString(CultureInfo.InvariantCulture))
+                .ToList();
+
+            await db.AuditLogs
+                .Where(l => l.EntityType == "VISIT" && l.EntityId != null && visitIdStrings.Contains(l.EntityId))
+                .ExecuteDeleteAsync();
+
+            await db.Payments
+                .Where(p => p.VisitId != null && visitIds.Contains(p.VisitId.Value))
+                .ExecuteDeleteAsync();
+
+            await db.VisitCharges
+                .Where(c => c.VisitId != null && visitIds.Contains(c.VisitId.Value))
+                .ExecuteDeleteAsync();
+
+            await db.Visits
+                .Where(v => visitIds.Contains(v.Id))
                 .ExecuteDeleteAsync();
         }
 

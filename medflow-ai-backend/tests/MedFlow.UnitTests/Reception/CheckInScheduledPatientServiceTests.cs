@@ -56,11 +56,12 @@ public sealed class CheckInScheduledPatientServiceTests : IDisposable
         public DbSet<HospitalRoom> HospitalRooms => Set<HospitalRoom>();
         public DbSet<Specialty> Specialties => Set<Specialty>();
         public DbSet<Service> Services => Set<Service>();
-        public DbSet<ServicePrice> ServicePrices => throw NotUsed();
+        public DbSet<ServicePrice> ServicePrices => Set<ServicePrice>();
         public DbSet<HospitalPolicy> HospitalPolicies => Set<HospitalPolicy>();
         public DbSet<Appointment> Appointments => Set<Appointment>();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
+        public DbSet<VisitCharge> VisitCharges => Set<VisitCharge>();
         public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
         public DbSet<Payment> Payments => throw NotUsed();
         public DbSet<QueueServicePoint> QueueServicePoints => Set<QueueServicePoint>();
@@ -72,7 +73,6 @@ public sealed class CheckInScheduledPatientServiceTests : IDisposable
         {
             modelBuilder.Ignore<AuthSession>();
             modelBuilder.Ignore<AuthVerificationChallenge>();
-            modelBuilder.Ignore<ServicePrice>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
             modelBuilder.Ignore<PatientFamilyLink>();
             modelBuilder.Ignore<Payment>();
@@ -93,6 +93,12 @@ public sealed class CheckInScheduledPatientServiceTests : IDisposable
                 b.HasOne(s => s.Department).WithMany().HasForeignKey(s => s.DepartmentId);
                 b.HasOne(s => s.Specialty).WithMany().HasForeignKey(s => s.SpecialtyId);
             });
+            modelBuilder.Entity<ServicePrice>(b =>
+            {
+                b.HasKey(p => p.Id);
+                b.HasOne(p => p.Service).WithMany(s => s.ServicePrices).HasForeignKey(p => p.ServiceId);
+            });
+            modelBuilder.Entity<VisitCharge>().HasKey(c => c.Id);
             modelBuilder.Entity<HospitalRoom>(b =>
             {
                 b.HasKey(r => r.Id);
@@ -245,6 +251,24 @@ public sealed class CheckInScheduledPatientServiceTests : IDisposable
                 Name = "Khám Nội CS2",
                 ServiceType = "EXAMINATION",
                 IsActive = true,
+            });
+
+        _db.ServicePrices.AddRange(
+            new ServicePrice
+            {
+                Id = 1,
+                ServiceId = 1,
+                PriceAmount = 200_000m,
+                EffectiveFrom = new DateTime(2026, 1, 1, 0, 0, 0),
+                EffectiveTo = null,
+            },
+            new ServicePrice
+            {
+                Id = 20,
+                ServiceId = 20,
+                PriceAmount = 200_000m,
+                EffectiveFrom = new DateTime(2026, 1, 1, 0, 0, 0),
+                EffectiveTo = null,
             });
 
         _db.HospitalRooms.AddRange(
@@ -1271,5 +1295,63 @@ public sealed class CheckInScheduledPatientServiceTests : IDisposable
                     appointmentIdOrCode: "APT-202610-0100",
                     request: new CheckInScheduledPatientRequest(IsIdentityVerified: true)));
         }
+    }
+
+    [Fact]
+    public async Task CheckInScheduledPatientAsync_CreatesActiveExaminationVisitChargeAndValidatesHalfOpenServicePrice()
+    {
+        var result = await _service.CheckInScheduledPatientAsync(
+            actorUserId: 5,
+            appointmentIdOrCode: "APT-202610-0100",
+            request: new CheckInScheduledPatientRequest(IsIdentityVerified: true));
+
+        var charge = await _db.VisitCharges.AsNoTracking().SingleAsync(c => c.VisitId == result.VisitId);
+        Assert.Equal("EXAMINATION", charge.ChargeType);
+        Assert.Equal(1L, charge.ServiceId);
+        Assert.Equal(200_000m, charge.UnitPrice);
+        Assert.Equal("REQUIRED", charge.PaymentRequirement);
+        Assert.Equal("ACTIVE", charge.Status);
+
+        // Half-open boundary: EffectiveTo == nowLocal (08:50) must be treated as expired -> 409 Conflict
+        var sp1 = await _db.ServicePrices.SingleAsync(p => p.Id == 1);
+        sp1.EffectiveTo = new DateTime(2026, 10, 27, 8, 50, 0);
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CheckInScheduledPatientAsync(
+                actorUserId: 5,
+                appointmentIdOrCode: "APT-202610-0101",
+                request: new CheckInScheduledPatientRequest(IsIdentityVerified: true)));
+
+        // Overlapping active prices -> ambiguous 409 Conflict
+        sp1.EffectiveTo = null;
+        _db.ServicePrices.Add(new ServicePrice
+        {
+            Id = 99,
+            ServiceId = 1,
+            PriceAmount = 220_000m,
+            EffectiveFrom = new DateTime(2026, 10, 1, 0, 0, 0),
+            EffectiveTo = null,
+        });
+        await _db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CheckInScheduledPatientAsync(
+                actorUserId: 5,
+                appointmentIdOrCode: "APT-202610-0101",
+                request: new CheckInScheduledPatientRequest(IsIdentityVerified: true)));
+    }
+
+    [Fact]
+    public async Task CheckInScheduledPatientAsync_OmittedPriorityVerificationConfirmedForElevatedPriority_ThrowsValidationException()
+    {
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.CheckInScheduledPatientAsync(
+                actorUserId: 5,
+                appointmentIdOrCode: "APT-202610-0102",
+                request: new CheckInScheduledPatientRequest(
+                    IsIdentityVerified: true,
+                    Priority: "ELDERLY",
+                    PriorityVerificationConfirmed: null)));
     }
 }

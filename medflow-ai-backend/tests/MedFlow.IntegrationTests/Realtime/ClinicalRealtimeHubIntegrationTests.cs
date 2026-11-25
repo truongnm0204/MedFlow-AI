@@ -562,6 +562,12 @@ public sealed class ClinicalRealtimeHubIntegrationTests : AuthTestBase
         Db.Visits.AddRange(trackedVisit, roomACompanionVisit, roomBCompanionVisit);
         await Db.SaveChangesAsync();
 
+        Db.VisitCharges.AddRange(
+            VisitCharge.CreateExamination(trackedVisit.Id, serviceId: 1, unitPrice: 0m, createdAtLocal: vnNow, waived: true),
+            VisitCharge.CreateExamination(roomACompanionVisit.Id, serviceId: 1, unitPrice: 0m, createdAtLocal: vnNow, waived: true),
+            VisitCharge.CreateExamination(roomBCompanionVisit.Id, serviceId: 1, unitPrice: 0m, createdAtLocal: vnNow, waived: true));
+        await Db.SaveChangesAsync();
+
         var trackedQueue = new QueueEntry
         {
             VisitId = trackedVisit.Id,
@@ -768,6 +774,7 @@ public sealed class ClinicalRealtimeHubIntegrationTests : AuthTestBase
                 .ToArray();
             await Db.AuditLogs.Where(a => a.EntityId != null && entityIds.Contains(a.EntityId)).ExecuteDeleteAsync();
 
+            await Db.VisitCharges.Where(c => c.VisitId != null && visitIds.Contains(c.VisitId.Value)).ExecuteDeleteAsync();
             await Db.Visits.Where(v => visitIds.Contains(v.Id)).ExecuteDeleteAsync();
             await Db.Appointments.Where(a => apptIds.Contains(a.Id)).ExecuteDeleteAsync();
             await Db.ExaminationSlots.Where(s => slotIds.Contains(s.Id)).ExecuteDeleteAsync();

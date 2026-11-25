@@ -265,18 +265,9 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
 
-        visit.ExaminationRoomId = room.Id;
-        visit.Status = string.Equals(normalizedVisitStatus, "CALLED", StringComparison.OrdinalIgnoreCase)
-            ? "CALLED"
-            : "WAITING";
-        visit.CheckedInAt ??= nowLocal;
-        if (!visit.CheckedInByStaffId.HasValue && actor.ActorStaffId.HasValue)
-        {
-            visit.CheckedInByStaffId = actor.ActorStaffId.Value;
-        }
-
         var servicePoint = await ResolveQueueServicePointAsync(room.Id, assignedDoctor.Id, effectiveHospitalId, ct);
-        var existingEntry = await FindExistingExaminationQueueEntryAsync(visit, ct);
+        var preExistingEntry = await FindExistingExaminationQueueEntryAsync(visit, ct);
+        var prePreviousSpId = preExistingEntry?.CurrentServicePointId ?? preExistingEntry?.ServicePointId;
 
         Patient? patient = appointment?.Patient;
         if (patient is null && visit.PatientId.HasValue)
@@ -288,7 +279,7 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
 
         if (normalizedPriority is not null &&
             ClinicalQueueRules.IsElevated(normalizedPriority) &&
-            normalizedPriority != ClinicalQueueRules.NormalizeStoredPriority(existingEntry?.ManualPriority))
+            normalizedPriority != ClinicalQueueRules.NormalizeStoredPriority(preExistingEntry?.ManualPriority))
         {
             if (trimmedReason is null)
             {
@@ -314,12 +305,111 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
             ? (await QueueOrderingPolicyLoader.LoadAsync(_db, effectiveHospitalId.Value, nowUtc, ct)).ForServicePoint(servicePoint?.Id).GraceMinutes
             : QueuePolicyKeys.DefaultGraceMinutes;
 
+        var roomIdsToLock = new[] { visit.ExaminationRoomId, (long?)room.Id }
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToArray();
+
+        var spIdsToLock = new[] { prePreviousSpId, servicePoint?.Id }
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .OrderBy(id => id)
+            .ToArray();
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        // ADR-0059 strict lock order: doctors (05) -> hospital_rooms (06) -> visits (09) -> queue_service_points / unrouted advisory (10) -> queue_entries (11)
+        await _db.TryLockDoctorsForUpdateAsync([assignedDoctor.Id], ct);
+        await _db.TryLockRoomsForUpdateAsync(roomIdsToLock, ct);
+        await _db.TryLockVisitForUpdateAsync(visit.Id, ct);
+
+        if (spIdsToLock.Length > 0)
+        {
+            await _db.TryLockServicePointsForUpdateAsync(spIdsToLock, ct);
+        }
+        else if (effectiveHospitalId.HasValue)
+        {
+            await _db.TryLockUnroutedQueueAdvisoryAsync(effectiveHospitalId.Value, today, ct);
+        }
+
+        if (preExistingEntry is not null)
+        {
+            await _db.TryLockQueueEntryForUpdateAsync(preExistingEntry.Id, ct);
+        }
+
+        if (_db is DbContext dbCtx && dbCtx.Database.ProviderName != "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            dbCtx.ChangeTracker.Clear();
+        }
+
+        visit = await LoadVisitAsync((visit.Id, null), asNoTracking: false, ct)
+            ?? throw new NotFoundException("Visit", visitIdOrCode.Trim());
+        normalizedVisitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
+        EnsureVisitCanBeAssignedRoom(visit, normalizedVisitStatus);
+
+        var latestRoom = await _db.HospitalRooms
+            .AsNoTracking()
+            .Include(r => r.Department)
+            .FirstOrDefaultAsync(r => r.Id == room.Id, ct)
+            ?? throw new NotFoundException("HospitalRoom", room.Id);
+
+        if (!string.Equals(latestRoom.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException(
+                $"Buồng khám '{latestRoom.RoomCode}' hiện không khả dụng (trạng thái: {latestRoom.Status}).");
+        }
+
+        activeOccupancyExcludingCurrent = await CountActiveRoomOccupancyAsync(room.Id, visit.Id, ct);
+        if (latestRoom.Capacity.HasValue &&
+            latestRoom.Capacity.Value > 0 &&
+            activeOccupancyExcludingCurrent >= latestRoom.Capacity.Value)
+        {
+            throw new ConflictException(
+                $"Buồng khám '{latestRoom.RoomCode}' đã đầy ({activeOccupancyExcludingCurrent}/{latestRoom.Capacity.Value} ca đang hoạt động). Vui lòng chọn buồng khám khác.");
+        }
+
+        previousRoomId = visit.ExaminationRoomId;
+        previousStatus = visit.Status;
+        if (previousRoomId.HasValue)
+        {
+            previousRoomCode = previousRoomId.Value == room.Id
+                ? room.RoomCode
+                : await _db.HospitalRooms
+                    .AsNoTracking()
+                    .Where(r => r.Id == previousRoomId.Value)
+                    .Select(r => r.RoomCode)
+                    .FirstOrDefaultAsync(ct);
+        }
+
+        var roomChanged = previousRoomId.HasValue && previousRoomId.Value != room.Id;
+        if (!visit.AssignedDoctorId.HasValue)
+        {
+            visit.AssignedDoctorId = assignedDoctor.Id;
+        }
+
+        visit.ExaminationRoomId = room.Id;
+        visit.Status = string.Equals(normalizedVisitStatus, "CALLED", StringComparison.OrdinalIgnoreCase) && !roomChanged
+            ? "CALLED"
+            : "WAITING";
+        visit.CheckedInAt ??= nowLocal;
+        if (!visit.CheckedInByStaffId.HasValue && actor.ActorStaffId.HasValue)
+        {
+            visit.CheckedInByStaffId = actor.ActorStaffId.Value;
+        }
+
+        var existingEntry = await FindExistingExaminationQueueEntryAsync(visit, ct);
+        var previousSpId = existingEntry?.CurrentServicePointId ?? existingEntry?.ServicePointId;
+
         var queueEntry = await UpsertExaminationQueueEntryAsync(
             visit,
             existingEntry,
             appointment,
             servicePoint,
             normalizedPriority,
+            roomChanged,
             today,
             nowLocal,
             graceMinutes,
@@ -368,6 +458,7 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
         });
 
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
 
         var effectiveServicePointId = queueEntry.CurrentServicePointId ?? queueEntry.ServicePointId;
         if (visit.AppointmentId is long assignedApptId)
@@ -386,7 +477,7 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
                 _realtimePublisher,
                 new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
                     HospitalId: effectiveHospitalForAudit ?? 0L,
-                    ServicePointId: null,
+                    ServicePointId: previousSpId,
                     RoomId: previousRoomId.Value,
                     AppointmentId: visit.AppointmentId),
                 ct);
@@ -943,7 +1034,10 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
                       v.Status.ToUpper() == "WAITING" ||
                       v.Status.ToUpper() == "CALLED" ||
                       v.Status.ToUpper() == "IN_PROGRESS" ||
-                      v.Status.ToUpper() == "IN_CONSULTATION"),
+                      v.Status.ToUpper() == "IN_CONSULTATION" ||
+                      v.Status.ToUpper() == "AWAITING_DIAGNOSTIC" ||
+                      v.Status.ToUpper() == "AWAITING_RESULTS" ||
+                      v.Status.ToUpper() == "RETURN_CONSULTATION"),
                 ct);
 
     private async Task<QueueServicePoint?> ResolveQueueServicePointAsync(
@@ -1013,6 +1107,7 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
         Appointment? appointment,
         QueueServicePoint? servicePoint,
         string? normalizedPriority,
+        bool roomChanged,
         DateOnly today,
         DateTime nowLocal,
         int graceMinutes,
@@ -1022,6 +1117,7 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
 
         if (queueEntry is not null)
         {
+            var versionBump = roomChanged;
             queueEntry.VisitId = visit.Id;
             if (string.IsNullOrWhiteSpace(queueEntry.QueueType))
             {
@@ -1030,14 +1126,24 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
 
             if (servicePoint is not null)
             {
+                if (queueEntry.CurrentServicePointId != servicePoint.Id)
+                {
+                    versionBump = true;
+                }
+
                 queueEntry.ServicePointId ??= servicePoint.Id;
                 queueEntry.CurrentServicePointId = servicePoint.Id;
             }
 
             if (string.IsNullOrWhiteSpace(queueEntry.Status) ||
-                string.Equals(queueEntry.Status, "RESERVED", StringComparison.OrdinalIgnoreCase))
+                string.Equals(queueEntry.Status, "RESERVED", StringComparison.OrdinalIgnoreCase) ||
+                (roomChanged && string.Equals(queueEntry.Status, "CALLED", StringComparison.OrdinalIgnoreCase)))
             {
                 queueEntry.Status = "WAITING";
+                if (roomChanged)
+                {
+                    queueEntry.CalledAt = null;
+                }
             }
 
             if (string.IsNullOrWhiteSpace(queueEntry.PresenceStatus) ||
@@ -1060,7 +1166,7 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
             {
                 if (normalizedPriority != ClinicalQueueRules.NormalizeStoredPriority(queueEntry.ManualPriority))
                 {
-                    queueEntry.StateVersion = (queueEntry.StateVersion is > 0 ? queueEntry.StateVersion.Value : 1) + 1;
+                    versionBump = true;
                 }
 
                 queueEntry.ManualPriority = normalizedPriority;
@@ -1068,6 +1174,11 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
             else
             {
                 queueEntry.ManualPriority ??= ClinicalQueueRules.PriorityNormal;
+            }
+
+            if (versionBump)
+            {
+                queueEntry.StateVersion = (queueEntry.StateVersion is > 0 ? queueEntry.StateVersion.Value : 1) + 1;
             }
 
             return queueEntry;

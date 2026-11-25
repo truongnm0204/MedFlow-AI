@@ -45,7 +45,7 @@ export async function updateExaminationQueueStatus(
 ): Promise<UpdateExaminationQueueStatusResponseDto> {
   const encodedId = encodeURIComponent(queueEntryId.trim());
   const { data } = await apiClient.patch<UpdateExaminationQueueStatusResponseDto>(
-    `/reception/examination-queue/${encodedId}/status`,
+    `/reception/examination-queue/entries/${encodedId}/status`,
     payload,
   );
   return data;

@@ -285,14 +285,22 @@ export function ExaminationQueueServicePointCard({
                     <td className="py-3">
                       <div className="flex flex-wrap items-center gap-1">
                         <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
-                        {entry.ineligibleReason && (
-                          <Badge
-                            tone={
-                              EXAMINATION_QUEUE_INELIGIBLE_REASON_META[entry.ineligibleReason].tone
-                            }
-                          >
-                            {EXAMINATION_QUEUE_INELIGIBLE_REASON_META[entry.ineligibleReason].label}
-                          </Badge>
+                        {entry.blockedReason === 'UNPAID_EXAMINATION_FEE' ? (
+                          <Badge tone="rose">Chưa thanh toán phí khám</Badge>
+                        ) : (
+                          entry.ineligibleReason && (
+                            <Badge
+                              tone={
+                                EXAMINATION_QUEUE_INELIGIBLE_REASON_META[entry.ineligibleReason]
+                                  .tone
+                              }
+                            >
+                              {
+                                EXAMINATION_QUEUE_INELIGIBLE_REASON_META[entry.ineligibleReason]
+                                  .label
+                              }
+                            </Badge>
+                          )
                         )}
                         {entry.queueType === 'RETURN_CONSULTATION' &&
                           entry.ineligibleReason !== 'AWAITING_RESULTS' &&
@@ -303,7 +311,9 @@ export function ExaminationQueueServicePointCard({
                       </div>
                       {entry.blockedReason && (
                         <div className="text-[10px] text-rose-600 mt-1 max-w-44">
-                          {entry.blockedReason}
+                          {entry.blockedReason === 'UNPAID_EXAMINATION_FEE'
+                            ? 'Chờ thanh toán phí khám trước khi gọi số (UNPAID_EXAMINATION_FEE)'
+                            : entry.blockedReason}
                         </div>
                       )}
                       {entry.isBackfilled && entry.backfillReason && (

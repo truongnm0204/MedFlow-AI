@@ -89,7 +89,7 @@ public sealed class AvailableSlotsEndpointTests : AuthTestBase
             var dto = await response.Content.ReadFromJsonAsync<AvailableSlotsResponse>();
             Assert.NotNull(dto);
 
-            Assert.Equal(7, dto.Dates.Count);
+            Assert.True(dto.Dates.Count >= 15);
             Assert.NotEmpty(dto.Profiles);
             Assert.Equal("PAT-0001", dto.Profiles[0].PatientCode);
             Assert.Contains(dto.Profiles, p => p.PatientCode == "PAT-0003");

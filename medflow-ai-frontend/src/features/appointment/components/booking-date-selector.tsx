@@ -1,6 +1,9 @@
+import { useMemo, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
 
 import type { BookingDateOption } from '../types/slot-booking.types';
+
+const DATES_PER_PAGE = 7;
 
 interface BookingDateSelectorProps {
   monthLabel: string;
@@ -9,12 +12,54 @@ interface BookingDateSelectorProps {
   onSelectDate: (dateIso: string) => void;
 }
 
+function formatMonthLabelFromIso(dateIso: string | undefined, fallback: string): string {
+  if (!dateIso) return fallback;
+  const match = /^(\d{4})-(\d{2})-\d{2}$/.exec(dateIso);
+  if (!match) return fallback;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return fallback;
+  return `Tháng ${month}, ${year}`;
+}
+
 export function BookingDateSelector({
   monthLabel,
   dates,
   selectedDateIso,
   onSelectDate,
 }: BookingDateSelectorProps) {
+  const totalPages = Math.max(1, Math.ceil(dates.length / DATES_PER_PAGE));
+
+  const selectedPageIndex = useMemo(() => {
+    const idx = dates.findIndex((item) => item.dateIso === selectedDateIso);
+    return idx >= 0 ? Math.floor(idx / DATES_PER_PAGE) : 0;
+  }, [dates, selectedDateIso]);
+
+  const [manualPageState, setManualPageState] = useState<{
+    anchorSelectedIso: string;
+    page: number;
+  } | null>(null);
+
+  const rawPage =
+    manualPageState && manualPageState.anchorSelectedIso === selectedDateIso
+      ? manualPageState.page
+      : selectedPageIndex;
+  const currentPage = Math.min(Math.max(0, rawPage), totalPages - 1);
+
+  const visibleDates = useMemo(() => {
+    if (dates.length <= DATES_PER_PAGE) {
+      return dates;
+    }
+    const start = currentPage * DATES_PER_PAGE;
+    return dates.slice(start, start + DATES_PER_PAGE);
+  }, [currentPage, dates]);
+
+  const displayedMonthLabel =
+    currentPage === 0 ? monthLabel : formatMonthLabelFromIso(visibleDates[0]?.dateIso, monthLabel);
+
+  const canGoPrev = currentPage > 0;
+  const canGoNext = currentPage < totalPages - 1;
+
   return (
     <section
       aria-labelledby="section-date-heading"
@@ -36,19 +81,33 @@ export function BookingDateSelector({
         </div>
 
         <div className="flex items-center gap-2 self-end sm:self-auto">
-          <span className="text-xs font-bold text-ink">{monthLabel}</span>
+          <span className="text-xs font-bold text-ink">{displayedMonthLabel}</span>
           <div className="flex items-center gap-1">
             <button
               type="button"
               aria-label="Tuần trước"
-              className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-white text-sub transition-colors hover:bg-canvas"
+              disabled={!canGoPrev}
+              onClick={() =>
+                setManualPageState({
+                  anchorSelectedIso: selectedDateIso,
+                  page: Math.max(0, currentPage - 1),
+                })
+              }
+              className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-white text-sub transition-colors hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50"
             >
               <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
             <button
               type="button"
               aria-label="Tuần tiếp theo"
-              className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-white text-sub transition-colors hover:bg-canvas"
+              disabled={!canGoNext}
+              onClick={() =>
+                setManualPageState({
+                  anchorSelectedIso: selectedDateIso,
+                  page: Math.min(totalPages - 1, currentPage + 1),
+                })
+              }
+              className="flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-white text-sub transition-colors hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50"
             >
               <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
@@ -61,7 +120,7 @@ export function BookingDateSelector({
         aria-label="Danh sách ngày khám trong tuần"
         className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-7"
       >
-        {dates.map((item) => {
+        {visibleDates.map((item) => {
           const isDisabled = item.status === 'FULL' || item.status === 'OFF';
           const isSelected = item.dateIso === selectedDateIso && !isDisabled;
 
@@ -81,7 +140,10 @@ export function BookingDateSelector({
               role="option"
               aria-selected={isSelected}
               disabled={isDisabled}
-              onClick={() => onSelectDate(item.dateIso)}
+              onClick={() => {
+                setManualPageState(null);
+                onSelectDate(item.dateIso);
+              }}
               className={`flex flex-col items-center justify-between rounded-xl border p-3 text-center transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
                 isSelected
                   ? 'border-primary bg-primary text-white shadow-sm'

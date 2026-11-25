@@ -17,6 +17,7 @@ import type {
   CancelQueueEntryRequestPayload,
   CancelQueueEntryResponseDto,
   CancelQueueEntryTarget,
+  QueueCancelDisposition,
 } from '../types/queue-status-update.types';
 import {
   EXAMINATION_QUEUE_STATUS_META,
@@ -34,6 +35,30 @@ const REASON_MAX_LENGTH = 500;
 
 type FieldErrors = Partial<Record<keyof CancelQueueEntryFormValues, string>>;
 
+const DISPOSITION_OPTIONS: ReadonlyArray<{
+  value: QueueCancelDisposition;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: 'PATIENT_ABANDONED',
+    label: 'Bệnh nhân rút lui / bỏ khám (PATIENT_ABANDONED)',
+    description:
+      'Hủy lượt khám trước khi bác sĩ bắt đầu khám; phí khám đã thu (nếu có) chuyển sang chờ hoàn tiền.',
+  },
+  {
+    value: 'REASSIGN_REQUEUE',
+    label: 'Điều phối lại sang phòng khác (REASSIGN_REQUEUE)',
+    description:
+      'Chỉ hủy dòng hàng đợi hiện tại, giữ nguyên hồ sơ lượt khám (Visit) và khoản thu để gán buồng mới.',
+  },
+  {
+    value: 'TECHNICAL_ERROR',
+    label: 'Hủy do thao tác / lỗi kỹ thuật (TECHNICAL_ERROR)',
+    description: 'Hủy bản ghi tiếp đón tạo nhầm trước khi khám lâm sàng.',
+  },
+];
+
 export function CancelQueueEntryModal({
   open,
   target,
@@ -41,7 +66,11 @@ export function CancelQueueEntryModal({
   onCancelled,
 }: CancelQueueEntryModalProps) {
   const { entry, servicePoint } = target;
-  const [values, setValues] = useState<CancelQueueEntryFormValues>({ reason: '', notes: '' });
+  const [values, setValues] = useState<CancelQueueEntryFormValues>({
+    disposition: 'PATIENT_ABANDONED',
+    reason: '',
+    notes: '',
+  });
   const [errors, setErrors] = useState<FieldErrors>({});
   const [apiError, setApiError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -92,6 +121,7 @@ export function CancelQueueEntryModal({
       reason: parsed.data.reason,
       expectedStateVersion: stateVersion,
       notes: parsed.data.notes.length > 0 ? parsed.data.notes : null,
+      disposition: parsed.data.disposition,
     };
 
     try {
@@ -177,6 +207,38 @@ export function CancelQueueEntryModal({
           </div>
         </div>
 
+        <div className="mt-4">
+          <span className="text-xs font-semibold uppercase tracking-wide text-navy">
+            Phân loại xử lý hủy lượt (Disposition)
+          </span>
+          <div
+            role="radiogroup"
+            aria-label="Phân loại xử lý hủy lượt"
+            className="mt-2 grid grid-cols-1 gap-2"
+          >
+            {DISPOSITION_OPTIONS.map((opt) => {
+              const isSelected = values.disposition === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={isSelected}
+                  onClick={() => handleChange('disposition', opt.value)}
+                  className={`rounded-xl border p-3 text-left transition-colors ${
+                    isSelected
+                      ? 'border-primary bg-sky-50/70 ring-2 ring-primary/30'
+                      : 'border-border bg-white hover:border-primary/50'
+                  }`}
+                >
+                  <div className="text-xs font-bold text-navy">{opt.label}</div>
+                  <div className="mt-0.5 text-[11px] text-sub">{opt.description}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
           <div className="flex items-center gap-2 font-semibold">
             <AlertTriangle aria-hidden="true" className="h-4 w-4 shrink-0" />
@@ -185,11 +247,12 @@ export function CancelQueueEntryModal({
           <ul className="mt-1.5 list-disc space-y-0.5 pl-6">
             <li>Số phiếu #{entry.queueNumber} được giữ nguyên và không cấp lại cho lượt khác.</li>
             <li>
-              {isReturnConsultation
-                ? 'Chỉ hủy lượt quay lại đọc kết quả CLS; lượt khám (visit) vẫn mở.'
-                : 'Lượt khám (visit) gắn với phiếu này sẽ chuyển sang Đã hủy.'}
+              {values.disposition === 'REASSIGN_REQUEUE'
+                ? 'Hồ sơ lượt khám (Visit) và khoản thu phí khám được giữ nguyên để phân buồng khám mới.'
+                : isReturnConsultation
+                  ? 'Chỉ hủy lượt quay lại đọc kết quả CLS; lượt khám (visit) vẫn mở.'
+                  : 'Lượt khám (visit) sẽ chuyển sang Đã hủy; khoản phí khám đã thanh toán (nếu có) sẽ chuyển sang trạng thái chờ hoàn tiền.'}
             </li>
-            <li>Lịch hẹn không bị thay đổi (hủy lịch hẹn thực hiện ở chức năng riêng).</li>
           </ul>
         </div>
 

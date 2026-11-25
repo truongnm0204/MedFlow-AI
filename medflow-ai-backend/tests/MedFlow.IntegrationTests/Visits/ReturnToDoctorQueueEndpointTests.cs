@@ -131,6 +131,15 @@ public sealed class ReturnToDoctorQueueEndpointTests : AuthTestBase
                 .ToListAsync();
             if (staleRooms.Count > 0)
             {
+                var staleVisitIds = await Db.Visits
+                    .Where(v => v.ExaminationRoomId.HasValue && staleRooms.Contains(v.ExaminationRoomId.Value))
+                    .Select(v => v.Id)
+                    .ToListAsync();
+                if (staleVisitIds.Count > 0)
+                {
+                    await Db.Payments.Where(p => p.VisitId != null && staleVisitIds.Contains(p.VisitId.Value)).ExecuteDeleteAsync();
+                    await Db.VisitCharges.Where(c => c.VisitId != null && staleVisitIds.Contains(c.VisitId.Value)).ExecuteDeleteAsync();
+                }
                 await Db.Visits.Where(v => v.ExaminationRoomId.HasValue && staleRooms.Contains(v.ExaminationRoomId.Value)).ExecuteDeleteAsync();
                 await Db.HospitalRooms.Where(r => staleRooms.Contains(r.Id)).ExecuteDeleteAsync();
             }
@@ -342,6 +351,8 @@ public sealed class ReturnToDoctorQueueEndpointTests : AuthTestBase
 
             if (createdVisitIds.Count > 0)
             {
+                await Db.Payments.Where(p => p.VisitId != null && createdVisitIds.Contains(p.VisitId.Value)).ExecuteDeleteAsync();
+                await Db.VisitCharges.Where(c => c.VisitId != null && createdVisitIds.Contains(c.VisitId.Value)).ExecuteDeleteAsync();
                 await Db.QueueEntries.Where(q => q.VisitId.HasValue && createdVisitIds.Contains(q.VisitId.Value)).ExecuteDeleteAsync();
                 await Db.Visits.Where(v => createdVisitIds.Contains(v.Id)).ExecuteDeleteAsync();
             }
