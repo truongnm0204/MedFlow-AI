@@ -4,6 +4,7 @@ using System.Text.Json;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Doctors;
 using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Application.Services.Appointments;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
@@ -15,6 +16,26 @@ namespace MedFlow.Application.Services.Doctors;
 public sealed class DoctorAdminService : IDoctorAdminService
 {
     private const string DoctorUpdatedAction = "DOCTOR_UPDATED";
+
+    private static readonly string[] ActiveClinicalVisitStatuses =
+    [
+        "CHECKED_IN",
+        "WAITING",
+        "CALLED",
+        "IN_PROGRESS",
+        "IN_CONSULTATION",
+        "AWAITING_DIAGNOSTIC",
+        "AWAITING_RESULTS",
+        "RETURN_CONSULTATION",
+    ];
+
+    private static readonly string[] ActiveQueueEntryStatuses =
+    [
+        "WAITING",
+        "READY",
+        "CALLED",
+        "IN_PROGRESS",
+    ];
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
@@ -417,174 +438,159 @@ public sealed class DoctorAdminService : IDoctorAdminService
             }
         }
 
-        if (targetIsActive.HasValue)
+        var isDeactivatingViaUpdate = targetIsActive.HasValue && !targetIsActive.Value && doctor.IsActive;
+        if (targetIsActive == true &&
+            doctor.Staff is not null &&
+            !string.Equals(doctor.Staff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
         {
-            if (targetIsActive.Value)
-            {
-                if (doctor.Staff is not null &&
-                    !string.Equals(doctor.Staff.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new ConflictException("Không thể kích hoạt bác sĩ khi hồ sơ nhân sự gốc đang ngừng hoạt động.");
-                }
-            }
-            else if (doctor.IsActive)
-            {
-                var hasActiveVisits = await _db.Visits
-                    .AsNoTracking()
-                    .AnyAsync(
-                        v => v.AssignedDoctorId == doctor.Id &&
-                             v.Status != null &&
-                             (v.Status.ToUpper() == "WAITING" ||
-                              v.Status.ToUpper() == "CALLED" ||
-                              v.Status.ToUpper() == "IN_PROGRESS" ||
-                              v.Status.ToUpper() == "IN_CONSULTATION"),
-                        ct);
-                if (hasActiveVisits)
-                {
-                    throw new ConflictException("Không thể tạm ngưng hoạt động bác sĩ đang có ca khám chưa hoàn thành.");
-                }
+            throw new ConflictException("Không thể kích hoạt bác sĩ khi hồ sơ nhân sự gốc đang ngừng hoạt động.");
+        }
 
+        await using var tx = isDeactivatingViaUpdate
+            ? await AppointmentBookingService.BeginTransactionSafeAsync(_db, ct)
+            : null;
+
+        try
+        {
+            if (isDeactivatingViaUpdate)
+            {
                 var nowLocal = HospitalClock.GetNow(_timeProvider);
-                var futureSlotIds = await _db.ExaminationSlots
-                    .AsNoTracking()
-                    .Where(s => s.DoctorId == doctor.Id && s.StartsAt != null && s.StartsAt > nowLocal)
-                    .Select(s => s.Id)
-                    .ToListAsync(ct);
+                var todayLocal = HospitalClock.GetToday(_timeProvider);
 
-                if (futureSlotIds.Count > 0)
-                {
-                    var hasUpcomingAppointments = await _db.Appointments
-                        .AsNoTracking()
-                        .AnyAsync(
-                            a => a.SlotId != null &&
-                                 futureSlotIds.Contains(a.SlotId.Value) &&
-                                 a.Status != null &&
-                                 (a.Status.ToUpper() == "BOOKED" ||
-                                  a.Status.ToUpper() == "CONFIRMED" ||
-                                  a.Status.ToUpper() == "CHECKED_IN"),
-                            ct);
-                    if (hasUpcomingAppointments)
-                    {
-                        throw new ConflictException("Không thể tạm ngưng hoạt động bác sĩ đang có lịch hẹn sắp tới chưa xử lý.");
-                    }
-                }
+                var (_, activeBookingsCount) = await LockAndGuardDoctorDeactivationAsync(
+                    doctor.Id,
+                    nowLocal,
+                    todayLocal,
+                    allowClosingBookedSlotsWithConfirmation: false,
+                    confirmUnderstood: false,
+                    ct);
+                _ = activeBookingsCount;
+            }
+
+            var previousSnapshot = new
+            {
+                specialtyId = doctor.SpecialtyId,
+                specialtyName = doctor.Specialty?.Name,
+                departmentId = doctor.Staff?.DepartmentId,
+                departmentName = doctor.Staff?.Department?.Name,
+                professionalTitle = doctor.ProfessionalTitle,
+                isActive = doctor.IsActive,
+                fullName = doctor.Staff?.FullName,
+                licenseNumber = doctor.LicenseNumber,
+                yearsOfExperience = doctor.YearsOfExperience,
+                profileImageUrl = doctor.ProfileImageUrl,
+                professionalBio = doctor.ProfessionalBio,
+                qualificationsSummary = doctor.QualificationsSummary,
+            };
+
+            if (resolvedSpecialty is not null)
+            {
+                doctor.SpecialtyId = resolvedSpecialty.Id;
+                doctor.Specialty = resolvedSpecialty;
+            }
+
+            if (resolvedDepartment is not null)
+            {
+                doctor.Staff!.DepartmentId = resolvedDepartment.Id;
+                doctor.Staff.Department = resolvedDepartment;
+            }
+
+            if (normalizedTitle is not null)
+            {
+                doctor.ProfessionalTitle = normalizedTitle;
+            }
+
+            if (targetIsActive.HasValue)
+            {
+                doctor.IsActive = targetIsActive.Value;
+            }
+
+            if (normalizedFullName is not null)
+            {
+                doctor.Staff!.FullName = normalizedFullName;
+            }
+
+            if (normalizedLicense is not null)
+            {
+                doctor.LicenseNumber = normalizedLicense;
+            }
+
+            if (request.YearsOfExperience.HasValue)
+            {
+                doctor.YearsOfExperience = request.YearsOfExperience.Value;
+            }
+
+            if (request.ProfileImageUrl is not null)
+            {
+                doctor.ProfileImageUrl = string.IsNullOrWhiteSpace(request.ProfileImageUrl)
+                    ? null
+                    : request.ProfileImageUrl.Trim();
+            }
+
+            if (rawBio is not null)
+            {
+                doctor.ProfessionalBio = string.IsNullOrWhiteSpace(rawBio)
+                    ? null
+                    : rawBio.Trim();
+            }
+
+            if (request.QualificationsSummary is not null)
+            {
+                doctor.QualificationsSummary = string.IsNullOrWhiteSpace(request.QualificationsSummary)
+                    ? null
+                    : request.QualificationsSummary.Trim();
+            }
+
+            var updatedSnapshot = new
+            {
+                specialtyId = doctor.SpecialtyId,
+                specialtyName = doctor.Specialty?.Name,
+                departmentId = doctor.Staff?.DepartmentId,
+                departmentName = doctor.Staff?.Department?.Name,
+                professionalTitle = doctor.ProfessionalTitle,
+                isActive = doctor.IsActive,
+                fullName = doctor.Staff?.FullName,
+                licenseNumber = doctor.LicenseNumber,
+                yearsOfExperience = doctor.YearsOfExperience,
+                profileImageUrl = doctor.ProfileImageUrl,
+                professionalBio = doctor.ProfessionalBio,
+                qualificationsSummary = doctor.QualificationsSummary,
+            };
+
+            var changeData = JsonSerializer.Serialize(new
+            {
+                doctorCode = doctor.DoctorCode,
+                previous = previousSnapshot,
+                updated = updatedSnapshot,
+                reason = trimmedReason,
+            });
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                ActorUserId = actorUserId,
+                HospitalId = doctorHospitalId,
+                Action = DoctorUpdatedAction,
+                EntityType = "Doctor",
+                EntityId = doctor.Id.ToString(CultureInfo.InvariantCulture),
+                Reason = trimmedReason,
+                ChangeData = changeData,
+                IpAddress = !string.IsNullOrWhiteSpace(ipAddress) && IPAddress.TryParse(ipAddress, out var parsedIp)
+                    ? parsedIp
+                    : null,
+                OccurredAt = nowUtc,
+            });
+
+            await _db.SaveChangesAsync(ct);
+            if (tx is not null)
+            {
+                await tx.CommitAsync(ct);
             }
         }
-
-        var previousSnapshot = new
+        catch (Exception ex) when (AppointmentBookingService.IsConcurrencyOrLockConflict(ex))
         {
-            specialtyId = doctor.SpecialtyId,
-            specialtyName = doctor.Specialty?.Name,
-            departmentId = doctor.Staff?.DepartmentId,
-            departmentName = doctor.Staff?.Department?.Name,
-            professionalTitle = doctor.ProfessionalTitle,
-            isActive = doctor.IsActive,
-            fullName = doctor.Staff?.FullName,
-            licenseNumber = doctor.LicenseNumber,
-            yearsOfExperience = doctor.YearsOfExperience,
-            profileImageUrl = doctor.ProfileImageUrl,
-            professionalBio = doctor.ProfessionalBio,
-            qualificationsSummary = doctor.QualificationsSummary,
-        };
-
-        if (resolvedSpecialty is not null)
-        {
-            doctor.SpecialtyId = resolvedSpecialty.Id;
-            doctor.Specialty = resolvedSpecialty;
+            await AppointmentBookingService.RollbackAndClearTrackerAsync(_db, tx, ct);
+            throw new ConflictException("Hồ sơ bác sĩ đang được thao tác đồng thời. Vui lòng tải lại và thử lại.");
         }
-
-        if (resolvedDepartment is not null)
-        {
-            doctor.Staff!.DepartmentId = resolvedDepartment.Id;
-            doctor.Staff.Department = resolvedDepartment;
-        }
-
-        if (normalizedTitle is not null)
-        {
-            doctor.ProfessionalTitle = normalizedTitle;
-        }
-
-        if (targetIsActive.HasValue)
-        {
-            doctor.IsActive = targetIsActive.Value;
-        }
-
-        if (normalizedFullName is not null)
-        {
-            doctor.Staff!.FullName = normalizedFullName;
-        }
-
-        if (normalizedLicense is not null)
-        {
-            doctor.LicenseNumber = normalizedLicense;
-        }
-
-        if (request.YearsOfExperience.HasValue)
-        {
-            doctor.YearsOfExperience = request.YearsOfExperience.Value;
-        }
-
-        if (request.ProfileImageUrl is not null)
-        {
-            doctor.ProfileImageUrl = string.IsNullOrWhiteSpace(request.ProfileImageUrl)
-                ? null
-                : request.ProfileImageUrl.Trim();
-        }
-
-        if (rawBio is not null)
-        {
-            doctor.ProfessionalBio = string.IsNullOrWhiteSpace(rawBio)
-                ? null
-                : rawBio.Trim();
-        }
-
-        if (request.QualificationsSummary is not null)
-        {
-            doctor.QualificationsSummary = string.IsNullOrWhiteSpace(request.QualificationsSummary)
-                ? null
-                : request.QualificationsSummary.Trim();
-        }
-
-        var updatedSnapshot = new
-        {
-            specialtyId = doctor.SpecialtyId,
-            specialtyName = doctor.Specialty?.Name,
-            departmentId = doctor.Staff?.DepartmentId,
-            departmentName = doctor.Staff?.Department?.Name,
-            professionalTitle = doctor.ProfessionalTitle,
-            isActive = doctor.IsActive,
-            fullName = doctor.Staff?.FullName,
-            licenseNumber = doctor.LicenseNumber,
-            yearsOfExperience = doctor.YearsOfExperience,
-            profileImageUrl = doctor.ProfileImageUrl,
-            professionalBio = doctor.ProfessionalBio,
-            qualificationsSummary = doctor.QualificationsSummary,
-        };
-
-        var changeData = JsonSerializer.Serialize(new
-        {
-            doctorCode = doctor.DoctorCode,
-            previous = previousSnapshot,
-            updated = updatedSnapshot,
-            reason = trimmedReason,
-        });
-
-        _db.AuditLogs.Add(new AuditLog
-        {
-            ActorUserId = actorUserId,
-            HospitalId = doctorHospitalId,
-            Action = DoctorUpdatedAction,
-            EntityType = "Doctor",
-            EntityId = doctor.Id.ToString(CultureInfo.InvariantCulture),
-            Reason = trimmedReason,
-            ChangeData = changeData,
-            IpAddress = !string.IsNullOrWhiteSpace(ipAddress) && IPAddress.TryParse(ipAddress, out var parsedIp)
-                ? parsedIp
-                : null,
-            OccurredAt = nowUtc,
-        });
-
-        await _db.SaveChangesAsync(ct);
 
         return MapToDto(doctor);
     }
@@ -813,85 +819,68 @@ public sealed class DoctorAdminService : IDoctorAdminService
             throw new ConflictException("Bác sĩ đã ở trạng thái ngừng hoạt động từ trước.");
         }
 
-        // 1. Kiểm tra các ca khám đang diễn ra chưa hoàn thành (Active ongoing visits)
-        var hasActiveVisits = await _db.Visits
-            .AsNoTracking()
-            .AnyAsync(
-                v => v.AssignedDoctorId == doctor.Id &&
-                     v.Status != null &&
-                     (v.Status.ToUpper() == "WAITING" ||
-                      v.Status.ToUpper() == "CALLED" ||
-                      v.Status.ToUpper() == "IN_PROGRESS" ||
-                      v.Status.ToUpper() == "IN_CONSULTATION"),
+        await using var tx = await AppointmentBookingService.BeginTransactionSafeAsync(_db, ct);
+
+        int activeSlotsCount;
+        int activeBookingsCount;
+        bool hasActiveBookings;
+
+        try
+        {
+            var nowLocal = HospitalClock.GetNow(_timeProvider);
+            var todayLocal = HospitalClock.GetToday(_timeProvider);
+
+            (activeSlotsCount, activeBookingsCount) = await LockAndGuardDoctorDeactivationAsync(
+                doctor.Id,
+                nowLocal,
+                todayLocal,
+                allowClosingBookedSlotsWithConfirmation: true,
+                confirmUnderstood: request.ConfirmUnderstood,
                 ct);
 
-        if (hasActiveVisits)
-        {
-            throw new ConflictException("Không thể tạm ngưng hoạt động bác sĩ đang có ca khám chưa hoàn thành.");
-        }
+            hasActiveBookings = activeBookingsCount > 0;
 
-        // 2. Kiểm tra các khung giờ khám tương lai & lượt đặt lịch hẹn phụ thuộc
-        var nowLocal = HospitalClock.GetNow(_timeProvider);
-        var futureSlots = await _db.ExaminationSlots
-            .Where(s => s.DoctorId == doctor.Id &&
-                        (s.EndsAt >= nowLocal || (s.StartsAt != null && s.StartsAt >= nowLocal)) &&
-                        (s.Status == null || s.Status.ToUpper() != "CLOSED"))
-            .ToListAsync(ct);
-
-        var activeSlotsCount = futureSlots.Count;
-        int activeBookingsCount = 0;
-
-        if (activeSlotsCount > 0)
-        {
-            var futureSlotIds = futureSlots.Select(s => s.Id).ToList();
-            activeBookingsCount = await _db.Appointments.AsNoTracking()
-                .Where(a => a.SlotId != null &&
-                            futureSlotIds.Contains(a.SlotId.Value) &&
-                            (a.Status == null || (a.Status != "CANCELLED" && a.Status != "NO_SHOW" && a.Status != "COMPLETED")))
-                .CountAsync(ct);
-        }
-
-        var hasActiveBookings = activeBookingsCount > 0;
-
-        if (hasActiveBookings && !request.ConfirmUnderstood)
-        {
-            throw new ConflictException(
-                $"Không thể ngừng hoạt động khi còn {activeBookingsCount} lượt khám đang xử lý hoặc lịch tương lai chưa được giải quyết.");
-        }
-
-        // 3. Tự động đóng các khung giờ khám tương lai khi đã xác nhận hoặc không có lịch hẹn
-        if (futureSlots.Count > 0)
-        {
-            foreach (var slot in futureSlots)
+            var reloadedDoctor = await _db.Doctors.FirstOrDefaultAsync(d => d.Id == doctor.Id, ct)
+                ?? throw new NotFoundException("Doctor", doctor.Id);
+            if (!reloadedDoctor.IsActive)
             {
-                slot.Status = "CLOSED";
+                throw new ConflictException("Bác sĩ đã ở trạng thái ngừng hoạt động từ trước.");
+            }
+
+            reloadedDoctor.IsActive = false;
+            doctor.IsActive = false;
+
+            TryAddDoctorAuditLog(
+                actorUserId,
+                doctorHospitalId,
+                "DOCTOR_DEACTIVATED",
+                doctor.Id.ToString(CultureInfo.InvariantCulture),
+                request.Reason ?? "Ngừng hoạt động bác sĩ",
+                new
+                {
+                    doctorId = doctor.Id,
+                    doctorCode = doctor.DoctorCode,
+                    doctorName = doctor.Staff?.FullName,
+                    closedSlotsCount = activeSlotsCount,
+                    activeBookingsCount = activeBookingsCount,
+                    confirmUnderstood = request.ConfirmUnderstood,
+                    reason = request.Reason
+                },
+                ipAddress,
+                nowUtc
+            );
+
+            await _db.SaveChangesAsync(ct);
+            if (tx is not null)
+            {
+                await tx.CommitAsync(ct);
             }
         }
-
-        // 4. Cập nhật trạng thái bác sĩ (No hard delete)
-        doctor.IsActive = false;
-
-        TryAddDoctorAuditLog(
-            actorUserId,
-            doctorHospitalId,
-            "DOCTOR_DEACTIVATED",
-            doctor.Id.ToString(CultureInfo.InvariantCulture),
-            request.Reason ?? "Ngừng hoạt động bác sĩ",
-            new
-            {
-                doctorId = doctor.Id,
-                doctorCode = doctor.DoctorCode,
-                doctorName = doctor.Staff?.FullName,
-                closedSlotsCount = activeSlotsCount,
-                activeBookingsCount = activeBookingsCount,
-                confirmUnderstood = request.ConfirmUnderstood,
-                reason = request.Reason
-            },
-            ipAddress,
-            nowUtc
-        );
-
-        await _db.SaveChangesAsync(ct);
+        catch (Exception ex) when (AppointmentBookingService.IsConcurrencyOrLockConflict(ex))
+        {
+            await AppointmentBookingService.RollbackAndClearTrackerAsync(_db, tx, ct);
+            throw new ConflictException("Hồ sơ bác sĩ đang được thao tác đồng thời. Vui lòng tải lại và thử lại.");
+        }
 
         return new DeactivateDoctorResponseDto(
             DoctorId: doctor.Id,
@@ -905,6 +894,171 @@ public sealed class DoctorAdminService : IDoctorAdminService
             ActiveSlotsCount: activeSlotsCount,
             OccurredAtUtc: nowUtc
         );
+    }
+
+    private async Task<(int ClosedSlotsCount, int ActiveBookingsCount)> LockAndGuardDoctorDeactivationAsync(
+        long doctorId,
+        DateTime nowLocal,
+        DateOnly todayLocal,
+        bool allowClosingBookedSlotsWithConfirmation,
+        bool confirmUnderstood,
+        CancellationToken ct)
+    {
+        // ADR-0059 lock order: doctors (05) -> examination_slots (07, ASC) -> queue_service_points (10, ASC)
+        await _db.TryLockDoctorsForUpdateAsync([doctorId], ct);
+
+        List<ExaminationSlot> futureSlots = [];
+        try
+        {
+            var openSlotIds = await _db.ExaminationSlots
+                .AsNoTracking()
+                .Where(s =>
+                    s.DoctorId == doctorId &&
+                    (s.EndsAt > nowLocal || (s.StartsAt != null && s.StartsAt > nowLocal)) &&
+                    (s.Status == null || (s.Status.ToUpper() != "CLOSED" && s.Status.ToUpper() != "CANCELLED")))
+                .OrderBy(s => s.Id)
+                .Select(s => s.Id)
+                .ToListAsync(ct);
+
+            if (openSlotIds.Count > 0)
+            {
+                await _db.TryLockSlotsForUpdateAsync(openSlotIds, ct);
+            }
+
+            futureSlots = await _db.ExaminationSlots
+                .Where(s =>
+                    s.DoctorId == doctorId &&
+                    (s.EndsAt > nowLocal || (s.StartsAt != null && s.StartsAt > nowLocal)) &&
+                    (s.Status == null || (s.Status.ToUpper() != "CLOSED" && s.Status.ToUpper() != "CANCELLED")))
+                .OrderBy(s => s.Id)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            futureSlots = [];
+        }
+
+        List<QueueServicePoint> linkedServicePoints = [];
+        try
+        {
+            var spIds = await _db.QueueServicePoints
+                .AsNoTracking()
+                .Where(sp => sp.DoctorId == doctorId)
+                .OrderBy(sp => sp.Id)
+                .Select(sp => sp.Id)
+                .ToListAsync(ct);
+
+            if (spIds.Count > 0)
+            {
+                await _db.TryLockServicePointsForUpdateAsync(spIds, ct);
+            }
+
+            linkedServicePoints = await _db.QueueServicePoints
+                .Where(sp => sp.DoctorId == doctorId)
+                .OrderBy(sp => sp.Id)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            linkedServicePoints = [];
+        }
+
+        // 1. Active clinical Visit guard across all 8 active visit states.
+        try
+        {
+            var hasActiveVisits = await _db.Visits
+                .AsNoTracking()
+                .AnyAsync(
+                    v => v.AssignedDoctorId == doctorId &&
+                         v.Status != null &&
+                         ActiveClinicalVisitStatuses.Contains(v.Status.ToUpper()),
+                    ct);
+
+            if (hasActiveVisits)
+            {
+                throw new ConflictException(
+                    "Không thể tạm ngưng hoạt động bác sĩ đang có ca khám chưa hoàn thành. Vui lòng chuyển giao hoặc hoàn tất người bệnh trước.");
+            }
+        }
+        catch (NotSupportedException)
+        {
+            // Minimal test contexts without Visits configured.
+        }
+
+        // 2. Active today QueueEntry guard on doctor service points / assigned visits / doctor slots.
+        try
+        {
+            var spIdList = linkedServicePoints.Select(sp => sp.Id).ToList();
+            var hasActiveTodayQueue = await _db.QueueEntries
+                .AsNoTracking()
+                .AnyAsync(
+                    q => (q.QueueDate == null || q.QueueDate == todayLocal) &&
+                         q.Status != null &&
+                         ActiveQueueEntryStatuses.Contains(q.Status.ToUpper()) &&
+                         ((q.CurrentServicePointId != null && spIdList.Contains(q.CurrentServicePointId.Value)) ||
+                          (q.CurrentServicePointId == null && q.ServicePointId != null && spIdList.Contains(q.ServicePointId.Value))),
+                    ct);
+
+            if (hasActiveTodayQueue)
+            {
+                throw new ConflictException(
+                    "Không thể tạm ngưng hoạt động bác sĩ khi còn bệnh nhân đang chờ hoặc đang khám trong hàng đợi hôm nay. Vui lòng chuyển giao hoặc hoàn tất ca khám chưa hoàn thành trước.");
+            }
+        }
+        catch (NotSupportedException)
+        {
+            // Minimal test contexts without QueueEntries configured.
+        }
+
+        // 3. Future booked/confirmed appointments & slot closure guard.
+        var activeBookingsCount = 0;
+        if (futureSlots.Count > 0)
+        {
+            try
+            {
+                var futureSlotIds = futureSlots.Select(s => s.Id).ToList();
+                activeBookingsCount = await _db.Appointments
+                    .AsNoTracking()
+                    .Where(a =>
+                        a.SlotId != null &&
+                        futureSlotIds.Contains(a.SlotId.Value) &&
+                        (a.Status == null ||
+                         (a.Status.ToUpper() != "CANCELLED" &&
+                          a.Status.ToUpper() != "NO_SHOW" &&
+                          a.Status.ToUpper() != "COMPLETED")))
+                    .CountAsync(ct);
+            }
+            catch (NotSupportedException)
+            {
+                activeBookingsCount = 0;
+            }
+        }
+
+        if (activeBookingsCount > 0)
+        {
+            if (!allowClosingBookedSlotsWithConfirmation)
+            {
+                throw new ConflictException("Không thể tạm ngưng hoạt động bác sĩ đang có lịch hẹn sắp tới chưa xử lý.");
+            }
+
+            if (!confirmUnderstood)
+            {
+                throw new ConflictException(
+                    $"Không thể ngừng hoạt động khi còn {activeBookingsCount} lượt khám đang xử lý hoặc lịch tương lai chưa được giải quyết.");
+            }
+        }
+
+        foreach (var slot in futureSlots)
+        {
+            slot.Status = "CLOSED";
+        }
+
+        foreach (var sp in linkedServicePoints.Where(sp => sp.IsActive != false))
+        {
+            sp.IsActive = false;
+        }
+
+        return (futureSlots.Count, activeBookingsCount);
     }
 
     public async Task<DeactivateDoctorResponseDto> ReactivateDoctorAsync(
@@ -1024,7 +1178,7 @@ public sealed class DoctorAdminService : IDoctorAdminService
                 Reason = reason,
                 ChangeData = serializedChange,
                 IpAddress = ip,
-                OccurredAt = DateTime.SpecifyKind(nowUtc, DateTimeKind.Unspecified)
+                OccurredAt = DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc)
             };
 
             _db.AuditLogs.Add(log);

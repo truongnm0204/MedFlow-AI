@@ -1,8 +1,11 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ChevronRight, Home } from 'lucide-react';
 
 import { AppHeader } from '@/shared/components/layout/app-header';
 import { PatientFooter } from '@/shared/components/layout/patient-footer';
+import { apiClient } from '@/shared/lib/axios';
 
 import { BookingEntryStepHeader } from '../components/booking-entry-step-header';
 import { BookingEntrySummary } from '../components/booking-entry-summary';
@@ -12,13 +15,111 @@ import { useHospitals } from '../hooks/use-hospitals';
 import { useBookingStore } from '../store/booking.store';
 import type { BookingMode } from '../types/booking-entry.types';
 
+interface EligibleFamilyMemberDto {
+  id?: string | number;
+  memberPatientId?: number;
+  isPrimaryAccount?: boolean;
+  permissions?: {
+    canBookAppointments?: boolean;
+    relationshipStatus?: string;
+  };
+}
+
+interface SelfPatientDto {
+  id?: number;
+  status?: string;
+}
+
+const POSITIVE_NUMERIC_ID_REGEX = /^[1-9]\d*$/;
+
+async function resolveVerifiedBookingPatientId(candidateId: string): Promise<string | null> {
+  try {
+    const { data } = await apiClient.get<EligibleFamilyMemberDto[]>('/patients/me/family-members');
+    const members = Array.isArray(data) ? data : [];
+    const matchedMember = members.find((member) => {
+      const numericMemberId =
+        typeof member.memberPatientId === 'number' && member.memberPatientId > 0
+          ? String(member.memberPatientId)
+          : String(member.id ?? '').trim();
+      if (numericMemberId !== candidateId) {
+        return false;
+      }
+
+      if (member.isPrimaryAccount) {
+        return true;
+      }
+
+      const relStatus = member.permissions?.relationshipStatus?.toUpperCase();
+      if (relStatus === 'REVOKED' || relStatus === 'PENDING') {
+        return false;
+      }
+
+      return member.permissions?.canBookAppointments !== false;
+    });
+
+    if (matchedMember) {
+      return typeof matchedMember.memberPatientId === 'number' && matchedMember.memberPatientId > 0
+        ? String(matchedMember.memberPatientId)
+        : candidateId;
+    }
+  } catch {
+    // Fallback to self profile check below when family-members endpoint fails or returns empty.
+  }
+
+  try {
+    const { data: selfProfile } = await apiClient.get<SelfPatientDto>('/patients/me');
+    if (
+      typeof selfProfile?.id === 'number' &&
+      String(selfProfile.id) === candidateId &&
+      (!selfProfile.status || selfProfile.status.toUpperCase() === 'ACTIVE')
+    ) {
+      return candidateId;
+    }
+  } catch {
+    // Ignore unverified / inaccessible patientId cleanly.
+  }
+
+  return null;
+}
+
 export function BookingEntryPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { data: hospitals = [], isLoading, isError, refetch } = useHospitals();
 
   const selectedHospitalId = useBookingStore((s) => s.selectedHospitalId);
   const selectHospital = useBookingStore((s) => s.selectHospital);
   const selectBookingMode = useBookingStore((s) => s.selectBookingMode);
+  const selectPatient = useBookingStore((s) => s.selectPatient);
+
+  const rawQueryPatientId = searchParams.get('patientId')?.trim() ?? '';
+  const candidatePatientId = POSITIVE_NUMERIC_ID_REGEX.test(rawQueryPatientId)
+    ? rawQueryPatientId
+    : null;
+
+  const { data: verifiedPatientId = null } = useQuery({
+    queryKey: ['booking-entry-verified-patient', candidatePatientId],
+    queryFn: () => resolveVerifiedBookingPatientId(candidatePatientId!),
+    enabled: Boolean(candidatePatientId),
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (!rawQueryPatientId) {
+      return;
+    }
+
+    if (!candidatePatientId) {
+      selectPatient('pat-self');
+      return;
+    }
+
+    if (verifiedPatientId) {
+      selectPatient(verifiedPatientId);
+    } else {
+      selectPatient('pat-self');
+    }
+  }, [candidatePatientId, rawQueryPatientId, selectPatient, verifiedPatientId]);
 
   const activeHospitals = hospitals.filter((h) => h.isActive);
   const resolvedHospitalId =
@@ -33,11 +134,15 @@ export function BookingEntryPage() {
     if (!resolvedHospitalId) return;
     selectHospital(resolvedHospitalId);
     selectBookingMode(mode);
-    const target =
-      mode === 'DOCTOR'
-        ? `/doctors?hospitalId=${encodeURIComponent(resolvedHospitalId)}`
-        : `/services?hospitalId=${encodeURIComponent(resolvedHospitalId)}`;
-    navigate(target);
+
+    const params = new URLSearchParams();
+    params.set('hospitalId', resolvedHospitalId);
+    if (verifiedPatientId) {
+      params.set('patientId', verifiedPatientId);
+    }
+
+    const basePath = mode === 'DOCTOR' ? '/doctors' : '/services';
+    navigate(`${basePath}?${params.toString()}`);
   };
 
   const step1State = resolvedHospitalId ? 'done' : 'current';

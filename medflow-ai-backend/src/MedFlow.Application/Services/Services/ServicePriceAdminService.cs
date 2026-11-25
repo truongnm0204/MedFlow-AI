@@ -4,6 +4,7 @@ using System.Text.Json;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Application.Services.Appointments;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
@@ -350,15 +351,16 @@ public sealed class ServicePriceAdminService : IServicePriceAdminService
         var noteInput = NormalizeOptionalText(request.Note ?? request.Reason, 500, "Ghi chú / lý do điều chỉnh giá");
 
         var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
-        var nowLocal = HospitalClock.GetNow(_timeProvider);
-        var todayLocal = HospitalClock.GetToday(_timeProvider);
+        var preLockNowLocal = HospitalClock.GetNow(_timeProvider);
+        var preLockTodayLocal = HospitalClock.GetToday(_timeProvider);
 
         var rawValidFrom = !string.IsNullOrWhiteSpace(request.ValidFrom)
             ? request.ValidFrom
             : request.EffectiveDate;
 
-        var (effectiveFrom, startDateOnly) = ParseValidFrom(rawValidFrom, nowLocal, todayLocal);
-        var effectiveTo = ParseValidTo(request.ValidTo, startDateOnly, effectiveFrom);
+        // Pre-validate date syntax & ordering before acquiring DB locks.
+        var (_, preLockStartDateOnly) = ParseValidFrom(rawValidFrom, preLockNowLocal, preLockTodayLocal);
+        _ = ParseValidTo(request.ValidTo, preLockStartDateOnly, preLockStartDateOnly?.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified) ?? preLockNowLocal);
 
         var (isSystemAdmin, actorHospitalId, actorDisplayName) = await EnsureAdminAccessAsync(actorUserId, nowUtc, ct);
 
@@ -367,90 +369,185 @@ public sealed class ServicePriceAdminService : IServicePriceAdminService
             throw new ForbiddenException("Bạn không có quyền cập nhật giá dịch vụ thuộc cơ sở y tế khác.");
         }
 
-        var service = await ResolveScopedServiceAsync(
+        var initialService = await ResolveScopedServiceAsync(
             targetIdentifier,
             isSystemAdmin,
             actorHospitalId,
             request.HospitalId,
-            asNoTracking: false,
+            asNoTracking: true,
             ct);
 
-        if (!service.HospitalId.HasValue || service.HospitalId.Value <= 0)
+        if (!initialService.HospitalId.HasValue || initialService.HospitalId.Value <= 0)
         {
             throw new ValidationException("Dịch vụ chưa được gắn cơ sở y tế hợp lệ.");
         }
 
         var hospital = await _db.Hospitals
             .AsNoTracking()
-            .FirstOrDefaultAsync(h => h.Id == service.HospitalId.Value, ct)
-            ?? throw new NotFoundException("Hospital", service.HospitalId.Value);
+            .FirstOrDefaultAsync(h => h.Id == initialService.HospitalId.Value, ct)
+            ?? throw new NotFoundException("Hospital", initialService.HospitalId.Value);
 
-        var previousActivePrice = ResolveActivePriceRecord(service.ServicePrices, nowLocal);
-        var closedPriceIds = new List<long>();
+        await using var tx = await AppointmentBookingService.BeginTransactionSafeAsync(_db, ct);
 
-        await using var tx = await _db.BeginTransactionAsync(ct);
+        Service service;
+        DateTime nowLocal;
 
-        foreach (var existing in service.ServicePrices
-                     .Where(p => !p.EffectiveTo.HasValue || p.EffectiveTo.Value > effectiveFrom)
-                     .ToList())
+        try
         {
-            existing.EffectiveTo = existing.EffectiveFrom.HasValue && existing.EffectiveFrom.Value > effectiveFrom
-                ? existing.EffectiveFrom.Value
-                : effectiveFrom;
-            closedPriceIds.Add(existing.Id);
+            // ADR-0059 Level 04: lock parent service row FOR UPDATE to serialize all ServicePrice intervals.
+            await _db.TryLockServiceForUpdateAsync(initialService.Id, ct);
+
+            if (AppointmentBookingService.IsRelationalDatabase(_db) && _db is DbContext efDb)
+            {
+                efDb.ChangeTracker.Clear();
+            }
+
+            service = await _db.Services
+                .Include(s => s.Department)
+                .Include(s => s.ServicePrices)
+                .FirstOrDefaultAsync(s => s.Id == initialService.Id, ct)
+                ?? throw new NotFoundException("Service", initialService.Id);
+
+            nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+            nowLocal = HospitalClock.GetNow(_timeProvider);
+            var todayLocal = HospitalClock.GetToday(_timeProvider);
+
+            var (effectiveFrom, startDateOnly) = ParseValidFrom(rawValidFrom, nowLocal, todayLocal);
+            var effectiveTo = ParseValidTo(request.ValidTo, startDateOnly, effectiveFrom);
+
+            var previousActivePrice = ResolveActivePriceRecord(service.ServicePrices, nowLocal);
+            var closedPriceIds = new List<long>();
+            var resumedPricesToInsert = new List<ServicePrice>();
+
+            var validExistingPrices = service.ServicePrices
+                .Where(p => !p.EffectiveFrom.HasValue || !p.EffectiveTo.HasValue || p.EffectiveTo.Value > p.EffectiveFrom.Value)
+                .OrderBy(p => p.EffectiveFrom ?? DateTime.MinValue)
+                .ThenBy(p => p.Id)
+                .ToList();
+
+            var overlappingPrices = validExistingPrices
+                .Where(p => IntervalsOverlap(
+                    p.EffectiveFrom ?? DateTime.MinValue,
+                    p.EffectiveTo,
+                    effectiveFrom,
+                    effectiveTo))
+                .ToList();
+
+            foreach (var existing in overlappingPrices)
+            {
+                var existingStart = existing.EffectiveFrom ?? DateTime.MinValue;
+                var existingEnd = existing.EffectiveTo;
+
+                // Reject any overlapping scheduled/future window starting at or after effectiveFrom,
+                // or any bounded future window already scheduled ahead of nowLocal.
+                if (existingStart >= effectiveFrom ||
+                    (existingStart > nowLocal && existingEnd.HasValue))
+                {
+                    throw new ConflictException(
+                        "Khoảng thời gian hiệu lực bị chồng lấn với biểu phí đã được lên lịch trước đó. Vui lòng chọn khoảng hiệu lực không chồng lấn.");
+                }
+
+                if (effectiveTo.HasValue)
+                {
+                    // Bounded promotional/temporary window [effectiveFrom, effectiveTo):
+                    // existing baseline must cover the window so it can be cleanly split and resumed.
+                    if (existingEnd.HasValue && existingEnd.Value < effectiveTo.Value)
+                    {
+                        throw new ConflictException(
+                            "Khoảng thời gian hiệu lực khuyến mãi/tạm thời vượt quá mốc kết thúc của biểu phí hiện hành.");
+                    }
+
+                    var originalEnd = existingEnd;
+                    existing.EffectiveTo = effectiveFrom;
+                    closedPriceIds.Add(existing.Id);
+
+                    if (!originalEnd.HasValue || originalEnd.Value > effectiveTo.Value)
+                    {
+                        resumedPricesToInsert.Add(new ServicePrice
+                        {
+                            ServiceId = service.Id,
+                            PriceAmount = existing.PriceAmount,
+                            EffectiveFrom = effectiveTo.Value,
+                            EffectiveTo = originalEnd,
+                        });
+                    }
+                }
+                else
+                {
+                    // Open-ended replacement [effectiveFrom, +inf): close prior baseline cleanly at effectiveFrom.
+                    existing.EffectiveTo = effectiveFrom;
+                    closedPriceIds.Add(existing.Id);
+                }
+            }
+
+            var newPrice = new ServicePrice
+            {
+                ServiceId = service.Id,
+                PriceAmount = priceAmount,
+                EffectiveFrom = effectiveFrom,
+                EffectiveTo = effectiveTo,
+            };
+
+            service.ServicePrices.Add(newPrice);
+            _db.ServicePrices.Add(newPrice);
+
+            foreach (var resumed in resumedPricesToInsert)
+            {
+                service.ServicePrices.Add(resumed);
+                _db.ServicePrices.Add(resumed);
+            }
+
+            await _db.SaveChangesAsync(ct);
+
+            var resolvedAppliedBy = appliedByInput ?? actorDisplayName;
+            var resolvedReason = noteInput
+                ?? (!string.IsNullOrWhiteSpace(decisionNumber)
+                    ? $"Cập nhật biểu phí dịch vụ theo quyết định {decisionNumber}"
+                    : $"Cập nhật biểu phí dịch vụ {service.ServiceCode}");
+
+            var parsedIp = !string.IsNullOrWhiteSpace(ipAddress) && IPAddress.TryParse(ipAddress, out var ip)
+                ? ip
+                : null;
+
+            var auditPayload = new PriceAuditPayload(
+                ServicePriceId: newPrice.Id,
+                ServiceId: service.Id,
+                ServiceCode: service.ServiceCode,
+                ServiceName: service.Name,
+                PreviousPriceAmount: previousActivePrice?.PriceAmount,
+                PriceAmount: priceAmount,
+                ClosedPriceIds: closedPriceIds,
+                ValidFrom: effectiveFrom,
+                ValidTo: effectiveTo,
+                DecisionNumber: decisionNumber,
+                AppliedBy: resolvedAppliedBy,
+                Note: noteInput ?? resolvedReason);
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                ActorUserId = actorUserId,
+                HospitalId = service.HospitalId,
+                Action = ServicePriceUpdatedAction,
+                EntityType = ServiceEntityType,
+                EntityId = service.Id.ToString(CultureInfo.InvariantCulture),
+                Reason = resolvedReason,
+                ChangeData = JsonSerializer.Serialize(auditPayload, JsonOptions),
+                IpAddress = parsedIp,
+                OccurredAt = nowUtc,
+            });
+
+            await _db.SaveChangesAsync(ct);
+
+            if (tx is not null)
+            {
+                await tx.CommitAsync(ct);
+            }
         }
-
-        var newPrice = new ServicePrice
+        catch (Exception ex) when (AppointmentBookingService.IsConcurrencyOrLockConflict(ex))
         {
-            ServiceId = service.Id,
-            PriceAmount = priceAmount,
-            EffectiveFrom = effectiveFrom,
-            EffectiveTo = effectiveTo,
-        };
-
-        service.ServicePrices.Add(newPrice);
-        _db.ServicePrices.Add(newPrice);
-        await _db.SaveChangesAsync(ct);
-
-        var resolvedAppliedBy = appliedByInput ?? actorDisplayName;
-        var resolvedReason = noteInput
-            ?? (!string.IsNullOrWhiteSpace(decisionNumber)
-                ? $"Cập nhật biểu phí dịch vụ theo quyết định {decisionNumber}"
-                : $"Cập nhật biểu phí dịch vụ {service.ServiceCode}");
-
-        var parsedIp = !string.IsNullOrWhiteSpace(ipAddress) && IPAddress.TryParse(ipAddress, out var ip)
-            ? ip
-            : null;
-
-        var auditPayload = new PriceAuditPayload(
-            ServicePriceId: newPrice.Id,
-            ServiceId: service.Id,
-            ServiceCode: service.ServiceCode,
-            ServiceName: service.Name,
-            PreviousPriceAmount: previousActivePrice?.PriceAmount,
-            PriceAmount: priceAmount,
-            ClosedPriceIds: closedPriceIds,
-            ValidFrom: effectiveFrom,
-            ValidTo: effectiveTo,
-            DecisionNumber: decisionNumber,
-            AppliedBy: resolvedAppliedBy,
-            Note: noteInput ?? resolvedReason);
-
-        _db.AuditLogs.Add(new AuditLog
-        {
-            ActorUserId = actorUserId,
-            HospitalId = service.HospitalId,
-            Action = ServicePriceUpdatedAction,
-            EntityType = ServiceEntityType,
-            EntityId = service.Id.ToString(CultureInfo.InvariantCulture),
-            Reason = resolvedReason,
-            ChangeData = JsonSerializer.Serialize(auditPayload, JsonOptions),
-            IpAddress = parsedIp,
-            OccurredAt = nowUtc,
-        });
-
-        await _db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
+            await AppointmentBookingService.RollbackAndClearTrackerAsync(_db, tx, ct);
+            throw new ConflictException("Biểu phí dịch vụ đang được cập nhật đồng thời bởi quản trị viên khác. Vui lòng tải lại và thử lại.");
+        }
 
         var hospitalsById = new Dictionary<long, string>
         {
@@ -764,6 +861,37 @@ public sealed class ServicePriceAdminService : IServicePriceAdminService
             LatestEffectiveDate: latestAny?.EffectiveDate);
     }
 
+    private static bool IntervalsOverlap(
+        DateTime startA,
+        DateTime? endA,
+        DateTime startB,
+        DateTime? endB)
+    {
+        var aBeforeBEnd = !endB.HasValue || startA < endB.Value;
+        var bBeforeAEnd = !endA.HasValue || startB < endA.Value;
+        return aBeforeBEnd && bBeforeAEnd;
+    }
+
+    private static DateTime ParseHospitalTimestamp(string trimmed, string errorMessage)
+    {
+        if (trimmed.EndsWith("Z", StringComparison.OrdinalIgnoreCase) ||
+            (trimmed.Length > 10 && (trimmed[10..].Contains('+') || trimmed[10..].Contains('-'))))
+        {
+            if (DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dto))
+            {
+                var converted = TimeZoneInfo.ConvertTime(dto, HospitalClock.TimeZone);
+                return DateTime.SpecifyKind(converted.DateTime, DateTimeKind.Unspecified);
+            }
+        }
+
+        if (DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDt))
+        {
+            return DateTime.SpecifyKind(parsedDt, DateTimeKind.Unspecified);
+        }
+
+        throw new ValidationException(errorMessage);
+    }
+
     private static (DateTime EffectiveFrom, DateOnly? StartDateOnly) ParseValidFrom(
         string? rawValidFrom,
         DateTime nowLocal,
@@ -785,13 +913,10 @@ public sealed class ServicePriceAdminService : IServicePriceAdminService
             return (dateOnly.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified), dateOnly);
         }
 
-        if (DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedDt))
-        {
-            var localDt = HospitalClock.EnsureHospitalLocal(parsedDt);
-            return (localDt, null);
-        }
-
-        throw new ValidationException("Ngày bắt đầu hiệu lực (ValidFrom) không hợp lệ. Vui lòng dùng định dạng YYYY-MM-DD.");
+        var localDt = ParseHospitalTimestamp(
+            trimmed,
+            "Ngày bắt đầu hiệu lực (ValidFrom) không hợp lệ. Vui lòng dùng định dạng YYYY-MM-DD.");
+        return (localDt, null);
     }
 
     private static DateTime? ParseValidTo(
@@ -814,20 +939,20 @@ public sealed class ServicePriceAdminService : IServicePriceAdminService
                 throw new ValidationException("Ngày bắt đầu hiệu lực (ValidFrom) phải nhỏ hơn hoặc bằng ngày kết thúc hiệu lực (ValidTo).");
             }
 
-            effectiveTo = endDateOnly.ToDateTime(new TimeOnly(23, 59, 59), DateTimeKind.Unspecified);
-        }
-        else if (DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedEndDt))
-        {
-            effectiveTo = HospitalClock.EnsureHospitalLocal(parsedEndDt);
+            // Half-open [EffectiveFrom, EffectiveTo): YYYY-MM-DD ValidTo is inclusive of that calendar day in UTC+7,
+            // so its exclusive upper bound is 00:00:00 of the next hospital calendar day.
+            effectiveTo = endDateOnly.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
         }
         else
         {
-            throw new ValidationException("Ngày kết thúc hiệu lực (ValidTo) không hợp lệ. Vui lòng dùng định dạng YYYY-MM-DD.");
+            effectiveTo = ParseHospitalTimestamp(
+                trimmed,
+                "Ngày kết thúc hiệu lực (ValidTo) không hợp lệ. Vui lòng dùng định dạng YYYY-MM-DD.");
         }
 
-        if (effectiveFrom > effectiveTo)
+        if (effectiveFrom >= effectiveTo)
         {
-            throw new ValidationException("Thời điểm bắt đầu hiệu lực (ValidFrom) phải nhỏ hơn hoặc bằng thời điểm kết thúc hiệu lực (ValidTo).");
+            throw new ValidationException("Thời điểm bắt đầu hiệu lực (ValidFrom) phải nhỏ hơn thời điểm kết thúc hiệu lực (ValidTo).");
         }
 
         return effectiveTo;

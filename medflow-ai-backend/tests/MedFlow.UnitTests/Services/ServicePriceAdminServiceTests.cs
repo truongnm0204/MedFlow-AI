@@ -353,4 +353,70 @@ public sealed class ServicePriceAdminServiceTests : IDisposable
         Assert.Equal(550_000m, updated.Price);
         Assert.Equal("QĐ-SYS-02", updated.DecisionNumber);
     }
+
+    [Fact]
+    public async Task UpdateServicePriceAsync_At0030VietnamTime_UsesVietnamLocalDateInsteadOfPreviousUtcDay()
+    {
+        // 2026-11-25T17:30:00Z == 2026-11-26 00:30:00 Asia/Ho_Chi_Minh (UTC+7)
+        var sutAt0030Vn = new ServicePriceAdminService(
+            _db,
+            new FixedTimeProvider(new DateTimeOffset(2026, 11, 25, 17, 30, 0, TimeSpan.Zero)));
+
+        var updated = await sutAt0030Vn.UpdateServicePriceAsync(
+            actorUserId: 1,
+            routeIdOrCode: "EX-1-01",
+            request: new UpdateServicePriceAdminRequest(
+                PriceAmount: 420_000m,
+                ValidFrom: null,
+                DecisionNumber: "QĐ-VN-0030"));
+
+        Assert.Equal("2026-11-26", updated.EffectiveDate);
+        Assert.Equal(420_000m, updated.Price);
+    }
+
+    [Fact]
+    public async Task UpdateServicePriceAsync_BoundedPromotionalWindow_UsesHalfOpenEndSplitsAndResumesBaseline_AndRejectsOverlap()
+    {
+        // Service 10 currently has open-ended baseline [nowLocal - 30d, null) at 300,000 VND.
+        var afterPromo = await _sut.UpdateServicePriceAsync(
+            actorUserId: 1,
+            routeIdOrCode: "EX-1-01",
+            request: new UpdateServicePriceAdminRequest(
+                PriceAmount: 220_000m,
+                ValidFrom: "2026-12-01",
+                ValidTo: "2026-12-10",
+                DecisionNumber: "QĐ-PROMO-12"));
+
+        // Current time is 2026-11-25 10:00 VN -> baseline 300,000 VND remains active today!
+        Assert.Equal(300_000m, afterPromo.Price);
+
+        var rows = await _db.ServicePrices
+            .AsNoTracking()
+            .Where(p => p.ServiceId == 10)
+            .OrderBy(p => p.EffectiveFrom)
+            .ToListAsync();
+
+        Assert.Equal(3, rows.Count);
+        Assert.Equal(300_000m, rows[0].PriceAmount);
+        Assert.Equal(new DateTime(2026, 12, 1, 0, 0, 0), rows[0].EffectiveTo);
+
+        Assert.Equal(220_000m, rows[1].PriceAmount);
+        Assert.Equal(new DateTime(2026, 12, 1, 0, 0, 0), rows[1].EffectiveFrom);
+        Assert.Equal(new DateTime(2026, 12, 11, 0, 0, 0), rows[1].EffectiveTo); // Half-open [Dec 1, Dec 11)
+
+        Assert.Equal(300_000m, rows[2].PriceAmount);
+        Assert.Equal(new DateTime(2026, 12, 11, 0, 0, 0), rows[2].EffectiveFrom);
+        Assert.Null(rows[2].EffectiveTo);
+
+        // Overlapping scheduled future window [2026-12-05, 2026-12-15] must reject with 409 ConflictException
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _sut.UpdateServicePriceAsync(
+                actorUserId: 1,
+                routeIdOrCode: "EX-1-01",
+                request: new UpdateServicePriceAdminRequest(
+                    PriceAmount: 199_000m,
+                    ValidFrom: "2026-12-05",
+                    ValidTo: "2026-12-15",
+                    DecisionNumber: "QĐ-OVERLAP")));
+    }
 }

@@ -11,4 +11,5 @@ public sealed record BookingPatientProfileDto(
     string MetaPrimary,
     string MetaSecondary,
     string PatientCode,
-    IReadOnlyList<string>? ActiveBookedDates = null);
+    IReadOnlyList<string>? ActiveBookedDates = null,
+    bool? IsIdentityVerified = null);

@@ -32,8 +32,7 @@ import type {
 export function AppointmentListPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const selectService = useBookingStore((s) => s.selectService);
-  const selectDoctor = useBookingStore((s) => s.selectDoctor);
+  const prepareRebook = useBookingStore((s) => s.prepareRebook);
 
   const initialMemberId = searchParams.get('memberId') ?? 'ALL';
   const initialTab = (searchParams.get('tab') as AppointmentTabGroup | null) ?? 'ALL';
@@ -133,8 +132,12 @@ export function AppointmentListPage() {
   };
 
   const handleReschedule = (appointment: AppointmentListItem) => {
-    selectDoctor(appointment.doctorId);
-    selectService(appointment.serviceId, appointment.serviceName);
+    prepareRebook({
+      doctorId: appointment.doctorId,
+      serviceId: appointment.serviceId,
+      serviceName: appointment.serviceName,
+      patientId: appointment.patientId,
+    });
     setActionBannerMessage(null);
     setSelectedRescheduleAppointment(appointment);
   };
@@ -200,7 +203,16 @@ export function AppointmentListPage() {
     );
   };
   const handleRebookSpecialty = (appointment: AppointmentListItem) => {
-    selectService(appointment.serviceId, appointment.serviceName);
+    prepareRebook({
+      doctorId: appointment.doctorId,
+      serviceId: appointment.serviceId,
+      serviceName: appointment.serviceName,
+      patientId: appointment.patientId,
+    });
+    if (!appointment.doctorId?.trim() && appointment.serviceId?.trim()) {
+      navigate(`/appointment/services/${encodeURIComponent(appointment.serviceId)}/booking`);
+      return;
+    }
     navigate(`/appointment/doctors?specialty=${encodeURIComponent(appointment.specialtyId)}`);
   };
 

@@ -119,7 +119,7 @@ public sealed class AppointmentCancelServiceTests : IDisposable
         Assert.Equal(1L, entity.CancelledByUserId);
 
         var lockCall = Assert.Single(_lock.Calls);
-        Assert.Equal((1L, (long?)null, 12L), lockCall);
+        Assert.Equal((1L, (long?)1L, 12L), lockCall);
 
         var auditEntry = Assert.Single(_audit.Entries);
         Assert.Equal(1L, auditEntry.Actor);
@@ -276,6 +276,29 @@ public sealed class AppointmentCancelServiceTests : IDisposable
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             sut.CancelMyAppointmentAsync(
                 userId: 0,
+                idOrCode: "103",
+                request: new CancelAppointmentRequest { CancellationReason = "Lý do hủy hợp lệ trên 10 ký tự" },
+                ipAddress: null));
+    }
+
+    [Fact]
+    public async Task CancelMyAppointmentAsync_ActiveNonCancelledVisitExists_ThrowsConflict()
+    {
+        _db.Visits.Add(new MedFlow.Domain.Entities.Visit
+        {
+            Id = 901,
+            PatientId = 1,
+            AppointmentId = 103,
+            Status = "WAITING",
+            CheckedInAt = new DateTime(2026, 11, 2, 7, 45, 0),
+        });
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut();
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            sut.CancelMyAppointmentAsync(
+                userId: 1,
                 idOrCode: "103",
                 request: new CancelAppointmentRequest { CancellationReason = "Lý do hủy hợp lệ trên 10 ký tự" },
                 ipAddress: null));

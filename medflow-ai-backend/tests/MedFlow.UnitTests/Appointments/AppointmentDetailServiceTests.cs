@@ -177,4 +177,48 @@ public sealed class AppointmentDetailServiceTests : IDisposable
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             sut.GetMyAppointmentDetailAsync(0, "101"));
     }
+
+    [Fact]
+    public async Task GetMyAppointmentDetailAsync_WhenLineageReachesMaxReschedules_OmitsRescheduleAction()
+    {
+        _db.Appointments.AddRange(
+            new MedFlow.Domain.Entities.Appointment
+            {
+                Id = 301,
+                PatientId = 1,
+                SlotId = 12,
+                RootAppointmentId = 301,
+                Status = "CANCELLED",
+                BookingChannel = "ONLINE",
+            },
+            new MedFlow.Domain.Entities.Appointment
+            {
+                Id = 302,
+                PatientId = 1,
+                SlotId = 12,
+                RootAppointmentId = 301,
+                RescheduledFromAppointmentId = 301,
+                Status = "CANCELLED",
+                BookingChannel = "ONLINE",
+            },
+            new MedFlow.Domain.Entities.Appointment
+            {
+                Id = 303,
+                AppointmentCode = "APT-202611-0303",
+                PatientId = 1,
+                SlotId = 12,
+                RootAppointmentId = 301,
+                RescheduledFromAppointmentId = 302,
+                Status = "BOOKED",
+                BookingChannel = "ONLINE",
+                BookedAt = new DateTime(2026, 11, 2, 7, 30, 0),
+            });
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut(); // MaxReschedules = 2
+        var detail = await sut.GetMyAppointmentDetailAsync(1, "303");
+
+        Assert.DoesNotContain("RESCHEDULE", detail.AvailableActions);
+        Assert.Contains("CANCEL", detail.AvailableActions);
+    }
 }

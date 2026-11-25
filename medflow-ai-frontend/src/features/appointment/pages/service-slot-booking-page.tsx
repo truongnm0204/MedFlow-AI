@@ -27,6 +27,7 @@ export function ServiceSlotBookingPage() {
   const [searchParams] = useSearchParams();
 
   const storeServiceId = useBookingStore((s) => s.selectedServiceId);
+  const queryPatientId = searchParams.get('patientId')?.trim() ?? '';
   const selectedPatientId = useBookingStore((s) => s.selectedPatientId);
   const selectedDateIso = useBookingStore((s) => s.selectedDateIso);
   const selectedSlotId = useBookingStore((s) => s.selectedSlotId);
@@ -55,10 +56,27 @@ export function ServiceSlotBookingPage() {
     dateIso: selectedDateIso,
   });
 
-  const selectedProfile = useMemo(
-    () => payload?.profiles.find((p) => p.id === selectedPatientId) ?? payload?.profiles[0],
-    [payload?.profiles, selectedPatientId],
-  );
+  const selectedProfile = useMemo(() => {
+    if (
+      /^[1-9]\d*$/.test(queryPatientId) &&
+      payload?.profiles.some((p) => p.id === queryPatientId) &&
+      selectedPatientId === 'pat-self'
+    ) {
+      return payload.profiles.find((p) => p.id === queryPatientId);
+    }
+    return payload?.profiles.find((p) => p.id === selectedPatientId) ?? payload?.profiles[0];
+  }, [payload?.profiles, queryPatientId, selectedPatientId]);
+
+  useEffect(() => {
+    if (
+      payload &&
+      /^[1-9]\d*$/.test(queryPatientId) &&
+      payload.profiles.some((p) => p.id === queryPatientId) &&
+      selectedPatientId === 'pat-self'
+    ) {
+      selectPatient(queryPatientId);
+    }
+  }, [payload, queryPatientId, selectPatient, selectedPatientId]);
 
   const selectedDate = useMemo(
     () =>

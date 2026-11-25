@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using MedFlow.Application.Common.Persistence;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Options;
@@ -216,7 +217,14 @@ public sealed class AppointmentLifecycleProcessor : BackgroundService
                 a.Slot != null &&
                 a.Slot.StartsAt != null &&
                 a.Slot.StartsAt > nowLocal &&
-                a.Slot.StartsAt <= upperScanBound)
+                a.Slot.StartsAt <= upperScanBound &&
+                !db.Notifications.Any(n =>
+                    n.AppointmentId == a.Id &&
+                    n.NotificationType == Notification.TypeAppointmentReminder &&
+                    (n.Status == null || n.Status != Notification.StatusCancelled)) &&
+                !db.Visits.Any(v =>
+                    v.AppointmentId == a.Id &&
+                    (v.Status == null || v.Status.ToUpper() != AppointmentBookingRules.CancelledStatus)))
             .OrderBy(a => a.Slot!.StartsAt)
             .ThenBy(a => a.Id)
             .Take(batchSize * 2)
@@ -227,25 +235,9 @@ public sealed class AppointmentLifecycleProcessor : BackgroundService
             return 0;
         }
 
-        var candidateApptIds = candidates.Select(a => a.Id).ToList();
-        var attendedApptIds = (await db.Visits
-            .AsNoTracking()
-            .Where(v =>
-                v.AppointmentId != null &&
-                candidateApptIds.Contains(v.AppointmentId.Value) &&
-                (v.Status == null || v.Status.ToUpper() != AppointmentBookingRules.CancelledStatus))
-            .Select(v => v.AppointmentId!.Value)
-            .ToListAsync(ct))
-            .ToHashSet();
-
         var filtered = new List<(Appointment Appointment, string IdempotencyKey)>();
         foreach (var appt in candidates)
         {
-            if (attendedApptIds.Contains(appt.Id))
-            {
-                continue;
-            }
-
             var slot = appt.Slot!;
             var startsAt = slot.StartsAt!.Value;
             var hospitalId = slot.Service?.HospitalId
@@ -362,7 +354,13 @@ public sealed class AppointmentLifecycleProcessor : BackgroundService
                 (a.Status == "BOOKED" || a.Status == "CONFIRMED") &&
                 a.Slot != null &&
                 a.Slot.EndsAt != null &&
-                a.Slot.EndsAt < nowLocal)
+                a.Slot.EndsAt < nowLocal &&
+                !db.Visits.Any(v =>
+                    v.AppointmentId == a.Id &&
+                    (v.Status == null || v.Status.ToUpper() != AppointmentBookingRules.CancelledStatus)) &&
+                !db.QueueEntries.Any(q =>
+                    q.AppointmentId == a.Id &&
+                    (q.VisitId != null || (q.Status != null && ServingQueueStatuses.Contains(q.Status.ToUpper())))))
             .OrderBy(a => a.Slot!.EndsAt)
             .ThenBy(a => a.Id)
             .Take(batchSize * 2)
@@ -374,7 +372,7 @@ public sealed class AppointmentLifecycleProcessor : BackgroundService
         }
 
         var policyByHospital = new Dictionary<long, int>();
-        var eligibleCandidateIds = new List<long>(batchSize);
+        var eligibleCandidates = new List<NoShowCandidateSnapshot>(batchSize);
 
         foreach (var candidate in rawCandidates)
         {
@@ -393,15 +391,22 @@ public sealed class AppointmentLifecycleProcessor : BackgroundService
 
             if (slot.EndsAt!.Value.AddMinutes(graceMinutes) < nowLocal)
             {
-                eligibleCandidateIds.Add(candidate.Id);
-                if (eligibleCandidateIds.Count >= batchSize)
+                eligibleCandidates.Add(new NoShowCandidateSnapshot(
+                    AppointmentId: candidate.Id,
+                    PatientId: candidate.PatientId!.Value,
+                    SlotId: slot.Id,
+                    RootAppointmentId: candidate.RootAppointmentId,
+                    DoctorId: slot.DoctorId,
+                    RoomId: slot.RoomId));
+
+                if (eligibleCandidates.Count >= batchSize)
                 {
                     break;
                 }
             }
         }
 
-        if (eligibleCandidateIds.Count == 0)
+        if (eligibleCandidates.Count == 0)
         {
             return (0, 0);
         }
@@ -409,7 +414,7 @@ public sealed class AppointmentLifecycleProcessor : BackgroundService
         var autoNoShowCount = 0;
         var cancelledQueueCount = 0;
 
-        foreach (var targetAppointmentId in eligibleCandidateIds)
+        foreach (var candidate in eligibleCandidates)
         {
             using var itemScope = _scopeFactory.CreateScope();
             var itemDb = itemScope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
@@ -417,184 +422,257 @@ public sealed class AppointmentLifecycleProcessor : BackgroundService
 
             await using var tx = await itemDb.BeginTransactionAsync(ct);
 
-            Appointment? lockedAppt;
-            if (isRelational)
+            long hospitalId;
+            long? roomId;
+            long? noShowServicePointId;
+            int cancelledQueuesForItem;
+
+            try
             {
-                var lockedList = await ((MedFlowDbContext)itemDb).Appointments
-                    .FromSqlInterpolated($"""
-                        SELECT xmin, *
-                        FROM "appointments"
-                        WHERE "id" = {targetAppointmentId}
-                          AND "status" IN ('BOOKED', 'CONFIRMED')
-                        FOR UPDATE SKIP LOCKED
-                        """)
+                // ADR-0059 strict lock order: patients (02) -> doctors (05) -> hospital_rooms (06) -> examination_slots (07) -> appointments (08)
+                await itemDb.TryLockPatientForUpdateAsync(candidate.PatientId, ct);
+
+                if (candidate.DoctorId.HasValue)
+                {
+                    await itemDb.TryLockDoctorsForUpdateAsync([candidate.DoctorId.Value], ct);
+                }
+
+                if (candidate.RoomId.HasValue)
+                {
+                    await itemDb.TryLockRoomForUpdateAsync(candidate.RoomId.Value, ct);
+                }
+
+                await itemDb.TryLockSlotsForUpdateAsync([candidate.SlotId], ct);
+
+                var apptIdsToLock = new[] { candidate.RootAppointmentId ?? candidate.AppointmentId, candidate.AppointmentId }
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToArray();
+                await itemDb.TryLockAppointmentsForUpdateAsync(apptIdsToLock, ct);
+
+                Appointment? lockedAppt;
+                if (isRelational)
+                {
+                    ((MedFlowDbContext)itemDb).ChangeTracker.Clear();
+                    var lockedList = await ((MedFlowDbContext)itemDb).Appointments
+                        .FromSqlInterpolated($"""
+                            SELECT xmin, *
+                            FROM "appointments"
+                            WHERE "id" = {candidate.AppointmentId}
+                              AND "status" IN ('BOOKED', 'CONFIRMED')
+                            FOR UPDATE
+                            """)
+                        .ToListAsync(ct);
+
+                    lockedAppt = lockedList.FirstOrDefault();
+                }
+                else
+                {
+                    lockedAppt = await itemDb.Appointments
+                        .FirstOrDefaultAsync(
+                            a => a.Id == candidate.AppointmentId &&
+                                 (a.Status == "BOOKED" || a.Status == "CONFIRMED"),
+                            ct);
+                }
+
+                if (lockedAppt is null ||
+                    lockedAppt.PatientId != candidate.PatientId ||
+                    lockedAppt.SlotId != candidate.SlotId)
+                {
+                    await tx.RollbackAsync(ct);
+                    continue;
+                }
+
+                var slot = await itemDb.ExaminationSlots
+                    .AsNoTracking()
+                    .Include(s => s.Service)
+                    .Include(s => s.Room)
+                    .Include(s => s.Doctor)
+                    .FirstOrDefaultAsync(s => s.Id == candidate.SlotId, ct);
+
+                if (slot?.EndsAt is null)
+                {
+                    await tx.RollbackAsync(ct);
+                    continue;
+                }
+
+                hospitalId = slot.Service?.HospitalId
+                    ?? slot.Room?.HospitalId
+                    ?? slot.Doctor?.HospitalId
+                    ?? 0L;
+                roomId = slot.RoomId;
+
+                if (!policyByHospital.TryGetValue(hospitalId, out var graceMinutes))
+                {
+                    var itemPolicySvc = itemScope.ServiceProvider.GetRequiredService<IAppointmentPolicyService>();
+                    graceMinutes = Math.Max(0, (await itemPolicySvc.GetEffectiveAsync(hospitalId, ct)).NoShowGraceMinutes);
+                    policyByHospital[hospitalId] = graceMinutes;
+                }
+
+                if (slot.EndsAt.Value.AddMinutes(graceMinutes) >= nowLocal)
+                {
+                    await tx.RollbackAsync(ct);
+                    continue;
+                }
+
+                // Re-verify inside lock that Reception Check-in has not created a Visit or activated a QueueEntry.
+                var hasNonCancelledVisit = await itemDb.Visits
+                    .AsNoTracking()
+                    .AnyAsync(
+                        v => v.AppointmentId == lockedAppt.Id &&
+                             (v.Status == null || v.Status.ToUpper() != AppointmentBookingRules.CancelledStatus),
+                        ct);
+
+                if (hasNonCancelledVisit)
+                {
+                    await tx.RollbackAsync(ct);
+                    continue;
+                }
+
+                var hasActiveServingQueue = await itemDb.QueueEntries
+                    .AsNoTracking()
+                    .AnyAsync(
+                        q => q.AppointmentId == lockedAppt.Id &&
+                             (q.VisitId != null ||
+                              (q.Status != null && ServingQueueStatuses.Contains(q.Status.ToUpper()))),
+                        ct);
+
+                if (hasActiveServingQueue)
+                {
+                    await tx.RollbackAsync(ct);
+                    continue;
+                }
+
+                var reservedQueueIds = await itemDb.QueueEntries
+                    .AsNoTracking()
+                    .Where(q =>
+                        q.AppointmentId == lockedAppt.Id &&
+                        q.VisitId == null &&
+                        q.Status != null &&
+                        q.Status.ToUpper() == "RESERVED")
+                    .OrderBy(q => q.Id)
+                    .Select(q => q.Id)
                     .ToListAsync(ct);
 
-                lockedAppt = lockedList.FirstOrDefault();
-            }
-            else
-            {
-                lockedAppt = await itemDb.Appointments
-                    .FirstOrDefaultAsync(
-                        a => a.Id == targetAppointmentId &&
-                             (a.Status == "BOOKED" || a.Status == "CONFIRMED"),
-                        ct);
-            }
-
-            if (lockedAppt is null || !lockedAppt.PatientId.HasValue || !lockedAppt.SlotId.HasValue)
-            {
-                await tx.RollbackAsync(ct);
-                continue;
-            }
-
-            var slot = await itemDb.ExaminationSlots
-                .AsNoTracking()
-                .Include(s => s.Service)
-                .Include(s => s.Room)
-                .Include(s => s.Doctor)
-                .FirstOrDefaultAsync(s => s.Id == lockedAppt.SlotId.Value, ct);
-
-            if (slot?.EndsAt is null)
-            {
-                await tx.RollbackAsync(ct);
-                continue;
-            }
-
-            var hospitalId = slot.Service?.HospitalId
-                ?? slot.Room?.HospitalId
-                ?? slot.Doctor?.HospitalId
-                ?? 0L;
-
-            if (!policyByHospital.TryGetValue(hospitalId, out var graceMinutes))
-            {
-                var itemPolicySvc = itemScope.ServiceProvider.GetRequiredService<IAppointmentPolicyService>();
-                graceMinutes = Math.Max(0, (await itemPolicySvc.GetEffectiveAsync(hospitalId, ct)).NoShowGraceMinutes);
-                policyByHospital[hospitalId] = graceMinutes;
-            }
-
-            if (slot.EndsAt.Value.AddMinutes(graceMinutes) >= nowLocal)
-            {
-                await tx.RollbackAsync(ct);
-                continue;
-            }
-
-            // Re-verify inside lock that Reception Check-in has not created a Visit or activated a QueueEntry.
-            var hasNonCancelledVisit = await itemDb.Visits
-                .AsNoTracking()
-                .AnyAsync(
-                    v => v.AppointmentId == lockedAppt.Id &&
-                         (v.Status == null || v.Status.ToUpper() != AppointmentBookingRules.CancelledStatus),
-                    ct);
-
-            if (hasNonCancelledVisit)
-            {
-                await tx.RollbackAsync(ct);
-                continue;
-            }
-
-            var hasActiveServingQueue = await itemDb.QueueEntries
-                .AsNoTracking()
-                .AnyAsync(
-                    q => q.AppointmentId == lockedAppt.Id &&
-                         q.Status != null &&
-                         ServingQueueStatuses.Contains(q.Status.ToUpper()),
-                    ct);
-
-            if (hasActiveServingQueue)
-            {
-                await tx.RollbackAsync(ct);
-                continue;
-            }
-
-            var previousStatus = lockedAppt.Status ?? AppointmentBookingRules.BookedStatus;
-            lockedAppt.Status = AppointmentBookingRules.NoShowStatus;
-
-            var noShowReason = "Hệ thống tự động ghi nhận vắng mặt (NO_SHOW) do quá thời gian tiếp đón theo chính sách bệnh viện.";
-            var cancelledQueues = await AppointmentNotificationComposer.CancelReservedQueueEntriesForAppointmentAsync(
-                itemDb,
-                lockedAppt.Id,
-                actorUserId: null,
-                hospitalId: hospitalId,
-                reason: noShowReason,
-                ipAddress: null,
-                nowUtc: nowUtc,
-                ct: ct);
-
-            await AppointmentNotificationComposer.InvalidatePendingRemindersAsync(
-                itemDb,
-                lockedAppt.Id,
-                "Hủy gửi nhắc lịch do lịch hẹn đã chuyển sang trạng thái vắng mặt (NO_SHOW).",
-                ct);
-
-            var apptCode = !string.IsNullOrWhiteSpace(lockedAppt.AppointmentCode)
-                ? lockedAppt.AppointmentCode!
-                : $"APT-{lockedAppt.Id}";
-
-            itemDb.AuditLogs.Add(new AuditLog
-            {
-                ActorUserId = null,
-                HospitalId = hospitalId > 0 ? hospitalId : null,
-                Action = AutoNoShowAuditAction,
-                EntityType = "APPOINTMENT",
-                EntityId = lockedAppt.Id.ToString(CultureInfo.InvariantCulture),
-                Reason = noShowReason,
-                ChangeData = JsonSerializer.Serialize(new
+                if (reservedQueueIds.Count > 0)
                 {
-                    appointmentId = lockedAppt.Id,
-                    appointmentCode = apptCode,
-                    patientId = lockedAppt.PatientId.Value,
-                    slotId = slot.Id,
-                    slotStartsAt = slot.StartsAt,
-                    slotEndsAt = slot.EndsAt,
-                    graceMinutes,
-                    previousStatus,
-                    newStatus = AppointmentBookingRules.NoShowStatus,
-                    cancelledQueueEntryIds = cancelledQueues.Select(q => q.Id).ToArray(),
-                    preservedQueueNumbers = cancelledQueues.Select(q => q.QueueNumber).ToArray(),
-                }),
-                IpAddress = null,
-                OccurredAt = nowUtc,
-            });
+                    await itemDb.TryLockQueueEntriesForUpdateAsync(reservedQueueIds, ct);
+                }
 
-            var noShowNotifKey = AppointmentNotificationComposer.BuildNoShowIdempotencyKey(lockedAppt.Id, slot.Id);
-            var alreadyNotified = await itemDb.Notifications
-                .AsNoTracking()
-                .AnyAsync(n => n.IdempotencyKey == noShowNotifKey, ct);
+                var previousStatus = lockedAppt.Status ?? AppointmentBookingRules.BookedStatus;
+                lockedAppt.Status = AppointmentBookingRules.NoShowStatus;
 
-            if (!alreadyNotified)
-            {
-                var authorizedEmail = await AppointmentNotificationComposer.ResolveAuthorizedRecipientEmailAsync(
+                var noShowReason = "Hệ thống tự động ghi nhận vắng mặt (NO_SHOW) do quá thời gian tiếp đón theo chính sách bệnh viện.";
+                var cancelledQueues = await AppointmentNotificationComposer.CancelReservedQueueEntriesForAppointmentAsync(
                     itemDb,
-                    lockedAppt.PatientId.Value,
-                    lockedAppt.BookedByUserId,
-                    nowLocal,
+                    lockedAppt.Id,
+                    actorUserId: null,
+                    hospitalId: hospitalId,
+                    reason: noShowReason,
+                    ipAddress: null,
+                    nowUtc: nowUtc,
+                    ct: ct);
+
+                await AppointmentNotificationComposer.InvalidatePendingRemindersAsync(
+                    itemDb,
+                    lockedAppt.Id,
+                    "Hủy gửi nhắc lịch do lịch hẹn đã chuyển sang trạng thái vắng mặt (NO_SHOW).",
                     ct);
 
-                var serviceName = !string.IsNullOrWhiteSpace(slot.Service?.Name)
-                    ? slot.Service!.Name
-                    : "Khám chuyên khoa ngoại trú";
+                var apptCode = !string.IsNullOrWhiteSpace(lockedAppt.AppointmentCode)
+                    ? lockedAppt.AppointmentCode!
+                    : $"APT-{lockedAppt.Id}";
 
-                var noShowNotification = AppointmentNotificationComposer.CreateNoShowNotification(
-                    patientId: lockedAppt.PatientId.Value,
-                    appointmentId: lockedAppt.Id,
-                    slotId: slot.Id,
-                    appointmentCode: apptCode,
-                    serviceName: serviceName,
-                    startsAt: slot.StartsAt ?? slot.EndsAt.Value,
-                    authorizedEmail: authorizedEmail,
-                    nowLocal: nowLocal);
+                itemDb.AuditLogs.Add(new AuditLog
+                {
+                    ActorUserId = null,
+                    HospitalId = hospitalId > 0 ? hospitalId : null,
+                    Action = AutoNoShowAuditAction,
+                    EntityType = "APPOINTMENT",
+                    EntityId = lockedAppt.Id.ToString(CultureInfo.InvariantCulture),
+                    Reason = noShowReason,
+                    ChangeData = JsonSerializer.Serialize(new
+                    {
+                        appointmentId = lockedAppt.Id,
+                        appointmentCode = apptCode,
+                        patientId = lockedAppt.PatientId.Value,
+                        slotId = slot.Id,
+                        slotStartsAt = slot.StartsAt,
+                        slotEndsAt = slot.EndsAt,
+                        graceMinutes,
+                        previousStatus,
+                        newStatus = AppointmentBookingRules.NoShowStatus,
+                        cancelledQueueEntryIds = cancelledQueues.Select(q => q.Id).ToArray(),
+                        preservedQueueNumbers = cancelledQueues.Select(q => q.QueueNumber).ToArray(),
+                    }),
+                    IpAddress = null,
+                    OccurredAt = nowUtc,
+                });
 
-                await InsertNotificationIdempotentAsync(itemDb, isRelational, noShowNotification, ct);
+                var noShowNotifKey = AppointmentNotificationComposer.BuildNoShowIdempotencyKey(lockedAppt.Id, slot.Id);
+                var alreadyNotified = await itemDb.Notifications
+                    .AsNoTracking()
+                    .AnyAsync(n => n.IdempotencyKey == noShowNotifKey, ct);
+
+                if (!alreadyNotified)
+                {
+                    var authorizedEmail = await AppointmentNotificationComposer.ResolveAuthorizedRecipientEmailAsync(
+                        itemDb,
+                        lockedAppt.PatientId.Value,
+                        lockedAppt.BookedByUserId,
+                        nowLocal,
+                        ct);
+
+                    var serviceName = !string.IsNullOrWhiteSpace(slot.Service?.Name)
+                        ? slot.Service!.Name
+                        : "Khám chuyên khoa ngoại trú";
+
+                    var noShowNotification = AppointmentNotificationComposer.CreateNoShowNotification(
+                        patientId: lockedAppt.PatientId.Value,
+                        appointmentId: lockedAppt.Id,
+                        slotId: slot.Id,
+                        appointmentCode: apptCode,
+                        serviceName: serviceName,
+                        startsAt: slot.StartsAt ?? slot.EndsAt.Value,
+                        authorizedEmail: authorizedEmail,
+                        nowLocal: nowLocal);
+
+                    await InsertNotificationIdempotentAsync(itemDb, isRelational, noShowNotification, ct);
+                }
+
+                await itemDb.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+
+                noShowServicePointId = cancelledQueues
+                    .Select(q => q.CurrentServicePointId ?? q.ServicePointId)
+                    .FirstOrDefault(id => id.HasValue);
+                cancelledQueuesForItem = cancelledQueues.Count;
             }
+            catch (Exception ex) when (IsConcurrencyOrLockConflict(ex))
+            {
+                try
+                {
+                    await tx.RollbackAsync(CancellationToken.None);
+                }
+                catch
+                {
+                    // Transaction already aborted by PostgreSQL on deadlock/serialization failure.
+                }
 
-            await itemDb.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
+                if (itemDb is DbContext ef)
+                {
+                    ef.ChangeTracker.Clear();
+                }
+
+                _logger.LogDebug(
+                    ex,
+                    "Skipped auto NO_SHOW finalization for appointment {AppointmentId} due to concurrent check-in/modification.",
+                    candidate.AppointmentId);
+                continue;
+            }
 
             var publisher = itemScope.ServiceProvider.GetService<MedFlow.Application.Interfaces.Services.IRealtimeNotificationPublisher>();
             var revoker = itemScope.ServiceProvider.GetService<MedFlow.Application.Interfaces.Services.IRealtimeAccessRevoker>();
-            var noShowServicePointId = cancelledQueues
-                .Select(q => q.CurrentServicePointId ?? q.ServicePointId)
-                .FirstOrDefault(id => id.HasValue);
 
             if (publisher is not null)
             {
@@ -603,8 +681,8 @@ public sealed class AppointmentLifecycleProcessor : BackgroundService
                     new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
                         HospitalId: hospitalId,
                         ServicePointId: noShowServicePointId,
-                        RoomId: slot.RoomId,
-                        AppointmentId: lockedAppt.Id),
+                        RoomId: roomId,
+                        AppointmentId: candidate.AppointmentId),
                     ct);
             }
 
@@ -612,16 +690,32 @@ public sealed class AppointmentLifecycleProcessor : BackgroundService
             {
                 await MedFlow.Application.Services.Realtime.RealtimeRevokeSafeExtensions.TryRevokeAppointmentTrackingSafeAsync(
                     revoker,
-                    lockedAppt.Id,
+                    candidate.AppointmentId,
                     ct);
             }
 
             autoNoShowCount++;
-            cancelledQueueCount += cancelledQueues.Count;
+            cancelledQueueCount += cancelledQueuesForItem;
         }
 
         return (autoNoShowCount, cancelledQueueCount);
     }
+
+    private static bool IsConcurrencyOrLockConflict(Exception ex)
+        => ex is DbUpdateConcurrencyException ||
+           PostgresConcurrencyException.TryGetSqlState(ex) is
+               PostgresConcurrencyException.UniqueViolationSqlState or
+               PostgresConcurrencyException.DeadlockDetectedSqlState or
+               PostgresConcurrencyException.SerializationFailureSqlState or
+               PostgresConcurrencyException.LockNotAvailableSqlState;
+
+    private sealed record NoShowCandidateSnapshot(
+        long AppointmentId,
+        long PatientId,
+        long SlotId,
+        long? RootAppointmentId,
+        long? DoctorId,
+        long? RoomId);
 
     private static async Task<int> InsertNotificationIdempotentAsync(
         IApplicationDbContext db,

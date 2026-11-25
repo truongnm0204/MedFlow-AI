@@ -4,19 +4,21 @@ using MedFlow.Application.DTOs.Appointments;
 using MedFlow.Application.DTOs.Doctors;
 using MedFlow.Application.DTOs.Services;
 using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Application.Options;
 using MedFlow.Application.Services.Doctors;
+using MedFlow.Application.Services.Patients;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Services;
 using MedFlow.Domain.Entities;
-using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MedFlow.Application.Services.Appointments;
 
 public sealed class AppointmentSlotService : IAppointmentSlotService
 {
-    private const int StripDays = 7;
+    private const int MinStripDays = 7;
     private const int FewSlotsThreshold = 5;
 
     private const string MorningShiftDescription =
@@ -30,19 +32,22 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
     private readonly IExaminationServiceCatalogService _serviceCatalog;
     private readonly IAppointmentPolicyService _policyService;
     private readonly TimeProvider _timeProvider;
+    private readonly IOptions<IdentityHashOptions>? _identityHashOptions;
 
     public AppointmentSlotService(
         IApplicationDbContext db,
         IDoctorCatalogService doctorCatalog,
         IExaminationServiceCatalogService serviceCatalog,
         IAppointmentPolicyService policyService,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IOptions<IdentityHashOptions>? identityHashOptions = null)
     {
         _db = db;
         _doctorCatalog = doctorCatalog;
         _serviceCatalog = serviceCatalog;
         _policyService = policyService;
         _timeProvider = timeProvider;
+        _identityHashOptions = identityHashOptions;
     }
 
     public async Task<AvailableSlotsResponse> GetAvailableSlotsAsync(
@@ -112,9 +117,12 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
 
-        var profiles = await LoadPatientProfilesAsync(userId, nowLocal, today, ct);
         var hospitalId = await AppointmentBookingRules.ResolveHospitalIdAsync(_db, serviceId, doctorId, ct);
         var policy = await _policyService.GetEffectiveAsync(hospitalId, ct);
+        var effectiveWindowDays = Math.Clamp(policy.BookingWindowDays, 1, 365);
+        var stripDays = Math.Max(MinStripDays, effectiveWindowDays + 1);
+
+        var profiles = await LoadPatientProfilesAsync(userId, nowLocal, today, stripDays, ct);
 
         var bookableSlots = await LoadBookableSlotsAsync(
             serviceId,
@@ -122,11 +130,12 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             nowLocal,
             today,
             policy.BookingLeadHours,
-            policy.BookingWindowDays,
+            effectiveWindowDays,
+            stripDays,
             ct);
 
-        var dates = BuildDateOptions(today, bookableSlots, isDoctorMode: true);
-        var effectiveDate = ResolveEffectiveDate(today, requestedDate, dates);
+        var dates = BuildDateOptions(today, stripDays, bookableSlots, isDoctorMode: true);
+        var effectiveDate = ResolveEffectiveDate(today, stripDays, requestedDate, dates);
         var monthLabel = $"Tháng {effectiveDate.Month}, {effectiveDate.Year}";
 
         var effectiveDaySlots = bookableSlots
@@ -146,7 +155,7 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             morningSlots,
             afternoonSlots);
 
-        var doctorService = BuildDoctorServiceInfo(doctorDto, serviceDto, bookableSlots);
+        var doctorService = BuildDoctorServiceInfo(doctorDto, serviceDto, bookableSlots, effectiveWindowDays);
 
         return new AvailableSlotsResponse(
             DoctorService: doctorService,
@@ -182,9 +191,12 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
         var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
         var today = DateOnly.FromDateTime(nowLocal);
 
-        var profiles = await LoadPatientProfilesAsync(userId, nowLocal, today, ct);
         var hospitalId = await AppointmentBookingRules.ResolveHospitalIdAsync(_db, serviceId, doctorId: null, ct);
         var policy = await _policyService.GetEffectiveAsync(hospitalId, ct);
+        var effectiveWindowDays = Math.Clamp(policy.BookingWindowDays, 1, 365);
+        var stripDays = Math.Max(MinStripDays, effectiveWindowDays + 1);
+
+        var profiles = await LoadPatientProfilesAsync(userId, nowLocal, today, stripDays, ct);
 
         var bookableSlots = await LoadBookableSlotsAsync(
             serviceId,
@@ -192,11 +204,12 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             nowLocal,
             today,
             policy.BookingLeadHours,
-            policy.BookingWindowDays,
+            effectiveWindowDays,
+            stripDays,
             ct);
 
-        var dates = BuildDateOptions(today, bookableSlots, isDoctorMode: false);
-        var effectiveDate = ResolveEffectiveDate(today, requestedDate, dates);
+        var dates = BuildDateOptions(today, stripDays, bookableSlots, isDoctorMode: false);
+        var effectiveDate = ResolveEffectiveDate(today, stripDays, requestedDate, dates);
         var monthLabel = $"Tháng {effectiveDate.Month}, {effectiveDate.Year}";
 
         var effectiveDaySlots = bookableSlots
@@ -259,13 +272,13 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
         DateOnly today,
         int bookingLeadHours,
         int bookingWindowDays,
+        int stripDays,
         CancellationToken ct)
     {
         var stripStart = today.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
-        var stripEnd = stripStart.AddDays(StripDays);
+        var stripEnd = stripStart.AddDays(stripDays);
 
-        var query = _db.ExaminationSlots
-            .AsNoTracking()
+        var query = AppointmentBookingService.IncludeResourceGraph(_db.ExaminationSlots.AsNoTracking())
             .Where(s =>
                 s.ServiceId == serviceId &&
                 s.Status.ToUpper() == "OPEN" &&
@@ -288,11 +301,21 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
         var minStartTime = nowLocal.AddHours(bookingLeadHours);
         var maxDate = today.AddDays(bookingWindowDays);
 
-        var filteredSlots = rawSlots
+        var windowFilteredSlots = rawSlots
             .Where(s =>
-                s.StartsAt!.Value >= minStartTime &&
+                s.StartsAt!.Value > nowLocal &&
+                s.StartsAt.Value >= minStartTime &&
                 DateOnly.FromDateTime(s.StartsAt.Value) <= maxDate)
             .ToList();
+
+        if (windowFilteredSlots.Count == 0)
+            return new List<BookableSlotItem>();
+
+        var filteredSlots = await AppointmentBookingService.FilterSlotsByActiveResourcesAsync(
+            _db,
+            windowFilteredSlots,
+            requireDoctorAuthorization: doctorId.HasValue,
+            ct);
 
         if (filteredSlots.Count == 0)
             return new List<BookableSlotItem>();
@@ -327,13 +350,14 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
         long userId,
         DateTime nowLocal,
         DateOnly today,
+        int stripDays,
         CancellationToken ct)
     {
         var (self, familyLinks) = await AppointmentBookingRules.LoadOwnedPatientsAsync(_db, userId, nowLocal, ct);
         var patientIds = new List<long>(1 + familyLinks.Count) { self.Id };
         patientIds.AddRange(familyLinks.Select(l => l.MemberPatientId));
 
-        var activeBookedDatesByPatient = await LoadActiveBookedDatesByPatientAsync(patientIds, today, ct);
+        var activeBookedDatesByPatient = await LoadActiveBookedDatesByPatientAsync(patientIds, today, stripDays, ct);
 
         var profiles = new List<BookingPatientProfileDto>(1 + familyLinks.Count)
         {
@@ -355,10 +379,11 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
     private async Task<Dictionary<long, IReadOnlyList<string>>> LoadActiveBookedDatesByPatientAsync(
         List<long> patientIds,
         DateOnly today,
+        int stripDays,
         CancellationToken ct)
     {
         var stripStart = today.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
-        var stripEnd = stripStart.AddDays(StripDays);
+        var stripEnd = stripStart.AddDays(stripDays);
 
         var rawAppointments = await _db.Appointments
             .AsNoTracking()
@@ -437,10 +462,42 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             dates.Add(DateOnly.FromDateTime(appt.StartsAt).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
         }
 
+        // Include active same-day/walk-in Visits within the horizon even when AppointmentId is null.
+        var directVisits = await _db.Visits
+            .AsNoTracking()
+            .Where(v =>
+                v.PatientId != null &&
+                patientIds.Contains(v.PatientId.Value) &&
+                v.CheckedInAt != null &&
+                v.CheckedInAt >= stripStart &&
+                v.CheckedInAt < stripEnd)
+            .Select(v => new
+            {
+                PatientId = v.PatientId!.Value,
+                v.Status,
+                CheckedInAt = v.CheckedInAt!.Value,
+            })
+            .ToListAsync(ct);
+
+        foreach (var visit in directVisits)
+        {
+            if (!AppointmentBookingRules.IsActiveVisitStatus(visit.Status))
+                continue;
+
+            if (!result.TryGetValue(visit.PatientId, out var dates))
+            {
+                dates = new HashSet<string>(StringComparer.Ordinal);
+                result[visit.PatientId] = dates;
+            }
+
+            var localCheckIn = HospitalClock.EnsureHospitalLocal(visit.CheckedInAt);
+            dates.Add(DateOnly.FromDateTime(localCheckIn).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        }
+
         return result.ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyList<string>)kvp.Value.OrderBy(d => d).ToList());
     }
 
-    private static BookingPatientProfileDto MapSelfProfile(
+    private BookingPatientProfileDto MapSelfProfile(
         Patient self,
         DateOnly today,
         IReadOnlyList<string> activeBookedDates)
@@ -450,7 +507,8 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
         var metaPrimary = !string.IsNullOrWhiteSpace(self.Phone)
             ? $"SĐT: {self.Phone}"
             : "Chưa cập nhật SĐT";
-        var metaSecondary = !string.IsNullOrWhiteSpace(self.IdentificationHash)
+        var isIdentityVerified = IdentificationNumber.HasVerifiedIdentity(self, _identityHashOptions);
+        var metaSecondary = isIdentityVerified
             ? "Định danh đã đối chiếu"
             : "Chưa xác thực định danh";
 
@@ -465,10 +523,11 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             MetaPrimary: metaPrimary,
             MetaSecondary: metaSecondary,
             PatientCode: self.PatientCode,
-            ActiveBookedDates: activeBookedDates);
+            ActiveBookedDates: activeBookedDates,
+            IsIdentityVerified: isIdentityVerified);
     }
 
-    private static BookingPatientProfileDto MapMemberProfile(
+    private BookingPatientProfileDto MapMemberProfile(
         Patient member,
         string? relationship,
         DateOnly today,
@@ -489,6 +548,7 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             ? $"SĐT: {member.Phone}"
             : "Hồ sơ người thân";
         var metaSecondary = $"PID: {member.PatientCode}";
+        var isIdentityVerified = IdentificationNumber.HasVerifiedIdentity(member, _identityHashOptions);
 
         return new BookingPatientProfileDto(
             Id: member.Id.ToString(CultureInfo.InvariantCulture),
@@ -501,7 +561,8 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
             MetaPrimary: metaPrimary,
             MetaSecondary: metaSecondary,
             PatientCode: member.PatientCode,
-            ActiveBookedDates: activeBookedDates);
+            ActiveBookedDates: activeBookedDates,
+            IsIdentityVerified: isIdentityVerified);
     }
 
     internal static int CalculateAge(DateOnly? dateOfBirth, DateOnly today)
@@ -535,12 +596,13 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
 
     private static List<BookingDateOptionDto> BuildDateOptions(
         DateOnly today,
+        int stripDays,
         List<BookableSlotItem> bookableSlots,
         bool isDoctorMode)
     {
-        var dates = new List<BookingDateOptionDto>(StripDays);
+        var dates = new List<BookingDateOptionDto>(stripDays);
 
-        for (var i = 0; i < StripDays; i++)
+        for (var i = 0; i < stripDays; i++)
         {
             var d = today.AddDays(i);
             var daySlots = bookableSlots
@@ -613,10 +675,11 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
 
     private static DateOnly ResolveEffectiveDate(
         DateOnly today,
+        int stripDays,
         DateOnly? requestedDate,
         List<BookingDateOptionDto> dates)
     {
-        var stripEndDate = today.AddDays(StripDays - 1);
+        var stripEndDate = today.AddDays(stripDays - 1);
         if (requestedDate.HasValue && requestedDate.Value >= today && requestedDate.Value <= stripEndDate)
         {
             var requestedIso = requestedDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -707,7 +770,8 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
     private static BookingDoctorServiceInfoDto BuildDoctorServiceInfo(
         DoctorDetailDto doctorDto,
         ExaminationServiceDto serviceDto,
-        List<BookableSlotItem> bookableSlots)
+        List<BookableSlotItem> bookableSlots,
+        int bookingWindowDays)
     {
         var room = doctorDto.Room;
         var shortRoom = room;
@@ -725,7 +789,7 @@ public sealed class AppointmentSlotService : IAppointmentSlotService
 
         var dutyNote = bookableSlots.Count > 0
             ? $"Ca trực gần nhất: {bookableSlots[0].StartsAt.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture)} ({bookableSlots[0].StartsAt:HH:mm} - {bookableSlots[0].EndsAt:HH:mm})"
-            : "Chưa có lịch trực trong 7 ngày tới";
+            : $"Chưa có lịch trực trong {bookingWindowDays} ngày tới";
 
         return new BookingDoctorServiceInfoDto(
             DoctorId: doctorDto.Id,

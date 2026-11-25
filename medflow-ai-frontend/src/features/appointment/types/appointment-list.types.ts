@@ -1,5 +1,16 @@
+import type { BookingDateOption } from './slot-booking.types';
+
 export type AppointmentRecordStatus =
   'CONFIRMED' | 'BOOKED' | 'PENDING' | 'CHECKED_IN' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';
+
+export type AppointmentAvailableAction =
+  | 'CANCEL'
+  | 'RESCHEDULE'
+  | 'UPDATE_REASON'
+  | 'PRINT_SLIP'
+  | 'TRACK_QUEUE'
+  | 'REBOOK'
+  | (string & {});
 
 export type AppointmentTabGroup = 'ALL' | 'UPCOMING' | 'COMPLETED' | 'CANCELLED';
 
@@ -28,7 +39,7 @@ export interface AppointmentListItem {
   patientBirthYearLabel?: string; // e.g. '1986 (40 tuổi)'
   patientBirthDateLabel?: string; // e.g. '15/08/1986 (40 tuổi) • Nam'
   patientPhone?: string; // e.g. '0912 345 678'
-  patientNationalId?: string; // e.g. '001086001234'
+  patientNationalId?: string;
   patientAddress?: string; // e.g. 'P. Hàng Trống, Q. Hoàn Kiếm, Hà Nội'
   serviceId: string;
   serviceCode: string;
@@ -70,6 +81,7 @@ export interface AppointmentListItem {
   slotReleaseNote?: string | null;
   rebookSpecialtyLabel?: string | null;
   bookedAt: string;
+  availableActions?: AppointmentAvailableAction[];
 }
 
 export interface ProposedRescheduleSlotOption {
@@ -79,10 +91,18 @@ export interface ProposedRescheduleSlotOption {
   scheduledDateFullLabel: string;
   scheduledTimeRange: string;
   checkInDeadlineTime: string;
-  estimatedQueueNumber: string;
+  estimatedQueueNumber: string | null;
+  remainingLabel?: string;
   roomCode: string;
   roomName: string;
   doctorName: string;
+}
+
+export interface ProposedRescheduleSchedulePayload {
+  dates: BookingDateOption[];
+  activeDateIso: string;
+  monthLabel?: string;
+  slots: ProposedRescheduleSlotOption[];
 }
 
 export interface AppointmentTabCounts {
