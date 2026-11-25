@@ -32,7 +32,8 @@ database/
 │   ├── 017_patient_identity_claims.sql            # patient identity claim workflow table
 │   ├── 018_patient_identity_verify_permission.sql # PATIENT_IDENTITY_VERIFY permission seed
 │   ├── 019_identity_claim_otp_purpose.sql         # IDENTITY_CLAIM OTP purpose check constraint
-│   └── 020_schedule_cronjob_indexes_and_notifications.sql # UC17 notifications read/lease columns & schedule/slot partial/unique indexes
+│   ├── 020_schedule_cronjob_indexes_and_notifications.sql # UC17 notifications read/lease columns & schedule/slot partial/unique indexes
+│   └── 021_hot_query_composite_indexes.sql        # hot-query composite indexes (queue, UC56 visits, UC60 audit logs, UC45 FEFO, service prices)
 └── README.md
 ```
 
@@ -91,6 +92,21 @@ docker exec medflow-postgres psql -U postgres -d medflow_db -v ON_ERROR_STOP=1 -
 - **ID type changed**: `uuid` → `bigint identity`. Backend entities/configuration require refactor.
 - **Schema moved**: `medflow.*` → `public.*`.
 - **Password hashing**: seed file has been rehashed to **PBKDF2-SHA256** (ASP.NET Identity `PasswordHasher<User>`). Demo logins (`Demo@12345`) work as soon as the backend is pointed at this DB.
+
+## Hot-query composite indexes (`021_hot_query_composite_indexes.sql`)
+
+Migration `021` adds six non-unique B-Tree composite indexes for high-frequency operational screens while preserving the exact index identifiers from Issue #829 mapped onto v4.1 physical columns:
+
+| Index name | Table | v4.1 columns & sort order | Mapping & query notes |
+|---|---|---|---|
+| `ix_queue_entries_sp_status_created` | `queue_entries` | `("service_point_id", "status", "arrived_at")` | 3-column baseline mapping `service_point_id` / `arrived_at` (v4.1 has no `queue_service_point_id` or `created_at`; existing `uq_queue_entries_service_point_id_queue_date_queue_number` and `ix_queue_entries_current_service_point_id` remain intact). |
+| `ix_visits_hospital_created_status` | `visits` | `("checked_in_at" DESC, "status")` | `visits` resolves hospital via room/doctor/staff/appointment relations (no `hospital_id` or `created_at`); serves `UC56` time-window status aggregations. |
+| `ix_audit_logs_hospital_occurred_desc` | `audit_logs` | `("hospital_id", "occurred_at" DESC)` | Serves `UC60` hospital-scoped audit filtering and newest-first pagination. |
+| `ix_audit_logs_action_occurred_desc` | `audit_logs` | `("action", "occurred_at" DESC)` | Serves action-specific audit trails (`NO_SHOW`, `SERVICE_PRICE_UPDATED`, `FEFO_BATCH_SELECTED`, etc.). |
+| `ix_medicine_batches_fefo_lookup` | `medicine_batches` | `("medicine_id", "is_blocked", "expiry_date" ASC)` | Maps boolean lock flag `is_blocked` (DTO `status` is computed in application code) and `expiry_date ASC` for `UC45` FEFO selection. |
+| `ix_service_prices_effective_lookup` | `service_prices` | `("service_id", "effective_from" DESC)` | `hospital_id` lives on `services` and effective start is stored in `effective_from` (`validFrom` is DTO naming). |
+
+> **Production lock note**: `021` uses `BEGIN; SET LOCAL lock_timeout = '5s'; CREATE INDEX IF NOT EXISTS …; COMMIT;` to match repository migration conventions. Standard `CREATE INDEX` acquires a `SHARE` lock that blocks concurrent writes while building the index; for large active production tables, run during a maintenance window or apply `CREATE INDEX CONCURRENTLY` outside a transaction block.
 
 ## Conventions
 
