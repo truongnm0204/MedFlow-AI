@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Services;
+using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Visits;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
@@ -30,6 +31,14 @@ public sealed partial class DiagnosticServiceAdminService
         "DONE",
         "FINALIZED",
         "VERIFIED",
+    ];
+
+    private static readonly string[] ActiveQueueEntryStatuses =
+    [
+        "WAITING",
+        "READY",
+        "CALLED",
+        "IN_PROGRESS",
     ];
 
     private static readonly JsonSerializerOptions AuditJsonOptions = new()
@@ -242,56 +251,189 @@ public sealed partial class DiagnosticServiceAdminService
         }
 
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
+        var todayLocal = HospitalClock.GetToday(_timeProvider);
         var (_, hospitalId) = await EnsureHospitalConfigWriteAccessAsync(actorUserId, nowUtc, ct);
-        var service = await FindScopedServiceForUpdateAsync(hospitalId, serviceId, ct);
-        if (service.IsActive == false)
+
+        await using var tx = await AppointmentBookingService.BeginTransactionSafeAsync(_db, ct);
+
+        Service service;
+
+        try
         {
-            throw new ConflictException("Dịch vụ cận lâm sàng đã ngừng hoạt động trước đó.");
-        }
+            // ADR-0059 lock order: services (04) -> examination_slots (07, ASC) -> queue_service_points (10, ASC)
+            await _db.TryLockServiceForUpdateAsync(serviceId, ct);
 
-        var openOrderCount = await _db.DiagnosticOrders.CountAsync(
-            o => o.ServiceId == serviceId &&
-                 (o.Status == null || !ClosedDiagnosticOrderStatuses.Contains(o.Status.ToUpper())),
-            ct);
-        if (openOrderCount > 0)
-        {
-            throw new ConflictException(
-                $"Không thể ngừng hoạt động: còn {openOrderCount} phiếu chỉ định cận lâm sàng chưa hoàn tất sử dụng dịch vụ này.");
-        }
-
-        var activeServicePointCount = await _db.QueueServicePoints.CountAsync(
-            sp => sp.ServiceId == serviceId
-                  && sp.PointType != null
-                  && sp.PointType.ToUpper() == DiagnosticServiceType
-                  && (sp.HospitalId == hospitalId || sp.HospitalId == null)
-                  && sp.IsActive != false,
-            ct);
-
-        service.IsActive = false;
-
-        await using var tx = await _db.BeginTransactionAsync(ct);
-        _db.AuditLogs.Add(new AuditLog
-        {
-            ActorUserId = actorUserId,
-            HospitalId = hospitalId,
-            Action = DiagnosticServiceDeactivatedAction,
-            EntityType = DiagnosticServiceEntityType,
-            EntityId = service.Id.ToString(CultureInfo.InvariantCulture),
-            Reason = reason,
-            ChangeData = JsonSerializer.Serialize(new
+            List<ExaminationSlot> openSlots = [];
+            try
             {
-                serviceId = service.Id,
-                serviceCode = service.ServiceCode,
-                previousStatus = "ACTIVE",
-                status = "INACTIVE",
-                activeServicePointCount,
-                ipAddress,
-            }, AuditJsonOptions),
-            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
-            OccurredAt = nowUtc,
-        });
-        await _db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
+                var openSlotIds = await _db.ExaminationSlots
+                    .AsNoTracking()
+                    .Where(s =>
+                        s.ServiceId == serviceId &&
+                        s.Status != "CLOSED" &&
+                        s.Status != "CANCELLED" &&
+                        (s.EndsAt == null || s.EndsAt > nowLocal))
+                    .OrderBy(s => s.Id)
+                    .Select(s => s.Id)
+                    .ToListAsync(ct);
+
+                if (openSlotIds.Count > 0)
+                {
+                    await _db.TryLockSlotsForUpdateAsync(openSlotIds, ct);
+                }
+
+                openSlots = await _db.ExaminationSlots
+                    .Where(s =>
+                        s.ServiceId == serviceId &&
+                        s.Status != "CLOSED" &&
+                        s.Status != "CANCELLED" &&
+                        (s.EndsAt == null || s.EndsAt > nowLocal))
+                    .OrderBy(s => s.Id)
+                    .ToListAsync(ct);
+            }
+            catch (NotSupportedException)
+            {
+                openSlots = [];
+            }
+
+            var linkedServicePoints = await _db.QueueServicePoints
+                .Where(sp =>
+                    sp.ServiceId == serviceId &&
+                    (sp.HospitalId == hospitalId || sp.HospitalId == null))
+                .OrderBy(sp => sp.Id)
+                .ToListAsync(ct);
+
+            if (linkedServicePoints.Count > 0)
+            {
+                await _db.TryLockServicePointsForUpdateAsync(
+                    linkedServicePoints.Select(sp => sp.Id).ToArray(),
+                    ct);
+            }
+
+            service = await FindScopedServiceForUpdateAsync(hospitalId, serviceId, ct);
+            if (service.IsActive == false)
+            {
+                throw new ConflictException("Dịch vụ cận lâm sàng đã ngừng hoạt động trước đó.");
+            }
+
+            var openOrderCount = await _db.DiagnosticOrders.CountAsync(
+                o => o.ServiceId == serviceId &&
+                     (o.Status == null || !ClosedDiagnosticOrderStatuses.Contains(o.Status.ToUpper())),
+                ct);
+            if (openOrderCount > 0)
+            {
+                throw new ConflictException(
+                    $"Không thể ngừng hoạt động: còn {openOrderCount} phiếu chỉ định cận lâm sàng chưa hoàn tất sử dụng dịch vụ này.");
+            }
+
+            if (linkedServicePoints.Count > 0)
+            {
+                try
+                {
+                    var spIds = linkedServicePoints.Select(sp => sp.Id).ToList();
+                    var hasActiveQueue = await _db.QueueEntries
+                        .AsNoTracking()
+                        .AnyAsync(
+                            q => (q.QueueDate == null || q.QueueDate == todayLocal) &&
+                                 q.Status != null &&
+                                 ActiveQueueEntryStatuses.Contains(q.Status.ToUpper()) &&
+                                 ((q.CurrentServicePointId != null && spIds.Contains(q.CurrentServicePointId.Value)) ||
+                                  (q.CurrentServicePointId == null && q.ServicePointId != null && spIds.Contains(q.ServicePointId.Value))),
+                            ct);
+
+                    if (hasActiveQueue)
+                    {
+                        throw new ConflictException(
+                            "Không thể ngừng hoạt động dịch vụ cận lâm sàng khi còn người bệnh đang chờ hoặc đang thực hiện tại điểm dịch vụ hôm nay. Vui lòng chuyển giao hoặc hoàn tất trước.");
+                    }
+                }
+                catch (NotSupportedException)
+                {
+                    // Minimal test contexts without QueueEntries configured.
+                }
+            }
+
+            if (openSlots.Count > 0)
+            {
+                try
+                {
+                    var openSlotIds = openSlots.Select(s => s.Id).ToList();
+                    var hasFutureBookings = await _db.Appointments
+                        .AsNoTracking()
+                        .AnyAsync(
+                            a => a.SlotId != null &&
+                                 openSlotIds.Contains(a.SlotId.Value) &&
+                                 (a.Status == null ||
+                                  (a.Status.ToUpper() != "CANCELLED" &&
+                                   a.Status.ToUpper() != "NO_SHOW" &&
+                                   a.Status.ToUpper() != "COMPLETED")),
+                            ct);
+
+                    if (hasFutureBookings)
+                    {
+                        throw new ConflictException(
+                            "Không thể ngừng hoạt động dịch vụ cận lâm sàng khi còn lịch hẹn sắp tới chưa xử lý.");
+                    }
+                }
+                catch (NotSupportedException)
+                {
+                    // Minimal test contexts without Appointments configured.
+                }
+
+                foreach (var slot in openSlots)
+                {
+                    slot.Status = "CLOSED";
+                }
+            }
+
+            var activeDiagnosticPoints = linkedServicePoints
+                .Where(sp =>
+                    sp.PointType != null &&
+                    sp.PointType.ToUpper() == DiagnosticServiceType &&
+                    sp.IsActive != false)
+                .ToList();
+            var activeServicePointCount = activeDiagnosticPoints.Count;
+
+            foreach (var sp in linkedServicePoints.Where(sp => sp.IsActive != false))
+            {
+                sp.IsActive = false;
+            }
+
+            service.IsActive = false;
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                ActorUserId = actorUserId,
+                HospitalId = hospitalId,
+                Action = DiagnosticServiceDeactivatedAction,
+                EntityType = DiagnosticServiceEntityType,
+                EntityId = service.Id.ToString(CultureInfo.InvariantCulture),
+                Reason = reason,
+                ChangeData = JsonSerializer.Serialize(new
+                {
+                    serviceId = service.Id,
+                    serviceCode = service.ServiceCode,
+                    previousStatus = "ACTIVE",
+                    status = "INACTIVE",
+                    activeServicePointCount,
+                    closedServicePointCount = activeServicePointCount,
+                    ipAddress,
+                }, AuditJsonOptions),
+                IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+                OccurredAt = nowUtc,
+            });
+            await _db.SaveChangesAsync(ct);
+            if (tx is not null)
+            {
+                await tx.CommitAsync(ct);
+            }
+        }
+        catch (Exception ex) when (AppointmentBookingService.IsConcurrencyOrLockConflict(ex))
+        {
+            await AppointmentBookingService.RollbackAndClearTrackerAsync(_db, tx, ct);
+            throw new ConflictException("Dịch vụ cận lâm sàng đang được thao tác đồng thời. Vui lòng tải lại và thử lại.");
+        }
 
         return await LoadItemAsync(hospitalId, service.Id, nowUtc, ct);
     }

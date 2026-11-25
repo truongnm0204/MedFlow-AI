@@ -16,6 +16,7 @@ export interface BookingPatientProfile {
   nationalId?: string;
   address?: string;
   activeBookedDates?: string[];
+  isIdentityVerified?: boolean;
 }
 
 export type DateScheduleStatus = 'FULL' | 'AVAILABLE' | 'FEW_SLOTS' | 'OFF';

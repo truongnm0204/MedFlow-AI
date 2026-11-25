@@ -4,6 +4,7 @@ using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.ExaminationRooms;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Appointments;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
@@ -15,6 +16,26 @@ namespace MedFlow.Application.Services.ExaminationRooms;
 public sealed class ExaminationRoomService : IExaminationRoomService
 {
     private const string UnknownFacilityFallback = "Chưa cập nhật";
+
+    private static readonly string[] ActiveClinicalVisitStatuses =
+    [
+        "CHECKED_IN",
+        "WAITING",
+        "CALLED",
+        "IN_PROGRESS",
+        "IN_CONSULTATION",
+        "AWAITING_DIAGNOSTIC",
+        "AWAITING_RESULTS",
+        "RETURN_CONSULTATION",
+    ];
+
+    private static readonly string[] ActiveQueueEntryStatuses =
+    [
+        "WAITING",
+        "READY",
+        "CALLED",
+        "IN_PROGRESS",
+    ];
 
     private readonly IApplicationDbContext _dbContext;
     private readonly TimeProvider _timeProvider;
@@ -616,25 +637,58 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             newStatus = activeFlag ? "ACTIVE" : "INACTIVE";
         }
 
-        if (string.Equals(newStatus, "INACTIVE", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(room.Status, "INACTIVE", StringComparison.OrdinalIgnoreCase))
-        {
-            var nowLocal = HospitalClock.GetNow(_timeProvider);
-            var (assignedDoctors, activeVisits, _, pendingAppointments, blockingReason, _) =
-                await GetRoomDependenciesInternalAsync(room, nowLocal, ct);
+        var isTransitioningNonActive = newStatus is "INACTIVE" or "MAINTENANCE" or "SUSPENDED" &&
+            !string.Equals(room.Status, newStatus, StringComparison.OrdinalIgnoreCase);
 
-            if (activeVisits > 0 || assignedDoctors > 0 || pendingAppointments > 0)
+        await using var tx = isTransitioningNonActive
+            ? await AppointmentBookingService.BeginTransactionSafeAsync(_dbContext, ct)
+            : null;
+
+        try
+        {
+            if (isTransitioningNonActive)
             {
-                throw new ConflictException(blockingReason ?? "Không thể ngừng hoạt động buồng khám khi còn dữ liệu phụ thuộc đang hoạt động.");
+                var nowLocal = HospitalClock.GetNow(_timeProvider);
+                var todayLocal = HospitalClock.GetToday(_timeProvider);
+
+                var linkedSp = await LockRoomSlotsAndServicePointsAsync(room.Id, nowLocal, ct);
+                var (assignedDoctors, activeVisits, _, pendingAppointments, blockingReason, futureSlots) =
+                    await GetRoomDependenciesInternalAsync(room, nowLocal, ct);
+
+                await EnsureNoActiveRoomQueueEntriesAsync(room.Id, linkedSp, todayLocal, ct);
+
+                if (activeVisits > 0 || assignedDoctors > 0 || pendingAppointments > 0)
+                {
+                    throw new ConflictException(blockingReason ?? "Không thể ngừng hoạt động buồng khám khi còn dữ liệu phụ thuộc đang hoạt động.");
+                }
+
+                foreach (var slot in futureSlots)
+                {
+                    slot.Status = "CLOSED";
+                }
+
+                foreach (var sp in linkedSp.Where(sp => sp.IsActive != false))
+                {
+                    sp.IsActive = false;
+                }
+            }
+
+            if (newStatus is not null)
+            {
+                room.Status = newStatus;
+            }
+
+            await _dbContext.SaveChangesAsync(ct);
+            if (tx is not null)
+            {
+                await tx.CommitAsync(ct);
             }
         }
-
-        if (newStatus is not null)
+        catch (Exception ex) when (AppointmentBookingService.IsConcurrencyOrLockConflict(ex))
         {
-            room.Status = newStatus;
+            await AppointmentBookingService.RollbackAndClearTrackerAsync(_dbContext, tx, ct);
+            throw new ConflictException("Buồng khám đang được thao tác đồng thời. Vui lòng tải lại và thử lại.");
         }
-
-        await _dbContext.SaveChangesAsync(ct);
 
         var isActive = string.Equals(room.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase);
 
@@ -727,58 +781,98 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             throw new ConflictException($"Buồng khám '{room.Name}' ({room.RoomCode}) hiện đã ở trạng thái ngừng hoạt động.");
         }
 
-        var nowLocal = HospitalClock.GetNow(_timeProvider);
-        var (assignedDoctors, activeVisits, activeSlots, pendingAppointments, blockingReason, futureSlots) =
-            await GetRoomDependenciesInternalAsync(room, nowLocal, ct);
+        await using var tx = await AppointmentBookingService.BeginTransactionSafeAsync(_dbContext, ct);
 
-        if (activeVisits > 0 || assignedDoctors > 0 || pendingAppointments > 0)
-        {
-            throw new ConflictException(blockingReason ?? "Buồng khám còn các liên kết và dữ liệu phụ thuộc đang hoạt động.");
-        }
-
+        int assignedDoctors;
+        int activeVisits;
+        int activeSlots;
+        int pendingAppointments;
         var closedSlotsCount = 0;
-        if (activeSlots > 0)
+
+        try
         {
-            if (request?.ConfirmUnderstood != true)
+            var nowLocal = HospitalClock.GetNow(_timeProvider);
+            var todayLocal = HospitalClock.GetToday(_timeProvider);
+
+            var linkedSp = await LockRoomSlotsAndServicePointsAsync(room.Id, nowLocal, ct);
+
+            var reloadedRoom = await _dbContext.HospitalRooms.FirstOrDefaultAsync(r => r.Id == room.Id, ct)
+                ?? throw new NotFoundException("HospitalRoom", room.Id);
+            if (string.Equals(reloadedRoom.Status, "INACTIVE", StringComparison.OrdinalIgnoreCase))
             {
-                throw new ConflictException(blockingReason ?? $"Buồng khám còn {activeSlots} ca khám chưa đóng. Vui lòng xác nhận để tiếp tục.");
+                throw new ConflictException($"Buồng khám '{reloadedRoom.Name}' ({reloadedRoom.RoomCode}) hiện đã ở trạng thái ngừng hoạt động.");
             }
 
-            foreach (var slot in futureSlots)
+            string? blockingReason;
+            List<ExaminationSlot> futureSlots;
+            (assignedDoctors, activeVisits, activeSlots, pendingAppointments, blockingReason, futureSlots) =
+                await GetRoomDependenciesInternalAsync(reloadedRoom, nowLocal, ct);
+
+            await EnsureNoActiveRoomQueueEntriesAsync(reloadedRoom.Id, linkedSp, todayLocal, ct);
+
+            if (activeVisits > 0 || assignedDoctors > 0 || pendingAppointments > 0)
             {
-                slot.Status = "CLOSED";
+                throw new ConflictException(blockingReason ?? "Buồng khám còn các liên kết và dữ liệu phụ thuộc đang hoạt động.");
             }
-            closedSlotsCount = futureSlots.Count;
-        }
 
-        var previousStatus = room.Status;
-        room.Status = "INACTIVE";
-
-        _dbContext.AuditLogs.Add(new AuditLog
-        {
-            ActorUserId = actorUserId,
-            HospitalId = room.HospitalId ?? actorHospitalId,
-            Action = "ROOM_DEACTIVATED",
-            EntityType = "HospitalRoom",
-            EntityId = room.Id.ToString(),
-            Reason = request?.Reason,
-            ChangeData = JsonSerializer.Serialize(new
+            if (activeSlots > 0)
             {
-                room.RoomCode,
-                room.Name,
-                room.HospitalId,
-                PreviousStatus = previousStatus,
-                NewStatus = "INACTIVE",
-                ClosedSlotsCount = closedSlotsCount,
+                if (request?.ConfirmUnderstood != true)
+                {
+                    throw new ConflictException(blockingReason ?? $"Buồng khám còn {activeSlots} ca khám chưa đóng. Vui lòng xác nhận để tiếp tục.");
+                }
+
+                foreach (var slot in futureSlots)
+                {
+                    slot.Status = "CLOSED";
+                }
+                closedSlotsCount = futureSlots.Count;
+            }
+
+            foreach (var sp in linkedSp.Where(sp => sp.IsActive != false))
+            {
+                sp.IsActive = false;
+            }
+
+            var previousStatus = reloadedRoom.Status;
+            reloadedRoom.Status = "INACTIVE";
+            room.Status = "INACTIVE";
+
+            _dbContext.AuditLogs.Add(new AuditLog
+            {
+                ActorUserId = actorUserId,
+                HospitalId = reloadedRoom.HospitalId ?? actorHospitalId,
+                Action = "ROOM_DEACTIVATED",
+                EntityType = "HospitalRoom",
+                EntityId = reloadedRoom.Id.ToString(),
                 Reason = request?.Reason,
-                Note = request?.Note,
-                Timestamp = nowUtcUnspecified
-            }),
-            IpAddress = !string.IsNullOrWhiteSpace(ipAddress) && IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
-            OccurredAt = nowUtcUnspecified
-        });
+                ChangeData = JsonSerializer.Serialize(new
+                {
+                    reloadedRoom.RoomCode,
+                    reloadedRoom.Name,
+                    reloadedRoom.HospitalId,
+                    PreviousStatus = previousStatus,
+                    NewStatus = "INACTIVE",
+                    ClosedSlotsCount = closedSlotsCount,
+                    Reason = request?.Reason,
+                    Note = request?.Note,
+                    Timestamp = nowUtcUnspecified
+                }),
+                IpAddress = !string.IsNullOrWhiteSpace(ipAddress) && IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
+                OccurredAt = DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc)
+            });
 
-        await _dbContext.SaveChangesAsync(ct);
+            await _dbContext.SaveChangesAsync(ct);
+            if (tx is not null)
+            {
+                await tx.CommitAsync(ct);
+            }
+        }
+        catch (Exception ex) when (AppointmentBookingService.IsConcurrencyOrLockConflict(ex))
+        {
+            await AppointmentBookingService.RollbackAndClearTrackerAsync(_dbContext, tx, ct);
+            throw new ConflictException("Buồng khám đang được thao tác đồng thời. Vui lòng tải lại và thử lại.");
+        }
 
         var facility = await LoadFacilityNameAsync(room.HospitalId, ct);
         var summary = new ExaminationRoomDependencySummaryDto(
@@ -859,7 +953,7 @@ public sealed class ExaminationRoomService : IExaminationRoomService
                 Timestamp = nowUtcUnspecified
             }),
             IpAddress = !string.IsNullOrWhiteSpace(ipAddress) && IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
-            OccurredAt = nowUtcUnspecified
+            OccurredAt = DateTime.SpecifyKind(nowUtc, DateTimeKind.Utc)
         });
 
         await _dbContext.SaveChangesAsync(ct);
@@ -915,6 +1009,98 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             .FirstOrDefaultAsync(r => r.RoomCode.ToUpper() == upper, ct);
     }
 
+    private async Task<List<QueueServicePoint>> LockRoomSlotsAndServicePointsAsync(
+        long roomId,
+        DateTime nowLocal,
+        CancellationToken ct)
+    {
+        // ADR-0059 lock order: hospital_rooms (06) -> examination_slots (07, ASC) -> queue_service_points (10, ASC)
+        await _dbContext.TryLockRoomForUpdateAsync(roomId, ct);
+
+        try
+        {
+            var openSlotIds = await _dbContext.ExaminationSlots
+                .AsNoTracking()
+                .Where(s =>
+                    s.RoomId == roomId &&
+                    s.Status != "CLOSED" &&
+                    s.Status != "CANCELLED" &&
+                    (s.EndsAt == null || s.EndsAt > nowLocal))
+                .OrderBy(s => s.Id)
+                .Select(s => s.Id)
+                .ToListAsync(ct);
+
+            if (openSlotIds.Count > 0)
+            {
+                await _dbContext.TryLockSlotsForUpdateAsync(openSlotIds, ct);
+            }
+        }
+        catch (NotSupportedException)
+        {
+            // Minimal test contexts without ExaminationSlots configured.
+        }
+
+        try
+        {
+            var spIds = await _dbContext.QueueServicePoints
+                .AsNoTracking()
+                .Where(sp => sp.RoomId == roomId)
+                .OrderBy(sp => sp.Id)
+                .Select(sp => sp.Id)
+                .ToListAsync(ct);
+
+            if (spIds.Count > 0)
+            {
+                await _dbContext.TryLockServicePointsForUpdateAsync(spIds, ct);
+            }
+
+            return await _dbContext.QueueServicePoints
+                .Where(sp => sp.RoomId == roomId)
+                .OrderBy(sp => sp.Id)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    private async Task EnsureNoActiveRoomQueueEntriesAsync(
+        long roomId,
+        IReadOnlyCollection<QueueServicePoint> linkedServicePoints,
+        DateOnly todayLocal,
+        CancellationToken ct)
+    {
+        if (linkedServicePoints.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var spIds = linkedServicePoints.Select(sp => sp.Id).ToList();
+            var hasActiveQueue = await _dbContext.QueueEntries
+                .AsNoTracking()
+                .AnyAsync(
+                    q => (q.QueueDate == null || q.QueueDate == todayLocal) &&
+                         q.Status != null &&
+                         ActiveQueueEntryStatuses.Contains(q.Status.ToUpper()) &&
+                         ((q.CurrentServicePointId != null && spIds.Contains(q.CurrentServicePointId.Value)) ||
+                          (q.CurrentServicePointId == null && q.ServicePointId != null && spIds.Contains(q.ServicePointId.Value))),
+                    ct);
+
+            if (hasActiveQueue)
+            {
+                throw new ConflictException(
+                    $"Không thể ngừng hoạt động buồng khám (ID: {roomId}) khi còn người bệnh đang chờ hoặc đang khám trong hàng đợi hôm nay. Vui lòng chuyển giao hoặc hoàn tất lượt khám trước.");
+            }
+        }
+        catch (NotSupportedException)
+        {
+            // Minimal test contexts without QueueEntries configured.
+        }
+    }
+
     private async Task<(int AssignedDoctors, int ActiveVisits, int ActiveSlots, int PendingAppointments, string? BlockingReason, List<ExaminationSlot> FutureSlots)> GetRoomDependenciesInternalAsync(
         HospitalRoom room,
         DateTime nowLocal,
@@ -927,7 +1113,8 @@ public sealed class ExaminationRoomService : IExaminationRoomService
             var activeVisits = await _dbContext.Visits
                 .AsNoTracking()
                 .Where(v => v.ExaminationRoomId == room.Id &&
-                            (v.Status == "WAITING" || v.Status == "CALLED" || v.Status == "IN_PROGRESS" || v.Status == "IN_CONSULTATION"))
+                            v.Status != null &&
+                            ActiveClinicalVisitStatuses.Contains(v.Status.ToUpper()))
                 .ToListAsync(ct);
 
             activeVisitsCount = activeVisits.Count;

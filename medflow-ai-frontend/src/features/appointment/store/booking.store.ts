@@ -4,6 +4,17 @@ import { getHospitalTodayIso } from '@/shared/lib/hospital-date';
 
 import type { BookingMode } from '../types/booking-entry.types';
 
+interface SelectServiceOptions {
+  preserveDoctor?: boolean;
+}
+
+interface RebookSelectionPayload {
+  doctorId?: string | null;
+  serviceId?: string | null;
+  serviceName?: string | null;
+  patientId?: string | null;
+}
+
 interface BookingState {
   selectedDoctorId: string | null;
   selectedServiceId: string | null;
@@ -16,7 +27,8 @@ interface BookingState {
   bookingMode: BookingMode | null;
   symptomNote: string;
   selectDoctor: (id: string) => void;
-  selectService: (id: string, name?: string) => void;
+  selectService: (id: string, name?: string, options?: SelectServiceOptions) => void;
+  prepareRebook: (payload: RebookSelectionPayload) => void;
   selectPatient: (id: string) => void;
   selectDate: (dateIso: string) => void;
   selectSlot: (slotId: string) => void;
@@ -39,9 +51,21 @@ export const useBookingStore = create<BookingState>((set) => ({
   bookingMode: null,
   symptomNote: '',
   selectDoctor: (id) =>
-    set({ selectedDoctorId: id, selectedServiceId: null, selectedServiceName: null }),
-  selectService: (id, name) =>
-    set({ selectedServiceId: id, selectedServiceName: name ?? null, selectedDoctorId: null }),
+    set({ selectedDoctorId: id || null, selectedServiceId: null, selectedServiceName: null }),
+  selectService: (id, name, options) =>
+    set((state) => ({
+      selectedServiceId: id || null,
+      selectedServiceName: name ?? null,
+      selectedDoctorId: options?.preserveDoctor ? state.selectedDoctorId : null,
+    })),
+  prepareRebook: ({ doctorId, serviceId, serviceName, patientId }) =>
+    set((state) => ({
+      selectedDoctorId: doctorId?.trim() ? doctorId.trim() : null,
+      selectedServiceId: serviceId?.trim() ? serviceId.trim() : null,
+      selectedServiceName: serviceName?.trim() ? serviceName.trim() : null,
+      selectedPatientId: patientId?.trim() ? patientId.trim() : state.selectedPatientId,
+      bookingMode: doctorId?.trim() ? 'DOCTOR' : 'SERVICE',
+    })),
   selectPatient: (id) => set({ selectedPatientId: id }),
   selectDate: (dateIso) => set({ selectedDateIso: dateIso }),
   selectSlot: (slotId) => set({ selectedSlotId: slotId }),
