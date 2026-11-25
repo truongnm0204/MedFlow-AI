@@ -4,6 +4,7 @@ using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
+
 namespace MedFlow.Application.Services.Appointments;
 
 public sealed class AppointmentDetailService : IAppointmentDetailService
@@ -60,9 +61,14 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
             view.Appointment,
             ct);
 
+        var hasNonCancelledVisit = view.Visit is not null &&
+            !string.Equals(view.Visit.Status?.Trim(), AppointmentBookingRules.CancelledStatus, StringComparison.OrdinalIgnoreCase);
+
         var availableActions = await BuildAvailableActionsAsync(
+            view.Appointment,
             view.Appointment.Slot!,
             item.Status,
+            hasNonCancelledVisit,
             nowLocal,
             ct);
 
@@ -101,9 +107,11 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
             "Bạn không có quyền cập nhật lịch hẹn này.",
             ct);
 
+        var hasNonCancelledVisit = view.Visit is not null &&
+            !string.Equals(view.Visit.Status?.Trim(), AppointmentBookingRules.CancelledStatus, StringComparison.OrdinalIgnoreCase);
         var status = AppointmentReadModel.ResolveEffectiveStatus(view.Appointment, view.Visit);
         var slotStart = view.Appointment.Slot?.StartsAt;
-        if (!AppointmentReadModel.IsModifiableStatus(status) || !slotStart.HasValue || slotStart.Value <= nowLocal)
+        if (hasNonCancelledVisit || !AppointmentReadModel.IsModifiableStatus(status) || !slotStart.HasValue || slotStart.Value <= nowLocal)
             throw new ConflictException("Lịch hẹn ở trạng thái hiện tại không thể cập nhật lý do khám.");
 
         var tracked = await _db.Appointments.FindAsync([view.Appointment.Id], ct)
@@ -119,25 +127,36 @@ public sealed class AppointmentDetailService : IAppointmentDetailService
     }
 
     private async Task<IReadOnlyList<string>> BuildAvailableActionsAsync(
+        Appointment appointment,
         ExaminationSlot slot,
         string status,
+        bool hasNonCancelledVisit,
         DateTime nowLocal,
         CancellationToken ct)
     {
         var actions = new List<string>(6);
         var start = slot.StartsAt!.Value;
-        var modifiable = AppointmentReadModel.IsModifiableStatus(status) && start > nowLocal;
+        var modifiable = !hasNonCancelledVisit && AppointmentReadModel.IsModifiableStatus(status) && start > nowLocal;
 
         if (modifiable)
         {
-            var hospitalId = slot.Service?.HospitalId ?? slot.Doctor?.HospitalId ?? 0L;
+            var hospitalId = slot.Service?.HospitalId
+                ?? slot.Room?.HospitalId
+                ?? slot.Doctor?.HospitalId
+                ?? 0L;
             var policy = await _policyService.GetEffectiveAsync(hospitalId, ct);
+            var (_, rescheduleCount) = await AppointmentRescheduleService.ResolveLineageRescheduleStateAsync(_db, appointment, ct);
 
             if (AppointmentReadModel.IsWithinCancelWindow(start, nowLocal, policy.CancelMinimumHours))
                 actions.Add(ActionCancel);
 
-            if (start >= nowLocal.AddHours(policy.RescheduleMinimumHours))
+            var allowsOnlineBooking = slot.Service?.AllowsOnlineBooking != false;
+            if (allowsOnlineBooking &&
+                start >= nowLocal.AddHours(policy.RescheduleMinimumHours) &&
+                rescheduleCount < policy.MaxReschedules)
+            {
                 actions.Add(ActionReschedule);
+            }
 
             actions.Add(ActionUpdateReason);
         }

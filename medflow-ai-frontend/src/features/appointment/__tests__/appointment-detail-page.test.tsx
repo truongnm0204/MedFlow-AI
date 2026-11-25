@@ -9,6 +9,7 @@ import { apiClient } from '@/shared/lib/axios';
 import { MOCK_APPOINTMENTS, resetMockAppointments } from '../data/appointment-list-mock';
 import { getMockAvailableSlotsPayload } from '../data/slot-booking-mock';
 import { AppointmentDetailPage } from '../pages/appointment-detail-page';
+import { useBookingStore } from '../store/booking.store';
 
 function renderAppointmentDetailPage(initialEntry = '/appointments/apt-1013-0902') {
   const queryClient = new QueryClient({
@@ -311,5 +312,45 @@ describe('AppointmentDetailPage (SCR-APT-09 — Issue #53 & #812)', () => {
     expect(
       screen.getByText(/Bạn không có quyền xem chi tiết lịch hẹn của tài khoản bệnh nhân khác/i),
     ).toBeInTheDocument();
+  });
+
+  it('renders sanitized placeholders instead of hardcoded 001086001234 CCCD or fake epigastric symptom when fields are empty', async () => {
+    const target = MOCK_APPOINTMENTS.find((a) => a.id === 'apt-1013-0902')!;
+    target.patientNationalId = undefined;
+    target.patientBirthYearLabel = '';
+    target.reasonForVisit = '';
+
+    renderAppointmentDetailPage('/appointments/apt-1013-0902');
+
+    expect(
+      await screen.findByRole('heading', { name: 'Chi Tiết Phiếu Hẹn Khám Ngoại Trú' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('001086001234')).not.toBeInTheDocument();
+    expect(screen.queryByText('1986 (40 tuổi)')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Đau tức vùng thượng vị/i)).not.toBeInTheDocument();
+    expect(screen.getByText('Đã bảo mật')).toBeInTheDocument();
+    expect(screen.getByText('Chưa ghi nhận triệu chứng ban đầu.')).toBeInTheDocument();
+  });
+
+  it('hides Đổi Lịch Khám when availableActions omits RESCHEDULE (MaxReschedules reached) and preserves selectedDoctorId on rebook', async () => {
+    useBookingStore.getState().reset();
+    const upcoming = MOCK_APPOINTMENTS.find((a) => a.id === 'apt-1013-0902')!;
+    upcoming.availableActions = ['CANCEL', 'UPDATE_REASON', 'PRINT_SLIP', 'TRACK_QUEUE'];
+
+    const view = renderAppointmentDetailPage('/appointments/apt-1013-0902');
+    expect(
+      await screen.findByRole('heading', { name: 'Chi Tiết Phiếu Hẹn Khám Ngoại Trú' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Đổi Lịch Khám/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /Hủy lịch hẹn/i })).toBeInTheDocument();
+    view.unmount();
+
+    renderAppointmentDetailPage('/appointments/apt-0815-0830');
+    const rebookBtn = await screen.findByRole('button', { name: /Đặt lại Chuyên khoa Tiêu Hóa/i });
+    fireEvent.click(rebookBtn);
+
+    const store = useBookingStore.getState();
+    expect(store.selectedDoctorId).toBe('doc-tran-quoc-tuan');
+    expect(store.selectedServiceId).toBe('srv-gastro-01');
   });
 });

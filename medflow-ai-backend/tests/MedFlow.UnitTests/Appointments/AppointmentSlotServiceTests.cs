@@ -2,6 +2,7 @@ using System.Globalization;
 using MedFlow.Application.DTOs.Appointments;
 using MedFlow.Application.DTOs.Policies;
 using MedFlow.Application.Interfaces.Persistence;
+using MedFlow.Application.Options;
 using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Application.Services.Policies;
@@ -11,6 +12,7 @@ using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Options;
 
 namespace MedFlow.UnitTests.Appointments;
 
@@ -201,7 +203,10 @@ public sealed class AppointmentSlotServiceTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    private AppointmentSlotService CreateSut(int windowDays = 30, int leadHours = 2)
+    private AppointmentSlotService CreateSut(
+        int windowDays = 30,
+        int leadHours = 2,
+        string identityMode = "dual")
     {
         var timeProvider = new FixedTimeProvider(DefaultUtcNow);
         return new AppointmentSlotService(
@@ -209,7 +214,8 @@ public sealed class AppointmentSlotServiceTests : IDisposable
             new DoctorCatalogService(_db, timeProvider),
             new ExaminationServiceCatalogService(_db),
             new StubPolicyService(windowDays, leadHours),
-            timeProvider);
+            timeProvider,
+            Options.Create(new IdentityHashOptions { Mode = identityMode }));
     }
 
     private static void SeedBaseData(SlotTestDbContext db)
@@ -545,7 +551,7 @@ public sealed class AppointmentSlotServiceTests : IDisposable
     [Fact]
     public async Task GetAvailableSlotsAsync_SevenDayStrip_FormatsVietnameseDateLabelsAndMonthLabel()
     {
-        var sut = CreateSut();
+        var sut = CreateSut(windowDays: 6);
         var result = await sut.GetAvailableSlotsAsync(1, new GetAvailableSlotsRequest
         {
             DoctorId = "DOC-001",
@@ -746,5 +752,88 @@ public sealed class AppointmentSlotServiceTests : IDisposable
             {
                 DoctorId = "DOC-001",
             }));
+    }
+
+    [Theory]
+    [InlineData(14, 15)]
+    [InlineData(30, 31)]
+    [InlineData(365, 366)]
+    public async Task GetAvailableSlotsAsync_DynamicBookingWindowDays_ReturnsFullHorizonDateStrip(
+        int windowDays,
+        int expectedStripCount)
+    {
+        var sut = CreateSut(windowDays: windowDays);
+        var result = await sut.GetAvailableSlotsAsync(1, new GetAvailableSlotsRequest
+        {
+            DoctorId = "DOC-001",
+        });
+
+        Assert.Equal(expectedStripCount, result.Dates.Count);
+        Assert.Equal("2026-11-02", result.Dates[0].DateIso);
+        Assert.Equal(
+            new DateOnly(2026, 11, 2).AddDays(windowDays).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            result.Dates[^1].DateIso);
+    }
+
+    [Fact]
+    public async Task GetAvailableSlotsAsync_ExcludesSlotsInMaintenanceRoom_AndIncludesActiveWalkInVisitDates()
+    {
+        _db.HospitalRooms.Add(new HospitalRoom
+        {
+            Id = 9,
+            HospitalId = 1,
+            DepartmentId = 2,
+            RoomCode = "RM-MAINT",
+            Name = "Phòng bảo trì",
+            RoomType = "EXAMINATION",
+            Status = "MAINTENANCE",
+        });
+        _db.ExaminationSlots.Add(new ExaminationSlot
+        {
+            Id = 1201,
+            DoctorId = 1,
+            ServiceId = 1,
+            RoomId = 9,
+            StartsAt = new DateTime(2026, 11, 3, 9, 0, 0),
+            EndsAt = new DateTime(2026, 11, 3, 9, 30, 0),
+            Capacity = 4,
+            Status = "OPEN",
+        });
+        _db.Visits.Add(new Visit
+        {
+            Id = 900,
+            PatientId = 1,
+            AppointmentId = null,
+            Status = "WAITING",
+            CheckedInAt = new DateTime(2026, 11, 2, 7, 30, 0),
+        });
+        await _db.SaveChangesAsync();
+
+        var sut = CreateSut();
+        var result = await sut.GetAvailableSlotsAsync(1, new GetAvailableSlotsRequest
+        {
+            DoctorId = "DOC-001",
+            DateIso = "2026-11-03",
+        });
+
+        Assert.Empty(result.MorningSlots);
+        Assert.Contains("2026-11-02", result.Profiles[0].ActiveBookedDates!);
+    }
+
+    [Fact]
+    public async Task GetAvailableSlotsAsync_IdentityHashModeHmacVsDual_SetsIsIdentityVerifiedAccurately()
+    {
+        var selfPatient = await _db.Patients.SingleAsync(p => p.Id == 1);
+        selfPatient.IdentificationHash = "legacy-sha256-hash";
+        selfPatient.IdentificationHashHmac = null;
+        await _db.SaveChangesAsync();
+
+        var dualRes = await CreateSut(identityMode: "dual")
+            .GetAvailableSlotsAsync(1, new GetAvailableSlotsRequest { DoctorId = "DOC-001" });
+        Assert.True(dualRes.Profiles[0].IsIdentityVerified);
+
+        var hmacRes = await CreateSut(identityMode: "hmac")
+            .GetAvailableSlotsAsync(1, new GetAvailableSlotsRequest { DoctorId = "DOC-001" });
+        Assert.False(hmacRes.Profiles[0].IsIdentityVerified);
     }
 }

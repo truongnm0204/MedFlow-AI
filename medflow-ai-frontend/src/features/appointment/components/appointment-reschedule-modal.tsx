@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertCircle,
@@ -8,6 +8,8 @@ import {
   CalendarClock,
   CalendarX2,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Loader2,
   RotateCcw,
   UserRound,
@@ -16,9 +18,11 @@ import {
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Modal } from '@/shared/ui/modal';
 
-import { fetchProposedRescheduleSlotsApi } from '../api/appointment-detail.api';
+import { fetchRescheduleScheduleApi } from '../api/appointment-detail.api';
 import { rescheduleAppointmentSchema } from '../schemas/appointment-detail.schema';
 import type { AppointmentListItem } from '../types/appointment-list.types';
+
+const DATES_PER_STRIP = 7;
 
 interface AppointmentRescheduleModalProps {
   appointment: AppointmentListItem | null;
@@ -33,28 +37,50 @@ export function AppointmentRescheduleModal({
   onClose,
   onConfirmReschedule,
 }: AppointmentRescheduleModalProps) {
+  const [requestedDateIso, setRequestedDateIso] = useState<string>('');
+  const [datePage, setDatePage] = useState<number>(0);
   const [selectedSlotId, setSelectedSlotId] = useState<string>('');
   const [rescheduleNote, setRescheduleNote] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const slotsQuery = useQuery({
+  const scheduleQuery = useQuery({
     queryKey: [
       'appointment-reschedule-slots',
       appointment?.id,
       appointment?.doctorId,
       appointment?.serviceId,
+      requestedDateIso || 'initial',
     ],
-    queryFn: () => fetchProposedRescheduleSlotsApi(appointment!),
+    queryFn: () => fetchRescheduleScheduleApi(appointment!, requestedDateIso || undefined),
     enabled: Boolean(appointment),
     retry: false,
   });
 
+  const dates = useMemo(() => scheduleQuery.data?.dates ?? [], [scheduleQuery.data?.dates]);
+  const totalDatePages = Math.max(1, Math.ceil(dates.length / DATES_PER_STRIP));
+  const clampedDatePage = Math.min(Math.max(0, datePage), totalDatePages - 1);
+  const visibleDates = useMemo(
+    () => dates.slice(clampedDatePage * DATES_PER_STRIP, (clampedDatePage + 1) * DATES_PER_STRIP),
+    [clampedDatePage, dates],
+  );
+
   if (!appointment) return null;
 
-  const proposedSlots = slotsQuery.data ?? [];
-  const isLoadingSlots = slotsQuery.isLoading;
-  const slotsError = slotsQuery.isError
-    ? getErrorMessage(slotsQuery.error, 'Không thể tải danh sách khung giờ trống để đổi lịch.')
+  const isDoctorMode = Boolean(appointment.doctorId?.trim());
+  const scheduleOwnerLabel = isDoctorMode
+    ? appointment.doctorName
+    : appointment.serviceName || 'dịch vụ khám';
+  const currentDoctorLabel = appointment.doctorName?.trim() || 'Bác sĩ điều phối theo ca khám';
+  const currentRoomLabel = appointment.roomCode?.trim()
+    ? appointment.roomCode.replace('P.', 'Buồng ')
+    : 'Theo điều phối';
+
+  const proposedSlots = scheduleQuery.data?.slots ?? [];
+  const activeDateIso =
+    scheduleQuery.data?.activeDateIso ?? requestedDateIso ?? appointment.scheduledDate;
+  const isLoadingSlots = scheduleQuery.isLoading;
+  const slotsError = scheduleQuery.isError
+    ? getErrorMessage(scheduleQuery.error, 'Không thể tải danh sách khung giờ trống để đổi lịch.')
     : null;
 
   const activeSlot =
@@ -124,13 +150,13 @@ export function AppointmentRescheduleModal({
               <p className="flex items-center gap-1.5">
                 <Building2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 <span>
-                  STT: <strong className="font-mono">{appointment.queueNumber ?? '012'}</strong> •{' '}
-                  {appointment.roomCode.replace('P.', 'Buồng ')}
+                  STT: <strong className="font-mono">{appointment.queueNumber ?? '---'}</strong> •{' '}
+                  {currentRoomLabel}
                 </span>
               </p>
               <p className="flex items-center gap-1.5">
                 <UserRound className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                <span>{appointment.doctorName}</span>
+                <span>{currentDoctorLabel}</span>
               </p>
             </div>
           </div>
@@ -177,9 +203,15 @@ export function AppointmentRescheduleModal({
                   <p className="flex items-center gap-1.5 font-semibold">
                     <Building2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                     <span>
-                      STT dự kiến:{' '}
-                      <strong className="font-mono">{activeSlot.estimatedQueueNumber}</strong> •{' '}
-                      {activeSlot.roomCode.replace('P.', 'Buồng ')}
+                      {activeSlot.estimatedQueueNumber ? (
+                        <>
+                          STT dự kiến:{' '}
+                          <strong className="font-mono">{activeSlot.estimatedQueueNumber}</strong>
+                        </>
+                      ) : (
+                        <span>{activeSlot.remainingLabel ?? 'Cấp STT mới khi xác nhận'}</span>
+                      )}{' '}
+                      • {activeSlot.roomCode.replace('P.', 'Buồng ')}
                     </span>
                   </p>
                   <p className="flex items-center gap-1.5 font-semibold">
@@ -195,6 +227,72 @@ export function AppointmentRescheduleModal({
             )}
           </div>
         </div>
+
+        {/* Multi-date selector across BookingWindowDays */}
+        {dates.length > 0 && (
+          <div className="mt-4 rounded-xl border border-border bg-canvas/60 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-bold text-ink">Chọn ngày khám mới:</span>
+              {totalDatePages > 1 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label="Tuần trước"
+                    disabled={clampedDatePage === 0}
+                    onClick={() => setDatePage((prev) => Math.max(0, prev - 1))}
+                    className="flex h-6 w-6 items-center justify-center rounded-md border border-border bg-white text-sub transition-colors hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Tuần tiếp theo"
+                    disabled={clampedDatePage >= totalDatePages - 1}
+                    onClick={() => setDatePage((prev) => Math.min(totalDatePages - 1, prev + 1))}
+                    className="flex h-6 w-6 items-center justify-center rounded-md border border-border bg-white text-sub transition-colors hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div
+              role="listbox"
+              aria-label="Chọn ngày đổi lịch khám"
+              className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4 lg:grid-cols-7"
+            >
+              {visibleDates.map((d) => {
+                const isDateDisabled = d.status === 'OFF' || d.status === 'FULL';
+                const isDateSelected = d.dateIso === activeDateIso && !isDateDisabled;
+                return (
+                  <button
+                    key={d.dateIso}
+                    type="button"
+                    role="option"
+                    aria-selected={isDateSelected}
+                    disabled={isDateDisabled}
+                    onClick={() => {
+                      setRequestedDateIso(d.dateIso);
+                      setSelectedSlotId('');
+                      setValidationError(null);
+                    }}
+                    className={`rounded-lg border px-2 py-1.5 text-center text-[11px] transition-colors ${
+                      isDateSelected
+                        ? 'border-primary bg-primary font-bold text-white'
+                        : isDateDisabled
+                          ? 'cursor-not-allowed border-border/70 bg-white/60 text-sub opacity-60'
+                          : 'border-border bg-white text-ink hover:border-sky-300'
+                    }`}
+                  >
+                    <div className="truncate font-semibold">{d.dayTopLabel}</div>
+                    <div className="font-extrabold">{d.subDateLabel}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Selectable Proposed Slots / Loading / Error / Empty */}
         <div className="mt-4">
@@ -215,7 +313,7 @@ export function AppointmentRescheduleModal({
               </div>
               <button
                 type="button"
-                onClick={() => void slotsQuery.refetch()}
+                onClick={() => void scheduleQuery.refetch()}
                 className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2.5 py-1 font-bold text-rose-800 hover:bg-rose-50"
               >
                 <RotateCcw className="h-3 w-3" aria-hidden="true" />
@@ -229,15 +327,15 @@ export function AppointmentRescheduleModal({
             >
               <CalendarX2 className="h-4 w-4 shrink-0 text-sub" aria-hidden="true" />
               <span>
-                Hiện chưa có khung giờ trống phù hợp của {appointment.doctorName} để đổi lịch.
+                Hiện chưa có khung giờ trống phù hợp của {scheduleOwnerLabel} để đổi lịch.
               </span>
             </div>
           ) : (
             <fieldset>
               <legend className="text-xs font-bold text-ink">
-                Chọn khung giờ trống của {appointment.doctorName}:
+                Chọn khung giờ trống của {scheduleOwnerLabel}:
               </legend>
-              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div className="mt-2 grid max-h-56 grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
                 {proposedSlots.map((slot) => {
                   const isSelected = slot.slotId === activeSlot?.slotId;
                   return (
@@ -258,7 +356,9 @@ export function AppointmentRescheduleModal({
                       <div className="font-extrabold">{slot.scheduledTimeRange}</div>
                       <div className="mt-0.5 text-[11px] text-sub">{slot.scheduledDateBadge}</div>
                       <div className="mt-1 font-mono text-[10px] font-semibold text-primary">
-                        STT dự kiến: {slot.estimatedQueueNumber}
+                        {slot.estimatedQueueNumber
+                          ? `STT dự kiến: ${slot.estimatedQueueNumber}`
+                          : (slot.remainingLabel ?? 'Cấp STT mới khi xác nhận')}
                       </div>
                     </button>
                   );
@@ -304,13 +404,13 @@ export function AppointmentRescheduleModal({
               buồng khám để người bệnh khác có thể đăng ký.
             </li>
             <li>
-              Số thứ tự giữ trước cũ (<strong>STT: {appointment.queueNumber ?? '012'}</strong>) sẽ
-              bị thu hồi và hệ thống tự động cấp số thứ tự giữ trước mới theo lượt đăng ký ca mới (
-              <strong>STT dự kiến: {activeSlot?.estimatedQueueNumber ?? '---'}</strong>).
+              Số thứ tự giữ trước cũ (<strong>STT: {appointment.queueNumber ?? '---'}</strong>) sẽ
+              bị thu hồi và hệ thống tự động cấp số thứ tự giữ trước mới sau khi xác nhận đổi sang
+              ca mới.
             </li>
             <li>
               <strong>Chính sách miễn phí:</strong> MedFlow hỗ trợ đổi lịch khám ngoại trú tự nguyện
-              hoàn toàn miễn phí khi thực hiện trước giờ khám tối thiểu 02 tiếng.
+              hoàn toàn miễn phí khi thực hiện đúng thời hạn quy định trước giờ khám.
             </li>
           </ol>
         </div>

@@ -27,7 +27,12 @@ export function AppointmentSlotBookingPage() {
   const [searchParams] = useSearchParams();
 
   const storeDoctorId = useBookingStore((s) => s.selectedDoctorId);
-  const queryServiceId = searchParams.get('serviceId');
+  const storeServiceId = useBookingStore((s) => s.selectedServiceId);
+  const queryDoctorId = paramDoctorId ?? searchParams.get('doctorId') ?? storeDoctorId;
+  const queryServiceId =
+    searchParams.get('serviceId') ??
+    (storeDoctorId && storeDoctorId === queryDoctorId ? storeServiceId : null);
+  const queryPatientId = searchParams.get('patientId')?.trim() ?? '';
   const selectedPatientId = useBookingStore((s) => s.selectedPatientId);
   const selectedDateIso = useBookingStore((s) => s.selectedDateIso);
   const selectedSlotId = useBookingStore((s) => s.selectedSlotId);
@@ -37,7 +42,6 @@ export function AppointmentSlotBookingPage() {
   const selectDate = useBookingStore((s) => s.selectDate);
   const selectSlot = useBookingStore((s) => s.selectSlot);
   const setSymptomNote = useBookingStore((s) => s.setSymptomNote);
-  const queryDoctorId = paramDoctorId ?? searchParams.get('doctorId') ?? storeDoctorId;
 
   const [reasonErrorState, setReasonErrorState] = useState<{
     doctorId: string | null;
@@ -80,10 +84,27 @@ export function AppointmentSlotBookingPage() {
     [morningSlots, afternoonSlots],
   );
 
-  const selectedProfile = useMemo(
-    () => payload?.profiles.find((p) => p.id === selectedPatientId) ?? payload?.profiles[0],
-    [payload?.profiles, selectedPatientId],
-  );
+  const selectedProfile = useMemo(() => {
+    if (
+      /^[1-9]\d*$/.test(queryPatientId) &&
+      payload?.profiles.some((p) => p.id === queryPatientId) &&
+      selectedPatientId === 'pat-self'
+    ) {
+      return payload.profiles.find((p) => p.id === queryPatientId);
+    }
+    return payload?.profiles.find((p) => p.id === selectedPatientId) ?? payload?.profiles[0];
+  }, [payload?.profiles, queryPatientId, selectedPatientId]);
+
+  useEffect(() => {
+    if (
+      payload &&
+      /^[1-9]\d*$/.test(queryPatientId) &&
+      payload.profiles.some((p) => p.id === queryPatientId) &&
+      selectedPatientId === 'pat-self'
+    ) {
+      selectPatient(queryPatientId);
+    }
+  }, [payload, queryPatientId, selectPatient, selectedPatientId]);
 
   const selectedDate = useMemo(
     () =>

@@ -19,15 +19,18 @@ public sealed class AppointmentRescheduleServiceTests : IDisposable
         private readonly int _rescheduleMinimumHours;
         private readonly int _bookingLeadHours;
         private readonly int _maxActiveBookings;
+        private readonly int _maxReschedules;
 
         public StubPolicyService(
             int rescheduleMinimumHours = 12,
             int bookingLeadHours = 2,
-            int maxActiveBookings = 3)
+            int maxActiveBookings = 3,
+            int maxReschedules = 2)
         {
             _rescheduleMinimumHours = rescheduleMinimumHours;
             _bookingLeadHours = bookingLeadHours;
             _maxActiveBookings = maxActiveBookings;
+            _maxReschedules = maxReschedules;
         }
 
         public Task<AppointmentPolicyDto> GetEffectiveAsync(long hospitalId, CancellationToken ct = default)
@@ -36,7 +39,7 @@ public sealed class AppointmentRescheduleServiceTests : IDisposable
                 BookingLeadHours: _bookingLeadHours,
                 MaxActiveBookings: _maxActiveBookings,
                 RescheduleMinimumHours: _rescheduleMinimumHours,
-                MaxReschedules: 2,
+                MaxReschedules: _maxReschedules,
                 CancelMinimumHours: 6,
                 NoShowGraceMinutes: 15,
                 NoShowMaxCount: 3,
@@ -58,10 +61,28 @@ public sealed class AppointmentRescheduleServiceTests : IDisposable
     private sealed class RecordingBookingLock : IAppointmentBookingLock
     {
         public List<(long PatientId, long? DoctorId, long SlotId)> Calls { get; } = new();
+        public List<(long PatientId, long? ServiceId, long[] DoctorIds, long[] RoomIds, long[] SlotIds)> BatchCalls { get; } = new();
 
         public Task AcquireAsync(long patientId, long? doctorId, long slotId, CancellationToken ct = default)
         {
             Calls.Add((patientId, doctorId, slotId));
+            return Task.CompletedTask;
+        }
+
+        public Task AcquireBatchAsync(
+            long patientId,
+            long? serviceId,
+            IReadOnlyCollection<long> doctorIds,
+            IReadOnlyCollection<long> roomIds,
+            IReadOnlyCollection<long> slotIds,
+            CancellationToken ct = default)
+        {
+            BatchCalls.Add((
+                patientId,
+                serviceId,
+                doctorIds.OrderBy(x => x).ToArray(),
+                roomIds.OrderBy(x => x).ToArray(),
+                slotIds.OrderBy(x => x).ToArray()));
             return Task.CompletedTask;
         }
     }
@@ -147,8 +168,15 @@ public sealed class AppointmentRescheduleServiceTests : IDisposable
         Assert.Equal(newAppt.Id.ToString(CultureInfo.InvariantCulture), dto.Id);
         Assert.Equal("BOOKED", dto.Status);
         Assert.Equal("001", dto.QueueNumber);
+        Assert.Equal(new DateTime(2026, 11, 2, 8, 0, 0), old.CancelledAt);
+        Assert.Equal(1L, old.CancelledByUserId);
+        Assert.Equal(103L, newAppt.RootAppointmentId);
+        Assert.Equal(103L, newAppt.RescheduledFromAppointmentId);
 
-        Assert.Equal(new[] { (1L, (long?)1L, 14L) }, _lock.Calls);
+        var batchCall = Assert.Single(_lock.BatchCalls);
+        Assert.Equal(1L, batchCall.PatientId);
+        Assert.Equal(new[] { 1L }, batchCall.DoctorIds);
+        Assert.Equal(new[] { 12L, 14L }, batchCall.SlotIds);
 
         var log = await _db.AuditLogs.AsNoTracking().SingleAsync(l => l.Action == "APPOINTMENT_RESCHEDULE");
         Assert.Equal("APPOINTMENT", log.EntityType);
@@ -351,5 +379,115 @@ public sealed class AppointmentRescheduleServiceTests : IDisposable
         var old = await _db.Appointments.AsNoTracking().SingleAsync(a => a.Id == 103);
         Assert.Equal("CANCELLED", old.Status);
         Assert.Equal("BOOKED", dto.Status);
+    }
+
+    [Fact]
+    public async Task RescheduleAsync_LineageReachesMaxReschedules_ThrowsConflict_IncludingPre023AuditFallback()
+    {
+        AddSlot(14);
+        AddSlot(15, startsAt: new DateTime(2026, 11, 6, 9, 0, 0), endsAt: new DateTime(2026, 11, 6, 9, 30, 0));
+        AddSlot(16, startsAt: new DateTime(2026, 11, 7, 9, 0, 0), endsAt: new DateTime(2026, 11, 7, 9, 30, 0));
+        await SaveAsync();
+
+        var sut = CreateSut(new StubPolicyService(maxReschedules: 2));
+
+        var first = await sut.RescheduleAsync(1, "103", Req("14", "Lần 1"), null);
+        var second = await sut.RescheduleAsync(1, first.Id, Req("15", "Lần 2"), null);
+        Assert.DoesNotContain("RESCHEDULE", second.AvailableActions);
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            sut.RescheduleAsync(1, second.Id, Req("16", "Lần 3 vượt trần"), null));
+
+        // Pre-023 fallback when RootAppointmentId was null but APPOINTMENT_RESCHEDULE audit log chain exists:
+        _db.Appointments.Add(new Appointment
+        {
+            Id = 500,
+            PatientId = 1,
+            SlotId = 11,
+            Status = "CANCELLED",
+            BookingChannel = "ONLINE",
+            BookedAt = new DateTime(2026, 11, 1, 8, 0, 0),
+        });
+        AddSlot(17, startsAt: new DateTime(2026, 11, 8, 9, 0, 0), endsAt: new DateTime(2026, 11, 8, 9, 30, 0));
+        AddSlot(18, startsAt: new DateTime(2026, 11, 9, 9, 0, 0), endsAt: new DateTime(2026, 11, 9, 9, 30, 0));
+        _db.Appointments.Add(new Appointment
+        {
+            Id = 501,
+            AppointmentCode = "APT-202611-0501",
+            PatientId = 1,
+            SlotId = 17,
+            Status = "BOOKED",
+            BookingChannel = "ONLINE",
+            BookedByUserId = 1,
+            BookedAt = new DateTime(2026, 11, 1, 9, 0, 0),
+            ReasonForVisit = "Tái khám tiêu hóa",
+        });
+        _db.AuditLogs.Add(new AuditLog
+        {
+            Id = 900,
+            ActorUserId = 1,
+            Action = "APPOINTMENT_RESCHEDULE",
+            EntityType = "APPOINTMENT",
+            EntityId = "500",
+            ChangeData = JsonSerializer.Serialize(new { FromAppointmentId = 500L, ToAppointmentId = 501L }),
+            OccurredAt = DateTime.UtcNow,
+        });
+        await SaveAsync();
+
+        var sutCap1 = CreateSut(new StubPolicyService(maxReschedules: 1));
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            sutCap1.RescheduleAsync(1, "501", Req("18"), null));
+    }
+
+    [Fact]
+    public async Task RescheduleAsync_UnassignedServiceModeAppointment_SelectsParallelOpenRoomSlot()
+    {
+        _db.HospitalRooms.Add(new HospitalRoom
+        {
+            Id = 2,
+            HospitalId = 1,
+            DepartmentId = 2,
+            RoomCode = "RM-002",
+            Name = "Khám Tiêu hóa 102",
+            RoomType = "EXAMINATION",
+            Status = "ACTIVE",
+        });
+        var currentServiceSlot = AddSlot(21, serviceId: 1, doctorId: null, roomId: 1,
+            startsAt: new DateTime(2026, 11, 5, 8, 0, 0), endsAt: new DateTime(2026, 11, 5, 8, 30, 0));
+        var fullRoom1Target = AddSlot(22, serviceId: 1, doctorId: null, roomId: 1, capacity: 1,
+            startsAt: new DateTime(2026, 11, 6, 8, 0, 0), endsAt: new DateTime(2026, 11, 6, 8, 30, 0));
+        var openRoom2Target = AddSlot(23, serviceId: 1, doctorId: null, roomId: 2, capacity: 2,
+            startsAt: new DateTime(2026, 11, 6, 8, 0, 0), endsAt: new DateTime(2026, 11, 6, 8, 30, 0));
+
+        _db.Appointments.AddRange(
+            new Appointment
+            {
+                Id = 601,
+                AppointmentCode = "APT-202611-0601",
+                PatientId = 1,
+                SlotId = currentServiceSlot.Id,
+                Status = "BOOKED",
+                BookingChannel = "ONLINE",
+                BookedByUserId = 1,
+                BookedAt = new DateTime(2026, 11, 2, 7, 0, 0),
+                ReasonForVisit = "Khám dịch vụ không chọn bác sĩ",
+            },
+            new Appointment
+            {
+                Id = 602,
+                PatientId = 2,
+                SlotId = fullRoom1Target.Id,
+                Status = "BOOKED",
+                BookingChannel = "ONLINE",
+                BookedAt = new DateTime(2026, 11, 2, 7, 0, 0),
+            });
+        await SaveAsync();
+
+        var sut = CreateSut();
+        // Even if patient clicked slot 22 (Room 1, which just filled up), service-mode reschedule picks open parallel Room 2 (slot 23)!
+        var dto = await sut.RescheduleAsync(1, "601", Req("22"), null);
+
+        var replacement = await _db.Appointments.AsNoTracking().SingleAsync(a => a.Id == long.Parse(dto.Id, CultureInfo.InvariantCulture));
+        Assert.Equal(openRoom2Target.Id, replacement.SlotId);
     }
 }
