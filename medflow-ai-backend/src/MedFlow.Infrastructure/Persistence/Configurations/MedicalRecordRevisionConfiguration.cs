@@ -40,6 +40,28 @@ public class MedicalRecordRevisionConfiguration : IEntityTypeConfiguration<Medic
         builder.Property(r => r.ClinicalConclusion)
             .HasColumnName("clinical_conclusion");
 
+        builder.Property(r => r.ClinicalProgressionNote)
+            .HasColumnName("clinical_progression_note");
+
+        builder.Property(r => r.ClinicalInterpretation)
+            .HasColumnName("clinical_interpretation");
+
+        builder.Property(r => r.TreatmentPlan)
+            .HasColumnName("treatment_plan");
+
+        builder.Property(r => r.DischargeInstructions)
+            .HasColumnName("discharge_instructions");
+
+        builder.Property(r => r.FollowUpInstructions)
+            .HasColumnName("follow_up_instructions");
+
+        builder.Property(r => r.FollowUpDate)
+            .HasColumnName("follow_up_date")
+            .HasColumnType("date");
+
+        builder.Property(r => r.WarningSigns)
+            .HasColumnName("warning_signs");
+
         builder.Property(r => r.EditedByDoctorId)
             .HasColumnName("edited_by_doctor_id");
 
@@ -52,5 +74,9 @@ public class MedicalRecordRevisionConfiguration : IEntityTypeConfiguration<Medic
 
         builder.Property(r => r.AmendmentReason)
             .HasColumnName("amendment_reason");
+
+        builder.HasIndex(r => new { r.MedicalRecordId, r.RevisionNo })
+            .HasDatabaseName("uq_medical_record_revisions_record_revision_no")
+            .IsUnique();
     }
 }

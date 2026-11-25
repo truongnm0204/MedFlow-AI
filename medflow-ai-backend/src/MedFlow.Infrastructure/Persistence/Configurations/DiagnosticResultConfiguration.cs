@@ -28,5 +28,9 @@ public class DiagnosticResultConfiguration : IEntityTypeConfiguration<Diagnostic
 
         builder.Property(x => x.FinalizedByStaffId)
             .HasColumnName("finalized_by_staff_id");
+
+        builder.HasIndex(x => x.DiagnosticOrderId)
+            .HasDatabaseName("uq_diagnostic_results_order_id")
+            .IsUnique();
     }
 }

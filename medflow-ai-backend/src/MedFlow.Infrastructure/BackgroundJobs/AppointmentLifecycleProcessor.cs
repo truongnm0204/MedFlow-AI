@@ -422,7 +422,7 @@ public sealed class AppointmentLifecycleProcessor : BackgroundService
             {
                 var lockedList = await ((MedFlowDbContext)itemDb).Appointments
                     .FromSqlInterpolated($"""
-                        SELECT *
+                        SELECT xmin, *
                         FROM "appointments"
                         WHERE "id" = {targetAppointmentId}
                           AND "status" IN ('BOOKED', 'CONFIRMED')

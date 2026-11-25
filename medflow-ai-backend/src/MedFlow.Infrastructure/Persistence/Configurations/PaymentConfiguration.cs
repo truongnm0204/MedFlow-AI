@@ -22,6 +22,14 @@ public class PaymentConfiguration : IEntityTypeConfiguration<Payment>
         builder.Property(p => p.VisitId)
             .HasColumnName("visit_id");
 
+        builder.Property(p => p.VisitChargeId)
+            .HasColumnName("visit_charge_id");
+
+        builder.Property(p => p.PaymentScope)
+            .HasColumnName("payment_scope")
+            .HasMaxLength(16)
+            .IsRequired();
+
         builder.Property(p => p.Amount)
             .HasColumnName("amount")
             .HasColumnType("numeric(16,2)");
@@ -41,5 +49,18 @@ public class PaymentConfiguration : IEntityTypeConfiguration<Payment>
         builder.Property(p => p.CreatedAt)
             .HasColumnName("created_at")
             .HasColumnType("timestamp without time zone");
+
+        builder.HasIndex(p => p.VisitChargeId)
+            .HasDatabaseName("ix_payments_visit_charge_id");
+
+        builder.HasOne<Visit>()
+            .WithMany()
+            .HasForeignKey(p => p.VisitId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<VisitCharge>()
+            .WithMany()
+            .HasForeignKey(p => p.VisitChargeId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

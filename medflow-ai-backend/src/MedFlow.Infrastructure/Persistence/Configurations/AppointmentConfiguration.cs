@@ -60,6 +60,19 @@ public class AppointmentConfiguration : IEntityTypeConfiguration<Appointment>
         builder.Property(a => a.CancelledByUserId)
             .HasColumnName("cancelled_by_user_id");
 
+        builder.Property(a => a.RootAppointmentId)
+            .HasColumnName("root_appointment_id");
+
+        builder.Property(a => a.RescheduledFromAppointmentId)
+            .HasColumnName("rescheduled_from_appointment_id");
+
+        builder.Property<uint>("xmin")
+            .HasColumnName("xmin")
+            .IsRowVersion();
+
+        builder.HasIndex(a => a.RootAppointmentId)
+            .HasDatabaseName("ix_appointments_root_appointment_id");
+
         builder.HasOne(a => a.Slot)
             .WithMany(s => s.Appointments)
             .HasForeignKey(a => a.SlotId)

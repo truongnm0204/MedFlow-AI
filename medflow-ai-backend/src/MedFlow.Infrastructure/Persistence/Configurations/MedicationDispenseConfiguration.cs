@@ -39,5 +39,10 @@ public class MedicationDispenseConfiguration : IEntityTypeConfiguration<Medicati
         builder.Property(md => md.IdempotencyKey)
             .HasColumnName("idempotency_key")
             .HasMaxLength(100);
+
+        builder.HasIndex(md => md.PrescriptionId)
+            .HasDatabaseName("uq_medication_dispenses_dispensed_prescription")
+            .IsUnique()
+            .HasFilter("\"prescription_id\" IS NOT NULL AND upper(btrim(\"status\")) IN ('DISPENSED', 'COMPLETED')");
     }
 }

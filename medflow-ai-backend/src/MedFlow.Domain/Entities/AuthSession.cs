@@ -1,6 +1,6 @@
 namespace MedFlow.Domain.Entities;
 
-/// <summary>Refresh-token session. Maps to <c>auth_sessions</c> (v4.1).</summary>
+/// <summary>Refresh-token session. Maps to <c>auth_sessions</c> (v4.1 + 005 + 023).</summary>
 public class AuthSession
 {
     public long Id { get; set; }
@@ -14,6 +14,10 @@ public class AuthSession
     public string? CreatedByIp { get; set; }
     public string? RevokedByIp { get; set; }
     public DateTime CreatedAt { get; set; }
+    /// <summary>Root login session ID preserved across silent refresh-token rotations (ADR-0059).</summary>
+    public long? RootSessionId { get; set; }
+    /// <summary>Reason code when RevokedAt is set (e.g. ROTATED, LOGOUT, PASSWORD_RESET).</summary>
+    public string? RevokedReason { get; set; }
 
     public User User { get; set; } = null!;
 

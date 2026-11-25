@@ -398,9 +398,22 @@ public sealed class VisitChargesEndpointTests : AuthTestBase
 
         if (waived is decimal waivedPrice)
         {
+            var waivedOrder = new DiagnosticOrder
+            {
+                OrderCode = $"DIA-VC-{suffix}",
+                VisitId = visit.Id,
+                Status = "ORDERED",
+                Priority = "NORMAL",
+                OrderedAt = paidAt,
+            };
+            Db.DiagnosticOrders.Add(waivedOrder);
+            await Db.SaveChangesAsync();
+
             Db.VisitCharges.Add(new VisitCharge
             {
                 VisitId = visit.Id,
+                DiagnosticOrderId = waivedOrder.Id,
+                ChargeType = "DIAGNOSTIC",
                 UnitPrice = waivedPrice,
                 PaymentRequirement = "WAIVED",
             });
@@ -438,6 +451,8 @@ public sealed class VisitChargesEndpointTests : AuthTestBase
         Db.Payments.RemoveRange(payments);
         var charges = await Db.VisitCharges.Where(c => c.VisitId == created.VisitId).ToListAsync();
         Db.VisitCharges.RemoveRange(charges);
+        var orders = await Db.DiagnosticOrders.Where(o => o.VisitId == created.VisitId).ToListAsync();
+        Db.DiagnosticOrders.RemoveRange(orders);
         var entries = await Db.QueueEntries.Where(q => q.VisitId == created.VisitId).ToListAsync();
         Db.QueueEntries.RemoveRange(entries);
         var audits = await Db.AuditLogs.Where(a => a.EntityId == created.VisitId.ToString()).ToListAsync();

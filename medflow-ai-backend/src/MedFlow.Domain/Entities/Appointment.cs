@@ -16,6 +16,8 @@ public class Appointment
     public string? CancellationReason { get; set; }
     public DateTime? CancelledAt { get; set; }
     public long? CancelledByUserId { get; set; }
+    public long? RootAppointmentId { get; set; }
+    public long? RescheduledFromAppointmentId { get; set; }
 
     public ExaminationSlot? Slot { get; set; }
     public Patient? Patient { get; set; }

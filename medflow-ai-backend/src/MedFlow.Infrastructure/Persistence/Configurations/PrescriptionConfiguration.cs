@@ -43,5 +43,10 @@ public class PrescriptionConfiguration : IEntityTypeConfiguration<Prescription>
 
         builder.Property(p => p.ReplacesPrescriptionId)
             .HasColumnName("replaces_prescription_id");
+
+        builder.HasIndex(p => p.VisitId)
+            .HasDatabaseName("uq_prescriptions_one_draft_per_visit")
+            .IsUnique()
+            .HasFilter("\"visit_id\" IS NOT NULL AND upper(btrim(\"status\")) = 'DRAFT'");
     }
 }
