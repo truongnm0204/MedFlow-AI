@@ -5,6 +5,7 @@ import {
   FlaskConical,
   Lock,
   Plus,
+  QrCode,
   RefreshCw,
   RotateCcw,
   Search,
@@ -62,6 +63,7 @@ export interface ConsultationDiagnosticOrderPanelProps {
     payload: CreateDiagnosticOrderRequest,
   ) => Promise<boolean | void> | boolean | void;
   onClearSubmitError?: () => void;
+  onOpenVietQrModal?: () => void;
 }
 
 const CATEGORY_META: Record<
@@ -90,6 +92,29 @@ const ORDER_STATUS_META: Record<
   CANCELLED: { label: 'Đã hủy', tone: 'rose' },
 };
 
+const SELECTION_META: Record<
+  string,
+  { label: string; tone: 'sky' | 'amber' | 'emerald' | 'rose' | 'slate' }
+> = {
+  ACCEPTED: { label: 'Đã đồng ý', tone: 'emerald' },
+  UNDECIDED: { label: 'Chưa quyết định (UNDECIDED)', tone: 'amber' },
+  DECLINED: { label: 'Đã từ chối (DECLINED)', tone: 'slate' },
+  REVIEW_REQUIRED: { label: 'Chờ BS xem xét (REVIEW_REQUIRED)', tone: 'rose' },
+  SKIPPED_AFTER_PAID: { label: 'Bỏ qua sau TT', tone: 'slate' },
+};
+
+const PAYMENT_STATUS_META: Record<
+  string,
+  { label: string; tone: 'sky' | 'amber' | 'emerald' | 'rose' | 'slate' }
+> = {
+  PAID: { label: 'Đã thanh toán', tone: 'emerald' },
+  WAIVED: { label: 'Miễn thu', tone: 'emerald' },
+  PENDING: { label: 'Đang chờ QR', tone: 'amber' },
+  UNPAID: { label: 'Chưa thanh toán', tone: 'amber' },
+  PAID_NOT_PERFORMED: { label: 'Đã TT — Không sử dụng', tone: 'slate' },
+  MISMATCH: { label: 'Chờ đối soát', tone: 'rose' },
+};
+
 function formatVnd(amount: number): string {
   return `${new Intl.NumberFormat('vi-VN').format(Math.round(amount))} ₫`;
 }
@@ -110,6 +135,7 @@ export function ConsultationDiagnosticOrderPanel({
   onToggleForm,
   onSubmitOrder,
   onClearSubmitError,
+  onOpenVietQrModal,
 }: ConsultationDiagnosticOrderPanelProps) {
   const isOrderable = canCreateOrder && hasOrderPermission;
 
@@ -315,6 +341,12 @@ export function ConsultationDiagnosticOrderPanel({
           {hasExistingOrders && pendingOrdersCount > 0 && (
             <Badge tone="amber">{pendingOrdersCount} đang chờ CLS</Badge>
           )}
+          {onOpenVietQrModal && (
+            <Button type="button" variant="secondary" size="sm" onClick={onOpenVietQrModal}>
+              <QrCode className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Hiển thị VietQR thanh toán</span>
+            </Button>
+          )}
           {!hasOrderPermission ? (
             <Badge tone="amber">Thiếu quyền DIAGNOSTIC_ORDER</Badge>
           ) : isOrderable ? (
@@ -397,6 +429,19 @@ export function ConsultationDiagnosticOrderPanel({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge tone={order.requiredForConclusion ? 'sky' : 'slate'}>
+                      {order.requiredForConclusion ? 'Bắt buộc' : 'Tùy chọn'}
+                    </Badge>
+                    {order.selectionStatus && SELECTION_META[order.selectionStatus] ? (
+                      <Badge tone={SELECTION_META[order.selectionStatus].tone}>
+                        {SELECTION_META[order.selectionStatus].label}
+                      </Badge>
+                    ) : null}
+                    {order.paymentStatus && PAYMENT_STATUS_META[order.paymentStatus] ? (
+                      <Badge tone={PAYMENT_STATUS_META[order.paymentStatus].tone}>
+                        {PAYMENT_STATUS_META[order.paymentStatus].label}
+                      </Badge>
+                    ) : null}
                     <Badge tone={catMeta.tone}>{catMeta.label}</Badge>
                     <Badge tone={prioMeta.tone}>{prioMeta.label}</Badge>
                     <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>

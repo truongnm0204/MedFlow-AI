@@ -34,6 +34,7 @@ export interface ConsultationDiagnosisAndOrdersCardProps {
     payload: CreateDiagnosticOrderRequest,
   ) => Promise<boolean | void> | boolean | void;
   onClearDiagnosticOrderSubmitError?: () => void;
+  onOpenVietQrModal?: () => void;
 }
 
 export function ConsultationDiagnosisAndOrdersCard({
@@ -55,6 +56,7 @@ export function ConsultationDiagnosisAndOrdersCard({
   onToggleDiagnosticOrderForm,
   onSubmitDiagnosticOrder,
   onClearDiagnosticOrderSubmitError,
+  onOpenVietQrModal,
 }: ConsultationDiagnosisAndOrdersCardProps) {
   return (
     <Card>
@@ -182,6 +184,15 @@ export function ConsultationDiagnosisAndOrdersCard({
           </div>
         </div>
 
+        {(diagnosticSummary.reviewRequiredCount ?? 0) > 0 && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50/70 px-3.5 py-2.5 text-xs text-rose-900">
+            <strong>Cần bác sĩ xem xét lại (REVIEW_REQUIRED):</strong> Có{' '}
+            {diagnosticSummary.reviewRequiredCount} chỉ định cận lâm sàng bắt buộc bị gián đoạn kỹ
+            thuật hoặc bệnh nhân đề nghị xem xét lại. Vui lòng hủy lâm sàng hoặc chỉ định thay thế
+            trước khi kết luận.
+          </div>
+        )}
+
         <ConsultationDiagnosticOrderPanel
           existingOrders={diagnosticOrders}
           catalogServices={catalogServices}
@@ -198,6 +209,7 @@ export function ConsultationDiagnosisAndOrdersCard({
           onToggleForm={onToggleDiagnosticOrderForm}
           onSubmitOrder={onSubmitDiagnosticOrder}
           onClearSubmitError={onClearDiagnosticOrderSubmitError}
+          onOpenVietQrModal={onOpenVietQrModal}
         />
       </CardContent>
     </Card>

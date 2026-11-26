@@ -150,7 +150,9 @@ public sealed record ConsultationDiagnosticSummaryDto(
     int OptionalPendingCount = 0,
     int PerformedAwaitingResultCount = 0,
     bool AllOrdersResolvedForCompletion = true,
-    bool RequiresDiagnosisReconfirmation = false);
+    bool RequiresDiagnosisReconfirmation = false,
+    int UndecidedOptionalPendingCount = 0,
+    int ReviewRequiredCount = 0);
 
 public sealed record ConsultationPrescriptionSummaryDto(
     int TotalPrescriptions,

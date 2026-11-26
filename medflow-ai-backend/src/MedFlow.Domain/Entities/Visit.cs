@@ -12,6 +12,7 @@ public class Visit
     public string? ReasonForVisit { get; set; }
     public string? Status { get; set; }
     public DateTime? CheckedInAt { get; set; }
+    public DateTime? ReadyForReturnAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public long? CompletedByDoctorId { get; set; }
 }

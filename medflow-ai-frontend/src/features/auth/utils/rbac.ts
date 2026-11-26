@@ -26,6 +26,7 @@ export const SYSTEM_PERMISSION_CODES = [
   'USER_MANAGE',
   'AUDIT_READ',
   'PAYMENT_VIEW',
+  'PAYMENT_COLLECT',
 ] as const;
 
 export type SystemPermissionCode = (typeof SYSTEM_PERMISSION_CODES)[number];
@@ -37,6 +38,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Readonly<Record<string, readonly SystemPe
     'QUEUE_MANAGE',
     'HOSPITAL_CONFIG',
     'PAYMENT_VIEW',
+    'PAYMENT_COLLECT',
     'PATIENT_IDENTITY_VERIFY',
   ],
   DOCTOR: [
@@ -53,6 +55,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Readonly<Record<string, readonly SystemPe
     'VISIT_ASSIGN',
     'QUEUE_MANAGE',
     'PAYMENT_VIEW',
+    'PAYMENT_COLLECT',
   ],
   DIAGNOSTIC_STAFF: ['PATIENT_PROFILE_READ', 'QUEUE_MANAGE', 'DIAGNOSTIC_RESULT_WRITE'],
   PHARMACY_STAFF: ['PATIENT_PROFILE_READ', 'MEDICINE_DISPENSE', 'PAYMENT_VIEW'],

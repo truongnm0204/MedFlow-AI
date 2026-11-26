@@ -79,6 +79,7 @@ const LINE_SETTLEMENT_TONES: Record<
   UNPAID: 'amber',
   MISMATCH: 'rose',
   CANCELLED: 'slate',
+  PAID_NOT_PERFORMED: 'slate',
   UNDETERMINED: 'slate',
 };
 

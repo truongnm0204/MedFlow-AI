@@ -16,6 +16,7 @@ import { ConsultationCompleteVisitPanel } from '../components/consultation-compl
 import { ConsultationDiagnosisAndOrdersCard } from '../components/consultation-diagnosis-and-orders-card';
 import { ConsultationPatientHeaderCard } from '../components/consultation-patient-header-card';
 import { ConsultationQueueContextCard } from '../components/consultation-queue-context-card';
+import { ConsultationVietQrModal } from '../components/consultation-vietqr-modal';
 import { ConsultationVitalsAndClinicalCard } from '../components/consultation-vitals-and-clinical-card';
 import { DoctorSidebar } from '../components/doctor-sidebar';
 import { CONSULTATION_QUICK_SWITCH_ITEMS } from '../data/consultation-workspace-mock';
@@ -82,6 +83,7 @@ export function DoctorConsultationWorkspacePage({
     useState<boolean>(isCompleteVisitRoute);
   const [selectedActionNotice, setSelectedActionNotice] = useState<string | null>(null);
   const [isClinicalFormDirty, setIsClinicalFormDirty] = useState(false);
+  const [isVietQrModalOpen, setIsVietQrModalOpen] = useState(false);
 
   const { isBlocked, confirmNavigation, cancelNavigation, guardAction } =
     useUnsavedChanges(isClinicalFormDirty);
@@ -577,6 +579,7 @@ export function DoctorConsultationWorkspacePage({
                       onToggleDiagnosticOrderForm={setIsDiagnosticOrderFormOpen}
                       onSubmitDiagnosticOrder={handleCreateDiagnosticOrder}
                       onClearDiagnosticOrderSubmitError={() => setDiagnosticOrderError(null)}
+                      onOpenVietQrModal={() => setIsVietQrModalOpen(true)}
                     />
                     <ConsultationCompleteVisitPanel
                       workspaceState={data.workspaceState}
@@ -616,6 +619,15 @@ export function DoctorConsultationWorkspacePage({
           )}
         </main>
       </div>
+
+      {data && (
+        <ConsultationVietQrModal
+          open={isVietQrModalOpen}
+          visitIdOrCode={data.visit.visitCode ?? activeIdentifier}
+          patientName={data.patient.fullName}
+          onClose={() => setIsVietQrModalOpen(false)}
+        />
+      )}
 
       <UnsavedChangesModal open={isBlocked} onStay={cancelNavigation} onLeave={confirmNavigation} />
     </div>

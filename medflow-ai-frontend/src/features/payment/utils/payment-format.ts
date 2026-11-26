@@ -21,8 +21,17 @@ const LINE_SETTLEMENT_LABELS: Record<LineSettlementStatus, string> = {
   PAID: 'Đã thanh toán',
   WAIVED: 'Miễn thu',
   CANCELLED: 'Đã hủy',
+  PAID_NOT_PERFORMED: 'Đã thanh toán — Không sử dụng',
   MISMATCH: 'Chờ đối soát',
   UNDETERMINED: 'Chưa xác định',
+};
+
+const SELECTION_STATUS_LABELS: Record<string, string> = {
+  UNDECIDED: 'Chưa quyết định',
+  ACCEPTED: 'Đã đồng ý',
+  DECLINED: 'Đã từ chối',
+  REVIEW_REQUIRED: 'Chờ bác sĩ xem xét',
+  SKIPPED_AFTER_PAID: 'Bỏ qua sau thanh toán',
 };
 
 const PAYMENT_LABELS: Record<PaymentStatus, string> = {
@@ -115,4 +124,9 @@ export function paymentLabel(status: string | null | undefined): string {
 
 export function chargeStatusLabel(status: ChargeDataStatus): string {
   return CHARGE_STATUS_LABELS[status] ?? '';
+}
+
+export function selectionStatusLabel(status: string | null | undefined): string {
+  if (!status) return '';
+  return SELECTION_STATUS_LABELS[status.toUpperCase()] ?? status;
 }

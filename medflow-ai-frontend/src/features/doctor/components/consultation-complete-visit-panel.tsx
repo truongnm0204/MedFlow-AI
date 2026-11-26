@@ -93,6 +93,7 @@ export function ConsultationCompleteVisitPanel({
   );
   const [completionNoteInput, setCompletionNoteInput] = useState('');
   const [confirmNoPrescriptionInput, setConfirmNoPrescriptionInput] = useState(false);
+  const [closeUndecidedOptionalInput, setCloseUndecidedOptionalInput] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   if (syncKey !== lastSyncKey) {
@@ -104,6 +105,7 @@ export function ConsultationCompleteVisitPanel({
     setWarningSignsInput(clinicalContext.warningSigns ?? '');
     setCompletionNoteInput('');
     setConfirmNoPrescriptionInput(false);
+    setCloseUndecidedOptionalInput(false);
     setValidationError(null);
   }
 
@@ -149,12 +151,29 @@ export function ConsultationCompleteVisitPanel({
     clinicalContext.diagnosticSummary.performedAwaitingResultCount ??
     performedAwaitingResultOrders.length;
 
-  const hasNoPendingDiagnostics =
-    clinicalContext.diagnosticSummary.openQueueEntries === 0 &&
+  const undecidedOptionalCount =
+    clinicalContext.diagnosticSummary.undecidedOptionalPendingCount ??
+    activeDiagnosticOrders.filter(
+      (order) =>
+        !order.requiredForConclusion &&
+        order.selectionStatus?.toUpperCase() === 'UNDECIDED' &&
+        !order.isResultFinalized,
+    ).length;
+
+  const onlyUndecidedOptionalOpen =
     clinicalContext.diagnosticSummary.allMandatoryResultsReady &&
     pendingMandatoryOrdersCount === 0 &&
-    pendingOptionalOrdersCount === 0 &&
-    !activeDiagnosticOrders.some((order) => !order.isResultFinalized);
+    performedAwaitingResultCount === 0 &&
+    undecidedOptionalCount > 0 &&
+    pendingOptionalOrdersCount === undecidedOptionalCount;
+
+  const hasNoPendingDiagnostics =
+    (clinicalContext.diagnosticSummary.openQueueEntries === 0 &&
+      clinicalContext.diagnosticSummary.allMandatoryResultsReady &&
+      pendingMandatoryOrdersCount === 0 &&
+      pendingOptionalOrdersCount === 0 &&
+      !activeDiagnosticOrders.some((order) => !order.isResultFinalized)) ||
+    (onlyUndecidedOptionalOpen && closeUndecidedOptionalInput);
 
   const hasClinicalConclusion = Boolean(
     clinicalConclusionInput.trim() ||
@@ -254,6 +273,7 @@ export function ConsultationCompleteVisitPanel({
       completionNote: completionNoteInput.trim() || null,
       notes: completionNoteInput.trim() || null,
       confirmNoPrescription: confirmNoPrescriptionInput,
+      closeUndecidedOptionalOrders: closeUndecidedOptionalInput || null,
       expectedStateVersion: expectedStateVersion ?? null,
       expectedRevisionNo: effectiveRevisionNo,
     };
@@ -581,42 +601,63 @@ export function ConsultationCompleteVisitPanel({
               </div>
             </div>
 
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-border">
-              <label className="inline-flex items-center gap-2 text-xs text-ink cursor-pointer">
-                <input
-                  type="checkbox"
-                  aria-label="Xác nhận hoàn tất không kê đơn thuốc ngoại trú"
-                  checked={confirmNoPrescriptionInput}
-                  onChange={(e) => {
-                    clearErrors();
-                    setConfirmNoPrescriptionInput(e.target.checked);
-                  }}
-                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                />
-                <span>Xác nhận hoàn tất không kê đơn thuốc ngoại trú (nếu không dùng thuốc)</span>
-              </label>
+            <div className="flex flex-col gap-2.5 pt-2 border-t border-border">
+              {onlyUndecidedOptionalOpen && (
+                <label className="inline-flex items-center gap-2 text-xs text-amber-900 bg-amber-50/70 border border-amber-200 rounded-lg px-3 py-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    aria-label="Đóng các chỉ định tùy chọn chưa thực hiện (UNDECIDED)"
+                    checked={closeUndecidedOptionalInput}
+                    onChange={(e) => {
+                      clearErrors();
+                      setCloseUndecidedOptionalInput(e.target.checked);
+                    }}
+                    className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                  />
+                  <span>
+                    Xác nhận đóng {undecidedOptionalCount} chỉ định cận lâm sàng tùy chọn chưa thực
+                    hiện (UNDECIDED) khi hoàn tất lượt khám
+                  </span>
+                </label>
+              )}
 
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={isSubmitting}
-                  onClick={handleResetDraft}
-                >
-                  <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Đặt lại</span>
-                </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="sm"
-                  loading={isSubmitting}
-                  disabled={isSubmitting}
-                >
-                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Xác nhận hoàn tất & Khóa bệnh án (UC38)</span>
-                </Button>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <label className="inline-flex items-center gap-2 text-xs text-ink cursor-pointer">
+                  <input
+                    type="checkbox"
+                    aria-label="Xác nhận hoàn tất không kê đơn thuốc ngoại trú"
+                    checked={confirmNoPrescriptionInput}
+                    onChange={(e) => {
+                      clearErrors();
+                      setConfirmNoPrescriptionInput(e.target.checked);
+                    }}
+                    className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                  />
+                  <span>Xác nhận hoàn tất không kê đơn thuốc ngoại trú (nếu không dùng thuốc)</span>
+                </label>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={isSubmitting}
+                    onClick={handleResetDraft}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Đặt lại</span>
+                  </Button>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="sm"
+                    loading={isSubmitting}
+                    disabled={isSubmitting}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Xác nhận hoàn tất & Khóa bệnh án (UC38)</span>
+                  </Button>
+                </div>
               </div>
             </div>
           </form>

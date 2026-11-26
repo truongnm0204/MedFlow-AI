@@ -15,6 +15,10 @@ import { CreatePatientModal } from '../components/create-patient-modal';
 import { AssignExaminationRoomModal } from '../components/assign-examination-room-modal';
 import { PatientDetailModal } from '../components/patient-detail-modal';
 import { PrintExaminationTicketModal } from '../components/print-examination-ticket-modal';
+import {
+  ReceptionCashCollectionModal,
+  type ReceptionCashCollectionTarget,
+} from '../components/reception-cash-collection-modal';
 import { UpdatePatientModal } from '../components/update-patient-modal';
 import { TransferVisitRoomModal } from '../components/transfer-visit-room-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
@@ -101,6 +105,8 @@ export function ReceptionDashboardPage() {
   const patientDetailQuery = usePatientDetail(selectedPatientCode);
   const selectedPatient = patientDetailQuery.data ?? null;
   const canAssignVisit = hasPermission(user?.roles, 'VISIT_ASSIGN');
+  const canCollectCash = hasPermission(user?.roles, 'PAYMENT_COLLECT');
+  const [cashTarget, setCashTarget] = useState<ReceptionCashCollectionTarget | null>(null);
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
   const summaryQuery = useReceptionDashboardSummary();
   const searchQuery = useReceptionPatientSearch('', 'ALL');
@@ -314,6 +320,18 @@ export function ReceptionDashboardPage() {
                       : undefined
                   }
                   onPrintTicket={(entry) => setPrintingVisitCode(entry.visitCode ?? entry.ticketNo)}
+                  onCollectCash={
+                    canCollectCash
+                      ? (entry) => {
+                          setUpdateNotice(null);
+                          setCashTarget({
+                            visitIdOrCode: entry.visitCode ?? entry.ticketNo,
+                            patientName: entry.patientName,
+                            patientCode: entry.patientCode,
+                          });
+                        }
+                      : undefined
+                  }
                 />
               </CardContent>
             </Card>
@@ -542,6 +560,20 @@ export function ReceptionDashboardPage() {
             setAssigningVisitTarget(null);
             setUpdateNotice(
               `Đã phân buồng khám ${result.roomCode} (${result.roomName}) cho lượt khám ${result.visitCode}`,
+            );
+          }}
+        />
+      )}
+
+      {cashTarget && (
+        <ReceptionCashCollectionModal
+          open
+          target={cashTarget}
+          onClose={() => setCashTarget(null)}
+          onCollected={(receipt) => {
+            void queueQuery.refetch();
+            setUpdateNotice(
+              `Đã thu tiền mặt ${receipt.paymentCode} (${receipt.amount.toLocaleString('vi-VN')} VNĐ) cho bệnh nhân ${cashTarget.patientName}`,
             );
           }}
         />

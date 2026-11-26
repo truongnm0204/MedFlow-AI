@@ -24,12 +24,19 @@ internal sealed record VisitChargeAssessment(
     string? PaymentMethod,
     DateTime? PaidAt,
     string? ExternalReference,
-    bool CanPayByQr);
+    bool CanPayByQr,
+    decimal? SelectedAmountDue = null,
+    long? ActivePendingQrPaymentId = null,
+    string? ActivePendingQrPaymentCode = null,
+    decimal? ActivePendingQrAmount = null,
+    IReadOnlyList<long>? ActivePendingQrChargeIds = null,
+    bool HasReconciliationItems = false);
 
 internal static class VisitChargeAssessor
 {
     public const string LineSettlementWaived = "WAIVED";
     public const string LineSettlementCancelled = "CANCELLED";
+    public const string LineSettlementPaidNotPerformed = "PAID_NOT_PERFORMED";
 
     public static async Task<VisitChargeAssessment> AssessAsync(
         IApplicationDbContext db,
@@ -51,7 +58,7 @@ internal static class VisitChargeAssessor
         var audit = audits.FirstOrDefault();
         var scheduled = await LoadScheduledPriceAsync(db, time, visit, ct);
 
-        var paymentMethod = VisitWalkInAudits.NormalizePaymentMethod(audit?.PaymentMethod);
+        var walkInPaymentMethod = VisitWalkInAudits.NormalizePaymentMethod(audit?.PaymentMethod);
         var visitBlocked = IsStatus(visit.Status, "CANCELLED") || IsStatus(visit.Status, "NO_SHOW");
         var staleCutoff = HospitalClock.GetNow(time).AddMinutes(-GenerateQrPaymentService.PendingExpiryMinutes);
 
@@ -60,7 +67,7 @@ internal static class VisitChargeAssessor
             return await AssessDerivedLegacyVisitAsync(
                 db,
                 visitBlocked,
-                paymentMethod,
+                walkInPaymentMethod,
                 staleCutoff,
                 audit,
                 scheduled,
@@ -68,14 +75,21 @@ internal static class VisitChargeAssessor
                 ct);
         }
 
+        var persistedAllocations = await PaymentAllocationLookup.TryLoadNoTrackingForVisitAsync(db, visit.Id, ct);
+        var (effectiveAllocations, allocatedPaymentIds) = PaymentAllocationLookup.BuildEffectiveAllocations(
+            visit.Id,
+            payments,
+            persistedAllocations);
+
         var diagOrdersById = await TryLoadDiagnosticOrdersAsync(db, charges, ct);
 
         var paidAll = DedupePaid(payments);
         var recognizedPaid = paidAll.Aggregate(0m, (sum, p) => sum + (p.Amount ?? 0m));
         var paidAmountMissing = paidAll.Any(p => p.Amount is null);
 
-        var chargeScopedPayments = payments.Where(p => p.VisitChargeId.HasValue).ToList();
-        var legacyPayments = payments.Where(p => !p.VisitChargeId.HasValue).ToList();
+        var legacyPayments = payments
+            .Where(p => !p.VisitChargeId.HasValue && !allocatedPaymentIds.Contains(p.Id))
+            .ToList();
         var legacyPaid = DedupePaid(legacyPayments);
         var hasLegacyMismatch = legacyPayments.Any(p => IsStatus(p.Status, VisitChargesService.SettlementMismatch));
         var hasActiveLegacyPending = legacyPayments.Any(p => IsActivePending(p, staleCutoff));
@@ -97,8 +111,10 @@ internal static class VisitChargeAssessor
             IsStatus(l.ChargeStatus, VisitChargeStatuses.Active) &&
             l.ChargeDataStatus == VisitChargesService.ChargeDataInvalid);
 
+        var hasAnyAllocations = effectiveAllocations.Count > 0;
+
         var isLegacyFullVisitPaid =
-            chargeScopedPayments.Count == 0 &&
+            !hasAnyAllocations &&
             !hasUnpriced &&
             !hasInvalid &&
             !paidAmountMissing &&
@@ -122,36 +138,70 @@ internal static class VisitChargeAssessor
             legacyPaid.Count == 1 &&
             activeExamLine is not null &&
             hasActiveDiagLines &&
-            !chargeScopedPayments.Any(p => p.VisitChargeId == activeExamLine.ChargeId) &&
+            !effectiveAllocations.Any(a => a.VisitChargeId == activeExamLine.ChargeId) &&
             legacyPaid[0].Amount == activeExamLine.UnitPrice;
 
         var isLegacyMismatchWithoutChargePayments =
-            chargeScopedPayments.Count == 0 &&
+            !hasAnyAllocations &&
             !isLegacyFullVisitPaid &&
             !isLegacyExamOnlyPaid &&
             (hasLegacyMismatch || legacyPaid.Count > 0);
 
         var evaluatedLines = new List<VisitChargeLineDto>(rawLines.Count);
-        var anyLineMismatch = isLegacyMismatchWithoutChargePayments;
+        var hasReconciliationItems = isLegacyMismatchWithoutChargePayments ||
+                                     payments.Any(p => IsStatus(p.Status, VisitChargesService.SettlementMismatch)) ||
+                                     effectiveAllocations.Any(a => IsStatus(a.Status, PaymentAllocationStatuses.Reconcile));
+        var anyActiveLineMismatch = isLegacyMismatchWithoutChargePayments;
+        var anyCancelledRefundPending = false;
         var anyLineUndetermined = paidAmountMissing;
 
         foreach (var line in rawLines)
         {
-            var lineChargePayments = line.ChargeId.HasValue
-                ? chargeScopedPayments.Where(p => p.VisitChargeId == line.ChargeId.Value).ToList()
+            var lineAllocations = line.ChargeId.HasValue
+                ? effectiveAllocations.Where(a => a.VisitChargeId == line.ChargeId.Value).ToList()
                 : [];
 
-            var latestLinePayment = lineChargePayments.FirstOrDefault()
-                ?? (chargeScopedPayments.Count == 0 &&
+            var diagOrder = line.DiagnosticOrderId.HasValue && diagOrdersById is not null &&
+                            diagOrdersById.TryGetValue(line.DiagnosticOrderId.Value, out var ord)
+                ? ord
+                : null;
+
+            var canExecuteTransition = diagOrder is not null && !IsOrderStartedOrCompleted(diagOrder.Status);
+            var isOptionalOrder = diagOrder is not null && diagOrder.RequiredForConclusion == false;
+
+            var paidLineAllocations = DedupePaidAllocations(lineAllocations);
+            var primaryPaidAllocation = paidLineAllocations.FirstOrDefault();
+
+            var latestLinePayment = primaryPaidAllocation?.Payment
+                ?? lineAllocations.FirstOrDefault()?.Payment
+                ?? (!hasAnyAllocations &&
                     (rawLines.Count == 1 || IsStatus(line.ChargeType, VisitChargeTypes.Examination))
                         ? legacyPayments.FirstOrDefault()
                         : null);
 
             var latestLinePaymentStatus = EffectivePaymentStatus(latestLinePayment, staleCutoff);
 
+            if (IsStatus(line.ChargeStatus, VisitChargeStatuses.PaidNotPerformed))
+            {
+                evaluatedLines.Add(line with
+                {
+                    Payable = false,
+                    LineSettlementStatus = LineSettlementPaidNotPerformed,
+                    PaymentId = latestLinePayment?.Id,
+                    PaymentCode = latestLinePayment?.PaymentCode,
+                    PaymentStatus = latestLinePaymentStatus ?? PaymentStatuses.Paid,
+                    CanPayByQr = false,
+                    CanSelect = false,
+                    CanDecline = false,
+                    CanSkipPaid = false,
+                });
+                continue;
+            }
+
             if (IsStatus(line.ChargeStatus, VisitChargeStatuses.CancelledRefundPending))
             {
-                anyLineMismatch = true;
+                anyCancelledRefundPending = true;
+                hasReconciliationItems = true;
                 evaluatedLines.Add(line with
                 {
                     Payable = false,
@@ -160,6 +210,9 @@ internal static class VisitChargeAssessor
                     PaymentCode = latestLinePayment?.PaymentCode,
                     PaymentStatus = latestLinePaymentStatus,
                     CanPayByQr = false,
+                    CanSelect = false,
+                    CanDecline = false,
+                    CanSkipPaid = false,
                 });
                 continue;
             }
@@ -174,6 +227,9 @@ internal static class VisitChargeAssessor
                     PaymentCode = latestLinePayment?.PaymentCode,
                     PaymentStatus = latestLinePaymentStatus,
                     CanPayByQr = false,
+                    CanSelect = false,
+                    CanDecline = false,
+                    CanSkipPaid = false,
                 });
                 continue;
             }
@@ -188,6 +244,9 @@ internal static class VisitChargeAssessor
                     PaymentCode = latestLinePayment?.PaymentCode,
                     PaymentStatus = latestLinePaymentStatus ?? VisitChargesService.SettlementUnpaid,
                     CanPayByQr = false,
+                    CanSelect = false,
+                    CanDecline = !visitBlocked && isOptionalOrder && canExecuteTransition,
+                    CanSkipPaid = false,
                 });
                 continue;
             }
@@ -201,14 +260,20 @@ internal static class VisitChargeAssessor
                     PaymentCode = latestLinePayment?.PaymentCode,
                     PaymentStatus = latestLinePaymentStatus,
                     CanPayByQr = false,
+                    CanSelect = !visitBlocked && isOptionalOrder && canExecuteTransition,
+                    CanDecline = !visitBlocked && isOptionalOrder && canExecuteTransition,
+                    CanSkipPaid = false,
                 });
                 continue;
             }
 
             // Active payable line with UnitPrice > 0
             string lineSettlement;
-            var lineHasActivePending = lineChargePayments.Any(p => IsActivePending(p, staleCutoff)) ||
-                                       (chargeScopedPayments.Count == 0 && hasActiveLegacyPending);
+            var lineHasActivePending = lineAllocations.Any(a =>
+                                           IsStatus(a.Status, PaymentAllocationStatuses.Pending) &&
+                                           a.Payment is not null &&
+                                           IsActivePending(a.Payment, staleCutoff)) ||
+                                       (!hasAnyAllocations && hasActiveLegacyPending);
 
             if (isLegacyFullVisitPaid || (isLegacyExamOnlyPaid && line.ChargeId == activeExamLine!.ChargeId))
             {
@@ -223,27 +288,33 @@ internal static class VisitChargeAssessor
             }
             else
             {
-                var linePaid = DedupePaid(lineChargePayments);
-                var lineMismatchRow = lineChargePayments.Any(p => IsStatus(p.Status, VisitChargesService.SettlementMismatch));
+                var lineMismatchRow = lineAllocations.Any(a =>
+                    IsStatus(a.Status, PaymentAllocationStatuses.Reconcile) ||
+                    (a.Payment is not null && IsStatus(a.Payment.Status, VisitChargesService.SettlementMismatch)));
 
-                if (linePaid.Any(p => p.Amount is null))
+                if (paidLineAllocations.Any(a => a.AllocatedAmount is null))
                 {
                     lineSettlement = VisitChargesService.SettlementUndetermined;
                     anyLineUndetermined = true;
                 }
+                else if (paidLineAllocations.Count == 1 && paidLineAllocations[0].AllocatedAmount == line.UnitPrice)
+                {
+                    // Valid PAID allocation wins even if a separate late/duplicate transfer was flagged RECONCILE!
+                    lineSettlement = VisitChargesService.SettlementPaid;
+                    latestLinePayment = paidLineAllocations[0].Payment;
+                    latestLinePaymentStatus = PaymentStatuses.Paid;
+                }
+                else if (paidLineAllocations.Count > 0)
+                {
+                    lineSettlement = VisitChargesService.SettlementMismatch;
+                    anyActiveLineMismatch = true;
+                    hasReconciliationItems = true;
+                }
                 else if (lineMismatchRow)
                 {
                     lineSettlement = VisitChargesService.SettlementMismatch;
-                    anyLineMismatch = true;
-                }
-                else if (linePaid.Count == 1 && linePaid[0].Amount == line.UnitPrice)
-                {
-                    lineSettlement = VisitChargesService.SettlementPaid;
-                }
-                else if (linePaid.Count > 0)
-                {
-                    lineSettlement = VisitChargesService.SettlementMismatch;
-                    anyLineMismatch = true;
+                    anyActiveLineMismatch = true;
+                    hasReconciliationItems = true;
                 }
                 else
                 {
@@ -254,10 +325,13 @@ internal static class VisitChargeAssessor
             var diagBlocked = line.DiagnosticOrderId.HasValue &&
                               diagOrdersById is not null &&
                               (!diagOrdersById.TryGetValue(line.DiagnosticOrderId.Value, out var order) ||
-                               IsStatus(order.Status, "CANCELLED"));
+                               IsStatus(order.Status, "CANCELLED") ||
+                               IsStatus(order.SelectionStatus, DiagnosticSelectionStatuses.Declined) ||
+                               IsStatus(order.SelectionStatus, DiagnosticSelectionStatuses.SkippedAfterPaid) ||
+                               IsStatus(order.SelectionStatus, DiagnosticSelectionStatuses.ReviewRequired));
 
             var cashierBlocked = IsStatus(line.ChargeType, VisitChargeTypes.Examination) &&
-                                 string.Equals(paymentMethod, "CASHIER", StringComparison.OrdinalIgnoreCase);
+                                 string.Equals(walkInPaymentMethod, "CASHIER", StringComparison.OrdinalIgnoreCase);
 
             var lineCanPayByQr = !visitBlocked &&
                                  !diagBlocked &&
@@ -268,6 +342,21 @@ internal static class VisitChargeAssessor
                                  lineSettlement == VisitChargesService.SettlementUnpaid &&
                                  !lineHasActivePending;
 
+            var canSelectLine = !visitBlocked &&
+                                !diagBlocked &&
+                                line.UnitPrice is > 0m &&
+                                lineSettlement == VisitChargesService.SettlementUnpaid;
+
+            var canDeclineLine = !visitBlocked &&
+                                 isOptionalOrder &&
+                                 canExecuteTransition &&
+                                 lineSettlement == VisitChargesService.SettlementUnpaid;
+
+            var canSkipPaidLine = !visitBlocked &&
+                                  isOptionalOrder &&
+                                  canExecuteTransition &&
+                                  lineSettlement == VisitChargesService.SettlementPaid;
+
             evaluatedLines.Add(line with
             {
                 LineSettlementStatus = lineSettlement,
@@ -275,8 +364,19 @@ internal static class VisitChargeAssessor
                 PaymentCode = latestLinePayment?.PaymentCode,
                 PaymentStatus = latestLinePaymentStatus ?? VisitChargesService.SettlementUnpaid,
                 CanPayByQr = lineCanPayByQr,
+                CanSelect = canSelectLine,
+                CanDecline = canDeclineLine,
+                CanSkipPaid = canSkipPaidLine,
             });
         }
+
+        var activeRequiredLines = evaluatedLines
+            .Where(l => IsStatus(l.ChargeStatus, VisitChargeStatuses.Active) && l.Payable == true && l.UnitPrice is > 0m)
+            .ToList();
+
+        var unpaidActiveLines = activeRequiredLines
+            .Where(l => l.LineSettlementStatus == VisitChargesService.SettlementUnpaid)
+            .ToList();
 
         string settlement;
         decimal? amountDue;
@@ -286,56 +386,85 @@ internal static class VisitChargeAssessor
             settlement = VisitChargesService.SettlementUndetermined;
             amountDue = null;
         }
-        else if (anyLineMismatch)
+        else if (anyActiveLineMismatch && unpaidActiveLines.Count == 0)
         {
             settlement = VisitChargesService.SettlementMismatch;
             amountDue = null;
         }
-        else
+        else if (activeRequiredLines.Count == 0)
         {
-            var activeRequiredLines = evaluatedLines
-                .Where(l => IsStatus(l.ChargeStatus, VisitChargeStatuses.Active) && l.Payable == true && l.UnitPrice is > 0m)
-                .ToList();
-
-            if (activeRequiredLines.Count == 0)
+            if (anyCancelledRefundPending)
             {
-                if (paidAll.Count == 0)
-                {
-                    settlement = VisitChargesService.SettlementUnpaid;
-                    amountDue = 0m;
-                }
-                else if (paidAll.Count == 1 && paidAll[0].Amount == 0m)
-                {
-                    settlement = VisitChargesService.SettlementPaid;
-                    amountDue = 0m;
-                }
-                else
-                {
-                    settlement = VisitChargesService.SettlementMismatch;
-                    amountDue = null;
-                }
+                settlement = VisitChargesService.SettlementMismatch;
+                amountDue = null;
+            }
+            else if (evaluatedLines.Any(l => l.LineSettlementStatus == LineSettlementPaidNotPerformed))
+            {
+                settlement = VisitChargesService.SettlementPaid;
+                amountDue = 0m;
+            }
+            else if (paidAll.Count == 0)
+            {
+                settlement = VisitChargesService.SettlementUnpaid;
+                amountDue = 0m;
+            }
+            else if (paidAll.Count == 1 && paidAll[0].Amount == 0m)
+            {
+                settlement = VisitChargesService.SettlementPaid;
+                amountDue = 0m;
             }
             else
             {
-                var unpaidRequiredLines = activeRequiredLines
-                    .Where(l => l.LineSettlementStatus == VisitChargesService.SettlementUnpaid)
-                    .ToList();
-
-                if (unpaidRequiredLines.Count == 0 &&
-                    activeRequiredLines.All(l => l.LineSettlementStatus == VisitChargesService.SettlementPaid))
-                {
-                    settlement = VisitChargesService.SettlementPaid;
-                    amountDue = 0m;
-                }
-                else
-                {
-                    settlement = VisitChargesService.SettlementUnpaid;
-                    amountDue = unpaidRequiredLines.Sum(l => l.UnitPrice!.Value);
-                }
+                settlement = VisitChargesService.SettlementMismatch;
+                amountDue = null;
             }
         }
+        else if (unpaidActiveLines.Count == 0 &&
+                 activeRequiredLines.All(l => l.LineSettlementStatus == VisitChargesService.SettlementPaid))
+        {
+            settlement = VisitChargesService.SettlementPaid;
+            amountDue = 0m;
+        }
+        else if (unpaidActiveLines.Count > 0)
+        {
+            // PAY-17: Unrelated ACTIVE UNPAID lines remain payable even if another cancelled/mismatched line requires reconciliation!
+            settlement = VisitChargesService.SettlementUnpaid;
+            amountDue = unpaidActiveLines.Sum(l => l.UnitPrice!.Value);
+        }
+        else
+        {
+            settlement = VisitChargesService.SettlementMismatch;
+            amountDue = null;
+        }
+
+        decimal? selectedAmountDue = amountDue is null
+            ? null
+            : unpaidActiveLines
+                .Where(l => !IsStatus(l.SelectionStatus, DiagnosticSelectionStatuses.Undecided) &&
+                            !IsStatus(l.SelectionStatus, DiagnosticSelectionStatuses.ReviewRequired))
+                .Sum(l => l.UnitPrice!.Value);
 
         var latest = payments.FirstOrDefault();
+        var effectivePaymentMethod = latest?.PaymentMethod ?? walkInPaymentMethod;
+
+        var activePendingQr = payments.FirstOrDefault(p =>
+            IsActivePending(p, staleCutoff) &&
+            !string.Equals(p.PaymentMethod, PaymentMethods.Cash, StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(p.PaymentCode));
+
+        IReadOnlyList<long>? activePendingChargeIds = null;
+        if (activePendingQr is not null)
+        {
+            var pendingChargeIds = effectiveAllocations
+                .Where(a => a.PaymentId == activePendingQr.Id && IsStatus(a.Status, PaymentAllocationStatuses.Pending))
+                .Select(a => a.VisitChargeId)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+            if (pendingChargeIds.Count > 0)
+                activePendingChargeIds = pendingChargeIds;
+        }
+
         var visitCanPayByQr = settlement == VisitChargesService.SettlementUnpaid &&
                               amountDue is > 0m &&
                               evaluatedLines.Any(l => l.CanPayByQr);
@@ -352,10 +481,16 @@ internal static class VisitChargeAssessor
             latest?.PaymentCode,
             latest is null ? VisitChargesService.SettlementUnpaid : EffectivePaymentStatus(latest, staleCutoff),
             latest?.Amount,
-            paymentMethod,
+            effectivePaymentMethod,
             latest?.PaidAt,
             latest?.ExternalReference,
-            visitCanPayByQr);
+            visitCanPayByQr,
+            SelectedAmountDue: selectedAmountDue,
+            ActivePendingQrPaymentId: activePendingQr?.Id,
+            ActivePendingQrPaymentCode: activePendingQr?.PaymentCode,
+            ActivePendingQrAmount: activePendingQr?.Amount,
+            ActivePendingQrChargeIds: activePendingChargeIds,
+            HasReconciliationItems: hasReconciliationItems);
     }
 
     private static async Task<VisitChargeAssessment> AssessDerivedLegacyVisitAsync(
@@ -433,6 +568,7 @@ internal static class VisitChargeAssessor
             PaymentCode = latest?.PaymentCode,
             PaymentStatus = latestStatus,
             CanPayByQr = canPayByQr,
+            CanSelect = canPayByQr,
         };
 
         return new VisitChargeAssessment(
@@ -447,10 +583,12 @@ internal static class VisitChargeAssessor
             latest?.PaymentCode,
             latestStatus,
             latest?.Amount,
-            paymentMethod,
+            latest?.PaymentMethod ?? paymentMethod,
             latest?.PaidAt,
             latest?.ExternalReference,
-            canPayByQr);
+            canPayByQr,
+            SelectedAmountDue: amountDue,
+            HasReconciliationItems: settlement == VisitChargesService.SettlementMismatch);
     }
 
     private static VisitChargeLineDto MapPersistedBase(
@@ -471,13 +609,18 @@ internal static class VisitChargeAssessor
             ? VisitChargeStatuses.Active
             : charge.Status.Trim().ToUpperInvariant();
 
-        if (chargeStatus == VisitChargeStatuses.Active &&
-            charge.DiagnosticOrderId.HasValue &&
+        DiagnosticOrder? diagOrder = null;
+        if (charge.DiagnosticOrderId.HasValue &&
             diagOrdersById is not null &&
-            diagOrdersById.TryGetValue(charge.DiagnosticOrderId.Value, out var diagOrder) &&
-            IsStatus(diagOrder.Status, "CANCELLED"))
+            diagOrdersById.TryGetValue(charge.DiagnosticOrderId.Value, out var foundOrder))
         {
-            chargeStatus = VisitChargeStatuses.Cancelled;
+            diagOrder = foundOrder;
+            if (chargeStatus == VisitChargeStatuses.Active && IsStatus(diagOrder.Status, "CANCELLED"))
+            {
+                chargeStatus = IsStatus(diagOrder.SelectionStatus, DiagnosticSelectionStatuses.SkippedAfterPaid)
+                    ? VisitChargeStatuses.PaidNotPerformed
+                    : VisitChargeStatuses.Cancelled;
+            }
         }
 
         bool? payable;
@@ -503,6 +646,16 @@ internal static class VisitChargeAssessor
             dataStatus = VisitChargesService.ChargeDataValid;
         }
 
+        var selectionStatus = diagOrder is not null
+            ? (string.IsNullOrWhiteSpace(diagOrder.SelectionStatus)
+                ? DiagnosticSelectionStatuses.Accepted
+                : diagOrder.SelectionStatus.Trim().ToUpperInvariant())
+            : (chargeType == VisitChargeTypes.Examination ? DiagnosticSelectionStatuses.Accepted : null);
+
+        var requiredForConclusion = diagOrder is not null
+            ? diagOrder.RequiredForConclusion ?? true
+            : (chargeType == VisitChargeTypes.Examination ? true : (bool?)null);
+
         return new VisitChargeLineDto(
             charge.Id,
             VisitChargesService.ChargeSourcePersisted,
@@ -515,7 +668,10 @@ internal static class VisitChargeAssessor
             payable,
             dataStatus,
             ChargeType: chargeType,
-            ChargeStatus: chargeStatus);
+            ChargeStatus: chargeStatus,
+            DiagnosticOrderCode: diagOrder?.OrderCode,
+            RequiredForConclusion: requiredForConclusion,
+            SelectionStatus: selectionStatus);
     }
 
     private static async Task<VisitChargeLineDto> MapDerivedAsync(
@@ -570,7 +726,9 @@ internal static class VisitChargeAssessor
             invalidPrice ? null : true,
             dataStatus,
             ChargeType: VisitChargeTypes.Examination,
-            ChargeStatus: VisitChargeStatuses.Active);
+            ChargeStatus: VisitChargeStatuses.Active,
+            RequiredForConclusion: true,
+            SelectionStatus: DiagnosticSelectionStatuses.Accepted);
     }
 
     private static async Task<IReadOnlyDictionary<long, DiagnosticOrder>?> TryLoadDiagnosticOrdersAsync(
@@ -671,12 +829,25 @@ internal static class VisitChargeAssessor
             amounts.Count == 0 ? null : amounts[0]);
     }
 
+    private static List<EffectiveChargeAllocation> DedupePaidAllocations(IEnumerable<EffectiveChargeAllocation> allocations) =>
+        allocations
+            .Where(a => IsStatus(a.Status, PaymentAllocationStatuses.Paid))
+            .GroupBy(a => a.Payment is not null ? DedupeKey(a.Payment) : $"alloc:{a.PaymentId}:{a.VisitChargeId}", StringComparer.Ordinal)
+            .Select(g => g.OrderByDescending(a => a.PaymentId).First())
+            .ToList();
+
     private static List<Payment> DedupePaid(IEnumerable<Payment> payments) =>
         payments
             .Where(p => IsStatus(p.Status, PaymentStatuses.Paid))
             .GroupBy(DedupeKey, StringComparer.Ordinal)
             .Select(g => g.OrderByDescending(p => p.Id).First())
             .ToList();
+
+    private static bool IsOrderStartedOrCompleted(string? status)
+    {
+        var s = status?.Trim().ToUpperInvariant();
+        return s is "IN_PROGRESS" or "COMPLETED" or "FINALIZED" or "VERIFIED" or "CANCELLED";
+    }
 
     private static bool IsActivePending(Payment payment, DateTime staleCutoff) =>
         IsStatus(payment.Status, PaymentStatuses.Pending) &&

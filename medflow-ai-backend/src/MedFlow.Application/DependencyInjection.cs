@@ -101,6 +101,8 @@ public static class DependencyInjection
         services.AddScoped<IVisitChargeSettlementReader, VisitChargeSettlementReader>();
         services.AddScoped<IVisitChargesService, VisitChargesService>();
         services.AddScoped<IGenerateQrPaymentService, GenerateQrPaymentService>();
+        services.AddScoped<ICollectCashPaymentService, CollectCashPaymentService>();
+        services.AddScoped<IDiagnosticOrderSelectionService, DiagnosticOrderSelectionService>();
         services.AddScoped<ISePayWebhookService, SePayWebhookService>();
         services.AddScoped<IConsultationWorkspaceService, ConsultationWorkspaceService>();
         services.AddScoped<IMedicalHistoryService, MedicalHistoryService>();

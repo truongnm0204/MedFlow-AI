@@ -28,6 +28,10 @@ import { LateArrivalMissedTurnModal } from '../components/late-arrival-missed-tu
 import { ExaminationQueueStatCards } from '../components/examination-queue-stat-cards';
 import { PatientDetailModal } from '../components/patient-detail-modal';
 import { ReceptionSidebar } from '../components/reception-sidebar';
+import {
+  ReceptionCashCollectionModal,
+  type ReceptionCashCollectionTarget,
+} from '../components/reception-cash-collection-modal';
 import { UpdateQueueStatusModal } from '../components/update-queue-status-modal';
 import { ReturnToDoctorQueueModal } from '../components/return-to-doctor-queue-modal';
 import { usePatientDetail } from '../hooks/use-reception-api';
@@ -88,6 +92,8 @@ export function ExaminationQueuePage() {
   const logout = useLogout();
 
   const canManageQueue = hasPermission(user?.roles, 'QUEUE_MANAGE');
+  const canCollectCash = hasPermission(user?.roles, 'PAYMENT_COLLECT');
+  const [cashTarget, setCashTarget] = useState<ReceptionCashCollectionTarget | null>(null);
   const defaultQueueDate = useMemo(() => getHospitalTodayIso(), []);
 
   const [filters, setFilters] = useState<ExaminationQueueFilterFormValues>(() =>
@@ -769,6 +775,18 @@ export function ExaminationQueuePage() {
                                 }
                               : undefined
                           }
+                          onCollectCash={
+                            canCollectCash
+                              ? (entry) => {
+                                  setUpdateNotice(null);
+                                  setCashTarget({
+                                    visitIdOrCode: entry.visitCode,
+                                    patientName: entry.patientName,
+                                    patientCode: entry.patientCode,
+                                  });
+                                }
+                              : undefined
+                          }
                         />
                       ))
                     ) : (
@@ -964,6 +982,20 @@ export function ExaminationQueuePage() {
             target={returnToDoctorTarget}
             onClose={() => setReturnToDoctorTarget(null)}
             onApplied={handleReturnToDoctorApplied}
+          />
+        )}
+
+        {cashTarget && (
+          <ReceptionCashCollectionModal
+            open
+            target={cashTarget}
+            onClose={() => setCashTarget(null)}
+            onCollected={(receipt) => {
+              void refetch();
+              setUpdateNotice(
+                `Đã thu tiền mặt ${receipt.paymentCode} (${receipt.amount.toLocaleString('vi-VN')} VNĐ) cho bệnh nhân ${cashTarget.patientName}.`,
+              );
+            }}
           />
         )}
       </div>

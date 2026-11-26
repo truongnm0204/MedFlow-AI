@@ -1091,6 +1091,16 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                     "Dữ liệu hàng đợi cận lâm sàng đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
             }
 
+            if (targetStatus == "CANCELLED" &&
+                cancelLinkedOrder &&
+                trackedOrder is not null &&
+                trackedOrder.RequiredForConclusion != false &&
+                !isTechnicalAbort)
+            {
+                throw new ConflictException(
+                    "[MANDATORY_ORDER_REVIEW_REQUIRED] Chỉ định cận lâm sàng bắt buộc phục vụ kết luận không được hủy thông thường tại phòng CLS (chỉ cho phép ghi nhận sự cố kỹ thuật TechnicalAbort = true để bác sĩ xem xét lại).");
+            }
+
             newStateVersion = currentDbStateVersion + 1;
             trackedQueueEntry.QueueType = "DIAGNOSTIC";
             trackedQueueEntry.QueueDate ??= entryQueueDate;

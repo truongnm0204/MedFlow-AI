@@ -29,6 +29,7 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
         MedicineBatches = 14,
         VisitCharges = 15,
         Payments = 16,
+        PaymentAllocations = 17,
     }
 
     public MedFlowDbContext(DbContextOptions<MedFlowDbContext> options) : base(options) { }
@@ -58,6 +59,7 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<Visit> Visits => Set<Visit>();
     public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<PaymentAllocation> PaymentAllocations => Set<PaymentAllocation>();
     public DbSet<PatientIdentityClaim> PatientIdentityClaims => Set<PatientIdentityClaim>();
     public DbSet<PaymentGatewayEvent> PaymentGatewayEvents => Set<PaymentGatewayEvent>();
     public DbSet<VisitCharge> VisitCharges => Set<VisitCharge>();
@@ -128,7 +130,11 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
         {
             if (entry.State is EntityState.Added or EntityState.Modified)
             {
-                if (entry.Entity.VisitChargeId.HasValue)
+                if (string.Equals(entry.Entity.PaymentScope, PaymentScopes.Allocated, StringComparison.OrdinalIgnoreCase))
+                {
+                    entry.Entity.PaymentScope = PaymentScopes.Allocated;
+                }
+                else if (entry.Entity.VisitChargeId.HasValue)
                 {
                     entry.Entity.PaymentScope = PaymentScopes.Charge;
                 }
@@ -136,6 +142,31 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
                 {
                     entry.Entity.PaymentScope = PaymentScopes.LegacyVisit;
                 }
+            }
+        }
+
+        foreach (var entry in ChangeTracker.Entries<PaymentAllocation>())
+        {
+            if (entry.State is EntityState.Added or EntityState.Modified)
+            {
+                entry.Entity.Status = string.IsNullOrWhiteSpace(entry.Entity.Status)
+                    ? PaymentAllocationStatuses.Pending
+                    : entry.Entity.Status.Trim().ToUpperInvariant();
+
+                if (entry.State == EntityState.Added && entry.Entity.CreatedAt == default)
+                {
+                    entry.Entity.CreatedAt = nowVietnam;
+                }
+            }
+        }
+
+        foreach (var entry in ChangeTracker.Entries<DiagnosticOrder>())
+        {
+            if (entry.State is EntityState.Added or EntityState.Modified)
+            {
+                entry.Entity.SelectionStatus = string.IsNullOrWhiteSpace(entry.Entity.SelectionStatus)
+                    ? DiagnosticSelectionStatuses.Accepted
+                    : entry.Entity.SelectionStatus.Trim().ToUpperInvariant();
             }
         }
     }
@@ -247,6 +278,12 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public Task<bool> TryLockPaymentsForUpdateAsync(IReadOnlyCollection<long> paymentIds, CancellationToken ct = default)
         => LockRowsForUpdateAsync(LockTargetTable.Payments, paymentIds, ct);
 
+    public Task<bool> TryLockPaymentAllocationForUpdateAsync(long allocationId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.PaymentAllocations, [allocationId], ct);
+
+    public Task<bool> TryLockPaymentAllocationsForUpdateAsync(IReadOnlyCollection<long> allocationIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.PaymentAllocations, allocationIds, ct);
+
     private async Task<bool> LockRowsForUpdateAsync(
         LockTargetTable table,
         IReadOnlyCollection<long> ids,
@@ -306,6 +343,8 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
                 $"SELECT id AS \"Value\" FROM visit_charges WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
             LockTargetTable.Payments => await Database.SqlQuery<long>(
                 $"SELECT id AS \"Value\" FROM payments WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.PaymentAllocations => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM payment_allocations WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
             _ => throw new ArgumentOutOfRangeException(nameof(table), table, "Unsupported lock target table."),
         };
 

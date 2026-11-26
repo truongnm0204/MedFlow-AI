@@ -19,5 +19,6 @@ public static class PermissionCodes
     public const string UserManage = "USER_MANAGE";
     public const string AuditRead = "AUDIT_READ";
     public const string PaymentView = "PAYMENT_VIEW";
+    public const string PaymentCollect = "PAYMENT_COLLECT";
     public const string PatientIdentityVerify = "PATIENT_IDENTITY_VERIFY";
 }

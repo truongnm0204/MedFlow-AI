@@ -1,4 +1,4 @@
-import { Printer } from 'lucide-react';
+import { Banknote, Printer } from 'lucide-react';
 
 import { Badge } from '@/shared/ui/badge';
 
@@ -10,6 +10,7 @@ interface QueuePreviewTableProps {
   onTransferRoom?: (entry: QueueEntry) => void;
   onPrintTicket?: (entry: QueueEntry) => void;
   onAssignRoom?: (entry: QueueEntry) => void;
+  onCollectCash?: (entry: QueueEntry) => void;
 }
 
 const STATUS_META: Record<
@@ -35,6 +36,7 @@ export function QueuePreviewTable({
   onTransferRoom,
   onPrintTicket,
   onAssignRoom,
+  onCollectCash,
 }: QueuePreviewTableProps) {
   return (
     <div className="overflow-x-auto">
@@ -49,7 +51,9 @@ export function QueuePreviewTable({
             <th className="py-2 pr-3">Ưu tiên</th>
             <th className="py-2 pr-3">Trạng thái</th>
             <th className="py-2 pr-3 text-right">Phiếu khám</th>
-            {(onTransferRoom || onAssignRoom) && <th className="py-2 text-right">Điều phối</th>}
+            {(onTransferRoom || onAssignRoom || onCollectCash) && (
+              <th className="py-2 text-right">Điều phối</th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -94,9 +98,21 @@ export function QueuePreviewTable({
                   <span>In phiếu</span>
                 </button>
               </td>
-              {(onTransferRoom || onAssignRoom) && (
+              {(onTransferRoom || onAssignRoom || onCollectCash) && (
                 <td className="py-2.5 text-right">
                   <div className="inline-flex items-center justify-end gap-1.5">
+                    {onCollectCash && (
+                      <button
+                        type="button"
+                        disabled={entry.status === 'DONE'}
+                        onClick={() => onCollectCash(entry)}
+                        aria-label={`Thu tiền mặt cho ${entry.patientName}`}
+                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-canvas focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Banknote className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Thu tiền</span>
+                      </button>
+                    )}
                     {onAssignRoom && (
                       <button
                         type="button"

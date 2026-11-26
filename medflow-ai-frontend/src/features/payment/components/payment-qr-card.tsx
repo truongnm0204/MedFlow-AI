@@ -109,6 +109,29 @@ export function PaymentQrCard({ qr, remainingMs, isExpired }: PaymentQrCardProps
             <CopyRow label="Nội dung chuyển khoản" value={qr.transferContent} tone="code" />
           </dl>
 
+          {qr.allocations && qr.allocations.length > 1 ? (
+            <div className="mt-3 rounded-xl border border-border bg-canvas px-3.5 py-2.5 text-xs">
+              <p className="font-semibold text-navy">
+                Chi tiết gộp ({qr.allocations.length} dịch vụ)
+              </p>
+              <ul className="mt-1.5 space-y-1">
+                {qr.allocations.map((alloc) => (
+                  <li
+                    key={alloc.visitChargeId}
+                    className="flex items-center justify-between gap-2 text-sub"
+                  >
+                    <span className="truncate">
+                      {alloc.serviceName ?? `#${alloc.visitChargeId}`}
+                    </span>
+                    <span className="shrink-0 font-mono font-semibold text-ink">
+                      {formatVnd(alloc.allocatedAmount)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           <p
             className={`mt-3 flex items-center gap-1.5 text-xs font-semibold ${
               isExpired ? 'text-danger' : 'text-emerald-700'

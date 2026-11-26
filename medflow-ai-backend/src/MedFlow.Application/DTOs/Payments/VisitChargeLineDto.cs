@@ -17,4 +17,10 @@ public sealed record VisitChargeLineDto(
     long? PaymentId = null,
     string? PaymentCode = null,
     string? PaymentStatus = null,
-    bool CanPayByQr = false);
+    bool CanPayByQr = false,
+    string? DiagnosticOrderCode = null,
+    bool? RequiredForConclusion = null,
+    string? SelectionStatus = null,
+    bool CanSelect = false,
+    bool CanDecline = false,
+    bool CanSkipPaid = false);

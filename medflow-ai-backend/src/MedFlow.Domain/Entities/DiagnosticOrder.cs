@@ -1,3 +1,5 @@
+using MedFlow.Domain.Constants;
+
 namespace MedFlow.Domain.Entities;
 
 public class DiagnosticOrder
@@ -12,6 +14,8 @@ public class DiagnosticOrder
     public bool? RequiredForConclusion { get; set; }
     public string? Priority { get; set; }
     public string? Status { get; set; }
+    public string SelectionStatus { get; set; } = DiagnosticSelectionStatuses.Accepted;
+    public DateOnly? DeferredUntilDate { get; set; }
     public long? ConfirmedByStaffId { get; set; }
     public DateTime? ConfirmedAt { get; set; }
     public DateTime? OrderedAt { get; set; }

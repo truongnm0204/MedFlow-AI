@@ -318,7 +318,7 @@ public sealed class Migration023AndRowLockIntegrationTests
                     return false;
                 if (!includeSeed && name.StartsWith("003_", StringComparison.Ordinal))
                     return false;
-                if (upToExclusive023 && name.StartsWith("023_", StringComparison.Ordinal))
+                if (upToExclusive023 && string.CompareOrdinal(name, "023_") >= 0)
                     return false;
                 return true;
             })

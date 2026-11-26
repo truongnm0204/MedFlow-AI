@@ -1,8 +1,12 @@
 import { apiClient } from '@/shared/lib/axios';
 
 import type {
+  DeclineDiagnosticOrderRequest,
+  DeclineDiagnosticOrderResponse,
+  GenerateQrPaymentRequest,
   GenerateQrPaymentResponse,
   PatientVisitListResponseDto,
+  UpdateDiagnosticOrderSelectionRequest,
   VisitChargesResponse,
 } from '../types/payment.types';
 
@@ -17,15 +21,55 @@ export async function fetchVisitChargesApi(visitIdOrCode: string): Promise<Visit
   return data;
 }
 
+export type QrPaymentCreateInput = number | null | undefined | GenerateQrPaymentRequest;
+
 /** POST /patients/visits/{idOrCode}/payments/qr — 200 = REUSED/ADOPTED, 201 = CREATED. */
 export async function generateQrPaymentApi(
   visitIdOrCode: string,
-  visitChargeId?: number | null,
+  input?: QrPaymentCreateInput,
 ): Promise<GenerateQrPaymentResponse> {
-  const body = visitChargeId != null ? { visitChargeId } : {};
+  let body: Record<string, unknown> = {};
+  if (typeof input === 'number') {
+    body = { visitChargeId: input };
+  } else if (input && typeof input === 'object') {
+    if (input.visitChargeIds && input.visitChargeIds.length > 0) {
+      body.visitChargeIds = input.visitChargeIds;
+    } else if (input.visitChargeId != null) {
+      body.visitChargeId = input.visitChargeId;
+    }
+    if (input.idempotencyKey) {
+      body.idempotencyKey = input.idempotencyKey;
+    }
+  }
+
   const { data } = await apiClient.post<GenerateQrPaymentResponse>(
     `/patients/visits/${encodeURIComponent(visitIdOrCode.trim())}/payments/qr`,
     body,
+  );
+  return data;
+}
+
+/** POST /patients/visits/{idOrCode}/diagnostic-orders/selection */
+export async function updateDiagnosticOrderSelectionApi(
+  visitIdOrCode: string,
+  payload: UpdateDiagnosticOrderSelectionRequest,
+): Promise<VisitChargesResponse> {
+  const { data } = await apiClient.post<VisitChargesResponse>(
+    `/patients/visits/${encodeURIComponent(visitIdOrCode.trim())}/diagnostic-orders/selection`,
+    payload,
+  );
+  return data;
+}
+
+/** POST /patients/visits/{idOrCode}/diagnostic-orders/{orderIdOrCode}/decline */
+export async function declineDiagnosticOrderApi(
+  visitIdOrCode: string,
+  orderIdOrCode: number | string,
+  payload?: DeclineDiagnosticOrderRequest,
+): Promise<DeclineDiagnosticOrderResponse> {
+  const { data } = await apiClient.post<DeclineDiagnosticOrderResponse>(
+    `/patients/visits/${encodeURIComponent(visitIdOrCode.trim())}/diagnostic-orders/${encodeURIComponent(String(orderIdOrCode))}/decline`,
+    payload ?? {},
   );
   return data;
 }

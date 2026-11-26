@@ -9,8 +9,8 @@ using Microsoft.EntityFrameworkCore;
 namespace MedFlow.Application.Services.Payments;
 
 /// <summary>
-/// Per-Charge Pay-Before-Service eligibility reader (ADR-0059 Option A &amp; ADR-0047 v4.1).
-/// Evaluates EXAMINATION charges, DIAGNOSTIC order charges, and Pharmacy visit clearance
+/// Per-Charge Pay-Before-Service eligibility reader (ADR-0059 Option A, ADR-0060 PaymentAllocations &amp; ADR-0047 v4.1).
+/// Evaluates EXAMINATION charges, DIAGNOSTIC order charges (including Stage B selection_status), and Pharmacy visit clearance
 /// without ever treating UNPRICED/INVALID/MISMATCH charges as free or inferring medicine retail prices.
 /// </summary>
 public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
@@ -26,7 +26,10 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
     public const string StatusVisitClosed = "VISIT_CLOSED";
     public const string StatusOrderNotFound = "ORDER_NOT_FOUND";
     public const string StatusOrderCancelled = "ORDER_CANCELLED";
+    public const string StatusOrderUndecided = "ORDER_UNDECIDED";
+    public const string StatusOrderReviewRequired = "ORDER_REVIEW_REQUIRED";
     public const string StatusChargeCancelled = "CHARGE_CANCELLED";
+    public const string StatusChargePaidNotPerformed = "CHARGE_PAID_NOT_PERFORMED";
     public const string StatusMissingCharge = "MISSING_CHARGE";
 
     private readonly IApplicationDbContext _db;
@@ -85,6 +88,12 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
 
         if (charges is not null && charges.Count > 0)
         {
+            var persistedAllocations = await PaymentAllocationLookup.TryLoadNoTrackingForVisitAsync(_db, visitId, ct);
+            var (effectiveAllocations, allocatedPaymentIds) = PaymentAllocationLookup.BuildEffectiveAllocations(
+                visitId,
+                payments,
+                persistedAllocations);
+
             var examCharges = charges
                 .Where(IsExaminationCharge)
                 .ToList();
@@ -95,6 +104,16 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
                 var cancelledExam = examCharges.FirstOrDefault();
                 if (cancelledExam is not null)
                 {
+                    if (IsStatus(cancelledExam.Status, VisitChargeStatuses.PaidNotPerformed))
+                    {
+                        return new VisitChargeGateResult(
+                            false,
+                            StatusChargePaidNotPerformed,
+                            cancelledExam.Id,
+                            cancelledExam.UnitPrice,
+                            "Khoản phí khám đã được ghi nhận không thực hiện.");
+                    }
+
                     var code = IsStatus(cancelledExam.Status, VisitChargeStatuses.CancelledRefundPending)
                         ? StatusMismatch
                         : StatusChargeCancelled;
@@ -114,7 +133,13 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
                     "Lượt khám chưa có khoản phí khám hợp lệ.");
             }
 
-            return EvaluatePersistedCharge(activeExam, charges, payments, allowLegacyFallback: true);
+            return EvaluatePersistedCharge(
+                activeExam,
+                charges,
+                payments,
+                effectiveAllocations,
+                allocatedPaymentIds,
+                allowLegacyFallback: true);
         }
 
         return await EvaluateLegacyDerivedVisitAsync(visit, payments, forPharmacyFallback: false, ct);
@@ -147,14 +172,26 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
                 "Không tìm thấy chỉ định cận lâm sàng.");
         }
 
-        if (IsStatus(order.Status, "CANCELLED"))
+        if (IsStatus(order.Status, "CANCELLED") ||
+            IsStatus(order.SelectionStatus, DiagnosticSelectionStatuses.Declined) ||
+            IsStatus(order.SelectionStatus, DiagnosticSelectionStatuses.SkippedAfterPaid))
         {
             return new VisitChargeGateResult(
                 false,
                 StatusOrderCancelled,
                 null,
                 null,
-                "Chỉ định cận lâm sàng đã bị hủy.");
+                "Chỉ định cận lâm sàng đã bị hủy hoặc bệnh nhân từ chối thực hiện.");
+        }
+
+        if (IsStatus(order.SelectionStatus, DiagnosticSelectionStatuses.ReviewRequired))
+        {
+            return new VisitChargeGateResult(
+                false,
+                StatusOrderReviewRequired,
+                null,
+                null,
+                "Chỉ định cận lâm sàng bắt buộc đang chờ bác sĩ xem xét lại [REVIEW_REQUIRED].");
         }
 
         if (!order.VisitId.HasValue)
@@ -208,6 +245,16 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
 
         if (!IsChargeActive(diagCharge.Status))
         {
+            if (IsStatus(diagCharge.Status, VisitChargeStatuses.PaidNotPerformed))
+            {
+                return new VisitChargeGateResult(
+                    false,
+                    StatusChargePaidNotPerformed,
+                    diagCharge.Id,
+                    diagCharge.UnitPrice,
+                    "Chỉ định cận lâm sàng đã thanh toán nhưng bệnh nhân xác nhận không thực hiện.");
+            }
+
             var code = IsStatus(diagCharge.Status, VisitChargeStatuses.CancelledRefundPending)
                 ? StatusMismatch
                 : StatusChargeCancelled;
@@ -224,7 +271,32 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
             .OrderByDescending(p => p.Id)
             .ToListAsync(ct);
 
-        return EvaluatePersistedCharge(diagCharge, charges, payments, allowLegacyFallback: true);
+        var persistedAllocations = await PaymentAllocationLookup.TryLoadNoTrackingForVisitAsync(_db, visit.Id, ct);
+        var (effectiveAllocations, allocatedPaymentIds) = PaymentAllocationLookup.BuildEffectiveAllocations(
+            visit.Id,
+            payments,
+            persistedAllocations);
+
+        var gate = EvaluatePersistedCharge(
+            diagCharge,
+            charges,
+            payments,
+            effectiveAllocations,
+            allocatedPaymentIds,
+            allowLegacyFallback: true);
+
+        if (IsStatus(order.SelectionStatus, DiagnosticSelectionStatuses.Undecided) &&
+            gate.StatusCode is not StatusPaid and not StatusPaidLegacy)
+        {
+            return new VisitChargeGateResult(
+                false,
+                StatusOrderUndecided,
+                diagCharge.Id,
+                diagCharge.UnitPrice,
+                "Chỉ định cận lâm sàng tùy chọn chưa được xác nhận đồng ý thực hiện (UNDECIDED).");
+        }
+
+        return gate;
     }
 
     public async Task<VisitChargeGateResult> CheckPharmacyVisitClearanceAsync(
@@ -272,6 +344,12 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
 
         if (charges is not null && charges.Count > 0)
         {
+            var persistedAllocations = await PaymentAllocationLookup.TryLoadNoTrackingForVisitAsync(_db, visitId, ct);
+            var (effectiveAllocations, allocatedPaymentIds) = PaymentAllocationLookup.BuildEffectiveAllocations(
+                visitId,
+                payments,
+                persistedAllocations);
+
             var examCharges = charges.Where(IsExaminationCharge).ToList();
             var activeExam = examCharges.FirstOrDefault(c => IsChargeActive(c.Status));
             if (activeExam is null)
@@ -287,7 +365,13 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
                     "Khoản phí khám của lượt khám đã bị hủy hoặc đang chờ đối soát.");
             }
 
-            return EvaluatePersistedCharge(activeExam, charges, payments, allowLegacyFallback: true);
+            return EvaluatePersistedCharge(
+                activeExam,
+                charges,
+                payments,
+                effectiveAllocations,
+                allocatedPaymentIds,
+                allowLegacyFallback: true);
         }
 
         return await EvaluateLegacyDerivedVisitAsync(visit, payments, forPharmacyFallback: true, ct);
@@ -297,6 +381,8 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
         VisitCharge charge,
         IReadOnlyList<VisitCharge> allVisitCharges,
         IReadOnlyList<Payment> allVisitPayments,
+        IReadOnlyList<EffectiveChargeAllocation> allAllocations,
+        IReadOnlySet<long> allocatedPaymentIds,
         bool allowLegacyFallback)
     {
         var req = string.IsNullOrWhiteSpace(charge.PaymentRequirement)
@@ -334,22 +420,12 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
         }
 
         var expectedAmount = charge.UnitPrice.Value;
-        var chargePayments = allVisitPayments
-            .Where(p => p.VisitChargeId == charge.Id)
+        var chargeAllocations = allAllocations
+            .Where(a => a.VisitChargeId == charge.Id)
             .ToList();
 
-        if (chargePayments.Any(p => IsStatus(p.Status, VisitChargesService.SettlementMismatch)))
-        {
-            return new VisitChargeGateResult(
-                false,
-                StatusMismatch,
-                charge.Id,
-                expectedAmount,
-                "Khoản thanh toán đang lệch số tiền và chờ đối soát.");
-        }
-
-        var paidCharge = DedupePaid(chargePayments);
-        if (paidCharge.Any(p => p.Amount is null))
+        var paidAllocations = DedupePaidAllocations(chargeAllocations);
+        if (paidAllocations.Any(a => a.AllocatedAmount is null))
         {
             return new VisitChargeGateResult(
                 false,
@@ -359,9 +435,9 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
                 "Dữ liệu thanh toán thiếu số tiền đối soát.");
         }
 
-        if (paidCharge.Count == 1 &&
-            paidCharge[0].Amount == expectedAmount &&
-            string.Equals(paidCharge[0].PaymentScope, PaymentScopes.Charge, StringComparison.OrdinalIgnoreCase))
+        if (paidAllocations.Count == 1 &&
+            paidAllocations[0].AllocatedAmount == expectedAmount &&
+            IsValidChargeSettlementScope(paidAllocations[0]))
         {
             return new VisitChargeGateResult(
                 true,
@@ -370,7 +446,7 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
                 expectedAmount);
         }
 
-        if (paidCharge.Count > 0)
+        if (paidAllocations.Count > 0)
         {
             return new VisitChargeGateResult(
                 false,
@@ -380,10 +456,22 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
                 "Số tiền đã thanh toán không khớp khoản phí yêu cầu.");
         }
 
-        if (allowLegacyFallback && chargePayments.Count == 0)
+        if (chargeAllocations.Any(a =>
+                IsStatus(a.Status, PaymentAllocationStatuses.Reconcile) ||
+                (a.Payment is not null && IsStatus(a.Payment.Status, VisitChargesService.SettlementMismatch))))
+        {
+            return new VisitChargeGateResult(
+                false,
+                StatusMismatch,
+                charge.Id,
+                expectedAmount,
+                "Khoản thanh toán đang lệch số tiền và chờ đối soát.");
+        }
+
+        if (allowLegacyFallback && chargeAllocations.Count == 0)
         {
             var legacyPayments = allVisitPayments
-                .Where(p => p.VisitChargeId is null)
+                .Where(p => !p.VisitChargeId.HasValue && !allocatedPaymentIds.Contains(p.Id))
                 .ToList();
 
             if (legacyPayments.Any(p => IsStatus(p.Status, VisitChargesService.SettlementMismatch)))
@@ -403,7 +491,7 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
                     .Where(c => IsChargeActive(c.Status) && IsPayableCharge(c) && c.UnitPrice is > 0m)
                     .Sum(c => c.UnitPrice!.Value);
 
-                var anyChargeScopedPayments = allVisitPayments.Any(p => p.VisitChargeId.HasValue);
+                var anyChargeScopedPayments = allAllocations.Count > 0 || allVisitPayments.Any(p => p.VisitChargeId.HasValue);
 
                 if (!anyChargeScopedPayments && legacyPaidAmount == allActivePayableTotal)
                 {
@@ -450,6 +538,16 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
             charge.Id,
             expectedAmount,
             "Chưa hoàn tất thanh toán khoản phí trước khi thực hiện dịch vụ.");
+    }
+
+    private static bool IsValidChargeSettlementScope(EffectiveChargeAllocation allocation)
+    {
+        if (allocation.AllocationId.HasValue)
+            return true;
+
+        var scope = allocation.Payment?.PaymentScope;
+        return string.Equals(scope, PaymentScopes.Charge, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(scope, PaymentScopes.Allocated, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<VisitChargeGateResult> EvaluateLegacyDerivedVisitAsync(
@@ -605,7 +703,6 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
         }
         catch (NotSupportedException)
         {
-            // Minimal test double without AuditLogs DbSet.
         }
 
         if (visit.AppointmentId is long appointmentId)
@@ -648,6 +745,13 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
 
         return (false, null, false);
     }
+
+    private static List<EffectiveChargeAllocation> DedupePaidAllocations(IEnumerable<EffectiveChargeAllocation> allocations) =>
+        allocations
+            .Where(a => IsStatus(a.Status, PaymentAllocationStatuses.Paid))
+            .GroupBy(a => a.Payment is not null ? DedupeKey(a.Payment) : $"alloc:{a.PaymentId}:{a.VisitChargeId}", StringComparer.Ordinal)
+            .Select(g => g.OrderByDescending(a => a.PaymentId).First())
+            .ToList();
 
     private static List<Payment> DedupePaid(IEnumerable<Payment> payments) =>
         payments

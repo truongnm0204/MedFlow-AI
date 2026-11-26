@@ -162,7 +162,10 @@ export interface ConsultationDiagnosticSummaryDto {
   optionalCompletedCount?: number;
   optionalPendingCount?: number;
   performedAwaitingResultCount?: number;
+  allOrdersResolvedForCompletion?: boolean;
   requiresDiagnosisReconfirmation?: boolean;
+  undecidedOptionalPendingCount?: number;
+  reviewRequiredCount?: number;
 }
 
 export interface ConsultationPrescriptionSummaryDto {
@@ -213,6 +216,16 @@ export interface ConsultationDiagnosticOrderDto {
   reportFileUrl?: string | null;
   performedByStaffName?: string | null;
   verifiedByStaffName?: string | null;
+  selectionStatus?:
+    | 'UNDECIDED'
+    | 'ACCEPTED'
+    | 'DECLINED'
+    | 'REVIEW_REQUIRED'
+    | 'SKIPPED_AFTER_PAID'
+    | (string & {});
+  visitChargeId?: number | null;
+  chargeStatus?: string | null;
+  paymentStatus?: string | null;
 }
 
 export interface DiagnosticServiceCatalogItemDto {
@@ -367,6 +380,7 @@ export interface CompleteVisitRequest {
   confirmNoPrescription?: boolean | null;
   expectedStateVersion?: number | null;
   expectedRevisionNo?: number | null;
+  closeUndecidedOptionalOrders?: boolean | null;
 }
 
 export interface Icd10CatalogItemDto {
