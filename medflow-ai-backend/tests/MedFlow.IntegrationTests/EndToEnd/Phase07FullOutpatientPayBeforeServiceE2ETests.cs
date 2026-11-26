@@ -3239,16 +3239,20 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
         if (visitIds.Count > 0 || apptIds.Count > 0)
         {
             await Db.VisitCharges.Where(c => c.VisitId.HasValue && visitIds.Contains(c.VisitId.Value)).ExecuteDeleteAsync();
-            if (orderIds.Count > 0)
-            {
-                await Db.DiagnosticOrders.Where(o => orderIds.Contains(o.Id)).ExecuteDeleteAsync();
-            }
 
+            // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit ON DELETE RESTRICT —
+            // queue_entries must be cleared BEFORE diagnostic_orders they bind (and before prescriptions
+            // bound via fk_queue_entries_prescription_visit).
             await Db.QueueEntries
                 .Where(q => (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
                             (q.AppointmentId.HasValue && apptIds.Contains(q.AppointmentId.Value)) ||
                             (q.ServicePointId.HasValue && spIds.Contains(q.ServicePointId.Value)))
                 .ExecuteDeleteAsync();
+
+            if (orderIds.Count > 0)
+            {
+                await Db.DiagnosticOrders.Where(o => orderIds.Contains(o.Id)).ExecuteDeleteAsync();
+            }
         }
 
         await Db.AuditLogs

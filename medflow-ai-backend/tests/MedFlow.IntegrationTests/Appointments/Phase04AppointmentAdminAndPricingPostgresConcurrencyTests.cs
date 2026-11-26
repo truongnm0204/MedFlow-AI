@@ -478,6 +478,18 @@ public sealed class Phase04AppointmentAdminAndPricingPostgresConcurrencyTests
                 .ExecuteDeleteAsync();
         }
 
+        // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit + fk_queue_entries_prescription_visit
+        // are ON DELETE RESTRICT — clear queue_entries bindings BEFORE orders/visits below.
+        if (spIds.Count > 0 || apptIds.Count > 0 || visitIds.Count > 0)
+        {
+            await db.QueueEntries
+                .Where(q => (q.ServicePointId != null && spIds.Contains(q.ServicePointId.Value)) ||
+                            (q.CurrentServicePointId != null && spIds.Contains(q.CurrentServicePointId.Value)) ||
+                            (q.AppointmentId != null && apptIds.Contains(q.AppointmentId.Value)) ||
+                            (q.VisitId != null && visitIds.Contains(q.VisitId.Value)))
+                .ExecuteDeleteAsync();
+        }
+
         if (visitIds.Count > 0)
         {
             await db.Payments.Where(p => p.VisitId != null && visitIds.Contains(p.VisitId.Value)).ExecuteDeleteAsync();
@@ -488,16 +500,6 @@ public sealed class Phase04AppointmentAdminAndPricingPostgresConcurrencyTests
         if (spIds.Count > 0)
         {
             await db.QueueFairnessStates.Where(q => spIds.Contains(q.ServicePointId)).ExecuteDeleteAsync();
-        }
-
-        if (spIds.Count > 0 || apptIds.Count > 0 || visitIds.Count > 0)
-        {
-            await db.QueueEntries
-                .Where(q => (q.ServicePointId != null && spIds.Contains(q.ServicePointId.Value)) ||
-                            (q.CurrentServicePointId != null && spIds.Contains(q.CurrentServicePointId.Value)) ||
-                            (q.AppointmentId != null && apptIds.Contains(q.AppointmentId.Value)) ||
-                            (q.VisitId != null && visitIds.Contains(q.VisitId.Value)))
-                .ExecuteDeleteAsync();
         }
 
         if (visitIds.Count > 0)

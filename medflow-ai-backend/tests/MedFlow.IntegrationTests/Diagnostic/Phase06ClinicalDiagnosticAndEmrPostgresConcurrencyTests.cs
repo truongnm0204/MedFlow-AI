@@ -1433,6 +1433,11 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
             .Select(v => v.Id)
             .ToListAsync();
 
+        // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit + fk_queue_entries_prescription_visit
+        // are ON DELETE RESTRICT — clear queue_entries bindings before prescriptions/orders/visits below.
+        Db.QueueEntries.RemoveRange(
+            await Db.QueueEntries.Where(q => q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)).ToListAsync());
+        await Db.SaveChangesAsync();
         var orderIds = await Db.DiagnosticOrders
             .Where(o => o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
             .Select(o => o.Id)

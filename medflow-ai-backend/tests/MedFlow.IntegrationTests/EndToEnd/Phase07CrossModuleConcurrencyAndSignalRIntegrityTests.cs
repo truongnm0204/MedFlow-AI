@@ -2098,6 +2098,12 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                         (n.PatientId.HasValue && fx.CreatedPatientIds.Contains(n.PatientId.Value)))
             .ExecuteDeleteAsync();
 
+        // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit + fk_queue_entries_prescription_visit
+        // are ON DELETE RESTRICT — clear queue_entries bindings before orders/prescriptions/visits below.
+        await db.QueueEntries
+            .Where(q => (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
+                        (q.AppointmentId.HasValue && apptIds.Contains(q.AppointmentId.Value)))
+            .ExecuteDeleteAsync();
         var orderIds = await db.DiagnosticOrders.AsNoTracking()
             .Where(o => o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
             .Select(o => o.Id)

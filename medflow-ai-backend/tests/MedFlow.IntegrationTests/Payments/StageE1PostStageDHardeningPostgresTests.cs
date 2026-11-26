@@ -2043,6 +2043,11 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
             (n.VisitId.HasValue && visitIds.Contains(n.VisitId.Value)) ||
             n.PatientId == fx.PatientId).ExecuteDeleteAsync();
 
+        // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit + fk_queue_entries_prescription_visit
+        // are ON DELETE RESTRICT — clear queue_entries bindings before prescriptions/orders/visits below.
+        await Db.QueueEntries.Where(q =>
+            (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
+            (q.ServicePointId.HasValue && fx.AllSpIds.Contains(q.ServicePointId.Value))).ExecuteDeleteAsync();
         if (visitIds.Count > 0)
         {
             var rxIds = await Db.Prescriptions
