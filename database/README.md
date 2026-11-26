@@ -36,10 +36,12 @@ database/
 │   ├── 021_hot_query_composite_indexes.sql        # hot-query composite indexes (queue, UC56 visits, UC60 audit logs, UC45 FEFO, service prices)
 │   ├── 022_patients_emergency_contact_columns.sql # UC05 optional emergency contact columns on patients
 │   ├── 023_business_integrity_constraints_and_indexes.sql # ADR-0059 per-charge billing (Option A), composite FKs, lineage/EMR cols & clinical/pharmacy integrity constraints
-│   └── 024_grouped_payment_allocations_selection_and_cross_day_visits.sql # ADR-0060 payment_allocations (Level 16b), cash/idempotency columns, selective CLS & cross-day visit columns
+│   ├── 024_grouped_payment_allocations_selection_and_cross_day_visits.sql # ADR-0060 payment_allocations (Level 16b), cash/idempotency columns, selective CLS & cross-day visit columns
+│   └── 025_cross_day_visit_presence_and_resume_tracking.sql # ADR-0060 Stage C durable daily presence (visits.last_present_date/presence_state/last_resumed_at) & queue_entries.idempotency_key
 ├── scripts/
 │   ├── preflight_023_audit.sql                    # read-only preflight audit for Migration 023
-│   └── preflight_024_audit.sql                    # read-only preflight audit for Migration 024
+│   ├── preflight_024_audit.sql                    # read-only preflight audit for Migration 024
+│   └── preflight_025_audit.sql                    # read-only preflight audit for Migration 025
 └── README.md
 ```
 

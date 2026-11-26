@@ -802,11 +802,26 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                     nowLocal,
                     referenceDate,
                     ct);
+                await SaveChangesWithConcurrencyGuardAsync(ct);
                 if (transitioned)
                 {
-                    await SaveChangesWithConcurrencyGuardAsync(ct);
                     returnConsultationServicePointId = returnQueueEntry?.ServicePointId;
                 }
+            }
+            else
+            {
+                // Unfinalized/draft/pending-verify update on a mandatory or accepted optional order may clear ReadyForReturnAt.
+                await DiagnosticOrderLifecycleHelper.TryTransitionVisitToReturnConsultationAsync(
+                    _db,
+                    visit,
+                    staffAccess.Hospital.Id,
+                    actorUserId,
+                    ipAddress,
+                    nowUtc,
+                    nowLocal,
+                    referenceDate,
+                    ct);
+                await SaveChangesWithConcurrencyGuardAsync(ct);
             }
 
             if (tx is not null)

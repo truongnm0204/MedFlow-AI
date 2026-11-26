@@ -73,6 +73,7 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
         "CALLED",
         "IN_PROGRESS",
         "SKIPPED",
+        "DEFERRED",
         "COMPLETED",
         "CANCELLED",
     };
@@ -515,6 +516,73 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
                         throw new ConflictException(
                             postLockPayment.Message
                             ?? $"Phiếu chỉ định '{orderCode}' chưa hoàn tất thanh toán phí dịch vụ cận lâm sàng (UNPAID_DIAGNOSTIC_FEE).");
+                    }
+                }
+
+                if (targetStatus == "IN_PROGRESS")
+                {
+                    var postLockVisitQueues = await _db.QueueEntries
+                        .AsNoTracking()
+                        .Where(q =>
+                            q.VisitId == visit.Id ||
+                            (visit.AppointmentId.HasValue && q.AppointmentId == visit.AppointmentId.Value))
+                        .ToListAsync(ct);
+
+                    var postLockQStatus = linkedQueueEntry is not null
+                        ? AppointmentBookingRules.NormalizeStatusKey(linkedQueueEntry.Status)
+                        : string.Empty;
+                    var postLockPresence = linkedQueueEntry is not null
+                        ? AppointmentBookingRules.NormalizeStatusKey(linkedQueueEntry.PresenceStatus)
+                        : string.Empty;
+
+                    if (postLockQStatus == "DEFERRED" ||
+                        (linkedQueueEntry?.QueueDate.HasValue == true && linkedQueueEntry.QueueDate.Value != referenceDate) ||
+                        postLockPresence is "LEFT" or "NOT_ARRIVED" or "ABSENT" ||
+                        !VisitPresenceEvaluator.IsPresentToday(visit, postLockVisitQueues, referenceDate))
+                    {
+                        throw new ConflictException(
+                            $"[PATIENT_NOT_PRESENT] Bệnh nhân của phiếu chỉ định '{orderCode}' hiện không có mặt hoặc đã tạm hoãn/rời viện (DEFERRED/LEFT), không thể bắt đầu thực hiện kỹ thuật.");
+                    }
+
+                    var targetEffSpId = plan.ServicePoint?.Id
+                                        ?? linkedQueueEntry?.CurrentServicePointId
+                                        ?? linkedQueueEntry?.ServicePointId;
+
+                    var busyAtAnotherPoint = postLockVisitQueues.Any(q =>
+                    {
+                        if (linkedQueueEntry is not null && q.Id == linkedQueueEntry.Id)
+                        {
+                            return false;
+                        }
+
+                        if (q.CompletedAt.HasValue ||
+                            AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("IN_PROGRESS" or "IN_CONSULTATION" or "SERVING"))
+                        {
+                            return false;
+                        }
+
+                        if (string.Equals(q.QueueType?.Trim(), "DIAGNOSTIC", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var otherEffSpId = q.CurrentServicePointId ?? q.ServicePointId;
+                            if (targetEffSpId.HasValue && otherEffSpId.HasValue && targetEffSpId.Value == otherEffSpId.Value)
+                            {
+                                return false;
+                            }
+
+                            return true;
+                        }
+
+                        // Pre-diagnostic ordering consultation session (StartedAt <= order.OrderedAt) does not block CLS start;
+                        // only a subsequent clinical session opened strictly after order.OrderedAt blocks simultaneous execution.
+                        return order.OrderedAt.HasValue &&
+                               q.StartedAt.HasValue &&
+                               q.StartedAt.Value > order.OrderedAt.Value;
+                    });
+
+                    if (busyAtAnotherPoint)
+                    {
+                        throw new ConflictException(
+                            "[PATIENT_BUSY_AT_ANOTHER_POINT] Bệnh nhân đang trong quá trình khám hoặc thực hiện kỹ thuật cận lâm sàng tại một điểm phục vụ khác (IN_PROGRESS), không thể bắt đầu đồng thời tại hai nơi.");
                     }
                 }
 

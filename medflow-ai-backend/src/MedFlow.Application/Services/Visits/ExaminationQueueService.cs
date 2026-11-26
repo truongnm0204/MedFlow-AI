@@ -41,6 +41,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         "IN_PROGRESS",
         "COMPLETED",
         "SKIPPED",
+        "DEFERRED",
     };
 
     private static readonly HashSet<string> ValidVisitTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -220,7 +221,11 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             CalledOrServingCount: allReturnedEntries.Count(e => e.Status is "CALLED" or "IN_PROGRESS"),
             CompletedCount: allReturnedEntries.Count(e => e.Status == "COMPLETED"),
             SkippedCount: allReturnedEntries.Count(e => e.Status == "SKIPPED"),
-            ActiveServicePoints: servicePointDtos.Count(sp => sp.IsActive));
+            ActiveServicePoints: servicePointDtos.Count(sp => sp.IsActive),
+            NewCheckInsToday: board.NewCheckInsToday,
+            ResumedVisitsToday: board.ResumedVisitsToday,
+            AwaitingResultsOrReturnCount: board.AwaitingResultsOrReturnCount,
+            CompletedVisitsToday: board.CompletedVisitsToday);
 
         return new ExaminationQueueResponseDto(
             QueueDate: board.EffectiveQueueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
@@ -706,7 +711,62 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
             boardBuckets.Add(new QueueBoardBucket(bucket, bucketPolicy, boardEntries));
         }
 
-        return new QueueBoard(hospital, nowUtc, nowLocal, effectiveQueueDate, boardBuckets);
+        var metricVisits = await _db.Visits
+            .AsNoTracking()
+            .Where(v =>
+                (v.CheckedInAt.HasValue && v.CheckedInAt.Value >= dayStart && v.CheckedInAt.Value < dayEnd) ||
+                (v.LastResumedAt.HasValue && v.LastResumedAt.Value >= dayStart && v.LastResumedAt.Value < dayEnd) ||
+                (v.CompletedAt.HasValue && v.CompletedAt.Value >= dayStart && v.CompletedAt.Value < dayEnd) ||
+                (v.Status != null && (v.Status.ToUpper() == "AWAITING_DIAGNOSTIC" ||
+                                      v.Status.ToUpper() == "AWAITING_RESULTS" ||
+                                      v.Status.ToUpper() == "RETURN_CONSULTATION")))
+            .ToListAsync(ct);
+
+        var scopedMetricVisits = metricVisits
+            .Where(v => IsVisitInHospital(
+                v,
+                hospital.Id,
+                roomsById,
+                doctorsById,
+                hospitalStaffIds,
+                hospitalAppointmentsById,
+                allRoomHospitalMap,
+                allDoctorHospitalMap,
+                allStaffHospitalMap))
+            .ToList();
+
+        var newCheckInsToday = scopedMetricVisits.Count(v =>
+            v.CheckedInAt.HasValue &&
+            v.CheckedInAt.Value >= dayStart &&
+            v.CheckedInAt.Value < dayEnd &&
+            AppointmentBookingRules.NormalizeStatusKey(v.Status) != "CANCELLED");
+
+        var resumedVisitsToday = scopedMetricVisits.Count(v =>
+            v.LastResumedAt.HasValue &&
+            v.LastResumedAt.Value >= dayStart &&
+            v.LastResumedAt.Value < dayEnd &&
+            (!v.CheckedInAt.HasValue || v.CheckedInAt.Value < dayStart) &&
+            AppointmentBookingRules.NormalizeStatusKey(v.Status) != "CANCELLED");
+
+        var awaitingResultsOrReturnCount = scopedMetricVisits.Count(v =>
+            AppointmentBookingRules.NormalizeStatusKey(v.Status) is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" or "RETURN_CONSULTATION");
+
+        var completedVisitsToday = scopedMetricVisits.Count(v =>
+            AppointmentBookingRules.NormalizeStatusKey(v.Status) is "COMPLETED" or "DONE" &&
+            v.CompletedAt.HasValue &&
+            v.CompletedAt.Value >= dayStart &&
+            v.CompletedAt.Value < dayEnd);
+
+        return new QueueBoard(
+            hospital,
+            nowUtc,
+            nowLocal,
+            effectiveQueueDate,
+            boardBuckets,
+            newCheckInsToday,
+            resumedVisitsToday,
+            awaitingResultsOrReturnCount,
+            completedVisitsToday);
     }
 
     private static string ResolveQueueGroup(string status, bool isEligible) => status switch
@@ -714,6 +774,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         "IN_PROGRESS" => QueueGroups.InProgress,
         "CALLED" => QueueGroups.Called,
         "SKIPPED" => QueueGroups.Skipped,
+        "DEFERRED" => QueueGroups.NotEligible,
         "COMPLETED" => QueueGroups.Completed,
         _ => isEligible ? QueueGroups.Eligible : QueueGroups.NotEligible,
     };
@@ -1603,7 +1664,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         }
 
         var normalizedQueueStatus = AppointmentBookingRules.NormalizeStatusKey(queueEntry.Status);
-        if (normalizedQueueStatus == "CANCELLED")
+        if (normalizedQueueStatus is "CANCELLED" or "DEFERRED")
         {
             return false;
         }
@@ -1976,6 +2037,11 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         var queueStatus = AppointmentBookingRules.NormalizeStatusKey(queueEntry?.Status);
         var visitStatus = AppointmentBookingRules.NormalizeStatusKey(visit?.Status);
 
+        if (queueStatus == "DEFERRED")
+        {
+            return "DEFERRED";
+        }
+
         if (queueStatus is "SKIPPED" or "MISSED" or "NO_SHOW" or "PASSED" ||
             visitStatus == "NO_SHOW")
         {
@@ -2028,6 +2094,14 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
 
     private static string NormalizePresenceStatus(QueueEntry? queueEntry, Visit? visit)
     {
+        if (visit is not null &&
+            queueEntry?.QueueDate is DateOnly qDate &&
+            visit.LastPresentDate == qDate &&
+            VisitPresenceEvaluator.NormalizePresenceState(visit.PresenceState) is VisitPresenceStates.Left or VisitPresenceStates.Deferred)
+        {
+            return "LEFT";
+        }
+
         var rawPresence = AppointmentBookingRules.NormalizeStatusKey(queueEntry?.PresenceStatus);
         return rawPresence switch
         {
@@ -2234,7 +2308,11 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         DateTime NowUtc,
         DateTime NowLocal,
         DateOnly EffectiveQueueDate,
-        IReadOnlyList<QueueBoardBucket> Buckets);
+        IReadOnlyList<QueueBoardBucket> Buckets,
+        int NewCheckInsToday = 0,
+        int ResumedVisitsToday = 0,
+        int AwaitingResultsOrReturnCount = 0,
+        int CompletedVisitsToday = 0);
 
     private sealed record QueueBoardBucket(
         ServicePointBucket Bucket,

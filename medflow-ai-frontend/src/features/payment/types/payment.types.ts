@@ -71,6 +71,9 @@ export interface VisitChargesResponse {
   activePendingQrAmount?: number | null;
   activePendingQrChargeIds?: number[] | null;
   hasReconciliationItems?: boolean;
+  readyForReturnAt?: string | null;
+  isPresentToday?: boolean;
+  presenceState?: string | null;
 }
 
 export interface PaymentAllocationItemDto {
@@ -171,6 +174,9 @@ export interface PatientVisitListItemDto {
   hospitalName: string | null;
   paymentStatus: string | null;
   paymentCode: string | null;
+  readyForReturnAt?: string | null;
+  isPresentToday?: boolean;
+  presenceState?: string | null;
 }
 
 export interface PatientVisitListResponseDto {

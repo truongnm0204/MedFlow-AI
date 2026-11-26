@@ -194,6 +194,37 @@ public sealed partial class ExaminationQueueService
         var normalizedStatus = AppointmentBookingRules.NormalizeStatusKey(target.Status);
         var normalizedPresence = NormalizePresenceStatus(target, visit);
 
+        if (target.QueueDate.HasValue && target.QueueDate.Value != today)
+        {
+            throw new ConflictException(
+                "Không thể gọi bệnh nhân thuộc hàng đợi của ngày khác. Vui lòng tải lại hàng đợi hôm nay.");
+        }
+
+        if (visit is not null)
+        {
+            var postLockVisitQueues = await _db.QueueEntries
+                .AsNoTracking()
+                .Where(q =>
+                    q.VisitId == visit.Id ||
+                    (visit.AppointmentId.HasValue && q.AppointmentId == visit.AppointmentId.Value))
+                .ToListAsync(ct);
+
+            if (!VisitPresenceEvaluator.IsPresentToday(visit, postLockVisitQueues, today))
+            {
+                throw new ConflictException(
+                    "[PATIENT_NOT_PRESENT] Bệnh nhân hiện không có mặt tại bệnh viện (đã rời viện hoặc tạm hoãn), không thể gọi vào phòng khám.");
+            }
+
+            if (postLockVisitQueues.Any(q =>
+                    q.Id != target.Id &&
+                    !q.CompletedAt.HasValue &&
+                    AppointmentBookingRules.NormalizeStatusKey(q.Status) is "IN_PROGRESS" or "IN_CONSULTATION" or "SERVING"))
+            {
+                throw new ConflictException(
+                    "[PATIENT_BUSY_AT_ANOTHER_POINT] Bệnh nhân đang trong quá trình khám hoặc thực hiện kỹ thuật cận lâm sàng tại một điểm phục vụ khác (IN_PROGRESS), không thể bắt đầu đồng thời tại hai nơi.");
+            }
+        }
+
         if (normalizedStatus is not ("WAITING" or "READY") ||
             normalizedPresence != "PRESENT" ||
             target.StateVersion != selected.QueueEntry!.StateVersion)
@@ -428,6 +459,30 @@ public sealed partial class ExaminationQueueService
                     v.ExaminationRoomId.Value != bucket.Bucket.RoomId.Value)
                 {
                     continue;
+                }
+
+                if (v is not null)
+                {
+                    var todayCandidateDate = entry.QueueEntry.QueueDate ?? DateOnly.FromDateTime(AppointmentBookingRules.GetVietnamNow(_timeProvider));
+                    var vQueues = await _db.QueueEntries
+                        .AsNoTracking()
+                        .Where(q =>
+                            q.VisitId == visitId ||
+                            (v.AppointmentId.HasValue && q.AppointmentId == v.AppointmentId.Value))
+                        .ToListAsync(ct);
+
+                    if (!VisitPresenceEvaluator.IsPresentToday(v, vQueues, todayCandidateDate))
+                    {
+                        continue;
+                    }
+
+                    if (vQueues.Any(q =>
+                            q.Id != entry.QueueEntry.Id &&
+                            !q.CompletedAt.HasValue &&
+                            AppointmentBookingRules.NormalizeStatusKey(q.Status) is "IN_PROGRESS" or "IN_CONSULTATION" or "SERVING"))
+                    {
+                        continue;
+                    }
                 }
             }
 

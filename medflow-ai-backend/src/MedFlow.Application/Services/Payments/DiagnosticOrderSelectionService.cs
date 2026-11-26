@@ -399,11 +399,12 @@ public sealed class DiagnosticOrderSelectionService : IDiagnosticOrderSelectionS
                         nowLocal,
                         excludingCancelledOrderId: order.Id,
                         newlyFinalizedOrderId: null,
-                        ct: ct);
+                        ct: ct,
+                        mutatingCancelledOrder: order,
+                        nowUtcOverride: nowUtc);
 
                 if (transitionedToReturn)
                 {
-                    lockedVisit.ReadyForReturnAt ??= nowLocal;
                     queueNotifications.Add(new QueueChangedNotification(
                         HospitalId: hospitalId,
                         ServicePointId: returnQueue?.CurrentServicePointId ?? returnQueue?.ServicePointId,

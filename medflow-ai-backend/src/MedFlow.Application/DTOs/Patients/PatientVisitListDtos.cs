@@ -8,6 +8,9 @@ public sealed record PatientVisitListItemDto(
     DateTime? CompletedAt,
     string? HospitalName,
     string? PaymentStatus,
-    string? PaymentCode);
+    string? PaymentCode,
+    DateTime? ReadyForReturnAt = null,
+    bool IsPresentToday = false,
+    string? PresenceState = null);
 
 public sealed record PatientVisitListResponseDto(IReadOnlyList<PatientVisitListItemDto> Items);

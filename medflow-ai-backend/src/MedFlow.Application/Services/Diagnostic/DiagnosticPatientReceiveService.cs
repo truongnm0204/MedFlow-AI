@@ -63,6 +63,7 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
         "IN_PROGRESS",
         "COMPLETED",
         "SKIPPED",
+        "DEFERRED",
         "CANCELLED",
     };
 
@@ -445,6 +446,23 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
                 string previousPresenceStatus;
                 string effectiveManualPriority;
 
+                if (linkedQueueEntry is not null &&
+                    linkedQueueEntry.QueueDate.HasValue &&
+                    linkedQueueEntry.QueueDate.Value < referenceDate)
+                {
+                    var staleQStatus = NormalizeQueueStatus(linkedQueueEntry.Status);
+                    if (staleQStatus is not ("COMPLETED" or "CANCELLED" or "DEFERRED" or "IN_PROGRESS"))
+                    {
+                        linkedQueueEntry.Status = "DEFERRED";
+                        linkedQueueEntry.PresenceStatus = "LEFT";
+                        linkedQueueEntry.CalledAt = null;
+                        linkedQueueEntry.CompletedAt ??= nowLocal;
+                        linkedQueueEntry.StateVersion = (linkedQueueEntry.StateVersion is > 0 ? linkedQueueEntry.StateVersion.Value : 1) + 1;
+                    }
+
+                    linkedQueueEntry = null;
+                }
+
                 if (linkedQueueEntry is null)
                 {
                     var diagSpId = resolvedSp?.Id;
@@ -518,6 +536,7 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
 
                     linkedQueueEntry.Status = "READY";
                     linkedQueueEntry.PresenceStatus = "PRESENT";
+                    linkedQueueEntry.CompletedAt = null;
                     if (!linkedQueueEntry.ArrivedAt.HasValue ||
                         previousPresenceStatus is "NOT_ARRIVED" or "LEFT")
                     {
@@ -554,6 +573,11 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
 
                 order.OrderCode = orderCode;
                 order.Priority = effectivePriority;
+                order.DeferredUntilDate = null;
+                VisitPresenceEvaluator.StampPresentToday(
+                    visit,
+                    referenceDate,
+                    visit.CheckedInAt.HasValue && DateOnly.FromDateTime(visit.CheckedInAt.Value) < referenceDate ? nowLocal : null);
                 if (validated.Instruction is not null)
                 {
                     order.Instruction = validated.Instruction;
@@ -810,7 +834,9 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
             }
 
             var queueStatus = NormalizeQueueStatus(linkedQueueEntry.Status);
-            if (queueStatus is "READY" or "CALLED")
+            var isPriorDayQueue = linkedQueueEntry.QueueDate.HasValue && linkedQueueEntry.QueueDate.Value < referenceDate;
+
+            if (!isPriorDayQueue && queueStatus is "READY" or "CALLED")
             {
                 throw new ConflictException($"Bệnh nhân của phiếu chỉ định '{orderCode}' đã được tiếp nhận và đang sẵn sàng trong hàng đợi phòng kỹ thuật ({queueStatus}).");
             }
@@ -820,7 +846,7 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
                 throw new ConflictException($"Lượt xếp hàng cận lâm sàng của phiếu chỉ định '{orderCode}' đang ở trạng thái '{queueStatus}', không thể tiếp nhận bệnh nhân.");
             }
 
-            if (queueStatus is not ("WAITING" or "RESERVED" or "SKIPPED"))
+            if (!isPriorDayQueue && queueStatus is not ("WAITING" or "RESERVED" or "SKIPPED" or "DEFERRED"))
             {
                 throw new ConflictException($"Lượt xếp hàng cận lâm sàng của phiếu chỉ định '{orderCode}' đang ở trạng thái '{queueStatus}', không hợp lệ để tiếp nhận bệnh nhân.");
             }

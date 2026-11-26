@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Building2, ListOrdered, RefreshCw, ShieldAlert } from 'lucide-react';
+import {
+  ArrowLeft,
+  Building2,
+  CalendarClock,
+  ListOrdered,
+  RefreshCw,
+  ShieldAlert,
+} from 'lucide-react';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
 import { useAuthStore } from '@/features/auth/store/auth.store';
@@ -32,6 +39,7 @@ import {
   ReceptionCashCollectionModal,
   type ReceptionCashCollectionTarget,
 } from '../components/reception-cash-collection-modal';
+import { ReceptionVisitResumeModal } from '../components/reception-visit-resume-modal';
 import { UpdateQueueStatusModal } from '../components/update-queue-status-modal';
 import { ReturnToDoctorQueueModal } from '../components/return-to-doctor-queue-modal';
 import { usePatientDetail } from '../hooks/use-reception-api';
@@ -92,8 +100,10 @@ export function ExaminationQueuePage() {
   const logout = useLogout();
 
   const canManageQueue = hasPermission(user?.roles, 'QUEUE_MANAGE');
+  const canCheckIn = hasPermission(user?.roles, 'PATIENT_CHECKIN');
   const canCollectCash = hasPermission(user?.roles, 'PAYMENT_COLLECT');
   const [cashTarget, setCashTarget] = useState<ReceptionCashCollectionTarget | null>(null);
+  const [isCrossDayResumeOpen, setIsCrossDayResumeOpen] = useState(false);
   const defaultQueueDate = useMemo(() => getHospitalTodayIso(), []);
 
   const [filters, setFilters] = useState<ExaminationQueueFilterFormValues>(() =>
@@ -615,6 +625,12 @@ export function ExaminationQueuePage() {
           </div>
 
           <div className="flex items-center gap-3">
+            {(canManageQueue || canCheckIn) && (
+              <Button variant="primary" size="sm" onClick={() => setIsCrossDayResumeOpen(true)}>
+                <CalendarClock className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Tiếp tục lượt khám (Qua ngày)</span>
+              </Button>
+            )}
             <Button variant="secondary" size="sm" onClick={() => void refetch()}>
               <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
               Làm mới
@@ -995,6 +1011,23 @@ export function ExaminationQueuePage() {
               setUpdateNotice(
                 `Đã thu tiền mặt ${receipt.paymentCode} (${receipt.amount.toLocaleString('vi-VN')} VNĐ) cho bệnh nhân ${cashTarget.patientName}.`,
               );
+            }}
+          />
+        )}
+
+        {isCrossDayResumeOpen && (
+          <ReceptionVisitResumeModal
+            open
+            onClose={() => setIsCrossDayResumeOpen(false)}
+            onResumed={(res) => {
+              void refetch();
+              setUpdateNotice(
+                `Đã xác nhận có mặt và tiếp tục lượt khám ${res.visitCode} (${res.target}).`,
+              );
+            }}
+            onDeferred={(res) => {
+              void refetch();
+              setUpdateNotice(`Đã ghi nhận tạm hoãn / rời viện cho lượt khám ${res.visitCode}.`);
             }}
           />
         )}

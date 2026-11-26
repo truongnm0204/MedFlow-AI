@@ -14,7 +14,11 @@ public sealed record ExaminationQueueStatsDto(
     int CalledOrServingCount,
     int CompletedCount,
     int SkippedCount,
-    int ActiveServicePoints);
+    int ActiveServicePoints,
+    int NewCheckInsToday = 0,
+    int ResumedVisitsToday = 0,
+    int AwaitingResultsOrReturnCount = 0,
+    int CompletedVisitsToday = 0);
 
 public sealed record ServicePointQueueDto(
     string ServicePointId,

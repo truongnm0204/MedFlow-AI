@@ -17,6 +17,7 @@ public class Notification
     public const string TypeAppointmentCancelled = "APPOINTMENT_CANCELLED";
     public const string TypeAppointmentReminder = "APPOINTMENT_REMINDER";
     public const string TypeAppointmentNoShow = "APPOINTMENT_NO_SHOW";
+    public const string TypeVisitReturnReady = "VISIT_RETURN_READY";
 
     public long Id { get; set; }
     public long? PatientId { get; set; }

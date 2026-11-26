@@ -46,6 +46,7 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
         "IN_PROGRESS",
         "COMPLETED",
         "SKIPPED",
+        "DEFERRED",
         "CANCELLED",
     };
 
@@ -958,6 +959,11 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
         var hasResultWrite = permissionSet.Contains("DIAGNOSTIC_RESULT_WRITE");
         var hasDiagnosticOrder = permissionSet.Contains("DIAGNOSTIC_ORDER");
         var hasConfirmPermission = hasQueueManage || hasResultWrite || hasDiagnosticOrder;
+        var crossDayPolicy = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(
+            _db,
+            actorContext.Hospital.Id,
+            HospitalClock.GetUtcNow(_timeProvider),
+            ct);
 
         var items = new List<DiagnosticWorklistItemDto>(hospitalOrders.Count);
 
@@ -1277,7 +1283,13 @@ public sealed class DiagnosticWorklistService : IDiagnosticWorklistService
                 CanUpdateExecutionStatus: canUpdateExecutionStatus,
                 CanEnterResult: canEnterResult,
                 CanViewResult: canViewResult,
-                AllowedActions: allowedActions));
+                AllowedActions: allowedActions,
+                DeferredUntilDate: order.DeferredUntilDate,
+                IsCrossDayOrder: order.OrderedAt.HasValue && DateOnly.FromDateTime(order.OrderedAt.Value) < todayLocal,
+                IsExpiredForReview: MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsOrderExpiredForExecution(
+                    order,
+                    crossDayPolicy.DiagnosticOrderValidityDays,
+                    nowLocal)));
         }
 
         return new HospitalWorklistDataset(

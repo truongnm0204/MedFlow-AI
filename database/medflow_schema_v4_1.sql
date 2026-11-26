@@ -1146,3 +1146,23 @@ ALTER TABLE "visits"
 INSERT INTO "permissions" ("code")
 SELECT 'PAYMENT_COLLECT'
 WHERE NOT EXISTS (SELECT 1 FROM "permissions" WHERE "code" = 'PAYMENT_COLLECT');
+
+-- 025_cross_day_visit_presence_and_resume_tracking (ADR-0060 Stage C)
+ALTER TABLE "visits"
+  ADD COLUMN IF NOT EXISTS "last_present_date" date NULL,
+  ADD COLUMN IF NOT EXISTS "presence_state" varchar(16) NOT NULL DEFAULT 'PRESENT',
+  ADD COLUMN IF NOT EXISTS "last_resumed_at" timestamp without time zone NULL,
+  ADD CONSTRAINT "chk_visits_presence_state" CHECK ("presence_state" IN ('PRESENT', 'LEFT', 'DEFERRED'));
+
+CREATE INDEX IF NOT EXISTS "ix_visits_patient_status_checked_in"
+  ON "visits" ("patient_id", "status", "checked_in_at");
+
+ALTER TABLE "queue_entries"
+  ADD COLUMN IF NOT EXISTS "idempotency_key" varchar(100) NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "ux_queue_entries_idempotency_key"
+  ON "queue_entries" ("idempotency_key")
+  WHERE "idempotency_key" IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS "ix_queue_entries_visit_date_type_status"
+  ON "queue_entries" ("visit_id", "queue_date", "queue_type", "status");

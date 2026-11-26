@@ -8,5 +8,9 @@ public sealed record HospitalAdminStatsDto(
     int ActiveDoctors,
     int OnlineServicesCount,
     int OpenSlotsToday,
-    int ReviewSlotsCount
+    int ReviewSlotsCount,
+    int NewCheckInsToday = 0,
+    int ResumedVisitsToday = 0,
+    int AwaitingResultsOrReturnCount = 0,
+    int CompletedVisitsToday = 0
 );

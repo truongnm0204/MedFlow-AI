@@ -72,10 +72,24 @@ public sealed class PatientVisitListService : IPatientVisitListService
             .ToListAsync(ct);
         var hospitalNames = hospitals.ToDictionary(h => h.Id, h => h.Name);
 
+        var todayLocal = DateOnly.FromDateTime(MedFlow.Application.Common.Time.HospitalClock.GetNow(_timeProvider));
+        var visitQueues = await _db.QueueEntries.AsNoTracking()
+            .Where(q => q.VisitId != null && visitIds.Contains(q.VisitId.Value) && q.QueueDate == todayLocal)
+            .ToListAsync(ct);
+        var queuesByVisitId = visitQueues
+            .GroupBy(q => q.VisitId!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
         var items = visible.Select(visit =>
         {
             latestPayment.TryGetValue(visit.Id, out var payment);
             hospitalNames.TryGetValue(hospitalMap[visit.Id].First(), out var hospitalName);
+            queuesByVisitId.TryGetValue(visit.Id, out var todayQueues);
+            var isPresentToday = MedFlow.Application.Services.Visits.VisitPresenceEvaluator.IsPresentToday(
+                visit,
+                todayQueues,
+                todayLocal);
+            var presenceState = MedFlow.Application.Services.Visits.VisitPresenceEvaluator.NormalizePresenceState(visit.PresenceState);
             return new PatientVisitListItemDto(
                 visit.Id,
                 visit.VisitCode,
@@ -84,7 +98,10 @@ public sealed class PatientVisitListService : IPatientVisitListService
                 visit.CompletedAt,
                 hospitalName,
                 payment?.Status,
-                payment?.PaymentCode);
+                payment?.PaymentCode,
+                ReadyForReturnAt: visit.ReadyForReturnAt,
+                IsPresentToday: isPresentToday,
+                PresenceState: presenceState);
         }).ToList();
 
         return new PatientVisitListResponseDto(items);

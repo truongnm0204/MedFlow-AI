@@ -94,7 +94,9 @@ public sealed record ConsultationDiagnosticOrderDto(
     string SelectionStatus = "ACCEPTED",
     long? VisitChargeId = null,
     string? ChargeStatus = null,
-    string? PaymentStatus = null);
+    string? PaymentStatus = null,
+    DateOnly? DeferredUntilDate = null,
+    bool IsExpiredForReview = false);
 
 public sealed record DiagnosticServiceCatalogItemDto(
     long ServiceId,

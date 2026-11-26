@@ -12,6 +12,9 @@ public class Visit
     public string? ReasonForVisit { get; set; }
     public string? Status { get; set; }
     public DateTime? CheckedInAt { get; set; }
+    public DateOnly? LastPresentDate { get; set; }
+    public string PresenceState { get; set; } = "PRESENT";
+    public DateTime? LastResumedAt { get; set; }
     public DateTime? ReadyForReturnAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public long? CompletedByDoctorId { get; set; }

@@ -7,7 +7,14 @@ import type {
 } from './diagnostic.types';
 
 export type DiagnosticWorklistQueueStatus =
-  'WAITING' | 'READY' | 'CALLED' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED' | 'CANCELLED';
+  | 'WAITING'
+  | 'READY'
+  | 'CALLED'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'SKIPPED'
+  | 'DEFERRED'
+  | 'CANCELLED';
 
 export type DiagnosticWorklistResultStatus =
   'PENDING' | 'DRAFT' | 'PRELIMINARY' | 'PENDING_VERIFY' | 'FINALIZED' | 'VERIFIED' | 'CANCELLED';
@@ -115,6 +122,9 @@ export interface DiagnosticWorklistItemDto {
   canEnterResult: boolean;
   canViewResult: boolean;
   allowedActions: DiagnosticWorklistActionDto[];
+  deferredUntilDate?: string | null;
+  isCrossDayOrder?: boolean;
+  isExpiredForReview?: boolean;
 }
 
 export interface DiagnosticServicePointWorklistDto {

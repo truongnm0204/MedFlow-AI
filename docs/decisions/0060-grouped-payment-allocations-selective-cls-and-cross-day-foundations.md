@@ -1,7 +1,7 @@
 # 0060 — Grouped Payment Allocations, Selective CLS, Doctor QR, Reception Cash Collection & Cross-Day Foundations
 
 - **Date**: 2026-11-26
-- **Status**: **Accepted (Stage B — Issue `#851`)**
+- **Status**: **Accepted (Stage B `#851` + Stage C `#853` Cross-Day Visit Lifecycle)**
 - **Lane**: high-risk (DB Schema / Concurrency / Auth & RBAC / Billing & Payment / Clinical State Machine)
 - **Related ADRs**: `0019`, `0025`, `0027`, `0029`, `0030`, `0031`, `0032`, `0033`, `0034`, `0047`, `0059`
 
@@ -68,10 +68,32 @@
 - **Voluntary Skip After Payment (`SKIPPED_AFTER_PAID` + `PAID_NOT_PERFORMED`)**: Recorded only by same-hospital `RECEPTION` or assigned `DOCTOR` before execution starts (`PATIENT` self-call returns `409` directing to Reception/Doctor). Cancels `DiagnosticOrder` (`SKIPPED_AFTER_PAID`) and `QueueEntry`, marks `VisitCharge = 'PAID_NOT_PERFORMED'`, preserves `Payment` & `PaymentAllocation` as `PAID`, writes `PAID_DIAGNOSTIC_ORDER_SKIPPED_BY_PATIENT`, and triggers `RETURN_CONSULTATION` readiness if no other active orders remain.
 - **Visit Completion Guard**: `CompleteVisitAsync` rejects lingering unpaid `UNDECIDED` optional orders with `409 [UNDECIDED_OPTIONAL_ORDERS_OPEN]` unless `CloseUndecidedOptionalOrders = true`, which atomically closes them as `DECLINED` + `VisitCharge = CANCELLED` without forcing payment.
 
+### 2.5. Stage C (`#853`, `Migration 025`): Cross-Day Visit Lifecycle, Durable Daily Presence & Presence-Gated `ReadyForReturn`
+
+1. **Durable Database Presence Model (`Migration 025`)**:
+   - `visits` stores `last_present_date date NULL`, `presence_state varchar(16) NOT NULL DEFAULT 'PRESENT' CHECK (presence_state IN ('PRESENT', 'LEFT', 'DEFERRED'))`, and `last_resumed_at timestamp without time zone NULL`. `visits.checked_in_at` remains the immutable initial episode intake timestamp.
+   - `queue_entries` adds `idempotency_key varchar(100) NULL` with partial unique index `ux_queue_entries_idempotency_key` (`WHERE idempotency_key IS NOT NULL`) to serialize idempotent cross-day `Resume` requests cleanly.
+   - `VisitPresenceEvaluator.IsPresentToday(visit, visitQueueEntries, todayLocal)` evaluates durable presence without inferring presence merely because a `Visit` is open or a `DiagnosticResult` arrived:
+     1. `last_present_date == todayLocal` and `presence_state IN ('LEFT', 'DEFERRED')` -> `false`.
+     2. `last_present_date == todayLocal` and `presence_state == 'PRESENT'` -> `true` (survives restarts).
+     3. Backwards-compatible fallback when `last_present_date IS NULL` and `CheckedInAt` is `todayLocal` (not `'LEFT'`/`'DEFERRED'`), or an active non-cancelled, non-`DEFERRED`, uncompleted `QueueEntry` exists on `todayLocal` with `PresenceStatus == 'PRESENT'` -> `true`.
+     4. Otherwise (prior-day `Visit` after `UTC+7` midnight rollover before Reception `Resume`) -> `false`.
+2. **Presence-Gated `ReadyForReturn` & Mandatory Readiness Re-Evaluation**:
+   - `DiagnosticOrderLifecycleHelper.TryTransitionVisitToReturnConsultationAsync` verifies that **all** mandatory (`required_for_conclusion = true`) orders have valid finalized/verified `UC43` results (`REVIEW_REQUIRED` / `TechnicalAbort` mandatory orders are **not** satisfied) and no non-cancelled `ACCEPTED` optional order is mid-execution (`IN_PROGRESS`) or `COMPLETED` awaiting `UC43` result.
+   - Whenever readiness ceases (e.g., Doctor creates a new mandatory `DiagnosticOrder`, or a mandatory order undergoes `TechnicalAbort`), `visit.ReadyForReturnAt` is deterministically reset to `NULL`.
+   - When ready (`visit.ReadyForReturnAt ??= nowLocal`) and `require_presence_for_return_queue = true` (default):
+     - **Present today**: creates/activates at most **1** active `RETURN_CONSULTATION` `QueueEntry` (`QueueDate = todayLocal`, `Status = 'READY'`, `PresenceStatus = 'PRESENT'`) and sets `visit.Status = 'RETURN_CONSULTATION'`.
+     - **Absent today**: keeps `visit.Status = 'AWAITING_RESULTS'` with `ReadyForReturnAt` stamped, creates **zero** callable queue entries, and enqueues an idempotent Zero-PHI `VISIT_RETURN_READY` notification (`visit-return-ready:{visitId}:{ReadyForReturnAt:yyyyMMddHHmmss}`).
+3. **`Resume` & `Defer` Lock Hierarchy, Collision Guards & Policies**:
+   - `ResumeVisitAsync` locks strictly in `05 doctors -> 06 hospital_rooms -> 09 visits -> 10 queue_service_points -> 11 queue_entries -> 12 diagnostic_orders` order, closes stale `QueueDate < todayLocal` non-`IN_PROGRESS` queue entries as `'DEFERRED'` (`PresenceStatus = 'LEFT'`), stamps `LastPresentDate = todayLocal` / `PresenceState = 'PRESENT'` / `LastResumedAt = nowLocal`, creates zero duplicate `EXAMINATION` or `DIAGNOSTIC` charges, and supports doctor reassignment when the original doctor is off-duty.
+   - `DeferVisitOrOrdersAsync` locks `09 -> 10 -> 11 -> 12`, rejects any `IN_PROGRESS` target (`409` in `Defer vs StartDiagnosticExecution`), marks waiting/ready/called queues `'DEFERRED'`, stamps `deferred_until_date` without cancelling orders or payments, and updates `visit.PresenceState` when the patient leaves.
+   - `CheckInScheduledPatientService` and `CreateWalkInVisitService` lock `patients (02)` and reject new intakes with `409 [VISIT_RESUME_REQUIRED]` when an open prior-day `Visit` exists in the same hospital unless `AllowNewEpisodeWhileVisitOpen = true`.
+   - `CrossDayVisitPolicyReader` reads configurable `VISIT`/`QUEUE` policies (`allow_cross_day_visit = true`, `diagnostic_order_validity_days = 7`, `return_consultation_window_days = 7`, `require_presence_for_return_queue = true`, `allow_doctor_reassignment = true`, `auto_cancel_overdue_visit = false`). Orders that already completed `UC42` (`COMPLETED`) never expire while awaiting `UC43`, and overdue unexecuted orders surface `REVIEW_REQUIRED` (`409 [DIAGNOSTIC_ORDER_EXPIRED_REVIEW_REQUIRED]`) without auto-cancellation or forfeiting `PAID` settlements.
+
 ---
 
 ## 3. Consequences
 
-- **Benefits**: Eliminates double-settlement and partial-bundle ambiguity across grouped VietQR, single VietQR, SePay webhooks, and Reception cash; enforces strict two-layer `PAYMENT_COLLECT` governance; cleanly separates `PAID_NOT_PERFORMED` voluntary skip from hospital-error `CANCELLED_REFUND_PENDING` without building an out-of-scope refund subsystem.
-- **Trade-offs**: Every payment and diagnostic selection mutation acquires the full ordered chain (`09 -> 12 -> 15 -> 16 -> 16b`) inside an explicit PostgreSQL transaction and reloads entities post-lock.
-- **Residual Risks**: Pre-`023` `LEGACY_VISIT` rows remain visit-level by design (zero guessed allocations); Stage C cross-day deferred return visits will build upon `deferred_until_date` and `ready_for_return_at`.
+- **Benefits**: Eliminates double-settlement and partial-bundle ambiguity across grouped VietQR, single VietQR, SePay webhooks, and Reception cash; enforces strict two-layer `PAYMENT_COLLECT` governance; cleanly separates `PAID_NOT_PERFORMED` voluntary skip from hospital-error `CANCELLED_REFUND_PENDING` without building an out-of-scope refund subsystem; provides restart-safe daily presence tracking, zero-duplicate cross-day `Resume`/`Defer` queue lifecycles, and accurate `NewCheckInsToday` vs `ResumedVisitsToday` operational metrics.
+- **Trade-offs**: Payment, selection, and cross-day resume/defer mutations acquire ordered lock chains (`05 -> 06 -> 09 -> 10 -> 11 -> 12 -> 15 -> 16 -> 16b`) inside explicit PostgreSQL transactions and reload entities post-lock.
+- **Residual Risks**: Pre-`023` `LEGACY_VISIT` rows remain visit-level by design (zero guessed allocations); overdue open visits remain visible for staff/doctor review rather than silently auto-cancelling when `auto_cancel_overdue_visit = false`.

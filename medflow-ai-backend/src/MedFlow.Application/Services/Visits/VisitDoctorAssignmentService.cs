@@ -32,9 +32,7 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
     {
         "IN_CONSULTATION",
         "IN_PROGRESS",
-        "AWAITING_DIAGNOSTIC",
-        "AWAITING_RESULTS",
-        "RETURN_CONSULTATION",
+        "SERVING",
     };
 
     private static readonly string[] HospitalAdminAllowedPermissions =
@@ -877,7 +875,42 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
         }
 
         QueueEntry? queueEntry = existingQueueEntry;
-        if (visit.ExaminationRoomId.HasValue)
+        var isAwaitingOrReturnStage = normalizedVisitStatus is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" or "RETURN_CONSULTATION";
+
+        if (doctorChanged)
+        {
+            var crossDayPolicy = await CrossDayVisitPolicyReader.LoadAsync(_db, effectiveHospitalId, nowUtc, ct);
+            if (!crossDayPolicy.AllowDoctorReassignment)
+            {
+                throw new ConflictException(
+                    "[DOCTOR_REASSIGNMENT_DISABLED] Chính sách cơ sở y tế hiện không cho phép chuyển bác sĩ phụ trách.");
+            }
+        }
+
+        if (isAwaitingOrReturnStage)
+        {
+            visit.Status = normalizedVisitStatus;
+            if (queueEntry is not null &&
+                !queueEntry.CompletedAt.HasValue &&
+                AppointmentBookingRules.NormalizeStatusKey(queueEntry.Status) is not ("COMPLETED" or "CANCELLED" or "DEFERRED"))
+            {
+                if (servicePoint is not null)
+                {
+                    queueEntry.ServicePointId ??= servicePoint.Id;
+                    queueEntry.CurrentServicePointId = servicePoint.Id;
+                }
+
+                if (doctorChanged &&
+                    string.Equals(queueEntry.Status, "CALLED", StringComparison.OrdinalIgnoreCase))
+                {
+                    queueEntry.Status = normalizedVisitStatus == "RETURN_CONSULTATION" ? "READY" : "WAITING";
+                    queueEntry.CalledAt = null;
+                }
+
+                queueEntry.StateVersion = (queueEntry.StateVersion is > 0 ? queueEntry.StateVersion.Value : 1) + 1;
+            }
+        }
+        else if (visit.ExaminationRoomId.HasValue)
         {
             if (string.Equals(normalizedVisitStatus, "CALLED", StringComparison.OrdinalIgnoreCase) && !doctorChanged && !roomChanged)
             {
