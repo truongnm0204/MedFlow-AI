@@ -47,6 +47,7 @@ const QUEUE_STATUS_LABEL: Record<string, string> = {
   IN_PROGRESS: 'Đang thực hiện',
   COMPLETED: 'Đã hoàn tất',
   SKIPPED: 'Tạm qua lượt',
+  DEFERRED: 'Tạm hoãn qua ngày',
   CANCELLED: 'Đã hủy lượt',
 };
 
@@ -141,6 +142,27 @@ export function DiagnosticWorklistTable({
                     <div className="mt-1">
                       <Badge tone="amber" className="text-[10px]">
                         Bổ sung #{item.orderSequenceNo}
+                      </Badge>
+                    </div>
+                  )}
+                  {item.isCrossDayOrder && (
+                    <div className="mt-1">
+                      <Badge tone="sky" className="text-[10px]">
+                        Lượt khám nhiều ngày
+                      </Badge>
+                    </div>
+                  )}
+                  {item.deferredUntilDate && (
+                    <div className="mt-1">
+                      <Badge tone="slate" className="text-[10px]">
+                        Hẹn ngày {item.deferredUntilDate}
+                      </Badge>
+                    </div>
+                  )}
+                  {item.isExpiredForReview && (
+                    <div className="mt-1">
+                      <Badge tone="amber" className="text-[10px]">
+                        Quá hạn — cần xem xét
                       </Badge>
                     </div>
                   )}

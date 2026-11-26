@@ -1538,6 +1538,12 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 PaymentStatus: resolved.UnitPrice == 0m ? "WAIVED" : "UNPAID"));
         }
 
+        var hasNewMandatoryOrAcceptedActive = resolvedItems.Any(r => r.Item.RequiredForConclusion);
+        if (hasNewMandatoryOrAcceptedActive || validated.TransitionToAwaitingResults)
+        {
+            visit.ReadyForReturnAt = null;
+        }
+
         activeEntry.StateVersion = nextStateVersion;
         if (validated.TransitionToAwaitingResults)
         {
@@ -4573,18 +4579,23 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             .ToList();
 
         var nonCancelledClinicalEntries = clinicalEntries
-            .Where(q => NormalizeQueueStatus(q.Status) != "CANCELLED")
+            .Where(q =>
+                NormalizeQueueStatus(q.Status) is not ("CANCELLED" or "DEFERRED") &&
+                AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("CANCELLED" or "DEFERRED"))
             .ToList();
 
         QueueEntry? activeClinicalEntry;
-        if (explicitQueueEntry is not null && NormalizeQueueStatus(explicitQueueEntry.Status) != "CANCELLED")
+        if (explicitQueueEntry is not null &&
+            AppointmentBookingRules.NormalizeStatusKey(explicitQueueEntry.Status) is not ("CANCELLED" or "DEFERRED"))
         {
             activeClinicalEntry = explicitQueueEntry;
         }
         else
         {
             var openClinicalEntries = nonCancelledClinicalEntries
-                .Where(q => NormalizeQueueStatus(q.Status) != "COMPLETED")
+                .Where(q =>
+                    !q.CompletedAt.HasValue &&
+                    NormalizeQueueStatus(q.Status) != "COMPLETED")
                 .ToList();
 
             activeClinicalEntry = openClinicalEntries.FirstOrDefault(q =>
@@ -4830,6 +4841,24 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         Visit currentVisit,
         CancellationToken ct)
     {
+        var sameVisitBusy = await _db.QueueEntries
+            .AsNoTracking()
+            .AnyAsync(q =>
+                q.Id != currentEntry.Id &&
+                q.VisitId == currentVisit.Id &&
+                q.CompletedAt == null &&
+                q.Status != null &&
+                (q.Status.ToUpper() == "IN_PROGRESS" ||
+                 q.Status.ToUpper() == "IN_CONSULTATION" ||
+                 q.Status.ToUpper() == "SERVING"),
+                ct);
+
+        if (sameVisitBusy)
+        {
+            throw new ConflictException(
+                "[PATIENT_BUSY_AT_ANOTHER_POINT] Bệnh nhân đang trong quá trình khám hoặc thực hiện kỹ thuật cận lâm sàng tại một điểm phục vụ khác (IN_PROGRESS), không thể bắt đầu đồng thời tại hai nơi.");
+        }
+
         var effectiveServicePointId = currentEntry.CurrentServicePointId ?? currentEntry.ServicePointId;
         var effectiveRoomId = currentVisit.ExaminationRoomId;
 
@@ -5339,10 +5368,26 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             hasDiagnosticOrders,
             hasReadyDiagnosticResults,
             hasRecordedClinicalProgress);
+        var crossDayPolicy = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(
+            _db,
+            doctorAccess.Hospital.Id,
+            nowUtc,
+            ct);
+        var hasExpiredOrderForReview = visitDiagnosticOrders.Any(o =>
+            MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsOrderExpiredForExecution(
+                o,
+                crossDayPolicy.DiagnosticOrderValidityDays,
+                nowLocal));
+        var isReturnOverdueForReview = MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsReturnConsultationOverdue(
+            visit,
+            crossDayPolicy.ReturnConsultationWindowDays,
+            nowLocal);
+
         var visitSummary = BuildVisitSummary(
             doctorAccess.Hospital,
             context,
-            queueDate);
+            queueDate,
+            isOverdueForReview: hasExpiredOrderForReview || isReturnOverdueForReview);
 
         var patientSummary = BuildPatientSummary(
             patient,
@@ -5366,7 +5411,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
     private static ConsultationVisitSummaryDto BuildVisitSummary(
         Hospital hospital,
         ResolvedVisitWorkspaceContext context,
-        DateOnly referenceDate)
+        DateOnly referenceDate,
+        bool isOverdueForReview = false)
     {
         var visit = context.Visit;
         var appointment = context.Appointment;
@@ -5429,7 +5475,11 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             AssignedDoctorTitle: doctorTitle,
             ServiceId: service?.Id,
             ServiceCode: service?.ServiceCode,
-            ServiceName: service?.Name);
+            ServiceName: service?.Name,
+            ReadyForReturnAt: visit.ReadyForReturnAt,
+            PresenceState: MedFlow.Application.Services.Visits.VisitPresenceEvaluator.NormalizePresenceState(visit.PresenceState),
+            IsCrossDayVisit: visit.CheckedInAt.HasValue && DateOnly.FromDateTime(visit.CheckedInAt.Value) < referenceDate,
+            IsOverdueForReview: isOverdueForReview);
     }
 
     private static ConsultationPatientSummaryDto BuildPatientSummary(
@@ -5629,7 +5679,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                     q.QueueType.ToUpper() == "DIAGNOSTIC" &&
                     q.CompletedAt == null &&
                     (q.Status == null ||
-                     (q.Status.ToUpper() != "COMPLETED" && q.Status.ToUpper() != "CANCELLED")))
+                     (q.Status.ToUpper() != "COMPLETED" &&
+                      q.Status.ToUpper() != "CANCELLED" &&
+                      q.Status.ToUpper() != "DEFERRED")))
                 .Select(q => q.VisitId!.Value)
                 .ToListAsync(ct);
 
@@ -5972,7 +6024,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         var diagnosticEntries = allVisitQueueEntries
             .Where(q =>
                 string.Equals(q.QueueType, "DIAGNOSTIC", StringComparison.OrdinalIgnoreCase) &&
-                NormalizeQueueStatus(q.Status) != "CANCELLED")
+                AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("CANCELLED" or "DEFERRED") &&
+                NormalizeQueueStatus(q.Status) is not ("CANCELLED" or "DEFERRED"))
             .ToList();
 
         var nonCancelledOrders = visitDiagnosticOrders
@@ -6047,9 +6100,13 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             var linkedQueue = o.QueueEntryId.HasValue && queueEntriesById.TryGetValue(o.QueueEntryId.Value, out var qe)
                 ? qe
                 : null;
+            var linkedQueueNorm = linkedQueue is not null
+                ? AppointmentBookingRules.NormalizeStatusKey(linkedQueue.Status)
+                : string.Empty;
             return ordStatus == "COMPLETED" ||
-                   linkedQueue?.CompletedAt.HasValue == true ||
-                   (linkedQueue is not null && NormalizeQueueStatus(linkedQueue.Status) == "COMPLETED");
+                   (linkedQueue is not null &&
+                    linkedQueueNorm != "DEFERRED" &&
+                    (linkedQueue.CompletedAt.HasValue || NormalizeQueueStatus(linkedQueue.Status) == "COMPLETED"));
         });
 
         var allReady = (!finalResultRequired || openMandatoryQueue == 0) && mandatoryPendingCount == 0;
@@ -6544,7 +6601,12 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                     : order.SelectionStatus.Trim().ToUpperInvariant(),
                 VisitChargeId: chargeLookupByOrderId.TryGetValue(order.Id, out var cInfo) ? cInfo.ChargeId : null,
                 ChargeStatus: chargeLookupByOrderId.TryGetValue(order.Id, out var cInfo2) ? cInfo2.ChargeStatus : null,
-                PaymentStatus: chargeLookupByOrderId.TryGetValue(order.Id, out var cInfo3) ? cInfo3.PaymentStatus : null));
+                PaymentStatus: chargeLookupByOrderId.TryGetValue(order.Id, out var cInfo3) ? cInfo3.PaymentStatus : null,
+                DeferredUntilDate: order.DeferredUntilDate,
+                IsExpiredForReview: MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsOrderExpiredForExecution(
+                    order,
+                    MedFlow.Application.Services.Policies.CrossDayVisitPolicySnapshot.Defaults.DiagnosticOrderValidityDays,
+                    nowLocal)));
         }
 
         return dtos;
@@ -7517,7 +7579,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         => allVisitQueueEntries.Count(q =>
             string.Equals(q.QueueType, "DIAGNOSTIC", StringComparison.OrdinalIgnoreCase) &&
             !q.CompletedAt.HasValue &&
-            NormalizeQueueStatus(q.Status) is not ("COMPLETED" or "CANCELLED"));
+            AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("COMPLETED" or "CANCELLED" or "DEFERRED") &&
+            NormalizeQueueStatus(q.Status) is not ("COMPLETED" or "CANCELLED" or "DEFERRED"));
 
     private async Task<int> CountOpenMandatoryOrUnlinkedDiagnosticEntriesAsync(
         long visitId,
@@ -7528,7 +7591,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             .Where(q =>
                 string.Equals(q.QueueType, "DIAGNOSTIC", StringComparison.OrdinalIgnoreCase) &&
                 !q.CompletedAt.HasValue &&
-                NormalizeQueueStatus(q.Status) is not ("COMPLETED" or "CANCELLED"))
+                AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("COMPLETED" or "CANCELLED" or "DEFERRED") &&
+                NormalizeQueueStatus(q.Status) is not ("COMPLETED" or "CANCELLED" or "DEFERRED"))
             .ToList();
 
         if (openEntries.Count == 0)

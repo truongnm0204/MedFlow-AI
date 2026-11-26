@@ -47,7 +47,11 @@ public sealed record ConsultationVisitSummaryDto(
     string? AssignedDoctorTitle,
     long? ServiceId,
     string? ServiceCode,
-    string? ServiceName);
+    string? ServiceName,
+    DateTime? ReadyForReturnAt = null,
+    string? PresenceState = null,
+    bool IsCrossDayVisit = false,
+    bool IsOverdueForReview = false);
 
 public sealed record ConsultationPatientSummaryDto(
     long PatientId,

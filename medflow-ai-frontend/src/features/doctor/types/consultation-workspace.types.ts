@@ -78,6 +78,10 @@ export interface ConsultationVisitSummaryDto {
   serviceId: number | null;
   serviceCode: string | null;
   serviceName: string | null;
+  readyForReturnAt?: string | null;
+  presenceState?: string | null;
+  isCrossDayVisit?: boolean;
+  isOverdueForReview?: boolean;
 }
 
 export interface ConsultationPatientSummaryDto {
@@ -226,6 +230,8 @@ export interface ConsultationDiagnosticOrderDto {
   visitChargeId?: number | null;
   chargeStatus?: string | null;
   paymentStatus?: string | null;
+  deferredUntilDate?: string | null;
+  isExpiredForReview?: boolean;
 }
 
 export interface DiagnosticServiceCatalogItemDto {

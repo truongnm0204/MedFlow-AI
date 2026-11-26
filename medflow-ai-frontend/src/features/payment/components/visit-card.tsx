@@ -1,4 +1,4 @@
-import { ArrowRight, CalendarClock, Hospital, Wallet } from 'lucide-react';
+import { ArrowRight, CalendarClock, CheckCircle2, Hospital, Wallet } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { Badge } from '@/shared/ui/badge';
@@ -13,13 +13,37 @@ interface VisitCardProps {
 
 const CLOSED_VISIT_STATUSES = ['CANCELLED', 'NO_SHOW'];
 
-function visitStatusMeta(status: string | null): {
+function visitStatusMeta(
+  status: string | null,
+  readyForReturnAt?: string | null,
+  isPresentToday?: boolean,
+): {
   label: string;
   tone: 'sky' | 'emerald' | 'amber' | 'rose' | 'slate';
 } {
-  switch (status?.toUpperCase()) {
+  const upper = status?.toUpperCase();
+  if (
+    Boolean(readyForReturnAt) &&
+    !isPresentToday &&
+    upper !== 'COMPLETED' &&
+    upper !== 'CANCELLED' &&
+    upper !== 'NO_SHOW'
+  ) {
+    return { label: 'Đã có kết quả CLS', tone: 'emerald' };
+  }
+
+  switch (upper) {
     case 'CHECKED_IN':
+    case 'WAITING':
       return { label: 'Đã check-in', tone: 'sky' };
+    case 'AWAITING_DIAGNOSTIC':
+    case 'AWAITING_RESULTS':
+      return { label: 'Chờ kết quả CLS', tone: 'amber' };
+    case 'RETURN_CONSULTATION':
+      return {
+        label: isPresentToday ? 'Chờ khám kết luận' : 'Đã có kết quả CLS',
+        tone: 'emerald',
+      };
     case 'IN_PROGRESS':
       return { label: 'Đang khám', tone: 'sky' };
     case 'COMPLETED':
@@ -54,9 +78,17 @@ function paymentStatusMeta(status: string | null): {
 }
 
 export function VisitCard({ visit }: VisitCardProps) {
-  const visitStatus = visitStatusMeta(visit.visitStatus);
+  const visitStatus = visitStatusMeta(
+    visit.visitStatus,
+    visit.readyForReturnAt,
+    visit.isPresentToday,
+  );
   const paymentStatus = paymentStatusMeta(visit.paymentStatus);
-  const isClosed = CLOSED_VISIT_STATUSES.includes(visit.visitStatus?.toUpperCase() ?? '');
+  const upperVisitStatus = visit.visitStatus?.toUpperCase() ?? '';
+  const isClosed = CLOSED_VISIT_STATUSES.includes(upperVisitStatus);
+  const isCompleted = upperVisitStatus === 'COMPLETED' || upperVisitStatus === 'DONE';
+  const showReturnReadyNotice =
+    Boolean(visit.readyForReturnAt) && !visit.isPresentToday && !isClosed && !isCompleted;
   const isPaid = visit.paymentStatus?.toUpperCase() === 'PAID';
   const target = `/payments/visits/${encodeURIComponent(visit.visitCode ?? String(visit.visitId))}`;
 
@@ -84,6 +116,18 @@ export function VisitCard({ visit }: VisitCardProps) {
           <Badge tone={paymentStatus.tone}>{paymentStatus.label}</Badge>
         </div>
       </div>
+
+      {showReturnReadyNotice ? (
+        <div
+          role="status"
+          className="mt-3 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3.5 py-2.5 text-xs font-semibold text-emerald-800"
+        >
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+          <span>
+            Đủ điều kiện quay lại khám kết luận — vui lòng đến quầy Tiếp đón xác nhận có mặt
+          </span>
+        </div>
+      ) : null}
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
         <p className="text-xs text-sub">

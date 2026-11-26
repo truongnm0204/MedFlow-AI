@@ -97,36 +97,35 @@ public sealed partial class ExaminationQueueService
         }
 
         var today = DateOnly.FromDateTime(AppointmentBookingRules.GetVietnamNow(_timeProvider));
-        if (referenceEntry?.QueueDate is DateOnly entryDate && entryDate != today)
-        {
-            throw new ConflictException("Chỉ tạo hoặc kích hoạt lượt khám lại cho hàng đợi của ngày hiện tại.");
-        }
-
-        if (referenceEntry is null &&
-            visit.CheckedInAt.HasValue &&
-            DateOnly.FromDateTime(visit.CheckedInAt.Value) != today)
-        {
-            throw new ConflictException("Chỉ tạo hoặc kích hoạt lượt khám lại cho hàng đợi của ngày hiện tại.");
-        }
-
         var board = await BuildQueueBoardForHospitalAsync(hospital, today, ct);
 
         var before = LocateBoardEntryForVisit(board, visit, referenceEntry);
-        if (before is null)
+        QueueBoardBucket targetBucket;
+        QueueBoardEntry? beforeEntry = null;
+
+        if (before is not null)
         {
-            if (referenceEntry?.QueueDate is DateOnly refDate)
-            {
-                var refBoard = await BuildQueueBoardForHospitalAsync(hospital, refDate, ct);
-                if (LocateBoardEntryForVisit(refBoard, visit, referenceEntry) is not null)
-                {
-                    throw new ConflictException("Chỉ tạo hoặc kích hoạt lượt khám lại cho hàng đợi của ngày hiện tại.");
-                }
-            }
-
-            throw new NotFoundException("Không tìm thấy lượt xếp hàng khám trên bảng điều phối.");
+            (targetBucket, beforeEntry) = before.Value;
         }
-
-        var (targetBucket, beforeEntry) = before.Value;
+        else
+        {
+            // Cross-day open visit: neither original CheckedInAt nor prior-day QueueEntry is on today's board yet.
+            var refSpId = referenceEntry?.CurrentServicePointId ?? referenceEntry?.ServicePointId;
+            targetBucket = board.Buckets.FirstOrDefault(b =>
+                               normalizedServicePointId is not null && MatchesServicePointFilter(b.Bucket, normalizedServicePointId))
+                           ?? board.Buckets.FirstOrDefault(b =>
+                               visit.ExaminationRoomId.HasValue &&
+                               visit.AssignedDoctorId.HasValue &&
+                               b.Bucket.RoomId == visit.ExaminationRoomId.Value &&
+                               b.Bucket.DoctorId == visit.AssignedDoctorId.Value)
+                           ?? board.Buckets.FirstOrDefault(b =>
+                               visit.ExaminationRoomId.HasValue && b.Bucket.RoomId == visit.ExaminationRoomId.Value)
+                           ?? board.Buckets.FirstOrDefault(b =>
+                               visit.AssignedDoctorId.HasValue && b.Bucket.DoctorId == visit.AssignedDoctorId.Value)
+                           ?? board.Buckets.FirstOrDefault(b =>
+                               refSpId.HasValue && b.Bucket.RawServicePointId == refSpId.Value)
+                           ?? throw new NotFoundException("Không tìm thấy điểm phục vụ / phòng khám cho lượt khám lại hôm nay.");
+        }
 
         if (normalizedServicePointId is not null &&
             !MatchesServicePointFilter(targetBucket.Bucket, normalizedServicePointId))
@@ -170,8 +169,32 @@ public sealed partial class ExaminationQueueService
         var targetStatus = request.ConfirmPresent && !isAwaitingMandatoryResults ? "READY" : "WAITING";
 
         var previousQueueEntryId = referenceEntry is not null ? $"q-{referenceEntry.Id:D3}" : null;
-        var previousStatus = referenceEntry is not null ? beforeEntry.Dto.Status : null;
-        int? previousServingOrder = referenceEntry is not null ? beforeEntry.Dto.ServingOrder : null;
+        var previousStatus = beforeEntry?.Dto.Status ?? (referenceEntry is not null ? NormalizeEntryStatus(referenceEntry, visit) : null);
+        int? previousServingOrder = beforeEntry?.Dto.ServingOrder;
+
+        // If existingReturnEntry belongs to a prior day (< today), close it as DEFERRED and create a fresh today entry.
+        if (existingReturnEntry is not null &&
+            existingReturnEntry.QueueDate.HasValue &&
+            existingReturnEntry.QueueDate.Value < today)
+        {
+            if (!existingReturnEntry.CompletedAt.HasValue &&
+                AppointmentBookingRules.NormalizeStatusKey(existingReturnEntry.Status) is not ("COMPLETED" or "CANCELLED" or "DEFERRED"))
+            {
+                existingReturnEntry.Status = "DEFERRED";
+                existingReturnEntry.PresenceStatus = "LEFT";
+                existingReturnEntry.CalledAt = null;
+                existingReturnEntry.CompletedAt = board.NowLocal;
+                existingReturnEntry.StateVersion = (existingReturnEntry.StateVersion is > 0 ? existingReturnEntry.StateVersion.Value : 1) + 1;
+            }
+
+            existingReturnEntry = null;
+        }
+
+        if (request.ConfirmPresent)
+        {
+            var isCrossDayVisit = visit.CheckedInAt.HasValue && DateOnly.FromDateTime(visit.CheckedInAt.Value) < today;
+            VisitPresenceEvaluator.StampPresentToday(visit, today, isCrossDayVisit ? board.NowLocal : null);
+        }
 
         QueueEntry targetEntry;
         string actionOutcome;
@@ -249,9 +272,15 @@ public sealed partial class ExaminationQueueService
             {
                 existingExamEntry.VisitId ??= visit.Id;
                 var examStatus = AppointmentBookingRules.NormalizeStatusKey(existingExamEntry.Status);
-                if (examStatus is not ("COMPLETED" or "CANCELLED"))
+                if (examStatus is not ("COMPLETED" or "CANCELLED" or "DEFERRED"))
                 {
-                    existingExamEntry.Status = "COMPLETED";
+                    var isPriorDayExam = existingExamEntry.QueueDate.HasValue && existingExamEntry.QueueDate.Value < today;
+                    existingExamEntry.Status = isPriorDayExam && !existingExamEntry.StartedAt.HasValue ? "DEFERRED" : "COMPLETED";
+                    if (existingExamEntry.Status == "DEFERRED")
+                    {
+                        existingExamEntry.PresenceStatus = "LEFT";
+                        existingExamEntry.CalledAt = null;
+                    }
                     existingExamEntry.CompletedAt ??= board.NowLocal;
                     existingExamEntry.StateVersion = (existingExamEntry.StateVersion is > 0
                         ? existingExamEntry.StateVersion.Value
@@ -522,7 +551,9 @@ public sealed partial class ExaminationQueueService
                 q.QueueType.ToUpper() == "DIAGNOSTIC" &&
                 q.CompletedAt == null &&
                 (q.Status == null ||
-                 (q.Status.ToUpper() != "COMPLETED" && q.Status.ToUpper() != "CANCELLED")),
+                 (q.Status.ToUpper() != "COMPLETED" &&
+                  q.Status.ToUpper() != "CANCELLED" &&
+                  q.Status.ToUpper() != "DEFERRED")),
                 ct);
 
         try

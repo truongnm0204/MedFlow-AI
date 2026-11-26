@@ -90,5 +90,9 @@ public class QueueEntryConfiguration : IEntityTypeConfiguration<QueueEntry>
 
         builder.Property(q => q.BackfillReason)
             .HasColumnName("backfill_reason");
+
+        builder.Property(q => q.IdempotencyKey)
+            .HasColumnName("idempotency_key")
+            .HasMaxLength(100);
     }
 }

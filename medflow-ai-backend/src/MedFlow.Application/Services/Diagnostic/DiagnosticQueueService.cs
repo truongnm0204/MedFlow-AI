@@ -63,6 +63,7 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
         "IN_PROGRESS",
         "COMPLETED",
         "SKIPPED",
+        "DEFERRED",
         "CANCELLED",
     };
 
@@ -74,6 +75,7 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
         "IN_PROGRESS",
         "COMPLETED",
         "SKIPPED",
+        "DEFERRED",
         "CANCELLED",
     };
 
@@ -297,7 +299,7 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
             staffAccess,
             nowLocal,
             todayLocal,
-            explicitDate: null,
+            explicitDate: todayLocal,
             ct);
 
         var resolvedServicePoint = ResolveTargetDiagnosticServicePoint(
@@ -1091,6 +1093,72 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                     "Dữ liệu hàng đợi cận lâm sàng đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
             }
 
+            if (targetStatus is "CALLED" or "IN_PROGRESS")
+            {
+                var currentTrackedStatus = NormalizeQueueStatus(trackedQueueEntry.Status);
+                var currentTrackedPresence = AppointmentBookingRules.NormalizeStatusKey(trackedQueueEntry.PresenceStatus);
+
+                if (currentTrackedStatus == "DEFERRED" ||
+                    (trackedQueueEntry.QueueDate.HasValue && trackedQueueEntry.QueueDate.Value != todayLocal))
+                {
+                    throw new ConflictException(
+                        "[PATIENT_NOT_PRESENT] Lượt xếp hàng cận lâm sàng đang ở trạng thái tạm hoãn (DEFERRED) hoặc thuộc ngày khác, không thể gọi hoặc bắt đầu thực hiện.");
+                }
+
+                if (targetCandidate.VisitId > 0)
+                {
+                    var postLockVisit = await _db.Visits.AsNoTracking().FirstOrDefaultAsync(v => v.Id == targetCandidate.VisitId, ct);
+                    var postLockVisitQueues = await _db.QueueEntries
+                        .AsNoTracking()
+                        .Where(q =>
+                            q.VisitId == targetCandidate.VisitId ||
+                            (postLockVisit != null && postLockVisit.AppointmentId.HasValue && q.AppointmentId == postLockVisit.AppointmentId.Value))
+                        .ToListAsync(ct);
+
+                    if (postLockVisit is not null &&
+                        (currentTrackedPresence is "LEFT" or "NOT_ARRIVED" ||
+                         !VisitPresenceEvaluator.IsPresentToday(postLockVisit, postLockVisitQueues, todayLocal)))
+                    {
+                        throw new ConflictException(
+                            "[PATIENT_NOT_PRESENT] Bệnh nhân hiện không có mặt tại bệnh viện (đã rời viện hoặc tạm hoãn), không thể gọi hoặc bắt đầu thực hiện kỹ thuật.");
+                    }
+
+                    var targetEffSpId = overrideServicePointId
+                                        ?? trackedQueueEntry.CurrentServicePointId
+                                        ?? trackedQueueEntry.ServicePointId;
+
+                    if (targetStatus == "IN_PROGRESS" &&
+                        postLockVisitQueues.Any(q =>
+                        {
+                            if (q.Id == trackedQueueEntry.Id ||
+                                q.CompletedAt.HasValue ||
+                                AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("IN_PROGRESS" or "IN_CONSULTATION" or "SERVING"))
+                            {
+                                return false;
+                            }
+
+                            if (string.Equals(q.QueueType?.Trim(), "DIAGNOSTIC", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var otherEffSpId = q.CurrentServicePointId ?? q.ServicePointId;
+                                if (targetEffSpId.HasValue && otherEffSpId.HasValue && targetEffSpId.Value == otherEffSpId.Value)
+                                {
+                                    return false;
+                                }
+
+                                return true;
+                            }
+
+                            return trackedOrder?.OrderedAt.HasValue == true &&
+                                   q.StartedAt.HasValue &&
+                                   q.StartedAt.Value > trackedOrder.OrderedAt.Value;
+                        }))
+                    {
+                        throw new ConflictException(
+                            "[PATIENT_BUSY_AT_ANOTHER_POINT] Bệnh nhân đang trong quá trình khám hoặc thực hiện kỹ thuật cận lâm sàng tại một điểm phục vụ khác (IN_PROGRESS), không thể bắt đầu đồng thời tại hai nơi.");
+                    }
+                }
+            }
+
             if (targetStatus == "CANCELLED" &&
                 cancelLinkedOrder &&
                 trackedOrder is not null &&
@@ -1120,6 +1188,7 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                     trackedQueueEntry.ReadyAt = nowLocal;
                     trackedQueueEntry.CalledAt = null;
                     trackedQueueEntry.StartedAt = null;
+                    trackedQueueEntry.CompletedAt = null;
                     trackedQueueEntry.BlockedReason = null;
                     trackedQueueEntry.PresenceStatus = requestedPresence ?? "PRESENT";
                     if (trackedOrder is not null && NormalizeOrderStatus(trackedOrder.Status) == "IN_PROGRESS")
@@ -1132,6 +1201,7 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                     trackedQueueEntry.ArrivedAt ??= nowLocal;
                     trackedQueueEntry.CalledAt = null;
                     trackedQueueEntry.StartedAt = null;
+                    trackedQueueEntry.CompletedAt = null;
                     trackedQueueEntry.BlockedReason = null;
                     trackedQueueEntry.PresenceStatus = requestedPresence ?? "PRESENT";
                     if (trackedOrder is not null && NormalizeOrderStatus(trackedOrder.Status) == "IN_PROGRESS")
@@ -1188,6 +1258,14 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                     {
                         trackedOrder.Status = "CONFIRMED";
                     }
+                    break;
+
+                case "DEFERRED":
+                    trackedQueueEntry.CalledAt = null;
+                    trackedQueueEntry.StartedAt = null;
+                    trackedQueueEntry.CompletedAt = nowLocal;
+                    trackedQueueEntry.BlockedReason = blockedReason ?? reason;
+                    trackedQueueEntry.PresenceStatus = requestedPresence ?? "LEFT";
                     break;
 
                 case "CANCELLED":

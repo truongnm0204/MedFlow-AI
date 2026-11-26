@@ -118,7 +118,10 @@ public sealed record DiagnosticWorklistItemDto(
     bool CanUpdateExecutionStatus,
     bool CanEnterResult,
     bool CanViewResult,
-    IReadOnlyList<DiagnosticWorklistActionDto> AllowedActions);
+    IReadOnlyList<DiagnosticWorklistActionDto> AllowedActions,
+    DateOnly? DeferredUntilDate = null,
+    bool IsCrossDayOrder = false,
+    bool IsExpiredForReview = false);
 
 public sealed record DiagnosticServicePointWorklistDto(
     long? ServicePointId,

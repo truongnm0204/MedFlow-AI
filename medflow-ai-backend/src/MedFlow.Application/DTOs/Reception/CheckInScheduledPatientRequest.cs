@@ -12,4 +12,5 @@ public sealed record CheckInScheduledPatientRequest(
     bool? PriorityVerificationConfirmed = null,
     string? Notes = null,
     long? AppointmentId = null,
-    string? AppointmentCode = null);
+    string? AppointmentCode = null,
+    bool? AllowNewEpisodeWhileVisitOpen = null);

@@ -445,11 +445,42 @@ public sealed class DoctorDashboardService : IDoctorDashboardService
                 string.Equals(e.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase))
             : 0;
 
+        var todayStart = nowLocal.Date;
+        var tomorrowStart = todayStart.AddDays(1);
+
+        var doctorNewCheckInsToday = allDoctorVisits.Count(v =>
+            v.CheckedInAt.HasValue &&
+            v.CheckedInAt.Value >= todayStart &&
+            v.CheckedInAt.Value < tomorrowStart &&
+            AppointmentBookingRules.NormalizeStatusKey(v.Status) != "CANCELLED");
+
+        var doctorResumedVisitsToday = allDoctorVisits.Count(v =>
+            v.LastResumedAt.HasValue &&
+            v.LastResumedAt.Value >= todayStart &&
+            v.LastResumedAt.Value < tomorrowStart &&
+            (!v.CheckedInAt.HasValue || v.CheckedInAt.Value < todayStart) &&
+            AppointmentBookingRules.NormalizeStatusKey(v.Status) != "CANCELLED");
+
+        var doctorAwaitingResultsOrReturn = allDoctorVisits.Count(v =>
+            AppointmentBookingRules.NormalizeStatusKey(v.Status) is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" or "RETURN_CONSULTATION");
+
+        var doctorCompletedVisitsToday = Math.Max(
+            completedTodayCount,
+            allDoctorVisits.Count(v =>
+                AppointmentBookingRules.NormalizeStatusKey(v.Status) is "COMPLETED" or "DONE" &&
+                v.CompletedAt.HasValue &&
+                v.CompletedAt.Value >= todayStart &&
+                v.CompletedAt.Value < tomorrowStart));
+
         var stats = new DoctorStatsDto(
             AssignedWaiting: assignedWaitingCount,
             InConsultation: inConsultationCount,
             PendingLabResults: pendingLabResultsCount,
-            CompletedToday: completedTodayCount);
+            CompletedToday: completedTodayCount,
+            NewCheckInsToday: canViewQueue ? doctorNewCheckInsToday : 0,
+            ResumedVisitsToday: canViewQueue ? doctorResumedVisitsToday : 0,
+            AwaitingResultsOrReturnCount: canViewQueue ? doctorAwaitingResultsOrReturn : 0,
+            CompletedVisitsToday: canViewQueue ? doctorCompletedVisitsToday : 0);
 
         IEnumerable<AssignedPatientEntryDto> filteredQueue = fullAssignedQueue;
 

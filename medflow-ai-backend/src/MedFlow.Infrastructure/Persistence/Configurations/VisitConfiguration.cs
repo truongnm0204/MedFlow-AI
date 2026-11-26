@@ -45,6 +45,20 @@ public class VisitConfiguration : IEntityTypeConfiguration<Visit>
             .HasColumnName("checked_in_at")
             .HasColumnType("timestamp without time zone");
 
+        builder.Property(v => v.LastPresentDate)
+            .HasColumnName("last_present_date")
+            .HasColumnType("date");
+
+        builder.Property(v => v.PresenceState)
+            .HasColumnName("presence_state")
+            .HasMaxLength(16)
+            .HasDefaultValue("PRESENT")
+            .IsRequired();
+
+        builder.Property(v => v.LastResumedAt)
+            .HasColumnName("last_resumed_at")
+            .HasColumnType("timestamp without time zone");
+
         builder.Property(v => v.ReadyForReturnAt)
             .HasColumnName("ready_for_return_at")
             .HasColumnType("timestamp without time zone");

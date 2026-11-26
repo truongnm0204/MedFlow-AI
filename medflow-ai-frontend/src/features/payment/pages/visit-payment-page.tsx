@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   ArrowLeft,
+  CheckCircle2,
   ChevronRight,
   CreditCard,
   Home,
@@ -269,6 +270,21 @@ export function VisitPaymentPage() {
           ) : charges ? (
             <div className="space-y-4">
               {mutationError ? <Alert tone="error">{getErrorMessage(mutationError)}</Alert> : null}
+
+              {charges.readyForReturnAt &&
+              !charges.isPresentToday &&
+              charges.visitStatus?.toUpperCase() !== 'COMPLETED' &&
+              charges.visitStatus?.toUpperCase() !== 'CANCELLED' ? (
+                <Alert tone="success">
+                  <div className="flex items-center gap-2 text-xs font-semibold">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>
+                      Đủ điều kiện quay lại khám kết luận — vui lòng đến quầy Tiếp đón xác nhận có
+                      mặt
+                    </span>
+                  </div>
+                </Alert>
+              ) : null}
 
               {charges.hasReconciliationItems && !isMismatch ? (
                 <Alert tone="warning">

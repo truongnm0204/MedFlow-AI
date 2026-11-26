@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Visits;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
@@ -727,12 +728,9 @@ internal static class DiagnosticOrderLifecycleHelper
                     nowLocal,
                     excludingCancelledOrderId: order.Id,
                     newlyFinalizedOrderId: null,
-                    ct: ct);
-
-            if (transitionedToReturnConsultation)
-            {
-                visit.ReadyForReturnAt ??= nowLocal;
-            }
+                    ct: ct,
+                    mutatingCancelledOrder: order,
+                    nowUtcOverride: nowUtc);
         }
 
         var auditAction = wasAlreadyPaid
@@ -816,7 +814,9 @@ internal static class DiagnosticOrderLifecycleHelper
             nowLocal,
             excludingCancelledOrderId: null,
             newlyFinalizedOrderId: null,
-            ct: ct);
+            ct: ct,
+            mutatingCancelledOrder: null,
+            nowUtcOverride: nowUtc);
 
     public sealed record DiagnosticOrderCancelOutcome(
         string PreviousOrderStatus,
@@ -830,6 +830,187 @@ internal static class DiagnosticOrderLifecycleHelper
         bool TransitionedToReturnConsultation,
         QueueEntry? ReturnQueueEntry);
 
+    public static async Task<bool> EvaluateVisitReturnReadinessAsync(
+        IApplicationDbContext db,
+        long visitId,
+        long? excludingCancelledOrderId = null,
+        DiagnosticOrder? mutatingCancelledOrder = null,
+        long? newlyFinalizedOrderId = null,
+        CancellationToken ct = default)
+    {
+        List<DiagnosticOrder> rawOrders;
+        try
+        {
+            rawOrders = await db.DiagnosticOrders.AsNoTracking()
+                .Where(o => o.VisitId == visitId)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            return false;
+        }
+
+        var visitOrders = new List<DiagnosticOrder>(rawOrders.Count + 1);
+        var replacedMutating = false;
+        foreach (var existing in rawOrders)
+        {
+            if (mutatingCancelledOrder is not null && existing.Id == mutatingCancelledOrder.Id)
+            {
+                visitOrders.Add(mutatingCancelledOrder);
+                replacedMutating = true;
+                continue;
+            }
+
+            if (mutatingCancelledOrder is null &&
+                excludingCancelledOrderId.HasValue &&
+                existing.Id == excludingCancelledOrderId.Value)
+            {
+                continue;
+            }
+
+            visitOrders.Add(existing);
+        }
+
+        if (mutatingCancelledOrder is not null && !replacedMutating && mutatingCancelledOrder.VisitId == visitId)
+        {
+            visitOrders.Add(mutatingCancelledOrder);
+        }
+
+        if (visitOrders.Count == 0 && !excludingCancelledOrderId.HasValue)
+        {
+            return false;
+        }
+
+        // 1. Any mandatory order with REVIEW_REQUIRED (e.g. TechnicalAbort awaiting Doctor decision) blocks readiness (CD-T18).
+        if (visitOrders.Any(o =>
+                o.RequiredForConclusion == true &&
+                string.Equals(o.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.ReviewRequired, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        var nonCancelledOrders = visitOrders
+            .Where(o => AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED")
+            .ToList();
+
+        var idsNeedingResultCheck = nonCancelledOrders
+            .Where(o => o.Id != newlyFinalizedOrderId)
+            .Select(o => o.Id)
+            .Distinct()
+            .ToList();
+
+        List<DiagnosticResult> results = [];
+        Dictionary<long, DiagnosticResultVersion?> versionsByResultId = new();
+
+        if (idsNeedingResultCheck.Count > 0)
+        {
+            try
+            {
+                results = await db.DiagnosticResults.AsNoTracking()
+                    .Where(r => r.DiagnosticOrderId.HasValue && idsNeedingResultCheck.Contains(r.DiagnosticOrderId.Value))
+                    .ToListAsync(ct);
+
+                var resultIds = results.Select(r => r.Id).Distinct().ToList();
+                if (resultIds.Count > 0)
+                {
+                    var versions = await db.DiagnosticResultVersions.AsNoTracking()
+                        .Where(v => v.DiagnosticResultId.HasValue && resultIds.Contains(v.DiagnosticResultId.Value))
+                        .ToListAsync(ct);
+
+                    versionsByResultId = versions
+                        .Where(v => v.DiagnosticResultId.HasValue)
+                        .GroupBy(v => v.DiagnosticResultId!.Value)
+                        .ToDictionary(
+                            g => g.Key,
+                            g => g.OrderByDescending(v => v.VersionNo ?? 0).ThenByDescending(v => v.Id).FirstOrDefault());
+                }
+            }
+            catch (NotSupportedException)
+            {
+                return false;
+            }
+        }
+
+        bool IsOrderResultFinalized(DiagnosticOrder order)
+        {
+            if (newlyFinalizedOrderId.HasValue && order.Id == newlyFinalizedOrderId.Value)
+            {
+                return true;
+            }
+
+            return results
+                .Where(r => r.DiagnosticOrderId == order.Id)
+                .OrderByDescending(r => r.Id)
+                .Any(r =>
+                {
+                    versionsByResultId.TryGetValue(r.Id, out var latestVer);
+                    return IsResultRowFinalized(r, latestVer);
+                });
+        }
+
+        var nonCancelledMandatory = nonCancelledOrders
+            .Where(o => o.RequiredForConclusion == true)
+            .ToList();
+
+        // 2. Every non-cancelled mandatory order MUST have a finalized/verified UC43 result.
+        foreach (var mandatory in nonCancelledMandatory)
+        {
+            if (!IsOrderResultFinalized(mandatory))
+            {
+                return false;
+            }
+        }
+
+        // 3. No non-cancelled ACCEPTED optional order may be mid-execution (IN_PROGRESS)
+        //    or completed UC42 awaiting UC43 result (PERFORMED_AWAITING_RESULT / unfinalized result row).
+        var nonCancelledOptional = nonCancelledOrders
+            .Where(o => o.RequiredForConclusion != true)
+            .ToList();
+
+        foreach (var optional in nonCancelledOptional)
+        {
+            if (IsOrderResultFinalized(optional))
+            {
+                continue;
+            }
+
+            var selection = string.IsNullOrWhiteSpace(optional.SelectionStatus)
+                ? DiagnosticSelectionStatuses.Accepted
+                : optional.SelectionStatus.Trim().ToUpperInvariant();
+            var orderStatus = AppointmentBookingRules.NormalizeStatusKey(optional.Status);
+
+            if (selection == DiagnosticSelectionStatuses.Accepted)
+            {
+                if (orderStatus is "IN_PROGRESS" or "COMPLETED")
+                {
+                    return false;
+                }
+
+                var hasDraftOrPendingVerifyResult = results.Any(r =>
+                    r.DiagnosticOrderId == optional.Id &&
+                    AppointmentBookingRules.NormalizeStatusKey(r.Status) != "CANCELLED");
+                if (hasDraftOrPendingVerifyResult)
+                {
+                    return false;
+                }
+            }
+        }
+
+        // 4. If the visit has zero non-cancelled mandatory orders, do not prematurely auto-return
+        //    while a non-deferred ACCEPTED optional order is still open (ORDERED/CONFIRMED) awaiting execution.
+        if (nonCancelledMandatory.Count == 0 &&
+            nonCancelledOptional.Any(o =>
+                (string.IsNullOrWhiteSpace(o.SelectionStatus) ||
+                 string.Equals(o.SelectionStatus.Trim(), DiagnosticSelectionStatuses.Accepted, StringComparison.OrdinalIgnoreCase)) &&
+                !o.DeferredUntilDate.HasValue &&
+                !IsOrderResultFinalized(o)))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
     public static async Task<(bool Transitioned, QueueEntry? ReturnQueueEntry)> TryTransitionVisitToReturnConsultationAsync(
         IApplicationDbContext db,
         Visit visit,
@@ -837,94 +1018,73 @@ internal static class DiagnosticOrderLifecycleHelper
         DateTime nowLocal,
         long? excludingCancelledOrderId,
         long? newlyFinalizedOrderId,
-        CancellationToken ct)
+        CancellationToken ct,
+        DiagnosticOrder? mutatingCancelledOrder = null,
+        DateTime? nowUtcOverride = null)
     {
         var visitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
-        if (visitStatus is not ("AWAITING_RESULTS" or "AWAITING_DIAGNOSTIC"))
+        if (visitStatus is "COMPLETED" or "DONE" or "CANCELLED" or "NO_SHOW")
         {
             return (false, null);
         }
 
-        List<DiagnosticOrder> visitOrders;
-        try
-        {
-            visitOrders = await db.DiagnosticOrders.AsNoTracking()
-                .Where(o => o.VisitId == visit.Id)
-                .ToListAsync(ct);
-        }
-        catch (NotSupportedException)
-        {
-            return (false, null);
-        }
+        var isReady = await EvaluateVisitReturnReadinessAsync(
+            db,
+            visit.Id,
+            excludingCancelledOrderId,
+            mutatingCancelledOrder,
+            newlyFinalizedOrderId,
+            ct);
 
-        var remainingNonCancelledOrders = visitOrders
-            .Where(o =>
-                o.Id != excludingCancelledOrderId &&
-                AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED")
-            .ToList();
-
-        if (remainingNonCancelledOrders.Count > 0)
+        if (!isReady)
         {
-            var remainingIds = remainingNonCancelledOrders
-                .Where(o => o.Id != newlyFinalizedOrderId)
-                .Select(o => o.Id)
-                .ToList();
+            visit.ReadyForReturnAt = null;
 
-            if (remainingIds.Count > 0)
+            if (visitStatus == "RETURN_CONSULTATION")
             {
-                List<DiagnosticResult> results;
-                List<DiagnosticResultVersion> versions = [];
-                try
+                var currentQueues = await db.QueueEntries
+                    .Where(q =>
+                        q.VisitId == visit.Id ||
+                        (visit.AppointmentId.HasValue && q.AppointmentId == visit.AppointmentId.Value))
+                    .ToListAsync(ct);
+
+                var hasActiveInProgressConsultation = currentQueues.Any(q =>
+                    ClinicalQueueRules.IsClinicalExaminationQueueType(q.QueueType) &&
+                    !q.CompletedAt.HasValue &&
+                    q.StartedAt.HasValue &&
+                    AppointmentBookingRules.NormalizeStatusKey(q.Status) is "IN_PROGRESS" or "IN_CONSULTATION" or "SERVING");
+
+                if (!hasActiveInProgressConsultation)
                 {
-                    results = await db.DiagnosticResults.AsNoTracking()
-                        .Where(r => r.DiagnosticOrderId.HasValue && remainingIds.Contains(r.DiagnosticOrderId.Value))
-                        .ToListAsync(ct);
-
-                    var resultIds = results.Select(r => r.Id).Distinct().ToList();
-                    if (resultIds.Count > 0)
+                    visit.Status = "AWAITING_RESULTS";
+                    foreach (var openReturn in currentQueues.Where(q =>
+                                 ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation &&
+                                 !q.CompletedAt.HasValue &&
+                                 AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED")))
                     {
-                        versions = await db.DiagnosticResultVersions.AsNoTracking()
-                            .Where(v => v.DiagnosticResultId.HasValue && resultIds.Contains(v.DiagnosticResultId.Value))
-                            .ToListAsync(ct);
-                    }
-                }
-                catch (NotSupportedException)
-                {
-                    return (false, null);
-                }
-
-                var versionsByResultId = versions
-                    .Where(v => v.DiagnosticResultId.HasValue)
-                    .GroupBy(v => v.DiagnosticResultId!.Value)
-                    .ToDictionary(
-                        g => g.Key,
-                        g => g.OrderByDescending(v => v.VersionNo ?? 0).ThenByDescending(v => v.Id).FirstOrDefault());
-
-                foreach (var candidateOrder in remainingNonCancelledOrders)
-                {
-                    if (candidateOrder.Id == newlyFinalizedOrderId)
-                    {
-                        continue;
-                    }
-
-                    var candidateResults = results
-                        .Where(r => r.DiagnosticOrderId == candidateOrder.Id)
-                        .OrderByDescending(r => r.Id)
-                        .ToList();
-
-                    var isCandidateFinalized = candidateResults.Any(r =>
-                    {
-                        versionsByResultId.TryGetValue(r.Id, out var latestVer);
-                        return IsResultRowFinalized(r, latestVer);
-                    });
-
-                    if (!isCandidateFinalized)
-                    {
-                        return (false, null);
+                        openReturn.Status = "DEFERRED";
+                        openReturn.PresenceStatus = "LEFT";
+                        openReturn.CalledAt = null;
+                        openReturn.CompletedAt = nowLocal;
+                        openReturn.BlockedReason = "Thu hồi lượt khám kết luận do phát sinh thay đổi chỉ định hoặc kết quả cận lâm sàng.";
+                        openReturn.StateVersion = (openReturn.StateVersion is > 0 ? openReturn.StateVersion.Value : 1) + 1;
                     }
                 }
             }
+
+            return (false, null);
         }
+
+        if (visitStatus is not ("AWAITING_RESULTS" or "AWAITING_DIAGNOSTIC" or "RETURN_CONSULTATION"))
+        {
+            return (false, null);
+        }
+
+        visit.ReadyForReturnAt ??= nowLocal;
+
+        var todayLocal = DateOnly.FromDateTime(nowLocal);
+        var effectiveNowUtc = nowUtcOverride ?? DateTime.SpecifyKind(nowLocal.AddHours(-7), DateTimeKind.Utc);
+        var policy = await CrossDayVisitPolicyReader.LoadAsync(db, hospitalId, effectiveNowUtc, ct);
 
         var visitQueueEntries = await db.QueueEntries
             .Where(q =>
@@ -937,7 +1097,23 @@ internal static class DiagnosticOrderLifecycleHelper
             .Where(q => ClinicalQueueRules.IsClinicalExaminationQueueType(q.QueueType))
             .ToList();
 
+        // Close any stale prior-day clinical queue entries (QueueDate < todayLocal) that are not IN_PROGRESS.
+        foreach (var staleClinical in clinicalEntries.Where(q =>
+                     q.QueueDate.HasValue &&
+                     q.QueueDate.Value < todayLocal &&
+                     !q.CompletedAt.HasValue &&
+                     AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("IN_PROGRESS" or "IN_CONSULTATION" or "SERVING" or "COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED")))
+        {
+            staleClinical.Status = "DEFERRED";
+            staleClinical.PresenceStatus = "LEFT";
+            staleClinical.CalledAt = null;
+            staleClinical.CompletedAt = nowLocal;
+            staleClinical.BlockedReason ??= "Chuyển sang trạng thái hoãn qua ngày (DEFERRED).";
+            staleClinical.StateVersion = (staleClinical.StateVersion is > 0 ? staleClinical.StateVersion.Value : 1) + 1;
+        }
+
         var openPrimaryServing = clinicalEntries.FirstOrDefault(q =>
+            (!q.QueueDate.HasValue || q.QueueDate.Value == todayLocal) &&
             ClinicalQueueRules.ResolveQueueType(q.QueueType, null) != ClinicalQueueRules.QueueTypeReturnConsultation &&
             !q.CompletedAt.HasValue &&
             AppointmentBookingRules.NormalizeStatusKey(q.Status) is "IN_PROGRESS" or "IN_CONSULTATION" or "SERVING" or "CALLED");
@@ -947,10 +1123,43 @@ internal static class DiagnosticOrderLifecycleHelper
             return (false, openPrimaryServing);
         }
 
+        var isPresentToday = !policy.RequirePresenceForReturnQueue ||
+                             VisitPresenceEvaluator.IsPresentToday(visit, visitQueueEntries, todayLocal);
+
+        if (!isPresentToday)
+        {
+            // Case B (CD-T05): Patient is NOT durably present today -> do NOT create RETURN_CONSULTATION queue or make callable.
+            foreach (var todayUnstartedReturn in clinicalEntries.Where(q =>
+                         q.QueueDate == todayLocal &&
+                         ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation &&
+                         !q.CompletedAt.HasValue &&
+                         !q.StartedAt.HasValue &&
+                         AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED")))
+            {
+                todayUnstartedReturn.Status = "DEFERRED";
+                todayUnstartedReturn.PresenceStatus = "LEFT";
+                todayUnstartedReturn.CalledAt = null;
+                todayUnstartedReturn.CompletedAt = nowLocal;
+                todayUnstartedReturn.StateVersion = (todayUnstartedReturn.StateVersion is > 0 ? todayUnstartedReturn.StateVersion.Value : 1) + 1;
+            }
+
+            visit.Status = "AWAITING_RESULTS";
+
+            await EnqueueZeroPhiReturnReadyNotificationIfMissingAsync(
+                db,
+                visit,
+                DateTime.SpecifyKind(nowLocal, DateTimeKind.Unspecified),
+                ct);
+
+            return (false, null);
+        }
+
+        // Case A (CD-T07): Patient IS durably present today -> ensure at most 1 active RETURN_CONSULTATION queue entry for todayLocal.
         var existingOpenReturn = clinicalEntries.FirstOrDefault(q =>
+            q.QueueDate == todayLocal &&
             ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation &&
             !q.CompletedAt.HasValue &&
-            AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("COMPLETED" or "DONE" or "CANCELLED"));
+            AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED"));
 
         if (existingOpenReturn is not null)
         {
@@ -966,6 +1175,14 @@ internal static class DiagnosticOrderLifecycleHelper
                     ? existingOpenReturn.StateVersion.Value
                     : 1) + 1;
             }
+            else if (existingStatus == "READY" &&
+                     AppointmentBookingRules.NormalizeStatusKey(existingOpenReturn.PresenceStatus) != "PRESENT")
+            {
+                existingOpenReturn.PresenceStatus = "PRESENT";
+                existingOpenReturn.StateVersion = (existingOpenReturn.StateVersion is > 0
+                    ? existingOpenReturn.StateVersion.Value
+                    : 1) + 1;
+            }
 
             visit.Status = "RETURN_CONSULTATION";
             return (true, existingOpenReturn);
@@ -975,44 +1192,16 @@ internal static class DiagnosticOrderLifecycleHelper
             .FirstOrDefault(q => AppointmentBookingRules.NormalizeStatusKey(q.Status) != "CANCELLED")
             ?? clinicalEntries.FirstOrDefault();
 
-        var targetSpId = referenceClinical?.CurrentServicePointId ?? referenceClinical?.ServicePointId;
-        if (!targetSpId.HasValue && (visit.ExaminationRoomId.HasValue || visit.AssignedDoctorId.HasValue))
-        {
-            try
-            {
-                var examPoints = await db.QueueServicePoints.AsNoTracking()
-                    .Where(sp =>
-                        sp.HospitalId == hospitalId &&
-                        sp.IsActive != false &&
-                        (sp.PointType == null || sp.PointType.ToUpper() == "EXAMINATION_ROOM"))
-                    .OrderBy(sp => sp.Id)
-                    .ToListAsync(ct);
-
-                targetSpId = examPoints
-                    .FirstOrDefault(sp =>
-                        visit.ExaminationRoomId.HasValue &&
-                        visit.AssignedDoctorId.HasValue &&
-                        sp.RoomId == visit.ExaminationRoomId.Value &&
-                        sp.DoctorId == visit.AssignedDoctorId.Value)?.Id
-                    ?? examPoints.FirstOrDefault(sp =>
-                        visit.ExaminationRoomId.HasValue && sp.RoomId == visit.ExaminationRoomId.Value)?.Id
-                    ?? examPoints.FirstOrDefault(sp =>
-                        visit.AssignedDoctorId.HasValue && sp.DoctorId == visit.AssignedDoctorId.Value)?.Id;
-            }
-            catch (NotSupportedException)
-            {
-                targetSpId = null;
-            }
-        }
-
-        var queueDate = referenceClinical?.QueueDate
-            ?? (visit.CheckedInAt.HasValue
-                ? DateOnly.FromDateTime(visit.CheckedInAt.Value)
-                : DateOnly.FromDateTime(nowLocal));
+        var targetSpId = await ResolveClinicalReturnServicePointIdAsync(
+            db,
+            visit,
+            hospitalId,
+            referenceClinical,
+            ct);
 
         var maxQueueNumber = await db.QueueEntries.AsNoTracking()
             .Where(q =>
-                q.QueueDate == queueDate &&
+                q.QueueDate == todayLocal &&
                 (targetSpId.HasValue
                     ? (q.ServicePointId == targetSpId.Value || q.CurrentServicePointId == targetSpId.Value)
                     : (q.ServicePointId == null && q.CurrentServicePointId == null)))
@@ -1024,7 +1213,7 @@ internal static class DiagnosticOrderLifecycleHelper
             AppointmentId = null,
             ServicePointId = targetSpId,
             CurrentServicePointId = targetSpId,
-            QueueDate = queueDate,
+            QueueDate = todayLocal,
             QueueNumber = (maxQueueNumber ?? 0) + 1,
             QueueType = ClinicalQueueRules.QueueTypeReturnConsultation,
             Status = "READY",
@@ -1041,6 +1230,107 @@ internal static class DiagnosticOrderLifecycleHelper
         visit.Status = "RETURN_CONSULTATION";
 
         return (true, returnEntry);
+    }
+
+    public static async Task<long?> ResolveClinicalReturnServicePointIdAsync(
+        IApplicationDbContext db,
+        Visit visit,
+        long hospitalId,
+        QueueEntry? referenceClinical,
+        CancellationToken ct)
+    {
+        try
+        {
+            var examPoints = await db.QueueServicePoints.AsNoTracking()
+                .Where(sp =>
+                    sp.HospitalId == hospitalId &&
+                    sp.IsActive != false &&
+                    (sp.PointType == null || sp.PointType.ToUpper() == "EXAMINATION_ROOM"))
+                .OrderBy(sp => sp.Id)
+                .ToListAsync(ct);
+
+            if (examPoints.Count > 0)
+            {
+                var matchedByRoomAndDoctor = examPoints.FirstOrDefault(sp =>
+                    visit.ExaminationRoomId.HasValue &&
+                    visit.AssignedDoctorId.HasValue &&
+                    sp.RoomId == visit.ExaminationRoomId.Value &&
+                    sp.DoctorId == visit.AssignedDoctorId.Value)?.Id;
+                if (matchedByRoomAndDoctor.HasValue)
+                {
+                    return matchedByRoomAndDoctor;
+                }
+
+                var matchedByRoom = examPoints.FirstOrDefault(sp =>
+                    visit.ExaminationRoomId.HasValue && sp.RoomId == visit.ExaminationRoomId.Value)?.Id;
+                if (matchedByRoom.HasValue)
+                {
+                    return matchedByRoom;
+                }
+
+                var matchedByDoctor = examPoints.FirstOrDefault(sp =>
+                    visit.AssignedDoctorId.HasValue && sp.DoctorId == visit.AssignedDoctorId.Value)?.Id;
+                if (matchedByDoctor.HasValue)
+                {
+                    return matchedByDoctor;
+                }
+            }
+        }
+        catch (NotSupportedException)
+        {
+            // Minimal unit test DbContext without QueueServicePoints.
+        }
+
+        return referenceClinical?.CurrentServicePointId ?? referenceClinical?.ServicePointId;
+    }
+
+    private static async Task EnqueueZeroPhiReturnReadyNotificationIfMissingAsync(
+        IApplicationDbContext db,
+        Visit visit,
+        DateTime nowLocalUnspecified,
+        CancellationToken ct)
+    {
+        if (!visit.ReadyForReturnAt.HasValue)
+        {
+            return;
+        }
+
+        var localStamp = DateTime.SpecifyKind(nowLocalUnspecified, DateTimeKind.Unspecified);
+        var idempotencyKey = $"visit-return-ready:{visit.Id}:{visit.ReadyForReturnAt.Value:yyyyMMddHHmmss}";
+        try
+        {
+            var alreadyExists = await db.Notifications
+                .AsNoTracking()
+                .AnyAsync(n => n.IdempotencyKey == idempotencyKey, ct);
+            if (alreadyExists)
+            {
+                return;
+            }
+
+            var visitCodeLabel = !string.IsNullOrWhiteSpace(visit.VisitCode)
+                ? visit.VisitCode.Trim()
+                : $"#{visit.Id}";
+
+            db.Notifications.Add(new Notification
+            {
+                PatientId = visit.PatientId,
+                AppointmentId = visit.AppointmentId,
+                VisitId = visit.Id,
+                Channel = Notification.ChannelInApp,
+                NotificationType = Notification.TypeVisitReturnReady,
+                Subject = "Kết quả cận lâm sàng đã sẵn sàng để khám kết luận",
+                Body = $"Lượt khám {visitCodeLabel} đã đủ điều kiện quay lại khám kết luận. Vui lòng đến quầy Tiếp đón để xác nhận có mặt.",
+                Status = Notification.StatusPending,
+                RetryCount = 0,
+                IdempotencyKey = idempotencyKey,
+                ScheduledAt = localStamp,
+                CreatedAt = localStamp,
+            });
+        }
+        catch (NotSupportedException)
+        {
+            // Minimal unit test DbContext without Notifications DbSet.
+        }
     }
 }
 

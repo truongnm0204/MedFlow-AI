@@ -25,4 +25,7 @@ public sealed record VisitChargesResponseDto(
     string? ActivePendingQrPaymentCode = null,
     decimal? ActivePendingQrAmount = null,
     IReadOnlyList<long>? ActivePendingQrChargeIds = null,
-    bool HasReconciliationItems = false);
+    bool HasReconciliationItems = false,
+    DateTime? ReadyForReturnAt = null,
+    bool IsPresentToday = false,
+    string? PresenceState = null);

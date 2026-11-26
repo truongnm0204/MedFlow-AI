@@ -601,6 +601,26 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
                 string queueStatus;
                 string presenceStatus;
 
+                if (linkedQueueEntry is not null &&
+                    linkedQueueEntry.QueueDate.HasValue &&
+                    linkedQueueEntry.QueueDate.Value < referenceDate)
+                {
+                    var staleStatus = NormalizeQueueStatus(linkedQueueEntry.Status);
+                    if (staleStatus is not ("COMPLETED" or "CANCELLED" or "DEFERRED" or "IN_PROGRESS"))
+                    {
+                        linkedQueueEntry.Status = "DEFERRED";
+                        linkedQueueEntry.PresenceStatus = "LEFT";
+                        linkedQueueEntry.CalledAt = null;
+                        linkedQueueEntry.CompletedAt ??= nowLocal;
+                        linkedQueueEntry.StateVersion = (linkedQueueEntry.StateVersion is > 0 ? linkedQueueEntry.StateVersion.Value : 1) + 1;
+                    }
+
+                    if (staleStatus != "IN_PROGRESS")
+                    {
+                        linkedQueueEntry = null;
+                    }
+                }
+
                 if (linkedQueueEntry is null)
                 {
                     var diagSpId = resolvedSp?.Id;
@@ -654,9 +674,11 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
                     }
 
                     var normalizedCurrentQStatus = NormalizeQueueStatus(linkedQueueEntry.Status);
-                    if (normalizedCurrentQStatus == "RESERVED" || string.IsNullOrWhiteSpace(linkedQueueEntry.Status))
+                    if (normalizedCurrentQStatus is "RESERVED" or "DEFERRED" || string.IsNullOrWhiteSpace(linkedQueueEntry.Status))
                     {
                         linkedQueueEntry.Status = "WAITING";
+                        linkedQueueEntry.CompletedAt = null;
+                        linkedQueueEntry.BlockedReason = null;
                     }
 
                     if (validated.PatientPresent == true)

@@ -1,3 +1,4 @@
+import { CalendarClock } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -7,6 +8,7 @@ import { hasPermission } from '@/features/auth/utils/rbac';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
+import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import { CheckInModal } from '../components/checkin-modal';
@@ -19,6 +21,7 @@ import {
   ReceptionCashCollectionModal,
   type ReceptionCashCollectionTarget,
 } from '../components/reception-cash-collection-modal';
+import { ReceptionVisitResumeModal } from '../components/reception-visit-resume-modal';
 import { UpdatePatientModal } from '../components/update-patient-modal';
 import { TransferVisitRoomModal } from '../components/transfer-visit-room-modal';
 import { QuickActionsPanel } from '../components/quick-actions-panel';
@@ -105,8 +108,11 @@ export function ReceptionDashboardPage() {
   const patientDetailQuery = usePatientDetail(selectedPatientCode);
   const selectedPatient = patientDetailQuery.data ?? null;
   const canAssignVisit = hasPermission(user?.roles, 'VISIT_ASSIGN');
+  const canCheckInOrQueue =
+    hasPermission(user?.roles, 'PATIENT_CHECKIN') || hasPermission(user?.roles, 'QUEUE_MANAGE');
   const canCollectCash = hasPermission(user?.roles, 'PAYMENT_COLLECT');
   const [cashTarget, setCashTarget] = useState<ReceptionCashCollectionTarget | null>(null);
+  const [isCrossDayResumeOpen, setIsCrossDayResumeOpen] = useState(false);
   const [todayLabel] = useState(() => new Date().toLocaleDateString('vi-VN'));
   const summaryQuery = useReceptionDashboardSummary();
   const searchQuery = useReceptionPatientSearch('', 'ALL');
@@ -200,6 +206,12 @@ export function ReceptionDashboardPage() {
             <div className="text-[11px] text-slate-500">Ca sáng • Hôm nay, {todayLabel}</div>
           </div>
           <div className="flex items-center gap-3">
+            {canCheckInOrQueue && (
+              <Button variant="primary" size="sm" onClick={() => setIsCrossDayResumeOpen(true)}>
+                <CalendarClock className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Tiếp tục lượt khám (Qua ngày)</span>
+              </Button>
+            )}
             <button
               type="button"
               aria-label="Thông báo"
@@ -575,6 +587,23 @@ export function ReceptionDashboardPage() {
             setUpdateNotice(
               `Đã thu tiền mặt ${receipt.paymentCode} (${receipt.amount.toLocaleString('vi-VN')} VNĐ) cho bệnh nhân ${cashTarget.patientName}`,
             );
+          }}
+        />
+      )}
+
+      {isCrossDayResumeOpen && (
+        <ReceptionVisitResumeModal
+          open
+          onClose={() => setIsCrossDayResumeOpen(false)}
+          onResumed={(res) => {
+            void queueQuery.refetch();
+            setUpdateNotice(
+              `Đã xác nhận có mặt và tiếp tục lượt khám ${res.visitCode} (${res.target})`,
+            );
+          }}
+          onDeferred={(res) => {
+            void queueQuery.refetch();
+            setUpdateNotice(`Đã ghi nhận tạm hoãn / rời viện cho lượt khám ${res.visitCode}`);
           }}
         />
       )}

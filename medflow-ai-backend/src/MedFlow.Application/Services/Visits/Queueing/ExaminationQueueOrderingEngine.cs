@@ -378,8 +378,9 @@ public static class ExaminationQueueOrderingEngine
         "CALLED" => 1,
         "WAITING" or "READY" => 2,
         "SKIPPED" => 3,
-        "COMPLETED" => 4,
-        _ => 5,
+        "DEFERRED" => 4,
+        "COMPLETED" => 5,
+        _ => 6,
     };
 
     private static int GetTier(

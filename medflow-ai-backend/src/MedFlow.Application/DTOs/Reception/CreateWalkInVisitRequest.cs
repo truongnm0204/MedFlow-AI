@@ -24,4 +24,5 @@ public sealed record CreateWalkInVisitRequest(
     string? ExaminationRoomId = null,
     string? RoomId = null,
     string? RoomCode = null,
-    string? Notes = null);
+    string? Notes = null,
+    bool? AllowNewEpisodeWhileVisitOpen = null);

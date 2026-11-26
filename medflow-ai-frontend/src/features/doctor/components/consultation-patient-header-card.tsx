@@ -111,6 +111,8 @@ export function ConsultationPatientHeaderCard({
               <Badge tone={visit.visitType === 'SCHEDULED' ? 'sky' : 'slate'}>
                 {visit.visitTypeLabel}
               </Badge>
+              {visit.isCrossDayVisit && <Badge tone="sky">Lượt khám nhiều ngày</Badge>}
+              {visit.isOverdueForReview && <Badge tone="amber">Quá hạn — cần xem xét</Badge>}
               {queue && (
                 <span className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 font-mono text-xs font-extrabold text-emerald-800">
                   Phiếu {queue.ticketNo} • TT #{queue.servingOrder}

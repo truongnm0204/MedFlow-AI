@@ -294,6 +294,53 @@ public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardServi
 
         var reviewSlotsCount = scopedSlots.Count(s => IsSlotNeedsReview(s, appointmentCountMap));
 
+        var scopedAppointmentIdSet = appointments.Select(a => a.Id).ToHashSet();
+        var hospitalStaffIds = (await _db.Staff
+                .AsNoTracking()
+                .Where(s => s.HospitalId == hospitalId)
+                .Select(s => s.Id)
+                .ToListAsync(ct))
+            .ToHashSet();
+
+        var hospitalVisitsForStats = (roomIds.Count == 0 && doctorIds.Count == 0 && scopedAppointmentIdSet.Count == 0 && hospitalStaffIds.Count == 0)
+            ? []
+            : await _db.Visits
+                .AsNoTracking()
+                .Where(v =>
+                    (v.ExaminationRoomId.HasValue && roomIds.Contains(v.ExaminationRoomId.Value)) ||
+                    (v.AssignedDoctorId.HasValue && doctorIds.Contains(v.AssignedDoctorId.Value)) ||
+                    (v.AppointmentId.HasValue && scopedAppointmentIdSet.Contains(v.AppointmentId.Value)) ||
+                    (v.CheckedInByStaffId.HasValue && hospitalStaffIds.Contains(v.CheckedInByStaffId.Value)))
+                .ToListAsync(ct);
+
+        var newCheckInsToday = hospitalVisitsForStats.Count(v =>
+            v.CheckedInAt.HasValue &&
+            v.CheckedInAt.Value >= today &&
+            v.CheckedInAt.Value < tomorrow &&
+            !string.Equals(v.Status?.Trim(), "CANCELLED", StringComparison.OrdinalIgnoreCase));
+
+        var resumedVisitsToday = hospitalVisitsForStats.Count(v =>
+            v.LastResumedAt.HasValue &&
+            v.LastResumedAt.Value >= today &&
+            v.LastResumedAt.Value < tomorrow &&
+            (!v.CheckedInAt.HasValue || v.CheckedInAt.Value < today) &&
+            !string.Equals(v.Status?.Trim(), "CANCELLED", StringComparison.OrdinalIgnoreCase));
+
+        var awaitingResultsOrReturnCount = hospitalVisitsForStats.Count(v =>
+        {
+            var vs = v.Status?.Trim().ToUpperInvariant();
+            return vs is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS" or "RETURN_CONSULTATION";
+        });
+
+        var completedVisitsToday = hospitalVisitsForStats.Count(v =>
+        {
+            var vs = v.Status?.Trim().ToUpperInvariant();
+            return vs is "COMPLETED" or "DONE" &&
+                   v.CompletedAt.HasValue &&
+                   v.CompletedAt.Value >= today &&
+                   v.CompletedAt.Value < tomorrow;
+        });
+
         var stats = new HospitalAdminStatsDto(
             ActiveDepartments: hasConfig ? activeDepartments : 0,
             TotalDepartments: hasConfig ? totalDepartments : 0,
@@ -302,7 +349,11 @@ public sealed class HospitalAdminDashboardService : IHospitalAdminDashboardServi
             ActiveDoctors: hasConfig ? activeDoctors : 0,
             OnlineServicesCount: hasPaymentOrConfig ? onlineServicesCount : 0,
             OpenSlotsToday: hasSlotOrQueue ? openSlotsTodayCount : 0,
-            ReviewSlotsCount: hasSlotOrQueue ? reviewSlotsCount : 0);
+            ReviewSlotsCount: hasSlotOrQueue ? reviewSlotsCount : 0,
+            NewCheckInsToday: hasSlotOrQueue ? newCheckInsToday : 0,
+            ResumedVisitsToday: hasSlotOrQueue ? resumedVisitsToday : 0,
+            AwaitingResultsOrReturnCount: hasSlotOrQueue ? awaitingResultsOrReturnCount : 0,
+            CompletedVisitsToday: hasSlotOrQueue ? completedVisitsToday : 0);
 
         var policyRows = await _db.HospitalPolicies
             .AsNoTracking()

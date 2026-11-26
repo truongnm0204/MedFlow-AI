@@ -69,6 +69,7 @@ public sealed class QueueStatusService : IQueueStatusService
         "IN_PROGRESS",
         "COMPLETED",
         "SKIPPED",
+        "DEFERRED",
     };
 
     private static readonly HashSet<string> ValidPresenceStatuses = new(StringComparer.OrdinalIgnoreCase)
@@ -81,12 +82,13 @@ public sealed class QueueStatusService : IQueueStatusService
     private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> AllowedTransitions =
         new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["RESERVED"] = ["WAITING", "READY"],
-            ["WAITING"] = ["READY", "CALLED", "SKIPPED"],
-            ["READY"] = ["WAITING", "CALLED", "SKIPPED"],
-            ["CALLED"] = ["IN_PROGRESS", "WAITING", "READY", "SKIPPED"],
+            ["RESERVED"] = ["WAITING", "READY", "DEFERRED"],
+            ["WAITING"] = ["READY", "CALLED", "SKIPPED", "DEFERRED"],
+            ["READY"] = ["WAITING", "CALLED", "SKIPPED", "DEFERRED"],
+            ["CALLED"] = ["IN_PROGRESS", "WAITING", "READY", "SKIPPED", "DEFERRED"],
             ["IN_PROGRESS"] = ["COMPLETED", "WAITING", "SKIPPED"],
-            ["SKIPPED"] = ["WAITING", "READY", "CALLED"],
+            ["SKIPPED"] = ["WAITING", "READY", "CALLED", "DEFERRED"],
+            ["DEFERRED"] = ["WAITING", "READY"],
             ["COMPLETED"] = [],
             ["CANCELLED"] = [],
         };
@@ -1337,10 +1339,11 @@ public sealed class QueueStatusService : IQueueStatusService
                      queueEntry.PresenceStatus.Equals("LEFT", StringComparison.OrdinalIgnoreCase)
                         ? "PRESENT"
                         : queueEntry.PresenceStatus.ToUpperInvariant());
-                if (previousStatus is "CALLED" or "IN_PROGRESS" or "SKIPPED")
+                if (previousStatus is "CALLED" or "IN_PROGRESS" or "SKIPPED" or "DEFERRED")
                 {
                     queueEntry.CalledAt = null;
                     queueEntry.StartedAt = null;
+                    queueEntry.CompletedAt = null;
                     queueEntry.BlockedReason = null;
                 }
 
@@ -1357,6 +1360,7 @@ public sealed class QueueStatusService : IQueueStatusService
                 queueEntry.PresenceStatus = requestedPresence ?? "PRESENT";
                 queueEntry.CalledAt = null;
                 queueEntry.StartedAt = null;
+                queueEntry.CompletedAt = null;
                 queueEntry.BlockedReason = null;
                 if (visit is not null && isClinicalQueue)
                 {
@@ -1425,6 +1429,21 @@ public sealed class QueueStatusService : IQueueStatusService
                 if (visit is not null && isClinicalQueue)
                 {
                     visit.Status = isReturnConsultation ? "RETURN_CONSULTATION" : "WAITING";
+                }
+
+                break;
+
+            case "DEFERRED":
+                queueEntry.BlockedReason = effectiveBlockedReason;
+                queueEntry.CalledAt = null;
+                queueEntry.StartedAt = null;
+                queueEntry.CompletedAt = nowLocal;
+                queueEntry.PresenceStatus = requestedPresence ?? "LEFT";
+                if (visit is not null &&
+                    isClinicalQueue &&
+                    AppointmentBookingRules.NormalizeStatusKey(visit.Status) == "RETURN_CONSULTATION")
+                {
+                    visit.Status = "AWAITING_RESULTS";
                 }
 
                 break;
@@ -1520,6 +1539,28 @@ public sealed class QueueStatusService : IQueueStatusService
         HospitalRoom? room,
         CancellationToken ct)
     {
+        var sameVisitId = currentEntry.VisitId ?? currentVisit?.Id;
+        if (sameVisitId.HasValue)
+        {
+            var busyAtAnotherPoint = await _db.QueueEntries
+                .AsNoTracking()
+                .AnyAsync(q =>
+                    q.Id != currentEntry.Id &&
+                    q.VisitId == sameVisitId.Value &&
+                    q.CompletedAt == null &&
+                    q.Status != null &&
+                    (q.Status.ToUpper() == "IN_PROGRESS" ||
+                     q.Status.ToUpper() == "IN_CONSULTATION" ||
+                     q.Status.ToUpper() == "SERVING"),
+                    ct);
+
+            if (busyAtAnotherPoint)
+            {
+                throw new ConflictException(
+                    "[PATIENT_BUSY_AT_ANOTHER_POINT] Bệnh nhân đang trong quá trình khám hoặc thực hiện kỹ thuật cận lâm sàng tại một điểm phục vụ khác (IN_PROGRESS), không thể bắt đầu đồng thời tại hai nơi.");
+            }
+        }
+
         var effectiveServicePointId = currentEntry.CurrentServicePointId ?? currentEntry.ServicePointId;
         var effectiveRoomId = currentVisit?.ExaminationRoomId ?? room?.Id;
 

@@ -250,6 +250,13 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             throw new ConflictException("Bệnh nhân đang có một lượt khám khác chưa hoàn tất trong ngày hôm nay.");
         }
 
+        await EnsureNoOpenPriorDayVisitInHospitalAsync(
+            patient.Id,
+            effectiveHospitalId,
+            dayStart,
+            request.AllowNewEpisodeWhileVisitOpen,
+            ct);
+
         var sameDayAppointments = await _db.Appointments
             .AsNoTracking()
             .Include(a => a.Slot)
@@ -391,6 +398,13 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             throw new ConflictException("Bệnh nhân đang có một lượt khám khác chưa hoàn tất trong ngày hôm nay.");
         }
 
+        await EnsureNoOpenPriorDayVisitInHospitalAsync(
+            patient.Id,
+            effectiveHospitalId,
+            dayStart,
+            request.AllowNewEpisodeWhileVisitOpen,
+            ct);
+
         var lockedSameDayAppointments = await _db.Appointments
             .AsNoTracking()
             .Include(a => a.Slot)
@@ -450,6 +464,8 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             ReasonForVisit = resolvedReason,
             Status = visitStatus,
             CheckedInAt = nowLocal,
+            LastPresentDate = today,
+            PresenceState = VisitPresenceStates.Present,
         };
 
         _db.Visits.Add(visit);
@@ -2532,4 +2548,60 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
            prop.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? prop.GetBoolean()
             : null;
+
+    private async Task EnsureNoOpenPriorDayVisitInHospitalAsync(
+        long patientId,
+        long effectiveHospitalId,
+        DateTime dayStart,
+        bool? allowNewEpisodeWhileVisitOpen,
+        CancellationToken ct)
+    {
+        if (allowNewEpisodeWhileVisitOpen == true)
+        {
+            return;
+        }
+
+        var priorVisits = await _db.Visits
+            .AsNoTracking()
+            .Where(v => v.PatientId == patientId && v.CheckedInAt < dayStart)
+            .OrderByDescending(v => v.CheckedInAt)
+            .ThenByDescending(v => v.Id)
+            .ToListAsync(ct);
+
+        var openPriorVisits = priorVisits
+            .Where(v => AppointmentBookingRules.IsActiveVisitStatus(v.Status))
+            .ToList();
+
+        if (openPriorVisits.Count == 0)
+        {
+            return;
+        }
+
+        Dictionary<long, HashSet<long>> hospitalMap;
+        try
+        {
+            hospitalMap = await MedFlow.Application.Services.Payments.VisitHospitalResolver.CollectManyAsync(
+                _db,
+                openPriorVisits,
+                ct);
+        }
+        catch (NotSupportedException)
+        {
+            hospitalMap = new Dictionary<long, HashSet<long>>();
+        }
+
+        var collidingVisit = openPriorVisits.FirstOrDefault(v =>
+            !hospitalMap.TryGetValue(v.Id, out var hospitals) ||
+            hospitals.Count == 0 ||
+            hospitals.Contains(effectiveHospitalId));
+
+        if (collidingVisit is not null)
+        {
+            var openCode = !string.IsNullOrWhiteSpace(collidingVisit.VisitCode)
+                ? collidingVisit.VisitCode.Trim()
+                : $"VIS-{collidingVisit.Id:D4}";
+            throw new ConflictException(
+                $"[VISIT_RESUME_REQUIRED] Bệnh nhân đang có lượt khám '{openCode}' từ ngày trước chưa hoàn tất. Vui lòng sử dụng chức năng Tiếp tục lượt khám (Resume Visit) thay vì tạo lượt khám mới.");
+        }
+    }
 }

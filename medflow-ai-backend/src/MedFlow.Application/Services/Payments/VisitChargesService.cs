@@ -76,6 +76,16 @@ public sealed class VisitChargesService : IVisitChargesService
         }
 
         var assessment = await VisitChargeAssessor.AssessAsync(_db, _timeProvider, visit, ct);
+        var todayLocal = DateOnly.FromDateTime(MedFlow.Application.Common.Time.HospitalClock.GetNow(_timeProvider));
+        var todayQueues = await _db.QueueEntries.AsNoTracking()
+            .Where(q => q.VisitId == visit.Id && q.QueueDate == todayLocal)
+            .ToListAsync(ct);
+        var isPresentToday = MedFlow.Application.Services.Visits.VisitPresenceEvaluator.IsPresentToday(
+            visit,
+            todayQueues,
+            todayLocal);
+        var presenceState = MedFlow.Application.Services.Visits.VisitPresenceEvaluator.NormalizePresenceState(visit.PresenceState);
+
         return new VisitChargesResponseDto(
             visit.Id,
             visit.VisitCode,
@@ -101,7 +111,10 @@ public sealed class VisitChargesService : IVisitChargesService
             ActivePendingQrPaymentCode: assessment.ActivePendingQrPaymentCode,
             ActivePendingQrAmount: assessment.ActivePendingQrAmount,
             ActivePendingQrChargeIds: assessment.ActivePendingQrChargeIds,
-            HasReconciliationItems: assessment.HasReconciliationItems);
+            HasReconciliationItems: assessment.HasReconciliationItems,
+            ReadyForReturnAt: visit.ReadyForReturnAt,
+            IsPresentToday: isPresentToday,
+            PresenceState: presenceState);
     }
 
     private async Task<ActorContext> LoadActorAsync(long actorUserId, CancellationToken ct)

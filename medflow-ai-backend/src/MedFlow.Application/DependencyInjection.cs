@@ -98,6 +98,7 @@ public static class DependencyInjection
         services.AddScoped<IUpdatePatientAtReceptionService, UpdatePatientAtReceptionService>();
         services.AddScoped<ICheckInScheduledPatientService, CheckInScheduledPatientService>();
         services.AddScoped<ICreateWalkInVisitService, CreateWalkInVisitService>();
+        services.AddScoped<IVisitCrossDayLifecycleService, VisitCrossDayLifecycleService>();
         services.AddScoped<IVisitChargeSettlementReader, VisitChargeSettlementReader>();
         services.AddScoped<IVisitChargesService, VisitChargesService>();
         services.AddScoped<IGenerateQrPaymentService, GenerateQrPaymentService>();
