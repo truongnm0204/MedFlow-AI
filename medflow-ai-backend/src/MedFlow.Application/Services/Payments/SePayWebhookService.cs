@@ -239,8 +239,26 @@ public sealed class SePayWebhookService : ISePayWebhookService
                         }
                     }
 
-                    // Expire any other overlapping PENDING attempts on cancelled charges
-                    ExpireOverlappingPendingAttempts(allVisitPayments, allVisitAllocations, payment.Id, targetSet);
+                    // Expire any other overlapping PENDING attempts on cancelled charges only
+                    // (do NOT expire a newer PENDING QR that covers only remaining ACTIVE charges!)
+                    var visitCancelledOrNoShow = visit is not null &&
+                                                 Normalize(visit.Status) is "CANCELLED" or "NO_SHOW";
+                    var cancelledChargeSet = visitCancelledOrNoShow
+                        ? targetSet
+                        : targetCharges
+                            .Where(c =>
+                                Normalize(c.Status) != VisitChargeStatuses.Active ||
+                                (c.DiagnosticOrderId.HasValue &&
+                                 targetOrders.Any(o =>
+                                     o.Id == c.DiagnosticOrderId.Value &&
+                                     (Normalize(o.Status) == "CANCELLED" ||
+                                      Normalize(o.SelectionStatus) is DiagnosticSelectionStatuses.Declined
+                                          or DiagnosticSelectionStatuses.SkippedAfterPaid
+                                          or DiagnosticSelectionStatuses.ReviewRequired))))
+                            .Select(c => c.Id)
+                            .ToHashSet();
+
+                    ExpireOverlappingPendingAttempts(allVisitPayments, allVisitAllocations, payment.Id, cancelledChargeSet);
 
                     payment.Status = MismatchPaymentStatus;
                     payment.ExternalReference = referenceCode;
