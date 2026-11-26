@@ -1,11 +1,4 @@
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Search,
-  Star,
-  Stethoscope,
-  UserCheck,
-} from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Search, Star, Stethoscope, UserCheck } from 'lucide-react';
 import { type FormEvent, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -223,7 +216,9 @@ export function ReturnCoordinationModal({
             <form onSubmit={handleEnroll} className="space-y-4">
               {/* Purpose */}
               <div>
-                <label className="mb-1 block text-sm font-medium text-ink">Mục đích điều phối</label>
+                <label className="mb-1 block text-sm font-medium text-ink">
+                  Mục đích điều phối
+                </label>
                 <div className="grid grid-cols-2 gap-2">
                   {(Object.keys(PURPOSE_LABELS) as ReturnCoordinationPurpose[]).map((p) => (
                     <button

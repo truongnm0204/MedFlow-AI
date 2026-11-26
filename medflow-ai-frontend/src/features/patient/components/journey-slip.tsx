@@ -15,7 +15,10 @@ export interface JourneySlipProps {
   visitIdOrCode: string;
 }
 
-const TICKET_STATUS_BADGE: Record<string, { label: string; tone: 'emerald' | 'amber' | 'slate' | 'sky' }> = {
+const TICKET_STATUS_BADGE: Record<
+  string,
+  { label: string; tone: 'emerald' | 'amber' | 'slate' | 'sky' }
+> = {
   WAITING: { label: 'Chờ', tone: 'sky' },
   READY: { label: 'Sẵn sàng', tone: 'emerald' },
   CALLED: { label: 'Đã gọi', tone: 'emerald' },
@@ -55,7 +58,6 @@ export function JourneySlip({ visitIdOrCode }: JourneySlipProps) {
       ? getErrorMessage(printMutation.error)
       : null;
 
-
   if (slipQuery.isPending) {
     return (
       <div className="flex items-center gap-2 text-sm text-sub">
@@ -94,12 +96,14 @@ export function JourneySlip({ visitIdOrCode }: JourneySlipProps) {
         <div className="rounded-lg border border-border bg-surface p-3 text-sm text-sub">
           {slip.currentAssignedDoctorDisplay && (
             <p>
-              Bác sĩ: <span className="font-medium text-ink">{slip.currentAssignedDoctorDisplay}</span>
+              Bác sĩ:{' '}
+              <span className="font-medium text-ink">{slip.currentAssignedDoctorDisplay}</span>
             </p>
           )}
           {slip.currentExaminationRoomDisplay && (
             <p>
-              Phòng: <span className="font-medium text-ink">{slip.currentExaminationRoomDisplay}</span>
+              Phòng:{' '}
+              <span className="font-medium text-ink">{slip.currentExaminationRoomDisplay}</span>
             </p>
           )}
         </div>
@@ -115,7 +119,10 @@ export function JourneySlip({ visitIdOrCode }: JourneySlipProps) {
         ) : (
           <ol className="space-y-1">
             {slip.tickets.map((t, i) => {
-              const badge = TICKET_STATUS_BADGE[t.status] ?? { label: t.status, tone: 'slate' as const };
+              const badge = TICKET_STATUS_BADGE[t.status] ?? {
+                label: t.status,
+                tone: 'slate' as const,
+              };
               return (
                 <li
                   key={t.queueEntryId ?? `${t.queueType}-${i}`}
@@ -127,9 +134,7 @@ export function JourneySlip({ visitIdOrCode }: JourneySlipProps) {
                     </span>
                     <div>
                       <span className="font-medium text-ink">Số {t.ticketNo}</span>
-                      <span className="ml-2 text-sub">
-                        {t.servicePointName ?? t.queueType}
-                      </span>
+                      <span className="ml-2 text-sub">{t.servicePointName ?? t.queueType}</span>
                     </div>
                   </div>
                   <Badge tone={badge.tone}>{badge.label}</Badge>

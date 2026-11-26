@@ -633,7 +633,11 @@ export function ExaminationQueuePage() {
 
           <div className="flex items-center gap-3">
             {(canManageQueue || canCheckIn) && (
-              <Button variant="secondary" size="sm" onClick={() => setIsReturnCoordinationOpen(true)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setIsReturnCoordinationOpen(true)}
+              >
                 <Stethoscope className="w-3.5 h-3.5" aria-hidden="true" />
                 <span>Điều phối khám kết luận</span>
               </Button>
