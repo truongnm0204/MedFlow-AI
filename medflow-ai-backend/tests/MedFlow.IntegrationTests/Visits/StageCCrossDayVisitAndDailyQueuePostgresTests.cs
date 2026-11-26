@@ -315,7 +315,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
         {
             _clock.SetVietnamLocalTime(new DateTime(2026, 11, 10, 14, 0, 0, DateTimeKind.Unspecified));
             var visit = await CreateCheckedInVisitAsync(fx, "CD03", examPrice: 150_000m, payExamNow: true);
-            var (imgOrderId, _) = await OpenExamAndCreateSingleDiagnosticOrderAsync(
+            var (imgOrderId, imgOrderCode) = await OpenExamAndCreateSingleDiagnosticOrderAsync(
                 fx,
                 visit.VisitCode!,
                 fx.ImagingServiceId,
@@ -330,6 +330,10 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                 RoleNames.Patient));
             Assert.Equal(HttpStatusCode.OK, selectRes.StatusCode);
             await PayDiagnosticOrderByCashAsync(fx, visit.VisitCode!, imgOrderId);
+
+            // Stage E2 (QE-03): order-create mints no queue. The patient is received at the CLS desk,
+            // which mints the READY DIAGNOSTIC ticket that is then deferred across days below.
+            await ConfirmAndReceiveDiagnosticOrderAsync(fx, imgOrderCode);
 
             var deferredTargetDate = new DateOnly(2026, 11, 12);
             var deferRes = await _client.SendAsync(AuthedPostJson(
@@ -353,7 +357,8 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             Assert.Equal(VisitPresenceStates.Deferred, reloadedVisit.PresenceState);
 
             var reloadedOrder = await Db.DiagnosticOrders.AsNoTracking().SingleAsync(o => o.Id == imgOrderId);
-            Assert.Equal("ORDERED", reloadedOrder.Status);
+            // Open accepted order after CLS receive (UR39 confirm keeps Status=CONFIRMED, queue READY).
+            Assert.Equal("CONFIRMED", reloadedOrder.Status);
             Assert.Equal(DiagnosticSelectionStatuses.Accepted, reloadedOrder.SelectionStatus);
             Assert.Equal(deferredTargetDate, reloadedOrder.DeferredUntilDate);
 
@@ -587,9 +592,29 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
 
             Db.ChangeTracker.Clear();
             var reloadedVisit = await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id);
+            // QE-10: UC43 finalize stamps ReadyForReturnAt and holds the visit in AWAITING_RESULTS;
+            // it no longer auto-mints a RETURN_CONSULTATION ticket (Reception coordinates the return).
             Assert.NotNull(reloadedVisit.ReadyForReturnAt);
-            Assert.Equal("RETURN_CONSULTATION", reloadedVisit.Status);
+            Assert.Equal("AWAITING_RESULTS", reloadedVisit.Status);
+            Assert.Equal(
+                0,
+                await Db.QueueEntries.AsNoTracking().CountAsync(q =>
+                    q.VisitId == visit.Id &&
+                    q.QueueType == "RETURN_CONSULTATION" &&
+                    q.CompletedAt == null));
 
+            // Reception coordinates the return consultation → exactly one READY ticket.
+            var enrollRes = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/reception/visits/{visit.VisitCode}/return-enrollment",
+                new CreateReturnEnrollmentRequestDto(
+                    Purpose: QueueCoordinationPurposes.ResultConclusion,
+                    IdempotencyKey: $"cd07-return-{visit.Id}"),
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            var enrollBody = await enrollRes.Content.ReadAsStringAsync();
+            Assert.True(enrollRes.StatusCode == HttpStatusCode.OK, enrollBody);
+
+            Db.ChangeTracker.Clear();
             var activeReturnEntries = await Db.QueueEntries.AsNoTracking()
                 .Where(q =>
                     q.VisitId == visit.Id &&
@@ -1329,6 +1354,18 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             Db.ChangeTracker.Clear();
             Assert.NotNull((await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id)).ReadyForReturnAt);
 
+            // Stage E2 (QE-10): finalize no longer auto-mints RETURN_CONSULTATION. Reception coordinates
+            // the return → transitions the visit to RETURN_CONSULTATION and mints the READY ticket.
+            var enrollReturnRes = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/reception/visits/{visit.VisitCode}/return-enrollment",
+                new CreateReturnEnrollmentRequestDto(
+                    Purpose: QueueCoordinationPurposes.ResultConclusion,
+                    IdempotencyKey: $"cd1618-return-{visit.Id}"),
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            var enrollReturnBody = await enrollReturnRes.Content.ReadAsStringAsync();
+            Assert.True(enrollReturnRes.StatusCode == HttpStatusCode.OK, enrollReturnBody);
+
             // Reception calls next & Doctor reopens consultation workspace
             var callNextRes = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/queue/service-points/{fx.ExamSp1Id}/call-next",
@@ -1452,9 +1489,8 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             await PayDiagnosticOrderByCashAsync(fx, visit1.VisitCode!, clsAId);
             await PayDiagnosticOrderByCashAsync(fx, visit1.VisitCode!, clsBId);
 
-            // Confirm & Receive both CLS A and CLS B, then start CLS A -> IN_PROGRESS
+            // Stage E2 (QE-03): order-create mints no queue. Receive CLS A at the CLS desk -> READY ticket.
             await ConfirmAndReceiveDiagnosticOrderAsync(fx, clsACode);
-            await ConfirmAndReceiveDiagnosticOrderAsync(fx, clsBCode);
 
             await using (var scope = _app.Services.CreateAsyncScope())
             {
@@ -1465,26 +1501,43 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                     new UpdateDiagnosticServiceStatusRequest(TargetStatus: "IN_PROGRESS"));
                 Assert.Equal("IN_PROGRESS", startedA.Order.Status);
 
-                // CD-T21: Starting CLS B while CLS A is IN_PROGRESS -> 409 [PATIENT_BUSY_AT_ANOTHER_POINT]
+                // CD-T21: single-active serving invariant — while CLS A is an active serving ticket, receiving
+                // CLS B is rejected with 409 ACTIVE_QUEUE_ALREADY_EXISTS (a patient holds at most one active ticket).
+                var reviewSvc = scope.ServiceProvider.GetRequiredService<IDiagnosticOrderReviewService>();
+                await reviewSvc.ConfirmDiagnosticOrderAsync(
+                    fx.DiagStaff1UserId,
+                    clsBCode,
+                    new ConfirmDiagnosticOrderRequest(IsEligibilityVerified: true));
+                var receiveSvc = scope.ServiceProvider.GetRequiredService<IDiagnosticPatientReceiveService>();
                 var busyDiagEx = await Assert.ThrowsAsync<ConflictException>(() =>
-                    execSvc.StartServiceExecutionAsync(
+                    receiveSvc.ReceiveDiagnosticPatientAsync(
                         fx.DiagStaff1UserId,
                         clsBCode,
-                        new UpdateDiagnosticServiceStatusRequest(TargetStatus: "IN_PROGRESS")));
-                Assert.Contains("PATIENT_BUSY_AT_ANOTHER_POINT", busyDiagEx.Message, StringComparison.Ordinal);
+                        new ReceiveDiagnosticPatientRequest(
+                            IsPatientPresent: true,
+                            IsIdentityVerified: true,
+                            IsPreparationVerified: true)));
+                Assert.Contains("ACTIVE_QUEUE_ALREADY_EXISTS", busyDiagEx.Message, StringComparison.Ordinal);
 
                 // Also starting clinical workspace while CLS A is IN_PROGRESS -> 409
                 var consultSvc = scope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
                 await Assert.ThrowsAsync<ConflictException>(() =>
                     consultSvc.OpenWorkspaceAsync(fx.Doctor1UserId, visit1.VisitCode!));
 
-                // Complete CLS A technical execution (Status = COMPLETED, awaiting UC43 result)
+                // Complete CLS A technical execution (UC42 closes A's ticket, releasing single-active)
                 await execSvc.CompleteServiceExecutionAsync(
                     fx.DiagStaff1UserId,
                     clsACode,
                     new UpdateDiagnosticServiceStatusRequest(TargetStatus: "COMPLETED"));
 
-                // CD-T19: While CLS A is awaiting UC43 result, CLS B executes cleanly!
+                // CD-T19: once CLS A has finished UC42 (awaiting UC43 result), CLS B enrolls & executes cleanly!
+                await receiveSvc.ReceiveDiagnosticPatientAsync(
+                    fx.DiagStaff1UserId,
+                    clsBCode,
+                    new ReceiveDiagnosticPatientRequest(
+                        IsPatientPresent: true,
+                        IsIdentityVerified: true,
+                        IsPreparationVerified: true));
                 var startedB = await execSvc.StartServiceExecutionAsync(
                     fx.DiagStaff1UserId,
                     clsBCode,
@@ -1648,6 +1701,20 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                 fx.OtherPatientUserId,
                 RoleNames.Patient));
             Assert.Equal(HttpStatusCode.Forbidden, crossPatientReportRes.StatusCode);
+
+            // Stage E2 (QE-10): verification finalize stamps ReadyForReturnAt + AWAITING_RESULTS; it does not
+            // auto-mint RETURN_CONSULTATION. Reception coordinates the return before the doctor reopens.
+            Db.ChangeTracker.Clear();
+            Assert.NotNull((await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id)).ReadyForReturnAt);
+            var enrollReturnRes = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/reception/visits/{visit.VisitCode}/return-enrollment",
+                new CreateReturnEnrollmentRequestDto(
+                    Purpose: QueueCoordinationPurposes.ResultConclusion,
+                    IdempotencyKey: $"cd2224-return-{visit.Id}"),
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            var enrollReturnBody = await enrollReturnRes.Content.ReadAsStringAsync();
+            Assert.True(enrollReturnRes.StatusCode == HttpStatusCode.OK, enrollReturnBody);
 
             // CD-T22 (ADR-0047): Reopen return consultation, issue EXTERNAL_PHARMACY prescription, complete visit -> zero medicine VisitCharges!
             var callNextRes = await _client.SendAsync(AuthedPostJson(

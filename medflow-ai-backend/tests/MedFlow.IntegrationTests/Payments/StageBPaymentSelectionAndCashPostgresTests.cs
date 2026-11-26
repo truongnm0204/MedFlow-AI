@@ -6,6 +6,7 @@ using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Consultation;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.DTOs.Payments;
+using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Payments;
 using MedFlow.Domain.Constants;
@@ -1093,8 +1094,10 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             Assert.Equal("CANCELLED", skipDto.OrderStatus);
             Assert.Equal(DiagnosticSelectionStatuses.SkippedAfterPaid, skipDto.SelectionStatus);
             Assert.Equal(VisitChargeStatuses.PaidNotPerformed, skipDto.ChargeStatus);
-            Assert.True(skipDto.TransitionedToReturnConsultation);
-            Assert.Equal("RETURN_CONSULTATION", skipDto.VisitStatus);
+            // Stage E2 (QE-10): resolving the last outstanding order stamps ReadyForReturnAt and holds the
+            // visit in AWAITING_RESULTS; it does not auto-create a RETURN_CONSULTATION ticket.
+            Assert.False(skipDto.TransitionedToReturnConsultation);
+            Assert.Equal("AWAITING_RESULTS", skipDto.VisitStatus);
 
             Db.ChangeTracker.Clear();
             var paymentAfterSkip = await Db.Payments.AsNoTracking().SingleAsync(p => p.Id == cashDto.PaymentId);
@@ -1105,6 +1108,18 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             Assert.True(await Db.AuditLogs.AnyAsync(a =>
                 (a.EntityId == optPaidOrderId.ToString() || a.EntityId == skipDto.OrderCode) &&
                 a.Action == "PAID_DIAGNOSTIC_ORDER_SKIPPED_BY_PATIENT"));
+
+            // Stage E2 (QE-10): after all orders resolve the visit sits in AWAITING_RESULTS; Reception
+            // must coordinate the return consultation (→ RETURN_CONSULTATION) before the doctor concludes.
+            var enrollReturnRes = await Client.SendAsync(AuthedPostJson(
+                $"/api/v1/reception/visits/{visit.VisitCode}/return-enrollment",
+                new CreateReturnEnrollmentRequestDto(
+                    Purpose: QueueCoordinationPurposes.ResultConclusion,
+                    IdempotencyKey: $"p1516-return-{visit.VisitCode}"),
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            var enrollReturnBody = await enrollReturnRes.Content.ReadAsStringAsync();
+            Assert.True(enrollReturnRes.StatusCode == HttpStatusCode.OK, enrollReturnBody);
 
             // Unblocks CompleteVisitAsync cleanly!
             await CompleteVisitWithConfirmedDiagnosisAsync(fx, visit.VisitCode!);
@@ -2401,6 +2416,13 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             .Where(v => v.PatientId.HasValue && patientIds.Contains(v.PatientId.Value))
             .Select(v => v.Id)
             .ToListAsync();
+
+        // fk_notifications_visit_id: notifications (e.g. VISIT_RETURN_READY) reference visits — clear them
+        // before visits are deleted below.
+        await Db.Notifications.Where(n =>
+            (n.VisitId.HasValue && visitIds.Contains(n.VisitId.Value)) ||
+            n.PatientId == fx.PatientId ||
+            n.PatientId == fx.OtherPatientId).ExecuteDeleteAsync();
 
         var orderIds = await Db.DiagnosticOrders
             .Where(o => o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
