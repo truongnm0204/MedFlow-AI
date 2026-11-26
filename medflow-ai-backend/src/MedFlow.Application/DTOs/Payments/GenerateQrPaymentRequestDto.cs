@@ -1,3 +1,6 @@
 namespace MedFlow.Application.DTOs.Payments;
 
-public sealed record GenerateQrPaymentRequestDto(long? VisitChargeId = null);
+public sealed record GenerateQrPaymentRequestDto(
+    long? VisitChargeId = null,
+    IReadOnlyList<long>? VisitChargeIds = null,
+    string? IdempotencyKey = null);

@@ -1905,6 +1905,13 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             _db.Payments.Add(payment);
             await _db.SaveChangesAsync(ct);
             payment.PaymentCode ??= $"MF{payment.Id}";
+
+            if (examCharge is { Id: > 0 })
+            {
+                MedFlow.Application.Services.Payments.PaymentAllocationLookup.TryAddAllocations(
+                    _db,
+                    [PaymentAllocation.Create(payment.Id, examCharge.Id, visitId, amount, PaymentAllocationStatuses.Pending, nowLocal)]);
+            }
         }
         catch (NotSupportedException)
         {

@@ -15,7 +15,8 @@ public sealed record CreateDiagnosticOrderRequest(
     string? FollowUpToOrderCode = null,
     string? AdditionalOrderReason = null,
     string? ClinicalProgressionNote = null,
-    int? ExpectedRevisionNo = null);
+    int? ExpectedRevisionNo = null,
+    bool? PatientAccepted = null);
 
 public sealed record CreateDiagnosticOrderItemRequest(
     long? ServiceId = null,
@@ -25,7 +26,8 @@ public sealed record CreateDiagnosticOrderItemRequest(
     bool? RequiredForConclusion = null,
     long? FollowUpToOrderId = null,
     string? FollowUpToOrderCode = null,
-    string? AdditionalOrderReason = null);
+    string? AdditionalOrderReason = null,
+    bool? PatientAccepted = null);
 
 public sealed record CreateAdditionalDiagnosticOrderRequest(
     long? ServiceId = null,
@@ -41,7 +43,9 @@ public sealed record CreateAdditionalDiagnosticOrderRequest(
     string? AdditionalOrderReason = null,
     string? ClinicalProgressionNote = null,
     long? FollowUpToOrderId = null,
-    string? FollowUpToOrderCode = null);
+    string? FollowUpToOrderCode = null,
+    bool? PatientAccepted = null);
+
 public sealed record ConsultationDiagnosticOrderDto(
     long OrderId,
     string OrderCode,
@@ -86,7 +90,11 @@ public sealed record ConsultationDiagnosticOrderDto(
     int OrderSequenceNo = 1,
     long? FollowUpToOrderId = null,
     string? FollowUpToOrderCode = null,
-    string? AdditionalOrderReason = null);
+    string? AdditionalOrderReason = null,
+    string SelectionStatus = "ACCEPTED",
+    long? VisitChargeId = null,
+    string? ChargeStatus = null,
+    string? PaymentStatus = null);
 
 public sealed record DiagnosticServiceCatalogItemDto(
     long ServiceId,
@@ -132,4 +140,6 @@ public sealed record CancelConsultationDiagnosticOrderRequest(
     string? Reason = null,
     bool? TechnicalAbort = null,
     string? CancelDisposition = null,
-    int? ExpectedStateVersion = null);
+    int? ExpectedStateVersion = null,
+    bool? VoluntarySkipByPatient = null,
+    bool? ReconciliationRequired = null);

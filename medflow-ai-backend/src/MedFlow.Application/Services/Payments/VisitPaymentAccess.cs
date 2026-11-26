@@ -1,6 +1,7 @@
 using System.Globalization;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.Domain.Exceptions;
@@ -16,6 +17,9 @@ internal static class VisitPaymentAccess
     public const string InactiveActorMessage = "Tài khoản người dùng hiện không ở trạng thái hoạt động.";
     public const string LockedActorMessage = "Tài khoản người dùng hiện đang bị tạm khóa.";
     public const string HospitalConflictMessage = "Không xác định được cơ sở của lượt khám.";
+    public const string InactiveStaffMessage = "Hồ sơ nhân sự của người dùng hiện không ở trạng thái hoạt động.";
+    public const string StaffMissingHospitalMessage = "Tài khoản nhân sự chưa được gán cơ sở y tế.";
+    public const string InactiveHospitalMessage = "Cơ sở y tế của nhân sự hiện đang ngừng hoạt động.";
 
     private const int MaxIdentifierLength = 40;
 
@@ -39,6 +43,191 @@ internal static class VisitPaymentAccess
             throw new UnauthorizedAccessException(LockedActorMessage);
 
         return user;
+    }
+
+    public static async Task<(List<long> RoleIds, HashSet<string> RoleCodes)> LoadActorRolesAsync(
+        IApplicationDbContext db,
+        long actorUserId,
+        CancellationToken ct)
+    {
+        var roleIds = await db.UserRoles.AsNoTracking()
+            .Where(ur => ur.UserId == actorUserId)
+            .Select(ur => ur.RoleId)
+            .ToListAsync(ct);
+
+        var roleCodes = roleIds.Count == 0
+            ? []
+            : await db.Roles.AsNoTracking()
+                .Where(r => roleIds.Contains(r.Id))
+                .Select(r => r.Code)
+                .ToListAsync(ct);
+
+        return (roleIds, new HashSet<string>(roleCodes, StringComparer.OrdinalIgnoreCase));
+    }
+
+    public static async Task<HashSet<string>> LoadRolePermissionCodesAsync(
+        IApplicationDbContext db,
+        IReadOnlyCollection<long> roleIds,
+        CancellationToken ct)
+    {
+        if (roleIds.Count == 0)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var codes = await (
+            from rp in db.RolePermissions.AsNoTracking()
+            join p in db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
+            where roleIds.Contains(rp.RoleId)
+            select p.Code).ToListAsync(ct);
+
+        return new HashSet<string>(codes, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public static async Task<(Staff Staff, Doctor Doctor)> RequireActiveDoctorStaffAsync(
+        IApplicationDbContext db,
+        long actorUserId,
+        string forbiddenMessage,
+        CancellationToken ct)
+    {
+        var staff = await db.Staff.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.UserId == actorUserId, ct)
+            ?? throw new ForbiddenException(forbiddenMessage);
+
+        if (!string.Equals(staff.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase) ||
+            staff.HospitalId is null)
+        {
+            throw new ForbiddenException(forbiddenMessage);
+        }
+
+        var doctor = await db.Doctors.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.StaffId == staff.Id, ct)
+            ?? throw new ForbiddenException(forbiddenMessage);
+
+        if (doctor.IsActive == false || (doctor.HospitalId.HasValue && doctor.HospitalId != staff.HospitalId))
+        {
+            throw new ForbiddenException(forbiddenMessage);
+        }
+
+        var hospital = await db.Hospitals.AsNoTracking()
+            .FirstOrDefaultAsync(h => h.Id == staff.HospitalId.Value, ct)
+            ?? throw new ForbiddenException(forbiddenMessage);
+
+        if (hospital.IsActive == false)
+        {
+            throw new ForbiddenException(InactiveHospitalMessage);
+        }
+
+        return (staff, doctor);
+    }
+
+    public static async Task EnsureDoctorAssignedToVisitAsync(
+        IApplicationDbContext db,
+        Doctor doctor,
+        Visit visit,
+        long visitHospitalId,
+        string forbiddenMessage,
+        CancellationToken ct)
+    {
+        if (doctor.HospitalId.HasValue && doctor.HospitalId.Value != visitHospitalId)
+            throw new ForbiddenException(forbiddenMessage);
+
+        if (visit.AssignedDoctorId.HasValue)
+        {
+            if (visit.AssignedDoctorId.Value != doctor.Id)
+                throw new ForbiddenException(forbiddenMessage);
+            return;
+        }
+
+        if (visit.CompletedByDoctorId == doctor.Id)
+            return;
+
+        try
+        {
+            var orderedOnVisit = await db.DiagnosticOrders.AsNoTracking()
+                .AnyAsync(o => o.VisitId == visit.Id && o.OrderingDoctorId == doctor.Id, ct);
+            if (orderedOnVisit)
+                return;
+        }
+        catch (NotSupportedException)
+        {
+        }
+
+        if (visit.AppointmentId is long appointmentId)
+        {
+            var apptSlotId = await db.Appointments.AsNoTracking()
+                .Where(a => a.Id == appointmentId)
+                .Select(a => a.SlotId)
+                .FirstOrDefaultAsync(ct);
+
+            if (apptSlotId is long slotId)
+            {
+                var slotDoctorId = await db.ExaminationSlots.AsNoTracking()
+                    .Where(s => s.Id == slotId)
+                    .Select(s => s.DoctorId)
+                    .FirstOrDefaultAsync(ct);
+                if (slotDoctorId == doctor.Id)
+                    return;
+            }
+        }
+
+        try
+        {
+            var spIds = await db.QueueEntries.AsNoTracking()
+                .Where(q => q.VisitId == visit.Id)
+                .Select(q => q.CurrentServicePointId ?? q.ServicePointId)
+                .Where(id => id != null)
+                .Select(id => id!.Value)
+                .Distinct()
+                .ToListAsync(ct);
+
+            if (spIds.Count > 0)
+            {
+                var matchesServicePoint = await db.QueueServicePoints.AsNoTracking()
+                    .AnyAsync(sp => spIds.Contains(sp.Id) && sp.DoctorId == doctor.Id && sp.IsActive != false, ct);
+                if (matchesServicePoint)
+                    return;
+            }
+        }
+        catch (NotSupportedException)
+        {
+        }
+
+        throw new ForbiddenException(forbiddenMessage);
+    }
+
+    public static IReadOnlyList<long>? ParseExplicitVisitChargeIds(
+        long? visitChargeId,
+        IReadOnlyList<long>? visitChargeIds,
+        string invalidIdMessage)
+    {
+        if (visitChargeId is <= 0)
+            throw new ValidationException(invalidIdMessage);
+
+        if (visitChargeIds is null)
+        {
+            return visitChargeId.HasValue ? [visitChargeId.Value] : null;
+        }
+
+        if (visitChargeIds.Count == 0)
+            throw new ValidationException(invalidIdMessage);
+
+        var seen = new HashSet<long>();
+        var ordered = new List<long>(visitChargeIds.Count);
+        foreach (var id in visitChargeIds)
+        {
+            if (id <= 0)
+                throw new ValidationException(invalidIdMessage);
+            if (!seen.Add(id))
+                throw new ValidationException("Danh sách khoản phí không được chứa mã trùng lặp.");
+            ordered.Add(id);
+        }
+
+        if (visitChargeId.HasValue && (ordered.Count != 1 || ordered[0] != visitChargeId.Value))
+        {
+            throw new ValidationException("Tham số visitChargeId và visitChargeIds không thống nhất.");
+        }
+
+        ordered.Sort();
+        return ordered;
     }
 
     public static async Task<HashSet<long>> LoadOwnedPatientIdsAsync(

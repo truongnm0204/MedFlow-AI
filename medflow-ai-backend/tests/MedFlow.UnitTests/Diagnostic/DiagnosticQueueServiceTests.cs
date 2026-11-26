@@ -1114,13 +1114,25 @@ public sealed class DiagnosticQueueServiceTests : IDisposable
         await Assert.ThrowsAsync<ConflictException>(() =>
             _service.RestoreDiagnosticSkippedTurnAsync(7, "q-012"));
 
-        // Cancel Entry 12 with CancelLinkedOrder = true
+        // Non-technical cancel of mandatory Order 12 by DIAGNOSTIC_STAFF must fail with 409 [MANDATORY_ORDER_REVIEW_REQUIRED]
+        var nonTechMandatoryEx = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CancelDiagnosticQueueEntryAsync(
+                actorUserId: 7,
+                idOrCode: "q-012",
+                request: new CancelDiagnosticQueueEntryRequest(
+                    Reason: "Bệnh nhân xin hoãn chụp X-quang theo chỉ định mới của bác sĩ",
+                    CancelLinkedOrder: true,
+                    ExpectedStateVersion: restored.StateVersion)));
+        Assert.Contains("MANDATORY_ORDER_REVIEW_REQUIRED", nonTechMandatoryEx.Message);
+
+        // Cancel Entry 12 with CancelLinkedOrder = true + TechnicalAbort = true
         var cancelled = await _service.CancelDiagnosticQueueEntryAsync(
             actorUserId: 7,
             idOrCode: "q-012",
             request: new CancelDiagnosticQueueEntryRequest(
-                Reason: "Bệnh nhân xin hoãn chụp X-quang theo chỉ định mới của bác sĩ",
+                Reason: "Sự cố kỹ thuật đầu bóng X-quang cần bác sĩ xem xét lại",
                 CancelLinkedOrder: true,
+                TechnicalAbort: true,
                 ExpectedStateVersion: restored.StateVersion));
 
         Assert.Equal("CANCELLED", cancelled.ActionOutcome);

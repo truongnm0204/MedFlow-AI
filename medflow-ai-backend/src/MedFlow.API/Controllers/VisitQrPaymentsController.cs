@@ -2,7 +2,6 @@ using System.Security.Claims;
 using System.Text.Json;
 using MedFlow.Application.DTOs.Payments;
 using MedFlow.Application.Interfaces.Services;
-using MedFlow.Application.Services.Payments;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Exceptions;
 using Microsoft.AspNetCore.Authorization;
@@ -12,7 +11,7 @@ using Microsoft.AspNetCore.RateLimiting;
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = RoleNames.Patient)]
+[Authorize(Roles = $"{RoleNames.Patient},{RoleNames.Doctor},{RoleNames.Reception},{RoleNames.HospitalAdmin}")]
 public sealed class VisitQrPaymentsController : ControllerBase
 {
     private static readonly JsonSerializerOptions RequestJsonOptions = new(JsonSerializerDefaults.Web);
@@ -24,9 +23,11 @@ public sealed class VisitQrPaymentsController : ControllerBase
         _service = service;
     }
 
-    /// <summary>POST /api/v1/visits/{idOrCode}/payments/qr — Phát hành QR thanh toán theo từng khoản phí (UC18 / ADR-0059).</summary>
+    /// <summary>POST /api/v1/visits/{idOrCode}/payments/qr — Phát hành VietQR đơn lẻ hoặc gộp theo các khoản phí được chọn (UC18 / ADR-0060).</summary>
     [HttpPost("/api/v1/visits/{idOrCode}/payments/qr")]
     [HttpPost("/api/v1/patients/visits/{idOrCode}/payments/qr")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/payments/qr")]
+    [HttpPost("/api/v1/reception/visits/{idOrCode}/payments/qr")]
     [EnableRateLimiting("payment-qr-generate")]
     [ProducesResponseType<GenerateQrPaymentResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<GenerateQrPaymentResponseDto>(StatusCodes.Status201Created)]
@@ -42,15 +43,9 @@ public sealed class VisitQrPaymentsController : ControllerBase
     {
         var request = await TryReadOptionalBodyAsync(ct);
 
-        GenerateQrPaymentResponseDto result;
-        if (_service is GenerateQrPaymentService perChargeService)
-        {
-            result = await perChargeService.CreateAsync(GetUserId(), idOrCode, GetIp(), request, ct);
-        }
-        else
-        {
-            result = await _service.CreateAsync(GetUserId(), idOrCode, GetIp(), ct);
-        }
+        var result = request is null
+            ? await _service.CreateAsync(GetUserId(), idOrCode, GetIp(), ct)
+            : await _service.CreateAsync(GetUserId(), idOrCode, GetIp(), request, ct);
 
         if (result.IssueKind == QrPaymentIssueKind.Created)
             return StatusCode(StatusCodes.Status201Created, result);

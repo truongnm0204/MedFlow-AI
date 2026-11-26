@@ -114,28 +114,14 @@ public sealed class SePayWebhookService : ISePayWebhookService
                     return new SePayWebhookResult(true, PaymentGatewayOutcomes.Unmatched);
                 }
 
-                // ADR-0059 strict lock order: visits (09) -> diagnostic_orders (12) -> visit_charges (15) -> payments (16)
+                // ADR-0060 strict lock order: visits (09) -> diagnostic_orders (12) -> visit_charges (15) -> payments (16) -> payment_allocations (16b)
                 if (candidatePayment.VisitId is long preVisitId)
                 {
-                    await _db.TryLockVisitForUpdateAsync(preVisitId, ct);
+                    await PaymentAllocationLookup.AcquireVisitPaymentChainLocksAsync(_db, preVisitId, ct);
                 }
-
-                VisitCharge? preCharge = null;
-                if (candidatePayment.VisitChargeId is long preChargeId)
+                else
                 {
-                    preCharge = await TryLoadChargeAsNoTrackingAsync(preChargeId, ct);
-                    if (preCharge?.DiagnosticOrderId is long preDiagOrderId)
-                    {
-                        await _db.TryLockDiagnosticOrderForUpdateAsync(preDiagOrderId, ct);
-                    }
-
-                    await _db.TryLockVisitChargeForUpdateAsync(preChargeId, ct);
-                }
-
-                var siblingPaymentIds = await LoadSiblingPaymentIdsForLockAsync(candidatePayment, ct);
-                if (siblingPaymentIds.Count > 0)
-                {
-                    await _db.TryLockPaymentsForUpdateAsync(siblingPaymentIds, ct);
+                    await _db.TryLockPaymentForUpdateAsync(candidatePayment.Id, ct);
                 }
 
                 if (_db is DbContext trackerCtx)
@@ -176,50 +162,96 @@ public sealed class SePayWebhookService : ISePayWebhookService
                     ? await _db.Visits.AsNoTracking().FirstOrDefaultAsync(v => v.Id == lockedVisitId, ct)
                     : null;
 
-                var charge = payment.VisitChargeId is long lockedChargeId
-                    ? await TryLoadTrackedChargeAsync(lockedChargeId, ct)
-                    : null;
+                var allVisitPayments = payment.VisitId is long vpId
+                    ? await _db.Payments.Where(p => p.VisitId == vpId).OrderBy(p => p.Id).ToListAsync(ct)
+                    : [payment];
 
-                var diagOrder = charge?.DiagnosticOrderId is long lockedOrderId
-                    ? await TryLoadDiagnosticOrderAsNoTrackingAsync(lockedOrderId, ct)
-                    : null;
-
-                var siblingChargePayments = charge is not null
-                    ? await _db.Payments
-                        .Where(p => p.VisitChargeId == charge.Id)
-                        .OrderBy(p => p.Id)
-                        .ToListAsync(ct)
+                var allVisitAllocations = payment.VisitId is long vaId
+                    ? await PaymentAllocationLookup.TryLoadTrackedForVisitAsync(_db, vaId, ct)
                     : [];
+
+                var thisPaymentAllocations = allVisitAllocations
+                    .Where(pa => pa.PaymentId == payment.Id)
+                    .OrderBy(pa => pa.VisitChargeId)
+                    .ToList();
+
+                var targetChargeIds = thisPaymentAllocations.Count > 0
+                    ? thisPaymentAllocations.Select(pa => pa.VisitChargeId).Distinct().OrderBy(id => id).ToList()
+                    : (payment.VisitChargeId.HasValue ? [payment.VisitChargeId.Value] : []);
+
+                var targetCharges = targetChargeIds.Count > 0
+                    ? await TryLoadTrackedChargesAsync(targetChargeIds, ct)
+                    : [];
+
+                var targetOrderIds = targetCharges
+                    .Where(c => c.DiagnosticOrderId.HasValue)
+                    .Select(c => c.DiagnosticOrderId!.Value)
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToList();
+
+                var targetOrders = targetOrderIds.Count > 0
+                    ? await TryLoadTrackedOrdersAsync(targetOrderIds, ct)
+                    : [];
+
+                var (effectiveAllocations, _) = payment.VisitId is long effVisitId
+                    ? PaymentAllocationLookup.BuildEffectiveAllocations(effVisitId, allVisitPayments, allVisitAllocations)
+                    : ([], new HashSet<long>());
 
                 var hospitalId = await ResolveVisitHospitalIdAsync(visit, ct);
                 var status = Normalize(payment.Status);
+                var isAllocatedOrHasRows = thisPaymentAllocations.Count > 0 ||
+                                           string.Equals(payment.PaymentScope, PaymentScopes.Allocated, StringComparison.OrdinalIgnoreCase);
+                var isChargeScoped = isAllocatedOrHasRows ||
+                                     payment.VisitChargeId.HasValue ||
+                                     string.Equals(payment.PaymentScope, PaymentScopes.Charge, StringComparison.OrdinalIgnoreCase);
+
                 notifyVisitId = payment.VisitId;
+                var nowLocal = HospitalClock.GetNow(_timeProvider);
 
                 if (status == PaymentStatuses.Paid)
                 {
+                    // Never downgrade or mutate an already-PAID Payment
                     outcome = PaymentGatewayOutcomes.AlreadyPaid;
                 }
-                else if (IsServiceOrVisitCancelled(visit, diagOrder, charge))
+                else if (IsAnyTargetCancelledOrDeclined(visit, targetOrders, targetCharges))
                 {
-                    // ADR-0059 §2.2.B / §3.4: Webhook after Visit / DiagnosticOrder / VisitCharge cancellation
+                    // §2.3: Late transfer after Visit / DiagnosticOrder / VisitCharge cancellation or decline
                     outcome = CancelledServiceRefundRequiredOutcome;
 
-                    if (charge is not null)
+                    var targetSet = targetChargeIds.ToHashSet();
+                    var alreadyPaidChargeIds = effectiveAllocations
+                        .Where(a => a.PaymentId != payment.Id &&
+                                    targetSet.Contains(a.VisitChargeId) &&
+                                    Normalize(a.Status) == PaymentAllocationStatuses.Paid)
+                        .Select(a => a.VisitChargeId)
+                        .ToHashSet();
+
+                    foreach (var charge in targetCharges)
                     {
-                        charge.Status = VisitChargeStatuses.CancelledRefundPending;
-                        charge.CancelledAt ??= HospitalClock.GetNow(_timeProvider);
+                        var cs = Normalize(charge.Status);
+                        // Never downgrade a charge already PAID by another valid attempt or PAID_NOT_PERFORMED!
+                        if (!alreadyPaidChargeIds.Contains(charge.Id) &&
+                            cs is VisitChargeStatuses.Cancelled or VisitChargeStatuses.CancelledRefundPending)
+                        {
+                            charge.Status = VisitChargeStatuses.CancelledRefundPending;
+                            charge.CancelledAt ??= nowLocal;
+                        }
                     }
 
-                    foreach (var sib in siblingChargePayments.Where(s => s.Id != payment.Id && Normalize(s.Status) == PaymentStatuses.Pending))
+                    // Expire any other overlapping PENDING attempts on cancelled charges
+                    ExpireOverlappingPendingAttempts(allVisitPayments, allVisitAllocations, payment.Id, targetSet);
+
+                    payment.Status = MismatchPaymentStatus;
+                    payment.ExternalReference = referenceCode;
+                    foreach (var pa in thisPaymentAllocations.Where(pa => Normalize(pa.Status) != PaymentAllocationStatuses.Paid))
                     {
-                        sib.Status = PaymentStatuses.Expired;
+                        pa.Status = PaymentAllocationStatuses.Reconcile;
                     }
 
-                    if (status is PaymentStatuses.Pending or PaymentStatuses.Expired)
-                    {
-                        payment.Status = MismatchPaymentStatus;
-                        payment.ExternalReference = referenceCode;
-                    }
+                    var expectedSum = targetCharges.Count > 0
+                        ? targetCharges.Sum(c => c.UnitPrice ?? 0m)
+                        : payment.Amount;
 
                     AddReconciliationAudit(
                         hospitalId,
@@ -231,61 +263,84 @@ public sealed class SePayWebhookService : ISePayWebhookService
                             provider = Provider,
                             externalId,
                             receivedAmount = amount,
-                            expectedAmount = charge?.UnitPrice ?? payment.Amount,
+                            expectedAmount = expectedSum,
                             referenceCode,
                             currency = VisitChargesService.CurrencyVnd,
                             outcome,
                             reasonCode = CancelledServiceReasonCode,
                             visitId = payment.VisitId,
                             visitStatus = visit?.Status,
-                            visitChargeId = charge?.Id,
-                            chargeStatus = charge?.Status,
-                            diagnosticOrderId = diagOrder?.Id,
-                            diagnosticOrderStatus = diagOrder?.Status,
+                            visitChargeId = payment.VisitChargeId,
+                            visitChargeIds = targetChargeIds,
+                            diagnosticOrderIds = targetOrderIds,
                         });
                 }
-                else if (status is PaymentStatuses.Pending or PaymentStatuses.Expired)
+                else if (targetChargeIds.Count > 0 &&
+                         FindAlreadyPaidCompetingAllocation(effectiveAllocations, payment.Id, targetChargeIds) is { } competingPaid)
                 {
-                    var alreadyPaidSibling = siblingChargePayments
-                        .FirstOrDefault(s => s.Id != payment.Id && Normalize(s.Status) == PaymentStatuses.Paid);
+                    // §2.2 / §2.3: Target charge already PAID by Cash or newer QR (whether this QR was PENDING, EXPIRED, or CANCELLED!)
+                    outcome = DuplicateChargeReconcileOutcome;
+                    payment.Status = MismatchPaymentStatus;
+                    payment.ExternalReference = referenceCode;
 
-                    var expectedAmount = charge?.UnitPrice ?? payment.Amount;
-                    var isChargeScoped = payment.VisitChargeId.HasValue ||
-                                         string.Equals(payment.PaymentScope, PaymentScopes.Charge, StringComparison.OrdinalIgnoreCase);
-
-                    if (alreadyPaidSibling is not null)
+                    foreach (var pa in thisPaymentAllocations.Where(pa => Normalize(pa.Status) != PaymentAllocationStatuses.Paid))
                     {
-                        // Old EXPIRED QR paid after newer QR was already PAID (ux_payments_one_paid_per_charge)
-                        outcome = DuplicateChargeReconcileOutcome;
-                        payment.Status = MismatchPaymentStatus;
-                        payment.ExternalReference = referenceCode;
-
-                        AddReconciliationAudit(
-                            hospitalId,
-                            payment,
-                            LateDuplicateAuditAction,
-                            new
-                            {
-                                paymentCode = code,
-                                provider = Provider,
-                                externalId,
-                                receivedAmount = amount,
-                                expectedAmount,
-                                referenceCode,
-                                currency = VisitChargesService.CurrencyVnd,
-                                outcome,
-                                reasonCode = DuplicateChargeReasonCode,
-                                visitId = payment.VisitId,
-                                visitChargeId = charge?.Id,
-                                alreadyPaidPaymentId = alreadyPaidSibling.Id,
-                                alreadyPaidPaymentCode = alreadyPaidSibling.PaymentCode,
-                            });
+                        pa.Status = PaymentAllocationStatuses.Reconcile;
                     }
-                    else if (expectedAmount is not decimal expected ||
-                             expected <= 0m ||
-                             payment.Amount is null ||
-                             payment.Amount <= 0m ||
-                             (charge?.UnitPrice is decimal chargePrice && payment.Amount != chargePrice))
+
+                    AddReconciliationAudit(
+                        hospitalId,
+                        payment,
+                        LateDuplicateAuditAction,
+                        new
+                        {
+                            paymentCode = code,
+                            provider = Provider,
+                            externalId,
+                            receivedAmount = amount,
+                            expectedAmount = payment.Amount,
+                            referenceCode,
+                            currency = VisitChargesService.CurrencyVnd,
+                            outcome,
+                            reasonCode = DuplicateChargeReasonCode,
+                            visitId = payment.VisitId,
+                            visitChargeId = competingPaid.VisitChargeId,
+                            visitChargeIds = targetChargeIds,
+                            alreadyPaidPaymentId = competingPaid.PaymentId,
+                            alreadyPaidPaymentCode = competingPaid.Payment?.PaymentCode,
+                        });
+                }
+                else if (status is PaymentStatuses.Pending or PaymentStatuses.Expired ||
+                         (status == PaymentStatuses.Cancelled && isAllocatedOrHasRows))
+                {
+                    decimal? expectedAmount;
+                    if (thisPaymentAllocations.Count > 0)
+                    {
+                        expectedAmount = thisPaymentAllocations.Sum(pa => pa.AllocatedAmount);
+                    }
+                    else if (targetCharges.Count == 1 && targetCharges[0].UnitPrice is decimal singlePrice)
+                    {
+                        expectedAmount = singlePrice;
+                    }
+                    else
+                    {
+                        expectedAmount = payment.Amount;
+                    }
+
+                    var chargePriceMismatch = targetCharges.Count > 0 &&
+                                              (targetCharges.Count != targetChargeIds.Count ||
+                                               targetCharges.Any(c => c.UnitPrice is null or <= 0m) ||
+                                               (thisPaymentAllocations.Count == 0 &&
+                                                targetCharges.Count == 1 &&
+                                                payment.Amount != targetCharges[0].UnitPrice) ||
+                                               (thisPaymentAllocations.Count > 0 &&
+                                                payment.Amount != expectedAmount));
+
+                    if (expectedAmount is not decimal expected ||
+                        expected <= 0m ||
+                        payment.Amount is null ||
+                        payment.Amount <= 0m ||
+                        chargePriceMismatch)
                     {
                         outcome = PaymentGatewayOutcomes.Unmatched;
                     }
@@ -304,7 +359,7 @@ public sealed class SePayWebhookService : ISePayWebhookService
                             payment.ExternalReference = referenceCode;
                             outcome = PaymentGatewayOutcomes.Paid;
 
-                            AddConfirmedAudit(hospitalId, payment, code!, amount, totalReceived, expected, externalId, outcome);
+                            AddConfirmedAudit(hospitalId, payment, code!, amount, totalReceived, expected, externalId, outcome, targetChargeIds);
                             shouldPublishPaymentChanged = true;
 
                             if (visit is not null && hospitalId.HasValue)
@@ -334,20 +389,24 @@ public sealed class SePayWebhookService : ISePayWebhookService
                                     currency = VisitChargesService.CurrencyVnd,
                                     outcome,
                                     visitId = payment.VisitId,
-                                    visitChargeId = charge?.Id,
+                                    visitChargeId = payment.VisitChargeId,
                                 });
                         }
                     }
                     else if (amount != expected)
                     {
-                        // ADR-0059 Exact Settlement Only for CHARGE-scoped payments:
-                        // underpayment (< expected) or overpayment (> expected) transitions to MISMATCH without unlocking.
+                        // PAY-13: Atomic Partial / Overpaid Mismatch — zero allocations marked PAID!
                         outcome = amount < expected
                             ? PaymentGatewayOutcomes.Partial
                             : PaymentGatewayOutcomes.Overpaid;
 
                         payment.Status = MismatchPaymentStatus;
                         payment.ExternalReference = referenceCode;
+
+                        foreach (var pa in thisPaymentAllocations)
+                        {
+                            pa.Status = PaymentAllocationStatuses.Reconcile;
+                        }
 
                         AddReconciliationAudit(
                             hospitalId,
@@ -364,25 +423,38 @@ public sealed class SePayWebhookService : ISePayWebhookService
                                 currency = VisitChargesService.CurrencyVnd,
                                 outcome,
                                 visitId = payment.VisitId,
-                                visitChargeId = charge?.Id,
+                                visitChargeId = payment.VisitChargeId,
+                                visitChargeIds = targetChargeIds,
                             });
                     }
                     else
                     {
-                        // Exact match (amount == expected) on active Visit / Order / Charge:
-                        // If customer paid an old EXPIRED QR while a newer PENDING QR was open on the same charge,
-                        // expire the unused newer PENDING QR and transition the paid row -> PAID!
-                        foreach (var newerPending in siblingChargePayments.Where(s => s.Id != payment.Id && Normalize(s.Status) == PaymentStatuses.Pending))
-                        {
-                            newerPending.Status = PaymentStatuses.Expired;
-                        }
+                        // PAY-08: Exact match on active unpaid charge(s)!
+                        // Cancel/expire any competing PENDING attempts + their PENDING allocations overlapping ANY target charge.
+                        var targetSet = targetChargeIds.ToHashSet();
+                        ExpireOverlappingPendingAttempts(allVisitPayments, allVisitAllocations, payment.Id, targetSet);
 
                         payment.Status = PaymentStatuses.Paid;
                         payment.PaidAt = ResolvePaidAt(request.TransactionDate);
+                        payment.PaymentMethod ??= PaymentMethods.VietQr;
                         payment.ExternalReference = referenceCode;
+
+                        foreach (var pa in thisPaymentAllocations)
+                        {
+                            pa.Status = PaymentAllocationStatuses.Paid;
+                        }
+
+                        foreach (var ord in targetOrders)
+                        {
+                            if (Normalize(ord.SelectionStatus) == DiagnosticSelectionStatuses.Undecided)
+                            {
+                                ord.SelectionStatus = DiagnosticSelectionStatuses.Accepted;
+                            }
+                        }
+
                         outcome = PaymentGatewayOutcomes.Paid;
 
-                        AddConfirmedAudit(hospitalId, payment, code!, amount, amount, expected, externalId, outcome);
+                        AddConfirmedAudit(hospitalId, payment, code!, amount, amount, expected, externalId, outcome, targetChargeIds);
                         shouldPublishPaymentChanged = true;
 
                         if (visit is not null && hospitalId.HasValue)
@@ -414,7 +486,6 @@ public sealed class SePayWebhookService : ISePayWebhookService
             }
             catch (DbUpdateException ex) when (PostgresUniqueViolation.Is(ex) || PostgresConcurrencyException.IsUniqueViolation(ex))
             {
-                // Duplicate (provider, external_id) webhook replay: rollback & return IGNORED with zero SignalR side effects.
                 await SafeRollbackAsync(tx, ct);
                 if (_db is DbContext context)
                     context.ChangeTracker.Clear();
@@ -469,10 +540,10 @@ public sealed class SePayWebhookService : ISePayWebhookService
         return match.Success ? "MF" + match.Groups[1].Value : null;
     }
 
-    private static bool IsServiceOrVisitCancelled(
+    private static bool IsAnyTargetCancelledOrDeclined(
         Visit? visit,
-        DiagnosticOrder? diagOrder,
-        VisitCharge? charge)
+        IReadOnlyList<DiagnosticOrder> diagOrders,
+        IReadOnlyList<VisitCharge> charges)
     {
         if (visit is not null)
         {
@@ -481,80 +552,110 @@ public sealed class SePayWebhookService : ISePayWebhookService
                 return true;
         }
 
-        if (diagOrder is not null && Normalize(diagOrder.Status) == "CANCELLED")
-            return true;
-
-        if (charge is not null)
+        foreach (var order in diagOrders)
         {
-            var chargeStatus = Normalize(charge.Status);
-            if (chargeStatus is VisitChargeStatuses.Cancelled or VisitChargeStatuses.CancelledRefundPending)
+            if (Normalize(order.Status) == "CANCELLED")
+                return true;
+
+            var sel = Normalize(order.SelectionStatus);
+            if (sel is DiagnosticSelectionStatuses.Declined
+                or DiagnosticSelectionStatuses.SkippedAfterPaid
+                or DiagnosticSelectionStatuses.ReviewRequired)
+            {
+                return true;
+            }
+        }
+
+        foreach (var charge in charges)
+        {
+            var cs = Normalize(charge.Status);
+            if (cs is not null && cs != VisitChargeStatuses.Active)
                 return true;
         }
 
         return false;
     }
 
-    private async Task<List<long>> LoadSiblingPaymentIdsForLockAsync(Payment candidate, CancellationToken ct)
+    private static EffectiveChargeAllocation? FindAlreadyPaidCompetingAllocation(
+        IReadOnlyList<EffectiveChargeAllocation> effectiveAllocations,
+        long currentPaymentId,
+        IReadOnlyCollection<long> targetChargeIds)
     {
-        if (candidate.VisitChargeId is long chargeId)
-        {
-            return await _db.Payments.AsNoTracking()
-                .Where(p => p.VisitChargeId == chargeId || p.Id == candidate.Id)
-                .OrderBy(p => p.Id)
-                .Select(p => p.Id)
-                .Distinct()
-                .ToListAsync(ct);
-        }
-
-        if (candidate.VisitId is long visitId)
-        {
-            return await _db.Payments.AsNoTracking()
-                .Where(p => p.VisitId == visitId)
-                .OrderBy(p => p.Id)
-                .Select(p => p.Id)
-                .Distinct()
-                .ToListAsync(ct);
-        }
-
-        return [candidate.Id];
+        var targetSet = targetChargeIds.ToHashSet();
+        return effectiveAllocations.FirstOrDefault(a =>
+            a.PaymentId != currentPaymentId &&
+            targetSet.Contains(a.VisitChargeId) &&
+            Normalize(a.Status) == PaymentAllocationStatuses.Paid);
     }
 
-    private async Task<VisitCharge?> TryLoadChargeAsNoTrackingAsync(long chargeId, CancellationToken ct)
+    private static void ExpireOverlappingPendingAttempts(
+        IReadOnlyList<Payment> allVisitPayments,
+        IReadOnlyList<PaymentAllocation> allVisitAllocations,
+        long currentPaymentId,
+        IReadOnlySet<long> targetSet)
     {
-        try
+        if (targetSet.Count == 0)
+            return;
+
+        var pendingAllocsByPayment = allVisitAllocations
+            .Where(pa => Normalize(pa.Status) == PaymentAllocationStatuses.Pending)
+            .GroupBy(pa => pa.PaymentId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        foreach (var sib in allVisitPayments)
         {
-            return await _db.VisitCharges.AsNoTracking()
-                .FirstOrDefaultAsync(c => c.Id == chargeId, ct);
-        }
-        catch (NotSupportedException)
-        {
-            return null;
+            if (sib.Id == currentPaymentId || Normalize(sib.Status) != PaymentStatuses.Pending)
+                continue;
+
+            var overlaps = false;
+            if (pendingAllocsByPayment.TryGetValue(sib.Id, out var sibAllocs))
+            {
+                overlaps = sibAllocs.Any(pa => targetSet.Contains(pa.VisitChargeId));
+            }
+            else if (sib.VisitChargeId.HasValue)
+            {
+                overlaps = targetSet.Contains(sib.VisitChargeId.Value);
+            }
+
+            if (!overlaps)
+                continue;
+
+            sib.Status = PaymentStatuses.Expired;
+            if (pendingAllocsByPayment.TryGetValue(sib.Id, out var toExpire))
+            {
+                foreach (var pa in toExpire)
+                    pa.Status = PaymentAllocationStatuses.Expired;
+            }
         }
     }
 
-    private async Task<VisitCharge?> TryLoadTrackedChargeAsync(long chargeId, CancellationToken ct)
+    private async Task<List<VisitCharge>> TryLoadTrackedChargesAsync(IReadOnlyCollection<long> chargeIds, CancellationToken ct)
     {
         try
         {
             return await _db.VisitCharges
-                .FirstOrDefaultAsync(c => c.Id == chargeId, ct);
+                .Where(c => chargeIds.Contains(c.Id))
+                .OrderBy(c => c.Id)
+                .ToListAsync(ct);
         }
         catch (NotSupportedException)
         {
-            return null;
+            return [];
         }
     }
 
-    private async Task<DiagnosticOrder?> TryLoadDiagnosticOrderAsNoTrackingAsync(long orderId, CancellationToken ct)
+    private async Task<List<DiagnosticOrder>> TryLoadTrackedOrdersAsync(IReadOnlyCollection<long> orderIds, CancellationToken ct)
     {
         try
         {
-            return await _db.DiagnosticOrders.AsNoTracking()
-                .FirstOrDefaultAsync(o => o.Id == orderId, ct);
+            return await _db.DiagnosticOrders
+                .Where(o => orderIds.Contains(o.Id))
+                .OrderBy(o => o.Id)
+                .ToListAsync(ct);
         }
         catch (NotSupportedException)
         {
-            return null;
+            return [];
         }
     }
 
@@ -611,7 +712,8 @@ public sealed class SePayWebhookService : ISePayWebhookService
         decimal totalReceived,
         decimal expected,
         string externalId,
-        string outcome)
+        string outcome,
+        IReadOnlyList<long> visitChargeIds)
     {
         _db.AuditLogs.Add(new AuditLog
         {
@@ -632,6 +734,7 @@ public sealed class SePayWebhookService : ISePayWebhookService
                 outcome,
                 visitId = payment.VisitId,
                 visitChargeId = payment.VisitChargeId,
+                visitChargeIds,
             }),
             OccurredAt = HospitalClock.GetUtcNow(_timeProvider),
         });
@@ -679,7 +782,6 @@ public sealed class SePayWebhookService : ISePayWebhookService
         }
         catch
         {
-            // Transaction already aborted by PostgreSQL.
         }
     }
 

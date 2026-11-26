@@ -830,6 +830,25 @@ public sealed class QueueStatusService : IQueueStatusService
             {
                 await _db.TryLockPaymentsForUpdateAsync(paymentIdsToLock, ct);
             }
+
+            if (preVisitId.HasValue)
+            {
+                try
+                {
+                    var allocIdsToLock = await _db.PaymentAllocations.AsNoTracking()
+                        .Where(pa => pa.VisitId == preVisitId.Value)
+                        .OrderBy(pa => pa.Id)
+                        .Select(pa => pa.Id)
+                        .ToListAsync(ct);
+                    if (allocIdsToLock.Count > 0)
+                    {
+                        await _db.TryLockPaymentAllocationsForUpdateAsync(allocIdsToLock, ct);
+                    }
+                }
+                catch (NotSupportedException)
+                {
+                }
+            }
         }
 
         if (_db is DbContext dbCtx && dbCtx.Database.ProviderName != "Microsoft.EntityFrameworkCore.InMemory")
@@ -1734,6 +1753,20 @@ public sealed class QueueStatusService : IQueueStatusService
             }
         }
 
+        var visitAllocations = await PaymentAllocationLookup.TryLoadTrackedForVisitAsync(_db, cancelledVisit.Id, ct);
+        foreach (var pa in visitAllocations)
+        {
+            if (string.Equals(pa.Status?.Trim(), PaymentAllocationStatuses.Pending, StringComparison.OrdinalIgnoreCase))
+            {
+                pa.Status = PaymentAllocationStatuses.Expired;
+            }
+        }
+
+        var (effectiveAllocations, allocatedPaymentIds) = PaymentAllocationLookup.BuildEffectiveAllocations(
+            cancelledVisit.Id,
+            visitPayments,
+            visitAllocations);
+
         var examCharges = visitCharges
             .Where(c =>
                 string.IsNullOrWhiteSpace(c.ChargeType)
@@ -1743,17 +1776,18 @@ public sealed class QueueStatusService : IQueueStatusService
 
         var legacyPaid = visitPayments.Any(p =>
             !p.VisitChargeId.HasValue &&
+            !allocatedPaymentIds.Contains(p.Id) &&
             string.Equals(p.Status?.Trim(), PaymentStatuses.Paid, StringComparison.OrdinalIgnoreCase));
 
         foreach (var examCharge in examCharges)
         {
-            var chargePaidPayments = visitPayments
-                .Where(p =>
-                    p.VisitChargeId == examCharge.Id &&
-                    string.Equals(p.Status?.Trim(), PaymentStatuses.Paid, StringComparison.OrdinalIgnoreCase))
+            var paidAllocs = effectiveAllocations
+                .Where(a =>
+                    a.VisitChargeId == examCharge.Id &&
+                    string.Equals(a.Status, PaymentAllocationStatuses.Paid, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
-            var isPaid = chargePaidPayments.Count > 0 || legacyPaid;
+            var isPaid = paidAllocs.Count > 0 || legacyPaid;
             if (isPaid)
             {
                 examCharge.Status = VisitChargeStatuses.CancelledRefundPending;
@@ -1775,7 +1809,7 @@ public sealed class QueueStatusService : IQueueStatusService
                         unitPrice = examCharge.UnitPrice,
                         chargeStatus = examCharge.Status,
                         disposition,
-                        paidPaymentIds = chargePaidPayments.Select(p => p.Id).ToArray(),
+                        paidPaymentIds = paidAllocs.Select(a => a.PaymentId).Distinct().ToArray(),
                         reason,
                     }, JsonOptions),
                     IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),

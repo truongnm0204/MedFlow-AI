@@ -35,9 +35,11 @@ database/
 │   ├── 020_schedule_cronjob_indexes_and_notifications.sql # UC17 notifications read/lease columns & schedule/slot partial/unique indexes
 │   ├── 021_hot_query_composite_indexes.sql        # hot-query composite indexes (queue, UC56 visits, UC60 audit logs, UC45 FEFO, service prices)
 │   ├── 022_patients_emergency_contact_columns.sql # UC05 optional emergency contact columns on patients
-│   └── 023_business_integrity_constraints_and_indexes.sql # ADR-0059 per-charge billing (Option A), composite FKs, lineage/EMR cols & clinical/pharmacy integrity constraints
+│   ├── 023_business_integrity_constraints_and_indexes.sql # ADR-0059 per-charge billing (Option A), composite FKs, lineage/EMR cols & clinical/pharmacy integrity constraints
+│   └── 024_grouped_payment_allocations_selection_and_cross_day_visits.sql # ADR-0060 payment_allocations (Level 16b), cash/idempotency columns, selective CLS & cross-day visit columns
 ├── scripts/
-│   └── preflight_023_audit.sql                    # read-only preflight audit for Migration 023
+│   ├── preflight_023_audit.sql                    # read-only preflight audit for Migration 023
+│   └── preflight_024_audit.sql                    # read-only preflight audit for Migration 024
 └── README.md
 ```
 
@@ -77,7 +79,7 @@ docker exec medflow-postgres psql -U postgres -d medflow_db -v ON_ERROR_STOP=1 -
 | Clinical | `medical_records`, `medical_record_revisions`, `visit_diagnoses`, `clinical_addenda` |
 | Diagnostics | `diagnostic_orders`, `diagnostic_results`, `diagnostic_result_versions` |
 | Pharmacy | `medicines`, `prescriptions`, `prescription_items`, `medicine_batches`, `medication_dispenses`, `dispense_items`, `stock_transactions` |
-| Billing | `visit_charges`, `payments` |
+| Billing | `visit_charges`, `payments`, `payment_allocations`, `payment_gateway_events` |
 | Notifications | `notifications` |
 | Configuration & audit | `hospital_policies`, `system_integrations`, `audit_logs` |
 

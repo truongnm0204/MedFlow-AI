@@ -7,6 +7,15 @@ public static class QrPaymentIssueKind
     public const string Reused = "REUSED";
 }
 
+public sealed record PaymentAllocationItemDto(
+    long? AllocationId,
+    long VisitChargeId,
+    string ChargeType,
+    long? DiagnosticOrderId,
+    string? ServiceName,
+    decimal AllocatedAmount,
+    string Status);
+
 public sealed record GenerateQrPaymentResponseDto(
     long VisitId,
     string? VisitCode,
@@ -21,4 +30,6 @@ public sealed record GenerateQrPaymentResponseDto(
     string AccountName,
     string TransferContent,
     string IssueKind,
-    long? VisitChargeId = null);
+    long? VisitChargeId = null,
+    IReadOnlyList<PaymentAllocationItemDto>? Allocations = null,
+    DateTime? ExpiresAtLocal = null);

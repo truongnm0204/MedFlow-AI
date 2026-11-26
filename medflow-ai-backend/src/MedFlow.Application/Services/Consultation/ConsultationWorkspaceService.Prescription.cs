@@ -91,8 +91,12 @@ public sealed partial class ConsultationWorkspaceService
             ?? context.ServicePoint?.Id;
         var policy = policySet.ForServicePoint(servicePointIdForPolicy);
         var hasPendingMandatoryOrders = await HasPendingMandatoryDiagnosticOrdersAsync(visit.Id, ct);
+        var openMandatoryOrUnlinkedCount = await CountOpenMandatoryOrUnlinkedDiagnosticEntriesAsync(
+            visit.Id,
+            context.AllVisitQueueEntries,
+            ct);
 
-        if (validated.IssueImmediately && ((policy.FinalResultRequired && openDiagnosticCount > 0) || hasPendingMandatoryOrders))
+        if (validated.IssueImmediately && ((policy.FinalResultRequired && openMandatoryOrUnlinkedCount > 0) || hasPendingMandatoryOrders))
         {
             throw new ConflictException(
                 "Chưa thể phát hành đơn thuốc chính thức (ISSUED) khi kết quả cận lâm sàng bắt buộc chưa hoàn tất. Bác sĩ có thể lưu đơn thuốc nháp (DRAFT).");

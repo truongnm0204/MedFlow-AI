@@ -320,6 +320,31 @@ internal static class DiagnosticOrderLifecycleHelper
                     anyRelationalLockAcquired = true;
                 }
             }
+
+            var allocationIds = new SortedSet<long>();
+            try
+            {
+                var aIds = await db.PaymentAllocations.AsNoTracking()
+                    .Where(pa => sortedVisitIds.Contains(pa.VisitId))
+                    .Select(pa => pa.Id)
+                    .ToListAsync(ct);
+                foreach (var aid in aIds)
+                {
+                    allocationIds.Add(aid);
+                }
+            }
+            catch (NotSupportedException)
+            {
+                // Minimal unit test DbContext without PaymentAllocations.
+            }
+
+            if (allocationIds.Count > 0)
+            {
+                if (await db.TryLockPaymentAllocationsForUpdateAsync(allocationIds.ToArray(), ct))
+                {
+                    anyRelationalLockAcquired = true;
+                }
+            }
         }
 
         if (anyRelationalLockAcquired && db is DbContext efContext)
@@ -339,7 +364,10 @@ internal static class DiagnosticOrderLifecycleHelper
         DateTime nowLocal,
         DateTime nowUtc,
         System.Net.IPAddress? ipAddress,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool cancelledByDoctor = false,
+        bool voluntarySkipAfterPaid = false,
+        bool reconciliationRequired = false)
     {
         var preOrder = await db.DiagnosticOrders.AsNoTracking()
             .FirstOrDefaultAsync(o => o.Id == diagnosticOrderId, ct)
@@ -379,7 +407,10 @@ internal static class DiagnosticOrderLifecycleHelper
             ipAddress,
             nowUtc,
             nowLocal,
-            ct);
+            ct,
+            cancelledByDoctor,
+            voluntarySkipAfterPaid,
+            reconciliationRequired);
 
         return new DiagnosticOrderCancellationOutcome(
             Order: order,
@@ -406,7 +437,10 @@ internal static class DiagnosticOrderLifecycleHelper
         DateTime nowUtc,
         DateTime nowLocal,
         DateOnly referenceDate,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool cancelledByDoctor = false,
+        bool voluntarySkipAfterPaid = false,
+        bool reconciliationRequired = false)
         => ApplyCancellationOnLockedEntitiesAsync(
             db,
             order,
@@ -420,7 +454,10 @@ internal static class DiagnosticOrderLifecycleHelper
             QueueEntryRequestParsing.ParseIpAddress(ipAddress),
             nowUtc,
             nowLocal,
-            ct);
+            ct,
+            cancelledByDoctor,
+            voluntarySkipAfterPaid,
+            reconciliationRequired);
 
     private static async Task<DiagnosticOrderCancelOutcome> ApplyCancellationOnLockedEntitiesAsync(
         IApplicationDbContext db,
@@ -435,7 +472,10 @@ internal static class DiagnosticOrderLifecycleHelper
         System.Net.IPAddress? ipAddress,
         DateTime nowUtc,
         DateTime nowLocal,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool cancelledByDoctor = false,
+        bool voluntarySkipAfterPaid = false,
+        bool reconciliationRequired = false)
     {
         if (visit is not null)
         {
@@ -452,8 +492,54 @@ internal static class DiagnosticOrderLifecycleHelper
             ? AppointmentBookingRules.NormalizeStatusKey(diagQueue.Status)
             : null;
 
+        // Allow DOCTOR to clinically resolve an already technical-aborted mandatory order (REVIEW_REQUIRED -> DECLINED)
         if (orderStatus == "CANCELLED")
         {
+            if (cancelledByDoctor &&
+                string.Equals(order.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.ReviewRequired, StringComparison.OrdinalIgnoreCase))
+            {
+                order.SelectionStatus = DiagnosticSelectionStatuses.Declined;
+                try
+                {
+                    db.AuditLogs.Add(new AuditLog
+                    {
+                        ActorUserId = actorUserId,
+                        HospitalId = hospitalId,
+                        Action = "DIAGNOSTIC_ORDER_REVIEW_RESOLVED",
+                        EntityType = "DIAGNOSTIC_ORDER",
+                        EntityId = !string.IsNullOrWhiteSpace(order.OrderCode)
+                            ? order.OrderCode.Trim()
+                            : order.Id.ToString(CultureInfo.InvariantCulture),
+                        Reason = string.IsNullOrWhiteSpace(reason) ? "Bác sĩ xác nhận đóng chỉ định bắt buộc sau hủy kỹ thuật." : reason.Trim(),
+                        ChangeData = JsonSerializer.Serialize(new
+                        {
+                            diagnosticOrderId = order.Id,
+                            orderCode = order.OrderCode,
+                            visitId = order.VisitId,
+                            selectionStatus = order.SelectionStatus,
+                            reason,
+                        }, AuditJsonOptions),
+                        IpAddress = ipAddress,
+                        OccurredAt = nowUtc,
+                    });
+                }
+                catch (NotSupportedException)
+                {
+                }
+
+                return new DiagnosticOrderCancelOutcome(
+                    PreviousOrderStatus: "CANCELLED",
+                    OrderStatus: "CANCELLED",
+                    QueueStatus: diagQueue?.Status,
+                    Disposition: cancelDisposition,
+                    ChargeStatus: null,
+                    DiagnosticCharge: null,
+                    WasAlreadyPaid: false,
+                    ExpiredPendingPaymentsCount: 0,
+                    TransitionedToReturnConsultation: false,
+                    ReturnQueueEntry: null);
+            }
+
             throw new ConflictException("Phiếu chỉ định cận lâm sàng đã được hủy trước đó.");
         }
 
@@ -485,6 +571,12 @@ internal static class DiagnosticOrderLifecycleHelper
             : cancelDisposition.Trim().ToUpperInvariant();
         var isTechnicalAbort = technicalAbort ||
             string.Equals(normalizedDisposition, QueueCancelDispositions.TechnicalError, StringComparison.OrdinalIgnoreCase);
+
+        if (!cancelledByDoctor && order.RequiredForConclusion == true && !isTechnicalAbort)
+        {
+            throw new ConflictException(
+                "[MANDATORY_ORDER_REVIEW_REQUIRED] Chỉ định cận lâm sàng bắt buộc cho kết luận không thể hủy trực tiếp bởi nhân viên CLS; vui lòng chuyển bác sĩ xem xét lại.");
+        }
 
         if (orderStatus == "IN_PROGRESS" || queueStatus == "IN_PROGRESS")
         {
@@ -530,33 +622,76 @@ internal static class DiagnosticOrderLifecycleHelper
 
         if (diagCharge is not null)
         {
-            List<Payment> chargePayments = [];
+            List<Payment> visitPayments = [];
             try
             {
-                chargePayments = await db.Payments
-                    .Where(p => p.VisitChargeId == diagCharge.Id)
-                    .ToListAsync(ct);
+                visitPayments = order.VisitId.HasValue
+                    ? await db.Payments.Where(p => p.VisitId == order.VisitId.Value).ToListAsync(ct)
+                    : await db.Payments.Where(p => p.VisitChargeId == diagCharge.Id).ToListAsync(ct);
             }
             catch (NotSupportedException)
             {
-                chargePayments = [];
+                visitPayments = [];
             }
 
-            wasAlreadyPaid = chargePayments.Any(p =>
-                string.Equals(p.Status?.Trim(), "PAID", StringComparison.OrdinalIgnoreCase));
+            var visitAllocations = order.VisitId.HasValue
+                ? await MedFlow.Application.Services.Payments.PaymentAllocationLookup.TryLoadTrackedForVisitAsync(db, order.VisitId.Value, ct)
+                : [];
 
-            foreach (var pendingPayment in chargePayments.Where(p =>
+            var (effectiveAllocations, _) = order.VisitId.HasValue
+                ? MedFlow.Application.Services.Payments.PaymentAllocationLookup.BuildEffectiveAllocations(
+                    order.VisitId.Value,
+                    visitPayments,
+                    visitAllocations)
+                : ([], new HashSet<long>());
+
+            wasAlreadyPaid = effectiveAllocations.Count > 0
+                ? effectiveAllocations.Any(a =>
+                    a.VisitChargeId == diagCharge.Id &&
+                    string.Equals(a.Status, PaymentAllocationStatuses.Paid, StringComparison.OrdinalIgnoreCase))
+                : visitPayments.Any(p =>
+                    p.VisitChargeId == diagCharge.Id &&
+                    string.Equals(p.Status?.Trim(), "PAID", StringComparison.OrdinalIgnoreCase));
+
+            var pendingAllocsByPayment = visitAllocations
+                .Where(pa => string.Equals(pa.Status, PaymentAllocationStatuses.Pending, StringComparison.OrdinalIgnoreCase))
+                .GroupBy(pa => pa.PaymentId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            foreach (var pendingPayment in visitPayments.Where(p =>
                          string.Equals(p.Status?.Trim(), "PENDING", StringComparison.OrdinalIgnoreCase)))
             {
+                var overlaps = pendingAllocsByPayment.TryGetValue(pendingPayment.Id, out var pAllocs)
+                    ? pAllocs.Any(pa => pa.VisitChargeId == diagCharge.Id)
+                    : pendingPayment.VisitChargeId == diagCharge.Id;
+
+                if (!overlaps)
+                    continue;
+
                 pendingPayment.Status = "EXPIRED";
                 expiredPendingPaymentCount++;
+
+                if (pendingAllocsByPayment.TryGetValue(pendingPayment.Id, out var toExpire))
+                {
+                    foreach (var pa in toExpire)
+                        pa.Status = PaymentAllocationStatuses.Expired;
+                }
             }
 
             if (wasAlreadyPaid)
             {
-                diagCharge.Status = VisitChargeStatuses.CancelledRefundPending;
-                diagCharge.CancelledAt = nowLocal;
-                resultingChargeStatus = VisitChargeStatuses.CancelledRefundPending;
+                if (voluntarySkipAfterPaid && !reconciliationRequired && !isTechnicalAbort)
+                {
+                    diagCharge.Status = VisitChargeStatuses.PaidNotPerformed;
+                    diagCharge.CancelledAt = nowLocal;
+                    resultingChargeStatus = VisitChargeStatuses.PaidNotPerformed;
+                }
+                else
+                {
+                    diagCharge.Status = VisitChargeStatuses.CancelledRefundPending;
+                    diagCharge.CancelledAt = nowLocal;
+                    resultingChargeStatus = VisitChargeStatuses.CancelledRefundPending;
+                }
             }
             else
             {
@@ -564,6 +699,20 @@ internal static class DiagnosticOrderLifecycleHelper
                 diagCharge.CancelledAt = nowLocal;
                 resultingChargeStatus = VisitChargeStatuses.Cancelled;
             }
+        }
+
+        if (!cancelledByDoctor && isTechnicalAbort && order.RequiredForConclusion != false)
+        {
+            // PAY-06 / BR-03 / §6.2: CLS staff TechnicalAbort sets REVIEW_REQUIRED so CompleteVisit remains gated!
+            order.SelectionStatus = DiagnosticSelectionStatuses.ReviewRequired;
+        }
+        else if (wasAlreadyPaid && voluntarySkipAfterPaid && !reconciliationRequired && !isTechnicalAbort)
+        {
+            order.SelectionStatus = DiagnosticSelectionStatuses.SkippedAfterPaid;
+        }
+        else
+        {
+            order.SelectionStatus = DiagnosticSelectionStatuses.Declined;
         }
 
         QueueEntry? returnQueueEntry = null;
@@ -579,10 +728,17 @@ internal static class DiagnosticOrderLifecycleHelper
                     excludingCancelledOrderId: order.Id,
                     newlyFinalizedOrderId: null,
                     ct: ct);
+
+            if (transitionedToReturnConsultation)
+            {
+                visit.ReadyForReturnAt ??= nowLocal;
+            }
         }
 
         var auditAction = wasAlreadyPaid
-            ? "DIAGNOSTIC_ORDER_CANCELLED_REFUND_PENDING"
+            ? (resultingChargeStatus == VisitChargeStatuses.PaidNotPerformed
+                ? "PAID_DIAGNOSTIC_ORDER_SKIPPED_BY_PATIENT"
+                : "DIAGNOSTIC_ORDER_CANCELLED_REFUND_PENDING")
             : "DIAGNOSTIC_ORDER_CANCELLED";
 
         var auditPayload = new

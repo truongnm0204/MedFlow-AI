@@ -386,6 +386,15 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
                 }
             }
 
+            var isTechnicalAbort = request?.TechnicalAbort == true ||
+                string.Equals(request?.CancelDisposition?.Trim(), "TECHNICAL_ERROR", StringComparison.OrdinalIgnoreCase);
+
+            if (reloadOrder.RequiredForConclusion != false && !isTechnicalAbort)
+            {
+                throw new ConflictException(
+                    "[MANDATORY_ORDER_REVIEW_REQUIRED] Chỉ định cận lâm sàng bắt buộc cho kết luận không thể hủy trực tiếp bởi nhân viên CLS; vui lòng chuyển bác sĩ khám xem xét lại.");
+            }
+
             outcome = await DiagnosticOrderLifecycleHelper.CancelOrderStateAwareAsync(
                 _db,
                 reloadOrder,

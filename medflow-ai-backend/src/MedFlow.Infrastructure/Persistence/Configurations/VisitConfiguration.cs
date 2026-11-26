@@ -45,6 +45,10 @@ public class VisitConfiguration : IEntityTypeConfiguration<Visit>
             .HasColumnName("checked_in_at")
             .HasColumnType("timestamp without time zone");
 
+        builder.Property(v => v.ReadyForReturnAt)
+            .HasColumnName("ready_for_return_at")
+            .HasColumnType("timestamp without time zone");
+
         builder.Property(v => v.CompletedAt)
             .HasColumnName("completed_at")
             .HasColumnType("timestamp without time zone");

@@ -1,4 +1,4 @@
-import { FileCheck2, Megaphone, Stethoscope, XCircle } from 'lucide-react';
+import { Banknote, FileCheck2, Megaphone, Stethoscope, XCircle } from 'lucide-react';
 
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -39,6 +39,7 @@ export interface ExaminationQueueServicePointCardProps {
     mode: ReturnToDoctorModalMode,
   ) => void;
   onCallNext?: (servicePoint: ServicePointQueueDto) => void;
+  onCollectCash?: (entry: ExaminationQueueEntryDto) => void;
   isCallingNext?: boolean;
 }
 
@@ -141,6 +142,7 @@ export function ExaminationQueueServicePointCard({
   onOpenCancelEntry,
   onOpenReturnToDoctor,
   onCallNext,
+  onCollectCash,
   isCallingNext,
 }: ExaminationQueueServicePointCardProps) {
   return (
@@ -422,6 +424,17 @@ export function ExaminationQueueServicePointCard({
                                 Hủy lượt
                               </Button>
                             )}
+                          {onCollectCash && entry.status !== 'COMPLETED' && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => onCollectCash(entry)}
+                              aria-label={`Thu tiền mặt cho ${entry.patientName}`}
+                            >
+                              <Banknote className="w-3.5 h-3.5" aria-hidden="true" />
+                              Thu tiền mặt
+                            </Button>
+                          )}
                           <Button
                             variant="secondary"
                             size="sm"

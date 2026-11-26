@@ -48,6 +48,8 @@ public sealed class RoleCatalogService : IRoleCatalogService
         "USER_MANAGE",
         "AUDIT_READ",
         "PAYMENT_VIEW",
+        "PAYMENT_COLLECT",
+        "PATIENT_IDENTITY_VERIFY",
     ];
     private static readonly HashSet<string> ValidScopes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -96,6 +98,8 @@ public sealed class RoleCatalogService : IRoleCatalogService
             ["USER_MANAGE"] = new("Quản lý tài khoản & vai trò", "Quản trị hệ thống"),
             ["AUDIT_READ"] = new("Tra cứu nhật ký kiểm toán", "An ninh & Kiểm toán"),
             ["PAYMENT_VIEW"] = new("Tra cứu viện phí & thanh toán", "Viện phí"),
+            ["PAYMENT_COLLECT"] = new("Thu tiền mặt tại quầy tiếp nhận", "Viện phí"),
+            ["PATIENT_IDENTITY_VERIFY"] = new("Xác minh định danh hồ sơ bệnh nhân", "Hồ sơ & Tiếp đón"),
         };
 
     private static readonly Dictionary<string, RoleCatalogMetadata> RoleMetadataCatalog =

@@ -207,12 +207,16 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         var policy = policySet.ForServicePoint(servicePointIdForPolicy);
 
         var openDiagnosticCount = CountOpenDiagnosticEntries(context.AllVisitQueueEntries);
+        var openMandatoryOrUnlinkedCount = await CountOpenMandatoryOrUnlinkedDiagnosticEntriesAsync(
+            visit.Id,
+            context.AllVisitQueueEntries,
+            ct);
         var hasPendingMandatory = await HasPendingMandatoryDiagnosticOrdersAsync(visit.Id, ct);
         var resolvedQueueType = ClinicalQueueRules.ResolveQueueType(activeEntry.QueueType, visit.Status);
 
         if (resolvedQueueType == ClinicalQueueRules.QueueTypeReturnConsultation &&
             policy.FinalResultRequired &&
-            (openDiagnosticCount > 0 || hasPendingMandatory))
+            (openMandatoryOrUnlinkedCount > 0 || hasPendingMandatory))
         {
             throw new ConflictException("Chưa thể mở phiên khám lại vì kết quả cận lâm sàng bắt buộc chưa sẵn sàng.");
         }
@@ -863,7 +867,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             FollowUpToOrderCode: request.FollowUpToOrderCode,
             AdditionalOrderReason: request.AdditionalOrderReason,
             ClinicalProgressionNote: request.ClinicalProgressionNote,
-            ExpectedRevisionNo: request.ExpectedRevisionNo);
+            ExpectedRevisionNo: request.ExpectedRevisionNo,
+            PatientAccepted: request.PatientAccepted);
 
         return CreateDiagnosticOrderCoreAsync(
             actorUserId,
@@ -1390,6 +1395,12 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             await SaveChangesWithConcurrencyGuardAsync(ct);
             createdQueueEntries.Add(diagQueueEntry);
 
+            var initialSelectionStatus = resolved.Item.RequiredForConclusion
+                ? DiagnosticSelectionStatuses.Accepted
+                : (resolved.Item.PatientAccepted == true
+                    ? DiagnosticSelectionStatuses.Accepted
+                    : DiagnosticSelectionStatuses.Undecided);
+
             var diagnosticOrder = new DiagnosticOrder
             {
                 VisitId = visit.Id,
@@ -1400,6 +1411,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 RequiredForConclusion = resolved.Item.RequiredForConclusion,
                 Priority = resolved.Item.Priority,
                 Status = "ORDERED",
+                SelectionStatus = initialSelectionStatus,
                 ConfirmedByStaffId = null,
                 ConfirmedAt = null,
                 OrderedAt = nowLocal,
@@ -1417,6 +1429,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 unitPrice: resolved.UnitPrice,
                 createdAtLocal: nowLocal);
             _db.VisitCharges.Add(diagnosticCharge);
+            await SaveChangesWithConcurrencyGuardAsync(ct);
             var ticketNo = $"C{nextQueueNumber:D3}";
             var orderSequenceNo = existingNonCancelledCount + index + 1;
             var isOrderAdditional = validated.IsAdditionalOrder ||
@@ -1518,7 +1531,11 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 OrderSequenceNo: orderSequenceNo,
                 FollowUpToOrderId: followUpOrderId,
                 FollowUpToOrderCode: followUpOrderCode,
-                AdditionalOrderReason: effectiveAdditionalReason));
+                AdditionalOrderReason: effectiveAdditionalReason,
+                SelectionStatus: diagnosticOrder.SelectionStatus,
+                VisitChargeId: diagnosticCharge.Id,
+                ChargeStatus: diagnosticCharge.Status,
+                PaymentStatus: resolved.UnitPrice == 0m ? "WAIVED" : "UNPAID"));
         }
 
         activeEntry.StateVersion = nextStateVersion;
@@ -1684,6 +1701,11 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             throw new NotFoundException("DiagnosticOrder", orderIdOrCode.Trim());
         }
 
+        var isVoluntarySkip = request?.VoluntarySkipByPatient == true ||
+            (targetOrder.RequiredForConclusion == false &&
+             request?.ReconciliationRequired != true &&
+             request?.TechnicalAbort != true);
+
         var cancelOutcome = await DiagnosticOrderLifecycleHelper.CancelOrderStateAwareAsync(
             db: _db,
             actorUserId: actorUserId,
@@ -1695,7 +1717,10 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             nowLocal: nowLocal,
             nowUtc: nowUtc,
             ipAddress: QueueEntryRequestParsing.ParseIpAddress(ipAddress),
-            ct: ct);
+            ct: ct,
+            cancelledByDoctor: true,
+            voluntarySkipAfterPaid: isVoluntarySkip,
+            reconciliationRequired: request?.ReconciliationRequired == true);
 
         await SaveChangesWithConcurrencyGuardAsync(ct);
 
@@ -1740,7 +1765,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             ct);
 
         var outcomeCode = cancelOutcome.WasAlreadyPaid
-            ? "DIAGNOSTIC_ORDER_CANCELLED_REFUND_PENDING"
+            ? (string.Equals(cancelOutcome.DiagnosticCharge?.Status, VisitChargeStatuses.PaidNotPerformed, StringComparison.OrdinalIgnoreCase)
+                ? "PAID_DIAGNOSTIC_ORDER_SKIPPED_BY_PATIENT"
+                : "DIAGNOSTIC_ORDER_CANCELLED_REFUND_PENDING")
             : "DIAGNOSTIC_ORDER_CANCELLED";
 
         return await BuildWorkspaceResponseAsync(
@@ -2488,10 +2515,14 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             ?? context.ServicePoint?.Id;
         var policy = policySet.ForServicePoint(servicePointIdForPolicy);
         var hasPendingMandatoryOrders = await HasPendingMandatoryDiagnosticOrdersAsync(visit.Id, ct);
+        var openMandatoryOrUnlinkedCount = await CountOpenMandatoryOrUnlinkedDiagnosticEntriesAsync(
+            visit.Id,
+            context.AllVisitQueueEntries,
+            ct);
         var wantsConfirmedDiagnosis = request.IsConfirmed == true ||
             validated.Items.Any(i => string.Equals(i.Status, "CONFIRMED", StringComparison.OrdinalIgnoreCase));
 
-        if (wantsConfirmedDiagnosis && ((policy.FinalResultRequired && openDiagnosticCount > 0) || hasPendingMandatoryOrders))
+        if (wantsConfirmedDiagnosis && ((policy.FinalResultRequired && openMandatoryOrUnlinkedCount > 0) || hasPendingMandatoryOrders))
         {
             throw new ConflictException(
                 "Chưa thể xác nhận chẩn đoán cuối cùng (CONFIRMED) khi kết quả cận lâm sàng bắt buộc chưa hoàn tất. Bác sĩ có thể lưu chẩn đoán sơ bộ (PROVISIONAL/PRELIMINARY).");
@@ -2835,6 +2866,27 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             ?? context.ServicePoint?.Id;
         var policy = policySet.ForServicePoint(servicePointIdForPolicy);
         var hasPendingMandatoryOrders = await HasPendingMandatoryDiagnosticOrdersAsync(visit.Id, ct);
+
+        if (hasPendingMandatoryOrders)
+        {
+            throw new ConflictException(
+                "Chưa thể hoàn tất lượt khám khi kết quả cận lâm sàng bắt buộc chưa hoàn tất hoặc đang chờ bác sĩ xử lý [REVIEW_REQUIRED].");
+        }
+
+        // PAY-22: Handle unpaid, unexecuted UNDECIDED optional orders cleanly at Visit Completion
+        var refreshedQueuesAfterUndecided = await HandleUndecidedOptionalOrdersBeforeCompleteAsync(
+            visit,
+            doctorAccess.Hospital.Id,
+            actorUserId,
+            validated.CloseUndecidedOptionalOrders,
+            nowLocal,
+            nowUtc,
+            ipAddress,
+            context.AllVisitQueueEntries,
+            ct);
+        context = context with { AllVisitQueueEntries = refreshedQueuesAfterUndecided };
+        openDiagnosticCount = CountOpenDiagnosticEntries(context.AllVisitQueueEntries);
+
         var hasAnyOpenDiagnosticOrders = await HasAnyOpenDiagnosticOrdersAsync(visit.Id, ct);
 
         if ((policy.FinalResultRequired && openDiagnosticCount > 0) || hasPendingMandatoryOrders)
@@ -3420,7 +3472,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                     RequiredForConclusion: request.RequiredForConclusion,
                     FollowUpToOrderId: request.FollowUpToOrderId,
                     FollowUpToOrderCode: request.FollowUpToOrderCode,
-                    AdditionalOrderReason: request.AdditionalOrderReason),
+                    AdditionalOrderReason: request.AdditionalOrderReason,
+                    PatientAccepted: request.PatientAccepted),
             ];
         }
         else
@@ -3494,6 +3547,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
 
             var priority = NormalizeDiagnosticOrderPriority(item.Priority);
             var requiredForConclusion = item.RequiredForConclusion ?? true;
+            var effectiveAccepted = item.PatientAccepted ?? request.PatientAccepted;
 
             normalizedItems.Add(new ValidatedDiagnosticOrderItemInput(
                 ServiceId: item.ServiceId,
@@ -3503,7 +3557,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 RequiredForConclusion: requiredForConclusion,
                 FollowUpToOrderId: effectiveFollowUpId,
                 FollowUpToOrderCode: effectiveFollowUpCode,
-                AdditionalOrderReason: effectiveAdditionalReason));
+                AdditionalOrderReason: effectiveAdditionalReason,
+                PatientAccepted: effectiveAccepted));
         }
 
         var isAdditionalOrder = forceAdditionalInvocation ||
@@ -4003,7 +4058,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 CompletionNote: null,
                 ConfirmNoPrescription: null,
                 ExpectedStateVersion: null,
-                ExpectedRevisionNo: null);
+                ExpectedRevisionNo: null,
+                CloseUndecidedOptionalOrders: null);
         }
 
         if (request.ExpectedStateVersion is < 1)
@@ -4057,7 +4113,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             CompletionNote: completionNote,
             ConfirmNoPrescription: request.ConfirmNoPrescription,
             ExpectedStateVersion: request.ExpectedStateVersion,
-            ExpectedRevisionNo: request.ExpectedRevisionNo);
+            ExpectedRevisionNo: request.ExpectedRevisionNo,
+            CloseUndecidedOptionalOrders: request.CloseUndecidedOptionalOrders);
     }
 
     private async Task<List<ResolvedDiagnosisItem>> ResolveAndValidateDiagnosisItemsAsync(
@@ -5959,11 +6016,25 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
 
         var open = total - completed;
 
+        var reviewRequiredMandatoryCount = visitDiagnosticOrders.Count(o =>
+            o.RequiredForConclusion == true &&
+            string.Equals(o.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.ReviewRequired, StringComparison.OrdinalIgnoreCase));
+
         var mandatoryPendingCount = nonCancelledOrders.Count(o =>
             o.RequiredForConclusion == true &&
-            !IsOrderCompletedOrResultFinalized(o, finalizedOrderIds, unfinalizedResultOrderIds));
+            !IsOrderCompletedOrResultFinalized(o, finalizedOrderIds, unfinalizedResultOrderIds)) +
+            visitDiagnosticOrders.Count(o =>
+                o.RequiredForConclusion == true &&
+                AppointmentBookingRules.NormalizeStatusKey(o.Status) == "CANCELLED" &&
+                string.Equals(o.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.ReviewRequired, StringComparison.OrdinalIgnoreCase));
+
         var optionalPendingCount = nonCancelledOrders.Count(o =>
             o.RequiredForConclusion != true &&
+            !IsOrderCompletedOrResultFinalized(o, finalizedOrderIds, unfinalizedResultOrderIds));
+
+        var undecidedOptionalPendingCount = nonCancelledOrders.Count(o =>
+            o.RequiredForConclusion == false &&
+            string.Equals(o.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.Undecided, StringComparison.OrdinalIgnoreCase) &&
             !IsOrderCompletedOrResultFinalized(o, finalizedOrderIds, unfinalizedResultOrderIds));
         var performedAwaitingResultCount = nonCancelledOrders.Count(o =>
         {
@@ -5995,7 +6066,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             OptionalPendingCount: optionalPendingCount,
             PerformedAwaitingResultCount: performedAwaitingResultCount,
             AllOrdersResolvedForCompletion: allOrdersResolved,
-            RequiresDiagnosisReconfirmation: requiresDiagnosisReconfirmation);
+            RequiresDiagnosisReconfirmation: requiresDiagnosisReconfirmation,
+            UndecidedOptionalPendingCount: undecidedOptionalPendingCount,
+            ReviewRequiredCount: reviewRequiredMandatoryCount);
     }
 
     private static bool IsOrderCompletedOrResultFinalized(
@@ -6336,6 +6409,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             .Distinct()
             .ToList();
         var auditMetadataByOrderId = await TryLoadDiagnosticOrderAuditMetadataAsync(orderIdStrings, ct);
+        var chargeLookupByOrderId = await TryLoadOrderChargeStatusesAsync(visit.Id, ct);
 
         var dtos = new List<ConsultationDiagnosticOrderDto>(visitDiagnosticOrders.Count);
         foreach (var order in visitDiagnosticOrders)
@@ -6464,10 +6538,300 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 OrderSequenceNo: orderSequenceNo,
                 FollowUpToOrderId: auditMeta?.FollowUpToOrderId,
                 FollowUpToOrderCode: auditMeta?.FollowUpToOrderCode,
-                AdditionalOrderReason: auditMeta?.AdditionalOrderReason));
+                AdditionalOrderReason: auditMeta?.AdditionalOrderReason,
+                SelectionStatus: string.IsNullOrWhiteSpace(order.SelectionStatus)
+                    ? DiagnosticSelectionStatuses.Accepted
+                    : order.SelectionStatus.Trim().ToUpperInvariant(),
+                VisitChargeId: chargeLookupByOrderId.TryGetValue(order.Id, out var cInfo) ? cInfo.ChargeId : null,
+                ChargeStatus: chargeLookupByOrderId.TryGetValue(order.Id, out var cInfo2) ? cInfo2.ChargeStatus : null,
+                PaymentStatus: chargeLookupByOrderId.TryGetValue(order.Id, out var cInfo3) ? cInfo3.PaymentStatus : null));
         }
 
         return dtos;
+    }
+
+    private async Task<Dictionary<long, (long ChargeId, string ChargeStatus, string PaymentStatus)>> TryLoadOrderChargeStatusesAsync(
+        long visitId,
+        CancellationToken ct)
+    {
+        var map = new Dictionary<long, (long ChargeId, string ChargeStatus, string PaymentStatus)>();
+        try
+        {
+            var charges = await _db.VisitCharges.AsNoTracking()
+                .Where(c => c.VisitId == visitId && c.DiagnosticOrderId != null)
+                .ToListAsync(ct);
+            if (charges.Count == 0)
+                return map;
+
+            var payments = await _db.Payments.AsNoTracking()
+                .Where(p => p.VisitId == visitId)
+                .OrderByDescending(p => p.Id)
+                .ToListAsync(ct);
+
+            var allocations = await MedFlow.Application.Services.Payments.PaymentAllocationLookup
+                .TryLoadNoTrackingForVisitAsync(_db, visitId, ct);
+
+            var (effectiveAllocs, _) = MedFlow.Application.Services.Payments.PaymentAllocationLookup
+                .BuildEffectiveAllocations(visitId, payments, allocations);
+
+            foreach (var charge in charges)
+            {
+                if (!charge.DiagnosticOrderId.HasValue)
+                    continue;
+
+                var cStatus = string.IsNullOrWhiteSpace(charge.Status)
+                    ? VisitChargeStatuses.Active
+                    : charge.Status.Trim().ToUpperInvariant();
+
+                var req = charge.PaymentRequirement?.Trim().ToUpperInvariant();
+                var lineAllocs = effectiveAllocs.Where(a => a.VisitChargeId == charge.Id).ToList();
+
+                string pStatus;
+                if (cStatus == VisitChargeStatuses.PaidNotPerformed)
+                {
+                    pStatus = VisitChargeStatuses.PaidNotPerformed;
+                }
+                else if (req == "WAIVED" || charge.UnitPrice == 0m)
+                {
+                    pStatus = "WAIVED";
+                }
+                else if (lineAllocs.Any(a => string.Equals(a.Status, PaymentAllocationStatuses.Paid, StringComparison.OrdinalIgnoreCase)))
+                {
+                    pStatus = "PAID";
+                }
+                else if (lineAllocs.Any(a => string.Equals(a.Status, PaymentAllocationStatuses.Pending, StringComparison.OrdinalIgnoreCase)))
+                {
+                    pStatus = "PENDING";
+                }
+                else if (lineAllocs.Any(a => string.Equals(a.Status, PaymentAllocationStatuses.Reconcile, StringComparison.OrdinalIgnoreCase)) ||
+                         cStatus == VisitChargeStatuses.CancelledRefundPending)
+                {
+                    pStatus = "MISMATCH";
+                }
+                else
+                {
+                    pStatus = "UNPAID";
+                }
+
+                map[charge.DiagnosticOrderId.Value] = (charge.Id, cStatus, pStatus);
+            }
+        }
+        catch (NotSupportedException)
+        {
+        }
+
+        return map;
+    }
+
+    private async Task<IReadOnlyList<QueueEntry>> HandleUndecidedOptionalOrdersBeforeCompleteAsync(
+        Visit visit,
+        long hospitalId,
+        long actorUserId,
+        bool? closeUndecidedOptionalOrders,
+        DateTime nowLocal,
+        DateTime nowUtc,
+        string? ipAddress,
+        IReadOnlyList<QueueEntry> allVisitQueueEntries,
+        CancellationToken ct)
+    {
+        List<DiagnosticOrder> orders;
+        try
+        {
+            orders = await _db.DiagnosticOrders
+                .Where(o => o.VisitId == visit.Id && o.RequiredForConclusion == false)
+                .OrderBy(o => o.Id)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            return allVisitQueueEntries;
+        }
+
+        if (orders.Count == 0)
+            return allVisitQueueEntries;
+
+        var resultsBundle = await LoadDiagnosticResultsBundleAsync(orders, ct);
+        var undecidedCandidates = orders
+            .Where(o =>
+                AppointmentBookingRules.NormalizeStatusKey(o.Status) is not ("CANCELLED" or "IN_PROGRESS" or "COMPLETED" or "DONE" or "FINALIZED" or "VERIFIED") &&
+                string.Equals(o.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.Undecided, StringComparison.OrdinalIgnoreCase) &&
+                !IsOrderCompletedOrResultFinalized(o, resultsBundle.FinalizedOrderIds, resultsBundle.UnfinalizedResultOrderIds))
+            .ToList();
+
+        if (undecidedCandidates.Count == 0)
+            return allVisitQueueEntries;
+
+        List<VisitCharge> visitCharges = [];
+        List<Payment> visitPayments = [];
+        List<PaymentAllocation> visitAllocations = [];
+
+        try
+        {
+            var preChargeIds = await _db.VisitCharges.AsNoTracking()
+                .Where(c => c.VisitId == visit.Id)
+                .OrderBy(c => c.Id)
+                .Select(c => c.Id)
+                .ToListAsync(ct);
+            if (preChargeIds.Count > 0)
+                await _db.TryLockVisitChargesForUpdateAsync(preChargeIds, ct);
+
+            visitCharges = await _db.VisitCharges
+                .Where(c => c.VisitId == visit.Id)
+                .OrderBy(c => c.Id)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+        }
+
+        try
+        {
+            var prePaymentIds = await _db.Payments.AsNoTracking()
+                .Where(p => p.VisitId == visit.Id)
+                .OrderBy(p => p.Id)
+                .Select(p => p.Id)
+                .ToListAsync(ct);
+            if (prePaymentIds.Count > 0)
+                await _db.TryLockPaymentsForUpdateAsync(prePaymentIds, ct);
+
+            visitPayments = await _db.Payments
+                .Where(p => p.VisitId == visit.Id)
+                .OrderBy(p => p.Id)
+                .ToListAsync(ct);
+
+            var preAllocIds = await _db.PaymentAllocations.AsNoTracking()
+                .Where(pa => pa.VisitId == visit.Id)
+                .OrderBy(pa => pa.Id)
+                .Select(pa => pa.Id)
+                .ToListAsync(ct);
+            if (preAllocIds.Count > 0)
+                await _db.TryLockPaymentAllocationsForUpdateAsync(preAllocIds, ct);
+
+            visitAllocations = await _db.PaymentAllocations
+                .Where(pa => pa.VisitId == visit.Id)
+                .OrderBy(pa => pa.Id)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+        }
+
+        var (effectiveAllocations, _) = MedFlow.Application.Services.Payments.PaymentAllocationLookup
+            .BuildEffectiveAllocations(visit.Id, visitPayments, visitAllocations);
+
+        var unpaidUndecided = undecidedCandidates
+            .Where(o =>
+            {
+                var ch = visitCharges.FirstOrDefault(c => c.DiagnosticOrderId == o.Id);
+                if (ch is null)
+                    return true;
+                return !effectiveAllocations.Any(a =>
+                    a.VisitChargeId == ch.Id &&
+                    string.Equals(a.Status, PaymentAllocationStatuses.Paid, StringComparison.OrdinalIgnoreCase));
+            })
+            .ToList();
+
+        if (unpaidUndecided.Count == 0)
+            return allVisitQueueEntries;
+
+        if (closeUndecidedOptionalOrders != true)
+        {
+            throw new ConflictException(
+                "[UNDECIDED_OPTIONAL_ORDERS_OPEN] Lượt khám còn chỉ định cận lâm sàng tùy chọn chưa quyết định (UNDECIDED). Vui lòng xác nhận đóng các chỉ định tùy chọn chưa sử dụng (closeUndecidedOptionalOrders = true) hoặc hủy từng chỉ định trước khi hoàn tất khám.");
+        }
+
+        var closedQueueIds = new HashSet<long>();
+        var closedChargeIds = new HashSet<long>();
+
+        foreach (var order in unpaidUndecided)
+        {
+            order.Status = "CANCELLED";
+            order.SelectionStatus = DiagnosticSelectionStatuses.Declined;
+
+            if (order.QueueEntryId.HasValue)
+            {
+                var qe = await _db.QueueEntries.FirstOrDefaultAsync(q => q.Id == order.QueueEntryId.Value, ct);
+                if (qe is not null && NormalizeQueueStatus(qe.Status) != "CANCELLED")
+                {
+                    var prevVer = qe.StateVersion is > 0 ? qe.StateVersion.Value : 1;
+                    qe.Status = "CANCELLED";
+                    qe.CompletedAt ??= nowLocal;
+                    qe.StateVersion = prevVer + 1;
+                    closedQueueIds.Add(qe.Id);
+                }
+            }
+
+            var charge = visitCharges.FirstOrDefault(c => c.DiagnosticOrderId == order.Id);
+            if (charge is not null)
+            {
+                charge.Status = VisitChargeStatuses.Cancelled;
+                charge.CancelledAt = nowLocal;
+                closedChargeIds.Add(charge.Id);
+            }
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                ActorUserId = actorUserId,
+                HospitalId = hospitalId,
+                Action = "DIAGNOSTIC_ORDER_CLOSED_UNDECIDED_AT_COMPLETION",
+                EntityType = "DIAGNOSTIC_ORDER",
+                EntityId = !string.IsNullOrWhiteSpace(order.OrderCode)
+                    ? order.OrderCode.Trim()
+                    : order.Id.ToString(CultureInfo.InvariantCulture),
+                Reason = "Đóng chỉ định cận lâm sàng tùy chọn chưa thực hiện (UNDECIDED) khi hoàn tất lượt khám.",
+                ChangeData = JsonSerializer.Serialize(new
+                {
+                    visitId = visit.Id,
+                    visitCode = visit.VisitCode,
+                    diagnosticOrderId = order.Id,
+                    orderCode = order.OrderCode,
+                    selectionStatus = order.SelectionStatus,
+                    visitChargeId = charge?.Id,
+                    chargeStatus = charge?.Status,
+                }, AuditJsonOptions),
+                IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+                OccurredAt = nowUtc,
+            });
+        }
+
+        if (closedChargeIds.Count > 0)
+        {
+            var pendingAllocsByPayment = visitAllocations
+                .Where(pa => string.Equals(pa.Status, PaymentAllocationStatuses.Pending, StringComparison.OrdinalIgnoreCase))
+                .GroupBy(pa => pa.PaymentId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            foreach (var p in visitPayments.Where(p =>
+                         string.Equals(p.Status?.Trim(), MedFlow.Application.Services.Payments.PaymentStatuses.Pending, StringComparison.OrdinalIgnoreCase)))
+            {
+                var overlaps = pendingAllocsByPayment.TryGetValue(p.Id, out var pAllocs)
+                    ? pAllocs.Any(pa => closedChargeIds.Contains(pa.VisitChargeId))
+                    : (p.VisitChargeId.HasValue && closedChargeIds.Contains(p.VisitChargeId.Value));
+
+                if (!overlaps)
+                    continue;
+
+                p.Status = MedFlow.Application.Services.Payments.PaymentStatuses.Cancelled;
+                if (pendingAllocsByPayment.TryGetValue(p.Id, out var toCancel))
+                {
+                    foreach (var pa in toCancel)
+                        pa.Status = PaymentAllocationStatuses.Cancelled;
+                }
+            }
+        }
+
+        await SaveChangesWithConcurrencyGuardAsync(ct);
+
+        return allVisitQueueEntries
+            .Select(q =>
+            {
+                if (!closedQueueIds.Contains(q.Id))
+                    return q;
+                q.Status = "CANCELLED";
+                q.CompletedAt ??= nowLocal;
+                return q;
+            })
+            .ToList();
     }
 
     private async Task<Dictionary<long, DiagnosticOrderAuditMetadata>> TryLoadDiagnosticOrderAuditMetadataAsync(
@@ -7155,6 +7519,41 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             !q.CompletedAt.HasValue &&
             NormalizeQueueStatus(q.Status) is not ("COMPLETED" or "CANCELLED"));
 
+    private async Task<int> CountOpenMandatoryOrUnlinkedDiagnosticEntriesAsync(
+        long visitId,
+        IReadOnlyList<QueueEntry> allVisitQueueEntries,
+        CancellationToken ct)
+    {
+        var openEntries = allVisitQueueEntries
+            .Where(q =>
+                string.Equals(q.QueueType, "DIAGNOSTIC", StringComparison.OrdinalIgnoreCase) &&
+                !q.CompletedAt.HasValue &&
+                NormalizeQueueStatus(q.Status) is not ("COMPLETED" or "CANCELLED"))
+            .ToList();
+
+        if (openEntries.Count == 0)
+            return 0;
+
+        try
+        {
+            var optionalQueueEntryIds = await _db.DiagnosticOrders
+                .AsNoTracking()
+                .Where(o => o.VisitId == visitId && o.RequiredForConclusion == false && o.QueueEntryId.HasValue)
+                .Select(o => o.QueueEntryId!.Value)
+                .ToListAsync(ct);
+
+            if (optionalQueueEntryIds.Count == 0)
+                return openEntries.Count;
+
+            var optionalSet = optionalQueueEntryIds.ToHashSet();
+            return openEntries.Count(q => !optionalSet.Contains(q.Id));
+        }
+        catch (NotSupportedException)
+        {
+            return openEntries.Count;
+        }
+    }
+
     private async Task<bool> HasPendingMandatoryDiagnosticOrdersAsync(
         long visitId,
         CancellationToken ct)
@@ -7173,11 +7572,12 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
 
             var resultsBundle = await LoadDiagnosticResultsBundleAsync(mandatoryOrders, ct);
             return mandatoryOrders.Any(o =>
-                AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED" &&
-                !IsOrderCompletedOrResultFinalized(
-                    o,
-                    resultsBundle.FinalizedOrderIds,
-                    resultsBundle.UnfinalizedResultOrderIds));
+                string.Equals(o.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.ReviewRequired, StringComparison.OrdinalIgnoreCase) ||
+                (AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED" &&
+                 !IsOrderCompletedOrResultFinalized(
+                     o,
+                     resultsBundle.FinalizedOrderIds,
+                     resultsBundle.UnfinalizedResultOrderIds)));
         }
         catch (NotSupportedException)
         {
@@ -7575,7 +7975,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         bool RequiredForConclusion,
         long? FollowUpToOrderId,
         string? FollowUpToOrderCode,
-        string? AdditionalOrderReason);
+        string? AdditionalOrderReason,
+        bool? PatientAccepted = null);
 
     private sealed record ResolvedDiagnosticOrderCreationItem(
         ValidatedDiagnosticOrderItemInput Item,
@@ -7629,7 +8030,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         string? CompletionNote,
         bool? ConfirmNoPrescription,
         int? ExpectedStateVersion,
-        int? ExpectedRevisionNo);
+        int? ExpectedRevisionNo,
+        bool? CloseUndecidedOptionalOrders = null);
 
     private sealed record ValidatedGetDiagnosticResultsFilter(
         string? Category,

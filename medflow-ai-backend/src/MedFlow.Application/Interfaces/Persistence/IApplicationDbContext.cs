@@ -31,6 +31,7 @@ public interface IApplicationDbContext
     DbSet<Visit> Visits { get; }
     DbSet<QueueEntry> QueueEntries { get; }
     DbSet<Payment> Payments { get; }
+    DbSet<PaymentAllocation> PaymentAllocations => throw new NotSupportedException("PaymentAllocations DbSet is not configured in this test context.");
     DbSet<VisitCharge> VisitCharges => throw new NotSupportedException("VisitCharges DbSet is not configured in this test context.");
     DbSet<Medicine> Medicines => throw new NotSupportedException("Medicines DbSet is not configured in this test context.");
     DbSet<MedicineBatch> MedicineBatches => throw new NotSupportedException("MedicineBatches DbSet is not configured in this test context.");
@@ -138,5 +139,11 @@ public interface IApplicationDbContext
     Task<bool> TryLockPaymentForUpdateAsync(long paymentId, CancellationToken ct = default)
         => Task.FromResult(false);
     Task<bool> TryLockPaymentsForUpdateAsync(IReadOnlyCollection<long> paymentIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 16b: payment_allocations (ADR-0060)
+    Task<bool> TryLockPaymentAllocationForUpdateAsync(long allocationId, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockPaymentAllocationsForUpdateAsync(IReadOnlyCollection<long> allocationIds, CancellationToken ct = default)
         => Task.FromResult(false);
 }

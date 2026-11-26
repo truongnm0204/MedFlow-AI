@@ -236,4 +236,199 @@ describe('VisitPaymentPage', () => {
     });
     expect(await screen.findByRole('img', { name: 'Mã QR thanh toán MF66' })).toBeInTheDocument();
   });
+
+  it('defaults checkboxes to Exam and ACCEPTED mandatory CLS while leaving UNDECIDED optional CLS unchecked, and generates grouped VietQR', async () => {
+    const user = userEvent.setup();
+    renderPage({
+      ...baseCharges,
+      settlementStatus: 'UNPAID',
+      payableTotal: 450000,
+      selectedAmountDue: 270000,
+      amountDue: 450000,
+      canPayByQr: true,
+      charges: [
+        {
+          chargeId: 201,
+          chargeSource: 'PERSISTED',
+          serviceId: 1,
+          serviceCode: 'KHAM-01',
+          serviceName: 'Khám Nội',
+          diagnosticOrderId: null,
+          unitPrice: 120000,
+          paymentRequirement: 'REQUIRED',
+          payable: true,
+          chargeDataStatus: 'VALID',
+          chargeType: 'EXAMINATION',
+          chargeStatus: 'ACTIVE',
+          lineSettlementStatus: 'UNPAID',
+          canPayByQr: true,
+          canSelect: true,
+        },
+        {
+          chargeId: 202,
+          chargeSource: 'PERSISTED',
+          serviceId: 2,
+          serviceCode: 'XN-01',
+          serviceName: 'Xét nghiệm máu bắt buộc',
+          diagnosticOrderId: 901,
+          unitPrice: 150000,
+          paymentRequirement: 'REQUIRED',
+          payable: true,
+          chargeDataStatus: 'VALID',
+          chargeType: 'DIAGNOSTIC',
+          chargeStatus: 'ACTIVE',
+          lineSettlementStatus: 'UNPAID',
+          canPayByQr: true,
+          requiredForConclusion: true,
+          selectionStatus: 'ACCEPTED',
+          canSelect: true,
+        },
+        {
+          chargeId: 203,
+          chargeSource: 'PERSISTED',
+          serviceId: 3,
+          serviceCode: 'SA-01',
+          serviceName: 'Siêu âm bụng tùy chọn',
+          diagnosticOrderId: 903,
+          unitPrice: 180000,
+          paymentRequirement: 'REQUIRED',
+          payable: true,
+          chargeDataStatus: 'VALID',
+          chargeType: 'DIAGNOSTIC',
+          chargeStatus: 'ACTIVE',
+          lineSettlementStatus: 'UNPAID',
+          canPayByQr: true,
+          requiredForConclusion: false,
+          selectionStatus: 'UNDECIDED',
+          canSelect: true,
+          canDecline: true,
+        },
+      ],
+    });
+
+    const examCheckbox = await screen.findByRole('checkbox', {
+      name: 'Chọn thanh toán Khám Nội',
+    });
+    const mandatoryCheckbox = screen.getByRole('checkbox', {
+      name: 'Chọn thanh toán Xét nghiệm máu bắt buộc',
+    });
+    const optionalCheckbox = screen.getByRole('checkbox', {
+      name: 'Chọn thanh toán Siêu âm bụng tùy chọn',
+    });
+
+    expect(examCheckbox).toBeChecked();
+    expect(mandatoryCheckbox).toBeChecked();
+    expect(optionalCheckbox).not.toBeChecked();
+
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: {
+        ...qrResponse,
+        paymentId: 77,
+        paymentCode: 'MF77',
+        amount: 270000,
+        transferContent: 'MF77',
+        allocations: [
+          {
+            visitChargeId: 201,
+            serviceCode: 'KHAM-01',
+            serviceName: 'Khám Nội',
+            allocatedAmount: 120000,
+            status: 'PENDING',
+          },
+          {
+            visitChargeId: 202,
+            serviceCode: 'XN-01',
+            serviceName: 'Xét nghiệm máu bắt buộc',
+            allocatedAmount: 150000,
+            status: 'PENDING',
+          },
+        ],
+      },
+    });
+
+    await user.click(screen.getByRole('button', { name: /Thanh toán các dịch vụ đã chọn \(2\)/i }));
+
+    expect(post).toHaveBeenCalledWith(`/patients/visits/${visitCode}/payments/qr`, {
+      visitChargeIds: [201, 202],
+    });
+    expect(await screen.findByRole('img', { name: 'Mã QR thanh toán MF77' })).toBeInTheDocument();
+    expect(screen.getByText('Chi tiết gộp (2 dịch vụ)')).toBeInTheDocument();
+  });
+
+  it('declines an unpaid optional diagnostic order and renders PAID_NOT_PERFORMED + non-blocking reconciliation notice cleanly', async () => {
+    const user = userEvent.setup();
+    renderPage({
+      ...baseCharges,
+      settlementStatus: 'UNPAID',
+      payableTotal: 330000,
+      amountDue: 180000,
+      canPayByQr: true,
+      hasReconciliationItems: true,
+      charges: [
+        {
+          chargeId: 210,
+          chargeSource: 'PERSISTED',
+          serviceId: 4,
+          serviceCode: 'XQ-01',
+          serviceName: 'X-quang ngực tùy chọn đã đóng tiền',
+          diagnosticOrderId: 910,
+          unitPrice: 150000,
+          paymentRequirement: 'REQUIRED',
+          payable: false,
+          chargeDataStatus: 'VALID',
+          chargeType: 'DIAGNOSTIC',
+          chargeStatus: 'PAID_NOT_PERFORMED',
+          lineSettlementStatus: 'PAID_NOT_PERFORMED',
+          canPayByQr: false,
+          requiredForConclusion: false,
+          selectionStatus: 'SKIPPED_AFTER_PAID',
+        },
+        {
+          chargeId: 211,
+          chargeSource: 'PERSISTED',
+          serviceId: 5,
+          serviceCode: 'SA-02',
+          serviceName: 'Siêu âm giáp tùy chọn',
+          diagnosticOrderId: 911,
+          unitPrice: 180000,
+          paymentRequirement: 'REQUIRED',
+          payable: true,
+          chargeDataStatus: 'VALID',
+          chargeType: 'DIAGNOSTIC',
+          chargeStatus: 'ACTIVE',
+          lineSettlementStatus: 'UNPAID',
+          canPayByQr: true,
+          requiredForConclusion: false,
+          selectionStatus: 'UNDECIDED',
+          canDecline: true,
+        },
+      ],
+    });
+
+    expect(await screen.findByText('Đã thanh toán — Không sử dụng')).toBeInTheDocument();
+    expect(screen.getByText(/Cần đối soát:/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Hoàn tiền/i })).not.toBeInTheDocument();
+
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: {
+        visitId: 10,
+        visitCode,
+        diagnosticOrderId: 911,
+        orderCode: 'DIA-911',
+        orderStatus: 'CANCELLED',
+        selectionStatus: 'DECLINED',
+        visitChargeId: 211,
+        chargeStatus: 'CANCELLED',
+        visitStatus: 'IN_PROGRESS',
+      },
+    });
+
+    await user.click(screen.getByRole('button', { name: /Không thực hiện/i }));
+    await user.click(screen.getByRole('button', { name: 'Xác nhận không thực hiện' }));
+
+    expect(post).toHaveBeenCalledWith(
+      `/patients/visits/${visitCode}/diagnostic-orders/911/decline`,
+      { reason: 'Bệnh nhân chọn không thực hiện dịch vụ tùy chọn.' },
+    );
+  });
 });

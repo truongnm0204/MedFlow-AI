@@ -64,6 +64,17 @@ public sealed class VisitChargesService : IVisitChargesService
         if (!actor.IsPatient && !actor.IsSystemAdmin && actor.HospitalId != visitHospitalId)
             throw new ForbiddenException(ForbiddenMessage);
 
+        if (actor.Doctor is not null)
+        {
+            await VisitPaymentAccess.EnsureDoctorAssignedToVisitAsync(
+                _db,
+                actor.Doctor,
+                visit,
+                visitHospitalId,
+                ForbiddenMessage,
+                ct);
+        }
+
         var assessment = await VisitChargeAssessor.AssessAsync(_db, _timeProvider, visit, ct);
         return new VisitChargesResponseDto(
             visit.Id,
@@ -84,44 +95,36 @@ public sealed class VisitChargesService : IVisitChargesService
             assessment.PaymentMethod,
             assessment.PaidAt,
             assessment.ExternalReference,
-            assessment.CanPayByQr);
+            assessment.CanPayByQr,
+            SelectedAmountDue: assessment.SelectedAmountDue,
+            ActivePendingQrPaymentId: assessment.ActivePendingQrPaymentId,
+            ActivePendingQrPaymentCode: assessment.ActivePendingQrPaymentCode,
+            ActivePendingQrAmount: assessment.ActivePendingQrAmount,
+            ActivePendingQrChargeIds: assessment.ActivePendingQrChargeIds,
+            HasReconciliationItems: assessment.HasReconciliationItems);
     }
 
     private async Task<ActorContext> LoadActorAsync(long actorUserId, CancellationToken ct)
     {
         await VisitPaymentAccess.RequireActiveUserAsync(_db, actorUserId, _timeProvider, ct);
 
-        var roleIds = await _db.UserRoles.AsNoTracking()
-            .Where(ur => ur.UserId == actorUserId)
-            .Select(ur => ur.RoleId)
-            .ToListAsync(ct);
+        var (roleIds, roleCodes) = await VisitPaymentAccess.LoadActorRolesAsync(_db, actorUserId, ct);
 
-        var roleCodes = await _db.Roles.AsNoTracking()
-            .Where(r => roleIds.Contains(r.Id))
-            .Select(r => r.Code)
-            .ToListAsync(ct);
-
-        var isSystemAdmin = HasRole(roleCodes, RoleNames.SystemAdmin);
-        var isHospitalAdmin = HasRole(roleCodes, RoleNames.HospitalAdmin);
-        var isReception = HasRole(roleCodes, RoleNames.Reception);
-        var isPatient = HasRole(roleCodes, RoleNames.Patient);
+        var isSystemAdmin = roleCodes.Contains(RoleNames.SystemAdmin);
+        var isHospitalAdmin = roleCodes.Contains(RoleNames.HospitalAdmin);
+        var isReception = roleCodes.Contains(RoleNames.Reception);
+        var isDoctor = roleCodes.Contains(RoleNames.Doctor);
+        var isPatient = roleCodes.Contains(RoleNames.Patient);
 
         if (isSystemAdmin || isHospitalAdmin || isReception)
         {
-            var permissionCodes = roleIds.Count == 0
-                ? []
-                : await (
-                    from rp in _db.RolePermissions.AsNoTracking()
-                    join p in _db.Permissions.AsNoTracking() on rp.PermissionId equals p.Id
-                    where roleIds.Contains(rp.RoleId)
-                    select p.Code).ToListAsync(ct);
-
-            var permSet = new HashSet<string>(permissionCodes, StringComparer.OrdinalIgnoreCase);
+            var permSet = await VisitPaymentAccess.LoadRolePermissionCodesAsync(_db, roleIds, ct);
             var hasRequiredPerm = isSystemAdmin
                 ? permSet.Contains(PermissionCodes.PaymentView) ||
                   permSet.Contains(PermissionCodes.AuditRead) ||
                   permSet.Contains(PermissionCodes.HospitalConfig)
                 : permSet.Contains(PermissionCodes.PaymentView) ||
+                  permSet.Contains(PermissionCodes.PaymentCollect) ||
                   permSet.Contains(PermissionCodes.PatientCheckin) ||
                   permSet.Contains(PermissionCodes.HospitalConfig);
 
@@ -145,22 +148,30 @@ public sealed class VisitChargesService : IVisitChargesService
                     throw new ForbiddenException(InactiveHospitalMessage);
             }
 
-            return new ActorContext(false, isSystemAdmin, staff?.HospitalId, []);
+            return new ActorContext(false, isSystemAdmin, staff?.HospitalId, null, []);
+        }
+
+        if (isDoctor)
+        {
+            var (staff, doctor) = await VisitPaymentAccess.RequireActiveDoctorStaffAsync(
+                _db,
+                actorUserId,
+                ForbiddenMessage,
+                ct);
+            return new ActorContext(false, false, staff.HospitalId, doctor, []);
         }
 
         if (!isPatient)
             throw new ForbiddenException(ForbiddenMessage);
 
         var ids = await VisitPaymentAccess.LoadOwnedPatientIdsAsync(_db, actorUserId, _timeProvider, ct);
-        return new ActorContext(true, false, null, ids);
+        return new ActorContext(true, false, null, null, ids);
     }
-
-    private static bool HasRole(IEnumerable<string> codes, string role) =>
-        codes.Any(c => string.Equals(c, role, StringComparison.OrdinalIgnoreCase));
 
     private sealed record ActorContext(
         bool IsPatient,
         bool IsSystemAdmin,
         long? HospitalId,
+        Doctor? Doctor,
         HashSet<long> OwnedPatientIds);
 }

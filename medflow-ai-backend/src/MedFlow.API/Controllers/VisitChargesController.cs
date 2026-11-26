@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{RoleNames.Patient},{RoleNames.Reception},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
+[Authorize(Roles = $"{RoleNames.Patient},{RoleNames.Doctor},{RoleNames.Reception},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class VisitChargesController : ControllerBase
 {
     private readonly IVisitChargesService _service;
@@ -18,9 +18,10 @@ public sealed class VisitChargesController : ControllerBase
         _service = service;
     }
 
-    /// <summary>GET /api/v1/visits/{idOrCode}/charges — Xem khoản phí và trạng thái thanh toán của lượt khám (UC18 / #160).</summary>
+    /// <summary>GET /api/v1/visits/{idOrCode}/charges — Xem khoản phí và trạng thái thanh toán của lượt khám (UC18 / ADR-0060).</summary>
     [HttpGet("/api/v1/visits/{idOrCode}/charges")]
     [HttpGet("/api/v1/reception/visits/{idOrCode}/charges")]
+    [HttpGet("/api/v1/doctor/visits/{idOrCode}/charges")]
     [HttpGet("/api/v1/patients/visits/{idOrCode}/charges")]
     [ProducesResponseType<VisitChargesResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]

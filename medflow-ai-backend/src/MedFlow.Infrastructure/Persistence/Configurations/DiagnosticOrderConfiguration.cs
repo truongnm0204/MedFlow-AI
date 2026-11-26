@@ -45,6 +45,15 @@ public class DiagnosticOrderConfiguration : IEntityTypeConfiguration<DiagnosticO
             .HasColumnName("status")
             .HasMaxLength(20);
 
+        builder.Property(x => x.SelectionStatus)
+            .HasColumnName("selection_status")
+            .HasMaxLength(24)
+            .IsRequired();
+
+        builder.Property(x => x.DeferredUntilDate)
+            .HasColumnName("deferred_until_date")
+            .HasColumnType("date");
+
         builder.Property(x => x.ConfirmedByStaffId)
             .HasColumnName("confirmed_by_staff_id");
 

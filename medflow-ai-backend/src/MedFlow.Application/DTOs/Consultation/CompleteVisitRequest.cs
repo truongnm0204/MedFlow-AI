@@ -10,4 +10,5 @@ public sealed record CompleteVisitRequest(
     string? CompletionNote = null,
     bool? ConfirmNoPrescription = null,
     int? ExpectedStateVersion = null,
-    int? ExpectedRevisionNo = null);
+    int? ExpectedRevisionNo = null,
+    bool? CloseUndecidedOptionalOrders = null);

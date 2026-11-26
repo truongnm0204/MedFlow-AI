@@ -304,6 +304,7 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
                     new CreateDiagnosticOrderRequest(
                         ServiceId: fx.ImagingDirectServiceId,
                         Instruction: "Siêu âm thử hủy QR",
+                        RequiredForConclusion: false,
                         TransitionToAwaitingResults: true));
                 orderAId = createdA.CreatedDiagnosticOrders![0].OrderId;
                 orderACode = createdA.CreatedDiagnosticOrders[0].OrderCode;
@@ -368,6 +369,7 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
                     new CreateDiagnosticOrderRequest(
                         ServiceId: fx.ImagingDirectServiceId,
                         Instruction: "Siêu âm đã đóng tiền nhưng hủy trước thực hiện",
+                        RequiredForConclusion: false,
                         TransitionToAwaitingResults: true));
                 orderBId = createdB.CreatedDiagnosticOrders![0].OrderId;
                 orderBCode = createdB.CreatedDiagnosticOrders[0].OrderCode;

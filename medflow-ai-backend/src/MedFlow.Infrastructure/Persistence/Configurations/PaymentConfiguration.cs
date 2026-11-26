@@ -30,6 +30,17 @@ public class PaymentConfiguration : IEntityTypeConfiguration<Payment>
             .HasMaxLength(16)
             .IsRequired();
 
+        builder.Property(p => p.PaymentMethod)
+            .HasColumnName("payment_method")
+            .HasMaxLength(16);
+
+        builder.Property(p => p.CollectedByStaffId)
+            .HasColumnName("collected_by_staff_id");
+
+        builder.Property(p => p.IdempotencyKey)
+            .HasColumnName("idempotency_key")
+            .HasMaxLength(100);
+
         builder.Property(p => p.Amount)
             .HasColumnName("amount")
             .HasColumnType("numeric(16,2)");
@@ -52,6 +63,19 @@ public class PaymentConfiguration : IEntityTypeConfiguration<Payment>
 
         builder.HasIndex(p => p.VisitChargeId)
             .HasDatabaseName("ix_payments_visit_charge_id");
+
+        builder.HasIndex(p => p.CollectedByStaffId)
+            .HasDatabaseName("ix_payments_collected_by_staff_id");
+
+        builder.HasIndex(p => p.IdempotencyKey)
+            .IsUnique()
+            .HasDatabaseName("ux_payments_idempotency_key")
+            .HasFilter("\"idempotency_key\" IS NOT NULL");
+
+        builder.HasOne<Staff>()
+            .WithMany()
+            .HasForeignKey(p => p.CollectedByStaffId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<Visit>()
             .WithMany()
