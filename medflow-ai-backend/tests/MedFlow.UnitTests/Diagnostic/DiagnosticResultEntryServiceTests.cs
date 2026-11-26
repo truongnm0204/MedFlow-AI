@@ -1130,9 +1130,12 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
         Assert.Equal(95, finalizeResponse.Order.FinalizedByStaffId);
         Assert.False(finalizeResponse.Order.CanEnterResult);
 
-        // Verify Visit.Status cleanly transitioned to RETURN_CONSULTATION since all orders on Visit 100 are now finalized (BUG-P6-02)
+        // Stage E2 (QE-10): finalizing the last order stamps ReadyForReturnAt and holds the visit in
+        // AWAITING_RESULTS — the RETURN_CONSULTATION ticket is minted later by Reception return coordination,
+        // not auto-enqueued on UC43 finalize (BUG-P6-02 / ADR-0061).
         var visitAfter = await _dbContext.Visits.AsNoTracking().FirstAsync(v => v.Id == 100);
-        Assert.Equal("RETURN_CONSULTATION", visitAfter.Status);
+        Assert.Equal("AWAITING_RESULTS", visitAfter.Status);
+        Assert.NotNull(visitAfter.ReadyForReturnAt);
 
         // Verify AuditLog was persisted with DIAGNOSTIC_RESULT_VERIFIED
         var auditLog = await _dbContext.AuditLogs

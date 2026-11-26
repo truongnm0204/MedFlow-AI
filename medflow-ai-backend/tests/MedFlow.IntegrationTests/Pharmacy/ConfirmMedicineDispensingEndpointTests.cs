@@ -168,7 +168,8 @@ public sealed class ConfirmMedicineDispensingEndpointTests : IClassFixture<TestW
             new Hospital { Id = 1, Name = "Bệnh viện Đa khoa Quốc tế MedFlow", IsActive = true },
             new Hospital { Id = 2, Name = "Bệnh viện Chi nhánh 2", IsActive = true });
 
-        db.Departments.Add(new Department { Id = 1, HospitalId = 1, Name = "Khoa Dược", IsActive = true });
+        // Stage E2: pharmacy staff dept-scope is fail-closed — pharmacist needs DepartmentId on an active PHA dept.
+        db.Departments.Add(new Department { Id = 1, HospitalId = 1, Name = "Khoa Dược", DepartmentCode = "PHA", IsActive = true });
         db.HospitalRooms.Add(new HospitalRoom { Id = 101, HospitalId = 1, DepartmentId = 1, RoomCode = "P.101", Name = "Quầy phát thuốc 01", RoomType = "PHARMACY", Status = "ACTIVE" });
 
         db.Roles.AddRange(
@@ -181,7 +182,7 @@ public sealed class ConfirmMedicineDispensingEndpointTests : IClassFixture<TestW
         // Staff 10: Valid Pharmacist
         db.Users.Add(new User { Id = 10, Email = "pharmacist@medflow.test", AccountStatus = AccountStatus.ACTIVE });
         db.UserRoles.Add(new UserRole { UserId = 10, RoleId = 1 });
-        db.Staff.Add(new Staff { Id = 10, UserId = 10, HospitalId = 1, FullName = "Đỗ Thị Lan Anh", Status = "ACTIVE" });
+        db.Staff.Add(new Staff { Id = 10, UserId = 10, HospitalId = 1, FullName = "Đỗ Thị Lan Anh", Status = "ACTIVE", DepartmentId = 1 });
 
         // Doctor 20
         db.Users.Add(new User { Id = 20, Email = "doctor@medflow.test", AccountStatus = AccountStatus.ACTIVE });
