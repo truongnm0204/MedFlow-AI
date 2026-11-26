@@ -1115,26 +1115,13 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                     StartedAt = nowLocal.AddMinutes(-5),
                     StateVersion = 2,
                 };
-                var q2 = new QueueEntry
-                {
-                    VisitId = busyVisit.Id,
-                    ServicePointId = fx.DiagServicePoint2Id,
-                    CurrentServicePointId = fx.DiagServicePoint2Id,
-                    QueueDate = today,
-                    QueueNumber = 1,
-                    QueueType = "DIAGNOSTIC",
-                    Status = "CALLED",
-                    PresenceStatus = "PRESENT",
-                    ArrivedAt = nowLocal.AddMinutes(-10),
-                    ReadyAt = nowLocal.AddMinutes(-9),
-                    CalledAt = nowLocal.AddMinutes(-4),
-                    StateVersion = 2,
-                };
-                db.QueueEntries.AddRange(q1, q2);
+                // Stage E2 (QE-03 + single-active per visit): order 2 (PAID & CONFIRMED) holds NO active queue —
+                // only order 1's IN_PROGRESS DIAGNOSTIC ticket exists on this visit. Starting order 2 must
+                // fail closed (no second active post-exam ticket per visit, no second active serving queue).
+                db.QueueEntries.Add(q1);
                 await db.SaveChangesAsync();
 
                 ord1.QueueEntryId = q1.Id;
-                ord2.QueueEntryId = q2.Id;
 
                 var c1 = VisitCharge.CreateDiagnostic(busyVisit.Id, ord1.Id, fx.DiagServiceId, 100_000m, nowLocal.AddMinutes(-15));
                 var c2 = VisitCharge.CreateDiagnostic(busyVisit.Id, ord2.Id, fx.Diag2ServiceId, 120_000m, nowLocal.AddMinutes(-15));
@@ -1337,7 +1324,9 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
             Assert.Empty(_spyPublisher.QueueEvents);
             Assert.Empty(_spyPublisher.PaymentEvents);
 
-            // 4) 409 PATIENT_BUSY_AT_ANOTHER_POINT simultaneous diagnostic start
+            // 4) Failing-closed simultaneous diagnostic start: order 2 (CONFIRMED, no ticket) cannot start
+            // while order 1 holds the patient's single active serving ticket (E2: ACTIVE_QUEUE_ALREADY_EXISTS;
+            // legacy busy-point check may report PATIENT_BUSY_AT_ANOTHER_POINT — both denote the same conflict).
             await using (var s4 = _app.Services.CreateAsyncScope())
             {
                 var execSvc = s4.ServiceProvider.GetRequiredService<IDiagnosticServiceExecutionService>();
@@ -1346,7 +1335,10 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                         fx.DiagStaffUserId,
                         busyOrder2Code,
                         new UpdateDiagnosticServiceStatusRequest(TargetStatus: "IN_PROGRESS")));
-                Assert.Contains("PATIENT_BUSY_AT_ANOTHER_POINT", busyEx.Message, StringComparison.Ordinal);
+                Assert.True(
+                    busyEx.Message.Contains("PATIENT_BUSY_AT_ANOTHER_POINT", StringComparison.Ordinal) ||
+                    busyEx.Message.Contains("ACTIVE_QUEUE_ALREADY_EXISTS", StringComparison.Ordinal),
+                    busyEx.Message);
             }
             Assert.Empty(_spyPublisher.QueueEvents);
             Assert.Empty(_spyPublisher.PaymentEvents);
