@@ -32,6 +32,7 @@ public interface IApplicationDbContext
     DbSet<QueueEntry> QueueEntries { get; }
     DbSet<Payment> Payments { get; }
     DbSet<PaymentAllocation> PaymentAllocations => throw new NotSupportedException("PaymentAllocations DbSet is not configured in this test context.");
+    DbSet<PaymentEnrollmentIntent> PaymentEnrollmentIntents => throw new NotSupportedException("PaymentEnrollmentIntents DbSet is not configured in this test context.");
     DbSet<PaymentGatewayEvent> PaymentGatewayEvents => throw new NotSupportedException("PaymentGatewayEvents DbSet is not configured in this test context.");
     DbSet<VisitCharge> VisitCharges => throw new NotSupportedException("VisitCharges DbSet is not configured in this test context.");
     DbSet<Medicine> Medicines => throw new NotSupportedException("Medicines DbSet is not configured in this test context.");
@@ -101,6 +102,8 @@ public interface IApplicationDbContext
     // Level 09: visits (Clinical Aggregate Root Lock)
     Task<bool> TryLockVisitForUpdateAsync(long visitId, CancellationToken ct = default)
         => Task.FromResult(false);
+    Task<bool> TryLockVisitsForUpdateAsync(IReadOnlyCollection<long> visitIds, CancellationToken ct = default)
+        => Task.FromResult(false);
 
     // Level 10: queue_service_points + deterministic unrouted queue advisory lock
     Task<bool> TryLockServicePointForUpdateAsync(long servicePointId, CancellationToken ct = default)
@@ -125,6 +128,8 @@ public interface IApplicationDbContext
     // Level 13: prescriptions
     Task<bool> TryLockPrescriptionForUpdateAsync(long prescriptionId, CancellationToken ct = default)
         => Task.FromResult(false);
+    Task<bool> TryLockPrescriptionsForUpdateAsync(IReadOnlyCollection<long> prescriptionIds, CancellationToken ct = default)
+        => Task.FromResult(false);
 
     // Level 14: medicine_batches
     Task<bool> TryLockMedicineBatchesForUpdateAsync(IReadOnlyCollection<long> batchIds, CancellationToken ct = default)
@@ -146,5 +151,11 @@ public interface IApplicationDbContext
     Task<bool> TryLockPaymentAllocationForUpdateAsync(long allocationId, CancellationToken ct = default)
         => Task.FromResult(false);
     Task<bool> TryLockPaymentAllocationsForUpdateAsync(IReadOnlyCollection<long> allocationIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 16c: payment_enrollment_intents (ADR-0061 Stage E2)
+    Task<bool> TryLockPaymentEnrollmentIntentForUpdateAsync(long intentId, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockPaymentEnrollmentIntentsForUpdateAsync(IReadOnlyCollection<long> intentIds, CancellationToken ct = default)
         => Task.FromResult(false);
 }

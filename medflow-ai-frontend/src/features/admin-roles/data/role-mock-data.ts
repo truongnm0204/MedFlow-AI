@@ -48,6 +48,11 @@ export const SYSTEM_PERMISSIONS: Record<string, RolePermissionItem> = {
     name: 'Quản lý hàng đợi khám',
     module: 'Hàng đợi',
   },
+  QUEUE_ENROLL: {
+    code: 'QUEUE_ENROLL',
+    name: 'Đăng ký & điều phối lấy số hàng đợi',
+    module: 'Hàng đợi',
+  },
   MEDICAL_RECORD_WRITE: {
     code: 'MEDICAL_RECORD_WRITE',
     name: 'Ghi nhận bệnh án lâm sàng',

@@ -126,4 +126,12 @@ public interface IConsultationWorkspaceService
         string? ipAddress = null,
         CancellationToken ct = default)
         => throw new NotSupportedException("CompleteClinicalReviewAsync is not implemented by this test double.");
+
+    Task<ConsultationWorkspaceResponseDto> HandoffToDiagnosticAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        HandoffToDiagnosticRequest? request = null,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+        => throw new NotSupportedException("HandoffToDiagnosticAsync is not implemented by this test double.");
 }

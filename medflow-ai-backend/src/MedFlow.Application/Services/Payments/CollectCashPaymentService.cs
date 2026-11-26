@@ -32,15 +32,19 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
     private readonly IRealtimeNotificationPublisher _realtimePublisher;
+    private readonly IPaymentEnrollmentIntentProcessor _intentProcessor;
 
     public CollectCashPaymentService(
         IApplicationDbContext db,
         TimeProvider? timeProvider = null,
-        IRealtimeNotificationPublisher? realtimePublisher = null)
+        IRealtimeNotificationPublisher? realtimePublisher = null,
+        IPaymentEnrollmentIntentProcessor? intentProcessor = null)
     {
         _db = db;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
+        _intentProcessor = intentProcessor
+            ?? new PaymentEnrollmentIntentProcessor(db, _timeProvider, realtimePublisher: _realtimePublisher);
     }
 
     public async Task<CollectCashPaymentResponseDto> CollectAsync(
@@ -85,8 +89,25 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
         if (staff.HospitalId != visitHospitalId)
             throw new ForbiddenException(ForbiddenMessage);
 
+        var preEnrollOrder = await PaymentEnrollmentIntentProcessor.ResolveRequestedEnrollOrderAsync(
+            _db,
+            visit.Id,
+            request.EnrollDiagnosticOrderId,
+            request.EnrollDiagnosticOrderCode,
+            ct);
+        if (preEnrollOrder is not null)
+        {
+            var (preRoleIds, preRoleCodes) = await VisitPaymentAccess.LoadActorRolesAsync(_db, actorUserId, ct);
+            var prePerms = await VisitPaymentAccess.LoadRolePermissionCodesAsync(_db, preRoleIds, ct);
+            if (!prePerms.Contains(PermissionCodes.QueueEnroll))
+            {
+                throw new ForbiddenException(MedFlow.Application.Services.Visits.VisitQueueEnrollmentService.QueueEnrollRequiredMessage);
+            }
+        }
+
         var visitId = visit.Id;
         CollectCashPaymentResponseDto response;
+        long? settledPaymentIdForEnrollment = null;
         var shouldPublishRealtime = false;
         var queueNotifications = new List<QueueChangedNotification>();
 
@@ -94,8 +115,12 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
         {
             try
             {
-                // ADR-0060 strict lock order: visits (09) -> diagnostic_orders (12) -> visit_charges (15) -> payments (16) -> payment_allocations (16b)
-                await PaymentAllocationLookup.AcquireVisitPaymentChainLocksAsync(_db, visitId, ct);
+                // ADR-0061 strict lock order: [02 patients] -> 09 visits -> 12 diagnostic_orders -> 15 visit_charges -> 16 payments -> 16b payment_allocations -> 16c payment_enrollment_intents
+                await PaymentAllocationLookup.AcquireVisitPaymentChainLocksAsync(
+                    _db,
+                    visitId,
+                    ct,
+                    patientIdToLock: preEnrollOrder is not null ? visit.PatientId : null);
 
                 if (_db is DbContext trackerCtx)
                     trackerCtx.ChangeTracker.Clear();
@@ -119,19 +144,41 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                 staff = verifiedCollector.Staff!;
                 visitHospitalId = verifiedCollector.VisitHospitalId;
 
+                var enrollOrder = await PaymentEnrollmentIntentProcessor.ResolveRequestedEnrollOrderAsync(
+                    _db,
+                    visitId,
+                    request.EnrollDiagnosticOrderId,
+                    request.EnrollDiagnosticOrderCode,
+                    ct);
+                if (enrollOrder is not null)
+                {
+                    await PaymentEnrollmentIntentProcessor.EnsureStaffHasQueueEnrollWhenIntentRequestedAsync(
+                        _db,
+                        actorUserId,
+                        verifiedCollector.RoleLabel,
+                        ct);
+                }
+
                 // Check IdempotencyKey post-lock first
                 var existingByKey = await _db.Payments.AsNoTracking()
                     .FirstOrDefaultAsync(p => p.IdempotencyKey == idempotencyKey, ct);
                 if (existingByKey is not null)
                 {
-                    response = await ValidateAndBuildIdempotentCashReplayAsync(
+                    var (replayDto, hasIntentOnReplay) = await ValidateAndBuildIdempotentCashReplayAsync(
                         lockedVisit,
                         staff,
                         existingByKey,
                         requestedChargeIds,
+                        enrollOrder?.Id,
                         ct);
                     await tx.CommitAsync(ct);
-                    return response;
+
+                    if (hasIntentOnReplay)
+                    {
+                        replayDto = await AttachPostCommitEnrollmentSafeAsync(replayDto, existingByKey.Id, ipAddress, ct);
+                    }
+
+                    return replayDto;
                 }
 
                 if (string.Equals(lockedVisit.Status?.Trim(), PaymentStatuses.Cancelled, StringComparison.OrdinalIgnoreCase) ||
@@ -152,6 +199,7 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                     .ToListAsync(ct);
 
                 var trackedAllocations = await PaymentAllocationLookup.TryLoadTrackedForVisitAsync(_db, visitId, ct);
+                var trackedIntents = await PaymentAllocationLookup.TryLoadTrackedIntentsForVisitAsync(_db, visitId, ct);
                 var (effectiveAllocations, _) = PaymentAllocationLookup.BuildEffectiveAllocations(
                     visitId,
                     trackedPayments,
@@ -205,12 +253,14 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                 }
 
                 GenerateQrPaymentService.RequireValidIntegerVnd(totalAmount);
+                PaymentEnrollmentIntentProcessor.EnsureEnrollOrderInPaidChargesOrThrow(enrollOrder, selectedCharges);
 
                 // Promote any explicitly paid UNDECIDED optional DiagnosticOrders -> ACCEPTED
                 await PromoteUndecidedOrdersAsync(selectedCharges, ct);
 
-                // Cancel ALL overlapping open PENDING QR attempts (and ALL of their PENDING allocations!)
-                CancelOverlappingPendingAttempts(trackedPayments, trackedAllocations, targetSet);
+                var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+                // Cancel ALL overlapping open PENDING QR attempts (and ALL of their PENDING allocations & intents!)
+                CancelOverlappingPendingAttempts(trackedPayments, trackedAllocations, trackedIntents, targetSet, nowUtc);
 
                 var nowLocal = HospitalClock.GetNow(_timeProvider);
                 var singleChargeId = selectedCharges.Count == 1 ? selectedCharges[0].Id : (long?)null;
@@ -238,6 +288,37 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                         nowLocal))
                     .ToList();
                 PaymentAllocationLookup.TryAddAllocations(_db, createdAllocations);
+
+                if (enrollOrder is not null && lockedVisit.PatientId is long enrollPatientId && enrollPatientId > 0)
+                {
+                    var todayLocal = DateOnly.FromDateTime(nowLocal);
+                    var trackedVisitForPresence = await _db.Visits.FirstOrDefaultAsync(v => v.Id == visitId, ct);
+                    var sessionNo = Math.Max(1, lockedVisit.PresenceSessionNo);
+                    if (trackedVisitForPresence is not null)
+                    {
+                        MedFlow.Application.Services.Visits.VisitPresenceEvaluator.StampPresentToday(trackedVisitForPresence, todayLocal, nowLocal);
+                        sessionNo = Math.Max(1, trackedVisitForPresence.PresenceSessionNo);
+                    }
+
+                    var createdIntent = new PaymentEnrollmentIntent
+                    {
+                        PaymentId = cashPayment.Id,
+                        VisitId = visitId,
+                        PatientId = enrollPatientId,
+                        DiagnosticOrderId = enrollOrder.Id,
+                        RequestedByUserId = actorUserId,
+                        RequestedByRole = verifiedCollector.RoleLabel,
+                        IdempotencyKey = $"pei:pay:{cashPayment.Id}",
+                        PresenceVerifiedDate = todayLocal,
+                        PresenceSessionNo = sessionNo,
+                        Status = PaymentEnrollmentIntentStatuses.PendingPostCommit,
+                        RetryCount = 0,
+                        CreatedAt = nowUtc,
+                        ExpiresAt = nowUtc.AddMinutes(30),
+                    };
+                    PaymentAllocationLookup.TryAddIntent(_db, createdIntent);
+                    settledPaymentIdForEnrollment = cashPayment.Id;
+                }
 
                 _db.AuditLogs.Add(new AuditLog
                 {
@@ -300,12 +381,19 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                     var currentVisit = await _db.Visits.AsNoTracking()
                         .FirstOrDefaultAsync(v => v.Id == visitId, ct)
                         ?? throw new NotFoundException(VisitPaymentAccess.VisitNotFoundMessage);
-                    return await ValidateAndBuildIdempotentCashReplayAsync(
+                    var (racedReplayDto, hasRacedIntent) = await ValidateAndBuildIdempotentCashReplayAsync(
                         currentVisit,
                         staff,
                         racedByKey,
                         requestedChargeIds,
+                        preEnrollOrder?.Id,
                         ct);
+                    if (hasRacedIntent)
+                    {
+                        racedReplayDto = await AttachPostCommitEnrollmentSafeAsync(racedReplayDto, racedByKey.Id, ipAddress, ct);
+                    }
+
+                    return racedReplayDto;
                 }
 
                 throw new ConflictException(ChargeAlreadyPaidMessage);
@@ -324,6 +412,11 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
             }
         }
 
+        if (settledPaymentIdForEnrollment is long settledPaymentId)
+        {
+            response = await AttachPostCommitEnrollmentSafeAsync(response, settledPaymentId, ipAddress, ct);
+        }
+
         if (shouldPublishRealtime)
         {
             await _realtimePublisher.TryPublishVisitPaymentChangedSafeAsync(
@@ -337,6 +430,40 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
         }
 
         return response;
+    }
+
+    private async Task<CollectCashPaymentResponseDto> AttachPostCommitEnrollmentSafeAsync(
+        CollectCashPaymentResponseDto baseDto,
+        long paymentId,
+        string? ipAddress,
+        CancellationToken ct)
+    {
+        try
+        {
+            var enrollResult = await _intentProcessor.ProcessPostCommitAsync(paymentId, ipAddress, ct);
+            if (enrollResult is null)
+            {
+                return baseDto;
+            }
+
+            return baseDto with
+            {
+                EnrollmentStatus = enrollResult.EnrollmentStatus,
+                EnrollmentOutcomeCode = enrollResult.OutcomeCode,
+                EnrollmentOutcomeMessage = enrollResult.OutcomeMessage,
+                EnrolledQueueEntry = enrollResult.QueueEntry,
+            };
+        }
+        catch
+        {
+            // QE-13 / E-BR28: Post-commit enrollment failure MUST NEVER fail the committed PAID cash payment!
+            return baseDto with
+            {
+                EnrollmentStatus = PaymentEnrollmentIntentStatuses.PendingPostCommit,
+                EnrollmentOutcomeCode = "ENROLLMENT_DEFERRED_FOR_RECOVERY",
+                EnrollmentOutcomeMessage = "Thanh toán tiền mặt đã hoàn tất. Yêu cầu lấy số tự động đang chờ xử lý lại.",
+            };
+        }
     }
 
     private async Task<Staff> AuthorizeCashCollectorAsync(long actorUserId, CancellationToken ct)
@@ -386,15 +513,23 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
             throw new ForbiddenException(MissingPaymentCollectPermissionMessage);
     }
 
-    private async Task<CollectCashPaymentResponseDto> ValidateAndBuildIdempotentCashReplayAsync(
+    private async Task<(CollectCashPaymentResponseDto Dto, bool HasEnrollmentIntent)> ValidateAndBuildIdempotentCashReplayAsync(
         Visit visit,
         Staff currentStaff,
         Payment existingPayment,
         IReadOnlyList<long> requestedChargeIds,
+        long? requestedEnrollOrderId,
         CancellationToken ct)
     {
         if (existingPayment.VisitId != visit.Id ||
             !string.Equals(existingPayment.PaymentMethod, PaymentMethods.Cash, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException(IdempotencyMismatchMessage);
+        }
+
+        var existingIntents = await PaymentAllocationLookup.TryLoadNoTrackingIntentsForVisitAsync(_db, visit.Id, ct);
+        var existingIntent = existingIntents.FirstOrDefault(i => i.PaymentId == existingPayment.Id);
+        if (existingIntent?.DiagnosticOrderId != requestedEnrollOrderId)
         {
             throw new ConflictException(IdempotencyMismatchMessage);
         }
@@ -424,7 +559,7 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
             ? currentStaff
             : await _db.Staff.AsNoTracking().FirstOrDefaultAsync(s => s.Id == existingPayment.CollectedByStaffId, ct) ?? currentStaff;
 
-        return BuildResponseDto(
+        var dto = BuildResponseDto(
             visit,
             existingPayment,
             collectorStaff,
@@ -432,6 +567,7 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
             existingAllocs,
             assessment.Lines,
             isIdempotentReplay: true);
+        return (dto, existingIntent is not null);
     }
 
     private async Task EnsureDiagnosticOrderEligibleForCashAsync(VisitCharge charge, CancellationToken ct)
@@ -491,7 +627,9 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
     private static void CancelOverlappingPendingAttempts(
         IReadOnlyList<Payment> trackedPayments,
         IReadOnlyList<PaymentAllocation> trackedAllocations,
-        IReadOnlySet<long> targetChargeSet)
+        IReadOnlyList<PaymentEnrollmentIntent> trackedIntents,
+        IReadOnlySet<long> targetChargeSet,
+        DateTime nowUtc)
     {
         var pendingAllocsByPayment = trackedAllocations
             .Where(pa => string.Equals(pa.Status, PaymentAllocationStatuses.Pending, StringComparison.OrdinalIgnoreCase))
@@ -521,6 +659,15 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
             {
                 foreach (var pa in toCancel)
                     pa.Status = PaymentAllocationStatuses.Cancelled;
+            }
+
+            foreach (var pi in trackedIntents.Where(i =>
+                         i.PaymentId == p.Id &&
+                         string.Equals(i.Status, PaymentEnrollmentIntentStatuses.PendingSettlement, StringComparison.OrdinalIgnoreCase)))
+            {
+                pi.Status = PaymentEnrollmentIntentStatuses.Cancelled;
+                pi.OutcomeCode = "PAYMENT_CANCELLED";
+                pi.ProcessedAt = nowUtc;
             }
         }
     }

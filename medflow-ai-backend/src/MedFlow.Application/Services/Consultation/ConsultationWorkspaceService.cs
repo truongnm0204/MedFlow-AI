@@ -1355,50 +1355,18 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         var formattedDoctorName = DoctorCatalogService.FormatDisplayName(doctorFullName, doctorTitle);
 
         var nextStateVersion = currentStateVersion + 1;
-        var createdQueueEntries = new List<QueueEntry>(resolvedItems.Count);
         var createdOrderDtos = new List<ConsultationDiagnosticOrderDto>(resolvedItems.Count);
         var existingNonCancelledCount = existingNonCancelledOrders.Count;
         var auditAction = validated.IsAdditionalOrder
             ? "ADDITIONAL_DIAGNOSTIC_ORDER_CREATED"
             : "DIAGNOSTIC_ORDER_CREATED";
 
+        // Stage E2 (QE-03 / E-BR08): Doctor order creation NEVER pre-allocates DIAGNOSTIC QueueEntry rows.
+        // Queue tickets are created strictly upon explicit post-settlement enrollment.
         for (var index = 0; index < resolvedItems.Count; index++)
         {
             var resolved = resolvedItems[index];
             var diagSpId = resolved.ServicePoint?.Id;
-            var maxQueueNumber = await _db.QueueEntries
-                .AsNoTracking()
-                .Where(q =>
-                    q.QueueDate == queueDate &&
-                    (diagSpId.HasValue
-                        ? (q.ServicePointId == diagSpId.Value || q.CurrentServicePointId == diagSpId.Value)
-                        : (q.QueueType != null && q.QueueType.ToUpper() == "DIAGNOSTIC")))
-                .MaxAsync(q => (int?)q.QueueNumber, ct);
-
-            var nextQueueNumber = (maxQueueNumber ?? 0) + 1;
-
-            var diagQueueEntry = new QueueEntry
-            {
-                VisitId = visit.Id,
-                AppointmentId = null,
-                ServicePointId = diagSpId,
-                CurrentServicePointId = diagSpId,
-                QueueDate = queueDate,
-                QueueNumber = nextQueueNumber,
-                QueueType = "DIAGNOSTIC",
-                Status = "WAITING",
-                ScheduledAt = null,
-                PresenceStatus = "PRESENT",
-                ArrivedAt = nowLocal,
-                ReadyAt = nowLocal,
-                ArrivalClass = "WALK_IN",
-                ManualPriority = ClinicalQueueRules.NormalizeStoredPriority(activeEntry.ManualPriority),
-                StateVersion = 1,
-            };
-
-            _db.QueueEntries.Add(diagQueueEntry);
-            await SaveChangesWithConcurrencyGuardAsync(ct);
-            createdQueueEntries.Add(diagQueueEntry);
 
             var initialSelectionStatus = resolved.Item.RequiredForConclusion
                 ? DiagnosticSelectionStatuses.Accepted
@@ -1411,7 +1379,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 VisitId = visit.Id,
                 OrderingDoctorId = doctorAccess.Doctor.Id,
                 ServiceId = resolved.Service.Id,
-                QueueEntryId = diagQueueEntry.Id,
+                QueueEntryId = null,
                 Instruction = resolved.Item.Instruction,
                 RequiredForConclusion = resolved.Item.RequiredForConclusion,
                 Priority = resolved.Item.Priority,
@@ -1435,7 +1403,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 createdAtLocal: nowLocal);
             _db.VisitCharges.Add(diagnosticCharge);
             await SaveChangesWithConcurrencyGuardAsync(ct);
-            var ticketNo = $"C{nextQueueNumber:D3}";
+
             var orderSequenceNo = existingNonCancelledCount + index + 1;
             var isOrderAdditional = validated.IsAdditionalOrder ||
                 existingNonCancelledCount > 0 ||
@@ -1464,11 +1432,11 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 status = diagnosticOrder.Status,
                 requiredForConclusion = diagnosticOrder.RequiredForConclusion == true,
                 instruction = diagnosticOrder.Instruction,
-                diagnosticQueueEntryId = diagQueueEntry.Id,
+                diagnosticQueueEntryId = (long?)null,
                 diagnosticServicePointId = diagSpId,
                 diagnosticRoomCode = resolved.Room?.RoomCode,
-                diagnosticQueueNumber = nextQueueNumber,
-                diagnosticTicketNo = ticketNo,
+                diagnosticQueueNumber = (int?)null,
+                diagnosticTicketNo = (string?)null,
                 isAdditionalOrder = isOrderAdditional,
                 orderSequenceNo,
                 followUpToOrderId = followUpOrderId,
@@ -1515,11 +1483,11 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 Category: resolved.Category,
                 UnitPrice: resolved.UnitPrice,
                 RequiresResultVerification: resolved.Service.RequiresResultVerification ?? true,
-                QueueEntryId: diagQueueEntry.Id,
-                FormattedQueueEntryId: $"q-{diagQueueEntry.Id:D3}",
-                TicketNo: ticketNo,
-                QueueNumber: nextQueueNumber,
-                QueueStatus: "WAITING",
+                QueueEntryId: null,
+                FormattedQueueEntryId: null,
+                TicketNo: null,
+                QueueNumber: null,
+                QueueStatus: null,
                 ServicePointId: diagSpId,
                 ServicePointName: resolved.ServicePoint?.Name,
                 RoomId: resolved.Room?.Id ?? resolved.ServicePoint?.RoomId,
@@ -1589,32 +1557,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 AppointmentId: activeEntry.AppointmentId ?? visit.AppointmentId),
             ct);
 
-        foreach (var diagEntry in createdQueueEntries)
-        {
-            if (diagEntry.ServicePointId is long diagSpId)
-            {
-                await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
-                    _realtimePublisher,
-                    new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
-                        HospitalId: doctorAccess.Hospital.Id,
-                        ServicePointId: diagSpId),
-                    ct);
-            }
-        }
-
-        var updatedVisitQueueEntries = createdQueueEntries
-            .OrderByDescending(q => q.Id)
-            .Concat(context.AllVisitQueueEntries)
-            .ToList();
-
-        var refreshedContext = context with
-        {
-            AllVisitQueueEntries = updatedVisitQueueEntries,
-        };
-
         return await BuildWorkspaceResponseAsync(
             doctorAccess,
-            refreshedContext,
+            context,
             actionOutcome: auditAction,
             nowUtc,
             nowLocal,
@@ -2240,6 +2185,188 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             doctorAccess,
             refreshedAfterReviewComplete,
             actionOutcome: "CLINICAL_REVIEW_COMPLETED",
+            nowUtc,
+            nowLocal,
+            ct);
+    }
+
+    public async Task<ConsultationWorkspaceResponseDto> HandoffToDiagnosticAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        HandoffToDiagnosticRequest? request = null,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        if (actorUserId <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        if (request?.ExpectedStateVersion is < 1)
+        {
+            throw new ValidationException("Phiên bản trạng thái hàng đợi (ExpectedStateVersion) phải lớn hơn hoặc bằng 1.");
+        }
+
+        var clinicalNote = ValidateClinicalTextField(
+            request?.ClinicalNote,
+            "Ghi chú bàn giao cận lâm sàng",
+            500);
+
+        var (numericId, code, isQueuePrefix) = ParseVisitOrQueueIdentifier(visitIdOrCode);
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+
+        var doctorAccess = await EnsureDoctorAccessAsync(actorUserId, nowUtc, PermissionMedicalRecordWrite, ct);
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        var context = await ResolveAndAuthorizeVisitContextAsync(
+            doctorAccess,
+            numericId,
+            code,
+            isQueuePrefix,
+            visitIdOrCode,
+            ct,
+            acquireWriteLocks: true);
+
+        doctorAccess = await EnsureDoctorAccessAsync(actorUserId, nowUtc, PermissionMedicalRecordWrite, ct);
+        if (!context.Visit.AssignedDoctorId.HasValue || context.Visit.AssignedDoctorId.Value != doctorAccess.Doctor.Id)
+        {
+            throw new ForbiddenException("Bác sĩ chỉ được phép bàn giao cận lâm sàng cho lượt khám được phân công.");
+        }
+
+        var visit = context.Visit;
+        var activeEntry = context.ActiveClinicalEntry;
+        var visitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
+
+        if (visitStatus is "CANCELLED" or "NO_SHOW")
+        {
+            throw new ConflictException("Không thể bàn giao cận lâm sàng cho lượt khám đã hủy hoặc vắng mặt (NO_SHOW).");
+        }
+
+        if (visitStatus is "COMPLETED" or "DONE")
+        {
+            throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED).");
+        }
+
+        var latestRecord = await TryLoadLatestMedicalRecordAsync(visit.Id, ct);
+        if (latestRecord is not null &&
+            string.Equals(latestRecord.Status?.Trim(), "FINALIZED", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException("Hồ sơ bệnh án đã được khóa hoàn tất (FINALIZED).");
+        }
+
+        var activeQueueStatus = activeEntry is not null ? NormalizeQueueStatus(activeEntry.Status) : string.Empty;
+        if (activeEntry is null ||
+            activeEntry.CompletedAt.HasValue ||
+            !activeEntry.StartedAt.HasValue ||
+            activeQueueStatus != "IN_PROGRESS")
+        {
+            throw new ConflictException(
+                "[CLINICAL_SESSION_NOT_IN_PROGRESS] Phiên khám lâm sàng chưa mở hoặc không ở trạng thái đang khám (IN_PROGRESS), không thể thực hiện bàn giao cận lâm sàng.");
+        }
+
+        var currentStateVersion = activeEntry.StateVersion is > 0 ? activeEntry.StateVersion.Value : 1;
+        if (request?.ExpectedStateVersion.HasValue == true && request.ExpectedStateVersion.Value != currentStateVersion)
+        {
+            throw new ConflictException(
+                "[STATE_VERSION_MISMATCH] Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại không gian khám.");
+        }
+
+        var visitOrders = await _db.DiagnosticOrders
+            .AsNoTracking()
+            .Where(o => o.VisitId == visit.Id)
+            .OrderBy(o => o.Id)
+            .ToListAsync(ct);
+
+        var openPendingOrders = visitOrders
+            .Where(o =>
+                AppointmentBookingRules.NormalizeStatusKey(o.Status) is not ("CANCELLED" or "COMPLETED" or "DONE" or "FINALIZED" or "VERIFIED") &&
+                !string.Equals(o.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.Declined, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(o.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.SkippedAfterPaid, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (openPendingOrders.Count == 0)
+        {
+            throw new ConflictException(
+                "[NO_PENDING_DIAGNOSTIC_ORDERS] Lượt khám hiện không có chỉ định cận lâm sàng nào đang chờ thanh toán hoặc thực hiện để bàn giao.");
+        }
+
+        var crossDayPolicy = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(
+            _db,
+            doctorAccess.Hospital.Id,
+            nowUtc,
+            ct);
+        var wasAlreadyReturnOverdue = MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsReturnConsultationOverdue(
+            visit,
+            crossDayPolicy.ReturnConsultationWindowDays,
+            nowLocal);
+
+        var nextStateVersion = currentStateVersion + 1;
+        activeEntry.Status = "COMPLETED";
+        activeEntry.CompletedAt ??= nowLocal;
+        activeEntry.StateVersion = nextStateVersion;
+
+        visit.Status = "AWAITING_RESULTS";
+        visit.OverdueReturnResultSnapshot = null;
+        if (!wasAlreadyReturnOverdue)
+        {
+            visit.ReadyForReturnAt = null;
+        }
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actorUserId,
+            HospitalId = doctorAccess.Hospital.Id,
+            Action = "CLINICAL_HANDOFF_TO_DIAGNOSTIC",
+            EntityType = "VISIT",
+            EntityId = visit.Id.ToString(CultureInfo.InvariantCulture),
+            Reason = clinicalNote ?? "Bác sĩ kết thúc phiên khám hiện tại và bàn giao bệnh nhân sang bước thanh toán / thực hiện cận lâm sàng",
+            ChangeData = JsonSerializer.Serialize(new
+            {
+                visitId = visit.Id,
+                visitCode = visit.VisitCode,
+                clinicalQueueEntryId = activeEntry.Id,
+                doctorId = doctorAccess.Doctor.Id,
+                previousStateVersion = currentStateVersion,
+                newStateVersion = nextStateVersion,
+                pendingDiagnosticOrderCount = openPendingOrders.Count,
+                pendingDiagnosticOrderIds = openPendingOrders.Select(o => o.Id).ToArray(),
+                resultingVisitStatus = visit.Status,
+                clinicalNote,
+            }, AuditJsonOptions),
+            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+            OccurredAt = nowUtc,
+        });
+
+        await SaveChangesWithConcurrencyGuardAsync(ct);
+
+        if (tx is not null)
+        {
+            await tx.CommitAsync(ct);
+        }
+
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: doctorAccess.Hospital.Id,
+                ServicePointId: activeEntry.CurrentServicePointId ?? activeEntry.ServicePointId,
+                RoomId: visit.ExaminationRoomId ?? context.Room?.Id,
+                AppointmentId: activeEntry.AppointmentId ?? visit.AppointmentId),
+            ct);
+
+        var refreshedAfterHandoff = await ResolveAndAuthorizeVisitContextAsync(
+            doctorAccess,
+            visit.Id,
+            null,
+            isQueuePrefix: false,
+            visitIdOrCode,
+            ct);
+
+        return await BuildWorkspaceResponseAsync(
+            doctorAccess,
+            refreshedAfterHandoff,
+            actionOutcome: "CLINICAL_HANDOFF_TO_DIAGNOSTIC",
             nowUtc,
             nowLocal,
             ct);
@@ -7291,6 +7418,23 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             var room = sp?.RoomId.HasValue == true && roomsById.TryGetValue(sp.RoomId.Value, out var foundRoom)
                 ? foundRoom
                 : null;
+            auditMetadataByOrderId.TryGetValue(order.Id, out var auditMeta);
+            if (sp is null && service is not null && auditMeta?.DiagnosticServicePointId is long previewSpId)
+            {
+                try
+                {
+                    sp = await _db.QueueServicePoints.AsNoTracking().FirstOrDefaultAsync(x => x.Id == previewSpId, ct);
+                    if (sp?.RoomId.HasValue == true)
+                    {
+                        room = await _db.HospitalRooms.AsNoTracking().FirstOrDefaultAsync(x => x.Id == sp.RoomId.Value, ct);
+                    }
+                }
+                catch (NotSupportedException)
+                {
+                    sp = null;
+                    room = null;
+                }
+            }
 
             var unitPrice = service is not null
                 ? await ResolveActiveServicePriceAsync(service.Id, nowLocal, ct)
@@ -7337,7 +7481,6 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 ? vStaff
                 : null;
 
-            auditMetadataByOrderId.TryGetValue(order.Id, out var auditMeta);
             var orderSequenceNo = auditMeta?.OrderSequenceNo
                 ?? (sequenceByOrderId.TryGetValue(order.Id, out var computedSeq) ? computedSeq : 1);
             var isAdditionalOrder = auditMeta is not null
@@ -7734,6 +7877,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 long? followUpId = null;
                 string? followUpCode = null;
                 string? additionalReason = null;
+                long? diagSpId = null;
 
                 if (!string.IsNullOrWhiteSpace(log.ChangeData))
                 {
@@ -7777,6 +7921,14 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                                     additionalReason = rawReason.Trim();
                                 }
                             }
+
+                            if (root.TryGetProperty("diagnosticServicePointId", out var dspProp) &&
+                                dspProp.ValueKind == JsonValueKind.Number &&
+                                dspProp.TryGetInt64(out var parsedDspId) &&
+                                parsedDspId > 0)
+                            {
+                                diagSpId = parsedDspId;
+                            }
                         }
                     }
                     catch (JsonException)
@@ -7790,7 +7942,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                     OrderSequenceNo: seqNo,
                     FollowUpToOrderId: followUpId,
                     FollowUpToOrderCode: followUpCode,
-                    AdditionalOrderReason: additionalReason);
+                    AdditionalOrderReason: additionalReason,
+                    DiagnosticServicePointId: diagSpId);
             }
         }
         catch (NotSupportedException)
@@ -8855,7 +9008,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         int? OrderSequenceNo,
         long? FollowUpToOrderId,
         string? FollowUpToOrderCode,
-        string? AdditionalOrderReason);
+        string? AdditionalOrderReason,
+        long? DiagnosticServicePointId = null);
     private sealed record ValidatedDiagnosisInput(
         IReadOnlyList<ValidatedDiagnosisItemInput> Items,
         string? PrimaryClinicalDiagnosis,

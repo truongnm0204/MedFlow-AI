@@ -510,6 +510,11 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             ? foundRoom
             : null;
 
+        DiagnosticDepartmentScopeGuard.EnsureStaffInDepartmentScopeOrThrow(
+            staffAccess.Staff,
+            service.DepartmentId,
+            resolvedRoom?.DepartmentId);
+
         var isExecutionStartedOrCompleted = IsOrderExecutionStartedOrCompleted(
             rawOrderStatus,
             normalizedQueueStatus,
@@ -596,6 +601,16 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
 
             trackedOrder = await _db.DiagnosticOrders.FirstOrDefaultAsync(o => o.Id == trackedOrder.Id, ct)
                 ?? throw new NotFoundException("DiagnosticOrder", orderCode);
+            var postLockResultService = trackedOrder.ServiceId.HasValue
+                ? await _db.Services.AsNoTracking().FirstOrDefaultAsync(s => s.Id == trackedOrder.ServiceId.Value, ct) ?? service
+                : service;
+            await DiagnosticDepartmentScopeGuard.ReloadLiveStaffAndEnsureDepartmentScopeAsync(
+                _db,
+                actorUserId,
+                staffAccess.Staff,
+                postLockResultService.DepartmentId,
+                resolvedRoom?.DepartmentId,
+                ct);
             visit = await _db.Visits.FirstOrDefaultAsync(v => v.Id == visit.Id, ct)
                 ?? throw new ConflictException("Phiếu chỉ định cận lâm sàng không gắn với lượt khám hợp lệ.");
             trackedQueueEntry = trackedOrder.QueueEntryId.HasValue
@@ -960,6 +975,12 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
 
         var lookupBundle = await LoadOrderLookupBundleAsync(visitOrders, hospitalId, nowLocal, ct);
         EnsureOrderHospitalOwnership(targetOrder, hospitalId, lookupBundle);
+        var verifyService = targetOrder.ServiceId.HasValue && lookupBundle.ServicesById.TryGetValue(targetOrder.ServiceId.Value, out var foundVerifySvc)
+            ? foundVerifySvc
+            : null;
+        DiagnosticDepartmentScopeGuard.EnsureStaffInDepartmentScopeOrThrow(
+            staffAccess.Staff,
+            verifyService?.DepartmentId);
 
         lookupBundle.ResultsByOrderId.TryGetValue(targetOrder.Id, out var preResult);
         var preVersions = preResult is not null && lookupBundle.VersionsByResultId.TryGetValue(preResult.Id, out var loadedPreVers)
@@ -1396,6 +1417,11 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
             ? foundRoom
             : null;
 
+        DiagnosticDepartmentScopeGuard.EnsureStaffInDepartmentScopeOrThrow(
+            staffAccess.Staff,
+            service?.DepartmentId,
+            resolvedRoom?.DepartmentId);
+
         var resultState = ResolveResultState(
             rawOrderStatus,
             normalizedQueueStatus,
@@ -1480,6 +1506,16 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
 
             trackedOrder = await _db.DiagnosticOrders.FirstOrDefaultAsync(o => o.Id == trackedOrder.Id, ct)
                 ?? throw new NotFoundException("DiagnosticOrder", orderCode);
+            var postLockAmendService = trackedOrder.ServiceId.HasValue
+                ? await _db.Services.AsNoTracking().FirstOrDefaultAsync(s => s.Id == trackedOrder.ServiceId.Value, ct) ?? service
+                : service;
+            await DiagnosticDepartmentScopeGuard.ReloadLiveStaffAndEnsureDepartmentScopeAsync(
+                _db,
+                actorUserId,
+                staffAccess.Staff,
+                postLockAmendService?.DepartmentId,
+                resolvedRoom?.DepartmentId,
+                ct);
             trackedQueueEntry = trackedOrder.QueueEntryId.HasValue
                 ? await _db.QueueEntries.FirstOrDefaultAsync(q => q.Id == trackedOrder.QueueEntryId.Value, ct)
                 : null;

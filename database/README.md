@@ -38,12 +38,14 @@ database/
 │   ├── 023_business_integrity_constraints_and_indexes.sql # ADR-0059 per-charge billing (Option A), composite FKs, lineage/EMR cols & clinical/pharmacy integrity constraints
 │   ├── 024_grouped_payment_allocations_selection_and_cross_day_visits.sql # ADR-0060 payment_allocations (Level 16b), cash/idempotency columns, selective CLS & cross-day visit columns
 │   ├── 025_cross_day_visit_presence_and_resume_tracking.sql # ADR-0060 Stage C durable daily presence (visits.last_present_date/presence_state/last_resumed_at) & queue_entries.idempotency_key
-│   └── 026_clinical_revalidation_overdue_approval_and_review_purpose.sql # ADR-0061 Stage E1 diagnostic_orders clinical revalidation, visits overdue return snapshot approval & queue_entries.coordination_purpose
+│   ├── 026_clinical_revalidation_overdue_approval_and_review_purpose.sql # ADR-0061 Stage E1 diagnostic_orders clinical revalidation, visits overdue return snapshot approval & queue_entries.coordination_purpose
+│   └── 027_queue_enrollment_intents_pharmacy_and_single_active_index.sql # ADR-0061 Stage E2 QUEUE_ENROLL, visits.presence_session_no, queue_entries target bindings + ux_queue_entries_one_active_post_exam_per_visit, pharmacy room/SP seed & payment_enrollment_intents (Level 16c)
 ├── scripts/
 │   ├── preflight_023_audit.sql                    # read-only preflight audit for Migration 023
 │   ├── preflight_024_audit.sql                    # read-only preflight audit for Migration 024
 │   ├── preflight_025_audit.sql                    # read-only preflight audit for Migration 025
-│   └── preflight_026_audit.sql                    # read-only preflight audit for Migration 026
+│   ├── preflight_026_audit.sql                    # read-only preflight audit for Migration 026
+│   └── preflight_027_audit.sql                    # read-only preflight audit for Migration 027
 └── README.md
 ```
 
@@ -83,7 +85,7 @@ docker exec medflow-postgres psql -U postgres -d medflow_db -v ON_ERROR_STOP=1 -
 | Clinical | `medical_records`, `medical_record_revisions`, `visit_diagnoses`, `clinical_addenda` |
 | Diagnostics | `diagnostic_orders`, `diagnostic_results`, `diagnostic_result_versions` |
 | Pharmacy | `medicines`, `prescriptions`, `prescription_items`, `medicine_batches`, `medication_dispenses`, `dispense_items`, `stock_transactions` |
-| Billing | `visit_charges`, `payments`, `payment_allocations`, `payment_gateway_events` |
+| Billing | `visit_charges`, `payments`, `payment_allocations`, `payment_gateway_events`, `payment_enrollment_intents` |
 | Notifications | `notifications` |
 | Configuration & audit | `hospital_policies`, `system_integrations`, `audit_logs` |
 

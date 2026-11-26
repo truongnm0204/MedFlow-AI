@@ -5,15 +5,18 @@ using MedFlow.Domain.Entities;
 namespace MedFlow.Application.Services.Visits;
 
 /// <summary>
-/// Evaluates durable daily patient presence in the hospital for Stage C cross-day visit workflows (ADR-0060).
-/// Never infers presence merely because a Visit is open or a DiagnosticResult was finalized.
+/// Evaluates durable daily patient presence and monotonic presence sessions in the hospital
+/// for cross-day and Stage E2 Queue-When-Ready workflows (ADR-0060 / ADR-0061).
+/// Never infers presence merely because a Visit is open, paid, or a DiagnosticResult was finalized.
 /// </summary>
 public static class VisitPresenceEvaluator
 {
     public static bool IsPresentToday(
         Visit? visit,
         IEnumerable<QueueEntry>? visitQueueEntries,
-        DateOnly todayLocal)
+        DateOnly todayLocal,
+        DateTime? nowLocal = null,
+        int? presenceTtlMinutes = null)
     {
         if (visit is null)
         {
@@ -22,7 +25,7 @@ public static class VisitPresenceEvaluator
 
         var presenceState = NormalizePresenceState(visit.PresenceState);
 
-        // 1. Explicit durable departure or deferral stamped today overrides everything until Reception Resume.
+        // 1. Explicit durable departure or deferral stamped today overrides everything until staff re-confirms presence.
         if (visit.LastPresentDate.HasValue &&
             visit.LastPresentDate.Value == todayLocal &&
             presenceState is VisitPresenceStates.Left or VisitPresenceStates.Deferred)
@@ -30,11 +33,25 @@ public static class VisitPresenceEvaluator
             return false;
         }
 
-        // 2. Durable presence stamped today by Check-in, Walk-in, Diagnostic Receive, or Reception Resume.
+        var hasActiveTodayQueue = visitQueueEntries is not null &&
+                                  visitQueueEntries.Any(qe => IsActivePresentQueueEntryToday(qe, todayLocal));
+
+        // 2. Durable presence stamped today by Check-in, Walk-in, Diagnostic/Pharmacy Staff, or Reception Resume.
         if (visit.LastPresentDate.HasValue &&
             visit.LastPresentDate.Value == todayLocal &&
             presenceState == VisitPresenceStates.Present)
         {
+            if (presenceTtlMinutes is > 0 && nowLocal.HasValue && !hasActiveTodayQueue)
+            {
+                var anchor = visit.LastResumedAt ?? visit.CheckedInAt;
+                if (anchor.HasValue &&
+                    DateOnly.FromDateTime(anchor.Value) == todayLocal &&
+                    nowLocal.Value > anchor.Value.AddMinutes(presenceTtlMinutes.Value))
+                {
+                    return false;
+                }
+            }
+
             return true;
         }
 
@@ -45,11 +62,19 @@ public static class VisitPresenceEvaluator
             DateOnly.FromDateTime(visit.CheckedInAt.Value) == todayLocal &&
             presenceState is not (VisitPresenceStates.Left or VisitPresenceStates.Deferred))
         {
+            if (presenceTtlMinutes is > 0 && nowLocal.HasValue && !hasActiveTodayQueue)
+            {
+                var anchor = visit.LastResumedAt ?? visit.CheckedInAt.Value;
+                if (nowLocal.Value > anchor.AddMinutes(presenceTtlMinutes.Value))
+                {
+                    return false;
+                }
+            }
+
             return true;
         }
 
-        if (visitQueueEntries is not null &&
-            visitQueueEntries.Any(qe => IsActivePresentQueueEntryToday(qe, todayLocal)))
+        if (hasActiveTodayQueue)
         {
             return true;
         }
@@ -72,12 +97,38 @@ public static class VisitPresenceEvaluator
     public static void StampPresentToday(Visit visit, DateOnly todayLocal, DateTime? resumedAtLocal = null)
     {
         ArgumentNullException.ThrowIfNull(visit);
+
+        if (visit.PresenceSessionNo < 1)
+        {
+            visit.PresenceSessionNo = 1;
+        }
+
+        var prevState = NormalizePresenceState(visit.PresenceState);
+        var wasPriorDay = visit.LastPresentDate.HasValue
+            ? visit.LastPresentDate.Value < todayLocal
+            : (visit.CheckedInAt.HasValue && DateOnly.FromDateTime(visit.CheckedInAt.Value) < todayLocal);
+        var wasLeftOrDeferred = prevState is VisitPresenceStates.Left or VisitPresenceStates.Deferred;
+
+        if (wasPriorDay || wasLeftOrDeferred)
+        {
+            visit.PresenceSessionNo = Math.Max(1, visit.PresenceSessionNo) + 1;
+        }
+
         visit.LastPresentDate = todayLocal;
         visit.PresenceState = VisitPresenceStates.Present;
         if (resumedAtLocal.HasValue)
         {
             visit.LastResumedAt = resumedAtLocal.Value;
         }
+    }
+
+    public static void StampDepartedOrDeferred(Visit visit, DateOnly todayLocal, bool isDeferred)
+    {
+        ArgumentNullException.ThrowIfNull(visit);
+
+        visit.LastPresentDate = todayLocal;
+        visit.PresenceState = isDeferred ? VisitPresenceStates.Deferred : VisitPresenceStates.Left;
+        visit.PresenceSessionNo = Math.Max(1, visit.PresenceSessionNo) + 1;
     }
 
     private static bool IsActivePresentQueueEntryToday(QueueEntry? qe, DateOnly todayLocal)
@@ -93,7 +144,7 @@ public static class VisitPresenceEvaluator
         }
 
         var status = AppointmentBookingRules.NormalizeStatusKey(qe.Status);
-        if (status is "CANCELLED" or "DEFERRED" or "COMPLETED" or "DONE" or "NO_SHOW")
+        if (status is "CANCELLED" or "DEFERRED" or "COMPLETED" or "DONE" or "NO_SHOW" or "SKIPPED" or "RESERVED")
         {
             return false;
         }

@@ -66,15 +66,71 @@ internal static class PaymentAllocationLookup
         }
     }
 
-    /// <summary>
-    /// Acquires ADR-0060 strict lock chain for a Visit's billing &amp; diagnostic graph:
-    /// 09 visits -&gt; 12 diagnostic_orders -&gt; 15 visit_charges -&gt; 16 payments -&gt; 16b payment_allocations.
-    /// </summary>
-    public static async Task AcquireVisitPaymentChainLocksAsync(
+    public static async Task<List<PaymentEnrollmentIntent>> TryLoadTrackedIntentsForVisitAsync(
         IApplicationDbContext db,
         long visitId,
         CancellationToken ct)
     {
+        try
+        {
+            return await db.PaymentEnrollmentIntents
+                .Where(i => i.VisitId == visitId)
+                .OrderBy(i => i.Id)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    public static async Task<List<PaymentEnrollmentIntent>> TryLoadNoTrackingIntentsForVisitAsync(
+        IApplicationDbContext db,
+        long visitId,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await db.PaymentEnrollmentIntents.AsNoTracking()
+                .Where(i => i.VisitId == visitId)
+                .OrderBy(i => i.Id)
+                .ToListAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    public static void TryAddIntent(
+        IApplicationDbContext db,
+        PaymentEnrollmentIntent intent)
+    {
+        try
+        {
+            db.PaymentEnrollmentIntents.Add(intent);
+        }
+        catch (NotSupportedException)
+        {
+            // Minimal unit-test DbContext double without PaymentEnrollmentIntents DbSet.
+        }
+    }
+
+    /// <summary>
+    /// Acquires ADR-0061 strict lock chain for a Visit's billing &amp; diagnostic graph:
+    /// 09 visits -&gt; 12 diagnostic_orders -&gt; 15 visit_charges -&gt; 16 payments -&gt; 16b payment_allocations -&gt; 16c payment_enrollment_intents.
+    /// </summary>
+    public static async Task AcquireVisitPaymentChainLocksAsync(
+        IApplicationDbContext db,
+        long visitId,
+        CancellationToken ct,
+        long? patientIdToLock = null)
+    {
+        if (patientIdToLock is > 0)
+        {
+            await db.TryLockPatientForUpdateAsync(patientIdToLock.Value, ct);
+        }
+
         await db.TryLockVisitForUpdateAsync(visitId, ct);
 
         try
@@ -129,6 +185,22 @@ internal static class PaymentAllocationLookup
             if (preAllocationIds.Count > 0)
             {
                 await db.TryLockPaymentAllocationsForUpdateAsync(preAllocationIds, ct);
+            }
+        }
+        catch (NotSupportedException)
+        {
+        }
+
+        try
+        {
+            var preIntentIds = await db.PaymentEnrollmentIntents.AsNoTracking()
+                .Where(i => i.VisitId == visitId)
+                .OrderBy(i => i.Id)
+                .Select(i => i.Id)
+                .ToListAsync(ct);
+            if (preIntentIds.Count > 0)
+            {
+                await db.TryLockPaymentEnrollmentIntentsForUpdateAsync(preIntentIds, ct);
             }
         }
         catch (NotSupportedException)

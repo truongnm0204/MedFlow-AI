@@ -49,6 +49,34 @@ public sealed partial class ExaminationQueueService
 
         await using var tx = await _db.BeginTransactionAsync(ct);
 
+        var preTarget = await FindExaminationQueueEntryForActionAsync(numericId, code, ct);
+        var preVisitForLock = preTarget.VisitId.HasValue
+            ? await _db.Visits.AsNoTracking().FirstOrDefaultAsync(v => v.Id == preTarget.VisitId.Value, ct)
+            : null;
+
+        // ADR-0061 strict lock order: patients (02) -> visits (09) -> queue_service_points (10) -> queue_entries (11)
+        if (preVisitForLock?.PatientId is long restorePatientId)
+        {
+            await _db.TryLockPatientForUpdateAsync(restorePatientId, ct);
+        }
+
+        if (preVisitForLock is not null)
+        {
+            await _db.TryLockVisitForUpdateAsync(preVisitForLock.Id, ct);
+        }
+
+        var preSpForLock = preTarget.CurrentServicePointId ?? preTarget.ServicePointId;
+        if (preSpForLock.HasValue)
+        {
+            await _db.TryLockServicePointForUpdateAsync(preSpForLock.Value, ct);
+        }
+
+        await _db.TryLockQueueEntryForUpdateAsync(preTarget.Id, ct);
+        if (_db is DbContext dbCtx && dbCtx.Database.ProviderName != "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            dbCtx.ChangeTracker.Clear();
+        }
+
         var target = await FindExaminationQueueEntryForActionAsync(numericId, code, ct);
         var board = await BuildQueueBoardAsync(actorUserId, target.QueueDate, ct);
         var before = FindBoardEntry(board, target.Id)
@@ -222,6 +250,34 @@ public sealed partial class ExaminationQueueService
 
         await using var tx = await _db.BeginTransactionAsync(ct);
 
+        var preTarget = await FindExaminationQueueEntryForActionAsync(numericId, code, ct);
+        var preVisitForLock = preTarget.VisitId.HasValue
+            ? await _db.Visits.AsNoTracking().FirstOrDefaultAsync(v => v.Id == preTarget.VisitId.Value, ct)
+            : null;
+
+        // ADR-0061 strict lock order: patients (02) -> visits (09) -> queue_service_points (10) -> queue_entries (11)
+        if (preVisitForLock?.PatientId is long restorePatientId)
+        {
+            await _db.TryLockPatientForUpdateAsync(restorePatientId, ct);
+        }
+
+        if (preVisitForLock is not null)
+        {
+            await _db.TryLockVisitForUpdateAsync(preVisitForLock.Id, ct);
+        }
+
+        var preSpForLock = preTarget.CurrentServicePointId ?? preTarget.ServicePointId;
+        if (preSpForLock.HasValue)
+        {
+            await _db.TryLockServicePointForUpdateAsync(preSpForLock.Value, ct);
+        }
+
+        await _db.TryLockQueueEntryForUpdateAsync(preTarget.Id, ct);
+        if (_db is DbContext dbCtx && dbCtx.Database.ProviderName != "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            dbCtx.ChangeTracker.Clear();
+        }
+
         var target = await FindExaminationQueueEntryForActionAsync(numericId, code, ct);
         var board = await BuildQueueBoardAsync(actorUserId, target.QueueDate, ct);
         var before = FindBoardEntry(board, target.Id)
@@ -257,6 +313,14 @@ public sealed partial class ExaminationQueueService
         {
             throw new ConflictException("Chỉ khôi phục được lượt khám đang ở trạng thái Qua lượt (SKIPPED).");
         }
+
+        await PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+            _db,
+            visit?.PatientId,
+            board.Hospital.Id,
+            board.EffectiveQueueDate,
+            excludeQueueEntryId: target.Id,
+            ct: ct);
 
         var previousPresenceStatus = entry.Dto.PresenceStatus;
         var previousArrivedAt = target.ArrivedAt;

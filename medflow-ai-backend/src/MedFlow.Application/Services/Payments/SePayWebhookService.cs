@@ -46,17 +46,21 @@ public sealed class SePayWebhookService : ISePayWebhookService
     private readonly IPaymentGatewayEventStore _store;
     private readonly TimeProvider _timeProvider;
     private readonly IRealtimeNotificationPublisher _realtimePublisher;
+    private readonly IPaymentEnrollmentIntentProcessor _intentProcessor;
 
     public SePayWebhookService(
         IApplicationDbContext db,
         IPaymentGatewayEventStore store,
         TimeProvider? timeProvider = null,
-        IRealtimeNotificationPublisher? realtimePublisher = null)
+        IRealtimeNotificationPublisher? realtimePublisher = null,
+        IPaymentEnrollmentIntentProcessor? intentProcessor = null)
     {
         _db = db;
         _store = store;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
+        _intentProcessor = intentProcessor
+            ?? new PaymentEnrollmentIntentProcessor(db, _timeProvider, realtimePublisher: _realtimePublisher);
     }
 
     public async Task<SePayWebhookResult> HandleAsync(
@@ -81,6 +85,7 @@ public sealed class SePayWebhookService : ISePayWebhookService
 
         var outcome = PaymentGatewayOutcomes.Unmatched;
         long? notifyVisitId = null;
+        long? settledPaymentIdForEnrollment = null;
         var shouldPublishPaymentChanged = false;
         var queueNotifications = new List<QueueChangedNotification>();
 
@@ -169,6 +174,10 @@ public sealed class SePayWebhookService : ISePayWebhookService
                 var allVisitAllocations = payment.VisitId is long vaId
                     ? await PaymentAllocationLookup.TryLoadTrackedForVisitAsync(_db, vaId, ct)
                     : [];
+                var allVisitIntents = payment.VisitId is long viId
+                    ? await PaymentAllocationLookup.TryLoadTrackedIntentsForVisitAsync(_db, viId, ct)
+                    : [];
+                var thisPaymentIntent = allVisitIntents.FirstOrDefault(i => i.PaymentId == payment.Id);
 
                 var thisPaymentAllocations = allVisitAllocations
                     .Where(pa => pa.PaymentId == payment.Id)
@@ -281,7 +290,13 @@ public sealed class SePayWebhookService : ISePayWebhookService
                             .Select(c => c.Id)
                             .ToHashSet();
 
-                    ExpireOverlappingPendingAttempts(allVisitPayments, allVisitAllocations, payment.Id, cancelledChargeSet);
+                    ExpireOverlappingPendingAttempts(
+                        allVisitPayments,
+                        allVisitAllocations,
+                        allVisitIntents,
+                        payment.Id,
+                        cancelledChargeSet,
+                        HospitalClock.GetUtcNow(_timeProvider));
 
                     payment.Status = MismatchPaymentStatus;
                     payment.ExternalReference = referenceCode;
@@ -473,7 +488,13 @@ public sealed class SePayWebhookService : ISePayWebhookService
                         // PAY-08: Exact match on active unpaid charge(s)!
                         // Cancel/expire any competing PENDING attempts + their PENDING allocations overlapping ANY target charge.
                         var targetSet = targetChargeIds.ToHashSet();
-                        ExpireOverlappingPendingAttempts(allVisitPayments, allVisitAllocations, payment.Id, targetSet);
+                        ExpireOverlappingPendingAttempts(
+                            allVisitPayments,
+                            allVisitAllocations,
+                            allVisitIntents,
+                            payment.Id,
+                            targetSet,
+                            HospitalClock.GetUtcNow(_timeProvider));
 
                         payment.Status = PaymentStatuses.Paid;
                         payment.PaidAt = ResolvePaidAt(request.TransactionDate);
@@ -509,6 +530,29 @@ public sealed class SePayWebhookService : ISePayWebhookService
                     outcome = PaymentGatewayOutcomes.AlreadyClosed;
                 }
 
+                var nowUtcForGateway = HospitalClock.GetUtcNow(_timeProvider);
+                if (outcome == PaymentGatewayOutcomes.Paid && thisPaymentIntent is not null)
+                {
+                    if (Normalize(thisPaymentIntent.Status) == PaymentEnrollmentIntentStatuses.PendingSettlement)
+                    {
+                        thisPaymentIntent.Status = PaymentEnrollmentIntentStatuses.PendingPostCommit;
+                    }
+
+                    settledPaymentIdForEnrollment = payment.Id;
+                }
+                else if (status != PaymentStatuses.Paid &&
+                         outcome != PaymentGatewayOutcomes.Paid &&
+                         outcome != PaymentGatewayOutcomes.Partial &&
+                         thisPaymentIntent is not null &&
+                         Normalize(thisPaymentIntent.Status) == PaymentEnrollmentIntentStatuses.PendingSettlement &&
+                         Normalize(payment.Status) is PaymentStatuses.Cancelled or PaymentStatuses.Expired or MismatchPaymentStatus)
+                {
+                    // PE-05: Late/mismatched/cancelled transfer NEVER triggers post-commit enrollment.
+                    thisPaymentIntent.Status = PaymentEnrollmentIntentStatuses.Cancelled;
+                    thisPaymentIntent.OutcomeCode = "PAYMENT_NOT_SETTLED";
+                    thisPaymentIntent.ProcessedAt = nowUtcForGateway;
+                }
+
                 var gatewayEvent = new PaymentGatewayEvent
                 {
                     Provider = Provider,
@@ -518,7 +562,7 @@ public sealed class SePayWebhookService : ISePayWebhookService
                     TransferAmount = amount,
                     ReferenceCode = referenceCode,
                     Outcome = outcome,
-                    ReceivedAt = HospitalClock.GetUtcNow(_timeProvider),
+                    ReceivedAt = nowUtcForGateway,
                 };
 
                 _store.Add(gatewayEvent);
@@ -546,6 +590,20 @@ public sealed class SePayWebhookService : ISePayWebhookService
             }
         }
 
+        PaymentEnrollmentResultDto? postCommitEnrollment = null;
+        if (settledPaymentIdForEnrollment is long settledId)
+        {
+            try
+            {
+                postCommitEnrollment = await _intentProcessor.ProcessPostCommitAsync(settledId, ct: ct);
+            }
+            catch
+            {
+                // QE-13 / E-BR28: Post-commit enrollment failure MUST NEVER roll back or fail the committed PAID webhook!
+                postCommitEnrollment = null;
+            }
+        }
+
         // ADR-0059 Principle #6: SignalR published strictly AFTER tx.CommitAsync(ct) succeeds
         if (shouldPublishPaymentChanged && notifyVisitId is long committedVisitId)
         {
@@ -559,7 +617,12 @@ public sealed class SePayWebhookService : ISePayWebhookService
             }
         }
 
-        return new SePayWebhookResult(true, outcome);
+        return new SePayWebhookResult(
+            true,
+            outcome,
+            postCommitEnrollment?.EnrollmentStatus,
+            postCommitEnrollment?.OutcomeCode,
+            postCommitEnrollment?.QueueEntry?.QueueEntryId);
     }
 
     internal static string? ExtractCode(SePayWebhookRequest request)
@@ -632,8 +695,10 @@ public sealed class SePayWebhookService : ISePayWebhookService
     private static void ExpireOverlappingPendingAttempts(
         IReadOnlyList<Payment> allVisitPayments,
         IReadOnlyList<PaymentAllocation> allVisitAllocations,
+        IReadOnlyList<PaymentEnrollmentIntent> allVisitIntents,
         long currentPaymentId,
-        IReadOnlySet<long> targetSet)
+        IReadOnlySet<long> targetSet,
+        DateTime nowUtc)
     {
         if (targetSet.Count == 0)
             return;
@@ -666,6 +731,15 @@ public sealed class SePayWebhookService : ISePayWebhookService
             {
                 foreach (var pa in toExpire)
                     pa.Status = PaymentAllocationStatuses.Expired;
+            }
+
+            foreach (var pi in allVisitIntents.Where(i =>
+                         i.PaymentId == sib.Id &&
+                         Normalize(i.Status) == PaymentEnrollmentIntentStatuses.PendingSettlement))
+            {
+                pi.Status = PaymentEnrollmentIntentStatuses.Expired;
+                pi.OutcomeCode = PaymentEnrollmentIntentOutcomeCodes.IntentExpired;
+                pi.ProcessedAt = nowUtc;
             }
         }
     }

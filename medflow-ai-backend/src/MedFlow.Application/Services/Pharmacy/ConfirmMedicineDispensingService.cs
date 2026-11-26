@@ -4,9 +4,11 @@ using System.Text.Json;
 using MedFlow.Application.Common.Persistence;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Pharmacy;
+using MedFlow.Application.DTOs.Realtime;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Payments;
+using MedFlow.Application.Services.Realtime;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
@@ -24,15 +26,18 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
     private readonly IVisitChargeSettlementReader _settlementReader;
+    private readonly IRealtimeNotificationPublisher _realtimePublisher;
 
     public ConfirmMedicineDispensingService(
         IApplicationDbContext dbContext,
         TimeProvider? timeProvider = null,
-        IVisitChargeSettlementReader? settlementReader = null)
+        IVisitChargeSettlementReader? settlementReader = null,
+        IRealtimeNotificationPublisher? realtimePublisher = null)
     {
         _db = dbContext;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _settlementReader = settlementReader ?? new VisitChargeSettlementReader(dbContext, _timeProvider);
+        _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
     }
 
     public async Task<DispenseConfirmContextDto> GetDispenseContextAsync(
@@ -349,19 +354,52 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             : request.IdempotencyKey.Trim();
 
         long confirmedDispenseId;
+        long? completedPharmacyServicePointId = null;
 
         await using (var tx = await _db.BeginTransactionAsync(ct))
         {
             try
             {
-                // ADR-0059 strict lock order: visits (09) -> prescriptions (13) -> medicine_batches (14, sorted ASC)
+                // ADR-0061 strict lock order: visits (09) -> queue_service_points (10) -> queue_entries (11) -> prescriptions (13) -> medicine_batches (14, sorted ASC)
                 await _db.TryLockVisitForUpdateAsync(visitId, ct);
+
+                try
+                {
+                    var prePharmacyQueues = await _db.QueueEntries.AsNoTracking()
+                        .Where(q => q.VisitId == visitId && q.QueueType != null && q.QueueType.ToUpper() == "PHARMACY")
+                        .ToListAsync(ct);
+                    var preSpIds = prePharmacyQueues
+                        .SelectMany(q => new[] { q.CurrentServicePointId, q.ServicePointId })
+                        .Where(id => id.HasValue && id.Value > 0)
+                        .Select(id => id!.Value)
+                        .Distinct()
+                        .OrderBy(id => id)
+                        .ToArray();
+                    if (preSpIds.Length > 0)
+                    {
+                        await _db.TryLockServicePointsForUpdateAsync(preSpIds, ct);
+                    }
+
+                    var preQeIds = prePharmacyQueues.Select(q => q.Id).OrderBy(id => id).ToArray();
+                    if (preQeIds.Length > 0)
+                    {
+                        await _db.TryLockQueueEntriesForUpdateAsync(preQeIds, ct);
+                    }
+                }
+                catch (NotSupportedException)
+                {
+                }
+
                 await _db.TryLockPrescriptionForUpdateAsync(preLockPrescription.Id, ct);
 
                 if (_db is DbContext trackerCtx)
                 {
                     trackerCtx.ChangeTracker.Clear();
                 }
+
+                var (postLockStaff, postLockHospital) = await ValidatePharmacyStaffAccessAsync(actorUserId, nowUtc, ct);
+                staff = postLockStaff;
+                hospital = postLockHospital;
 
                 var visit = await _db.Visits.AsNoTracking()
                     .FirstOrDefaultAsync(v => v.Id == visitId, ct)
@@ -793,6 +831,44 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
 
                 prescription.Status = "DISPENSED";
 
+                // PH-02: Atomically close open PHARMACY queue entry inside the exact same transaction as stock deduction.
+                // If FEFO batch validation threw above, we never reach here and the queue entry remains open.
+                try
+                {
+                    var openPharmacyEntries = await _db.QueueEntries
+                        .Where(q =>
+                            q.VisitId == visit.Id &&
+                            q.CompletedAt == null &&
+                            q.QueueType != null &&
+                            q.QueueType.ToUpper() == "PHARMACY" &&
+                            (q.PrescriptionId == prescription.Id || q.PrescriptionId == null))
+                        .ToListAsync(ct);
+
+                    foreach (var pq in openPharmacyEntries)
+                    {
+                        var normStatus = pq.Status?.Trim().ToUpperInvariant();
+                        if (normStatus is "COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED")
+                        {
+                            continue;
+                        }
+
+                        pq.PrescriptionId ??= prescription.Id;
+                        pq.ArrivedAt ??= nowLocal;
+                        pq.ReadyAt ??= nowLocal;
+                        pq.CalledAt ??= nowLocal;
+                        pq.StartedAt ??= nowLocal;
+                        pq.CompletedAt = nowLocal;
+                        pq.Status = "COMPLETED";
+                        pq.PresenceStatus = "PRESENT";
+                        pq.BlockedReason = null;
+                        pq.StateVersion = (pq.StateVersion is > 0 ? pq.StateVersion.Value : 1) + 1;
+                        completedPharmacyServicePointId ??= pq.CurrentServicePointId ?? pq.ServicePointId;
+                    }
+                }
+                catch (NotSupportedException)
+                {
+                }
+
                 _db.AuditLogs.Add(new AuditLog
                 {
                     ActorUserId = actorUserId,
@@ -854,6 +930,15 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
 
                 throw new ConflictException("Giao dịch cấp phát thuốc đang có xung đột đồng thời, vui lòng thử lại.");
             }
+        }
+
+        if (completedPharmacyServicePointId.HasValue)
+        {
+            await _realtimePublisher.TryPublishQueueChangedSafeAsync(
+                new QueueChangedNotification(
+                    HospitalId: hospital.Id,
+                    ServicePointId: completedPharmacyServicePointId.Value),
+                ct);
         }
 
         return await BuildDispensingResultDetailAsync(confirmedDispenseId, ct, request.ReceiverName);
@@ -1187,6 +1272,38 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
         if (!hasMedicineDispensePermission)
         {
             throw new ForbiddenException("Dược sĩ chưa được phân quyền cấp phát thuốc (MEDICINE_DISPENSE).");
+        }
+
+        if (!actorStaff.DepartmentId.HasValue || actorStaff.DepartmentId.Value <= 0)
+        {
+            throw new ForbiddenException(
+                "[DEPARTMENT_SCOPE_FORBIDDEN] Nhân viên nhà thuốc chưa được phân công khoa Dược, không được phép thực hiện nghiệp vụ chuyên môn.");
+        }
+
+        try
+        {
+            var staffDepartment = await _db.Departments.AsNoTracking()
+                .FirstOrDefaultAsync(d => d.Id == actorStaff.DepartmentId.Value, ct);
+            if (staffDepartment is null ||
+                staffDepartment.HospitalId != hospitalId ||
+                staffDepartment.IsActive != true)
+            {
+                throw new ForbiddenException(
+                    "[DEPARTMENT_SCOPE_FORBIDDEN] Khoa được phân công của nhân viên nhà thuốc không hợp lệ hoặc đã ngừng hoạt động.");
+            }
+
+            var phaDepartmentIds = await _db.Departments.AsNoTracking()
+                .Where(d => d.HospitalId == hospitalId && d.IsActive == true && d.DepartmentCode != null && d.DepartmentCode.ToUpper() == "PHA")
+                .Select(d => d.Id)
+                .ToListAsync(ct);
+            if (phaDepartmentIds.Count > 0 && !phaDepartmentIds.Contains(actorStaff.DepartmentId.Value))
+            {
+                throw new ForbiddenException(
+                    "[DEPARTMENT_SCOPE_FORBIDDEN] Nhân viên nhà thuốc chỉ được phép thực hiện nghiệp vụ cấp phát thuốc trong phạm vi Khoa Dược được phân công.");
+            }
+        }
+        catch (NotSupportedException)
+        {
         }
 
         return (actorStaff, hospital);

@@ -404,7 +404,8 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
                 includeChargeAndPaymentLocks: false,
                 ct,
                 extraServiceIds: executionPlans.Select(p => p.Service.Id),
-                extraRoomIds: lookupBundle.RoomsById.Keys);
+                extraRoomIds: lookupBundle.RoomsById.Keys,
+                extraPatientIds: executionPlans.Where(p => p.Visit.PatientId.HasValue).Select(p => p.Visit.PatientId!.Value));
 
             var postLockServiceIds = executionPlans.Select(p => p.Service.Id).Distinct().ToList();
             var postLockServicesById = postLockServiceIds.Count == 0
@@ -455,6 +456,13 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
 
                 var resolvedSp = postLockHospitalServicePoints.First(sp => sp.Id == postLockSpId);
                 postLockRoomsById.TryGetValue(resolvedSp.RoomId!.Value, out var resolvedRoom);
+                await DiagnosticDepartmentScopeGuard.ReloadLiveStaffAndEnsureDepartmentScopeAsync(
+                    _db,
+                    actorUserId,
+                    staffAccess.Staff,
+                    service.DepartmentId,
+                    resolvedRoom?.DepartmentId,
+                    ct);
                 lookupBundle.ServicesById[service.Id] = service;
                 lookupBundle.ServicePointsById[resolvedSp.Id] = resolvedSp;
                 if (resolvedRoom is not null)
@@ -514,6 +522,35 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
 
                 if (linkedQueueEntry is null)
                 {
+                    var activeClinicalSessionExists = await _db.QueueEntries
+                        .AsNoTracking()
+                        .AnyAsync(
+                            q => q.VisitId == visit.Id &&
+                                 q.CompletedAt == null &&
+                                 q.QueueType != null &&
+                                 (q.QueueType.ToUpper() == "EXAMINATION" || q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
+                                 q.Status != null &&
+                                 (q.Status.ToUpper() == "WAITING" ||
+                                  q.Status.ToUpper() == "READY" ||
+                                  q.Status.ToUpper() == "CALLED" ||
+                                  q.Status.ToUpper() == "IN_PROGRESS" ||
+                                  q.Status.ToUpper() == "IN_CONSULTATION" ||
+                                  q.Status.ToUpper() == "SERVING"),
+                            ct);
+                    if (activeClinicalSessionExists)
+                    {
+                        throw new ConflictException(
+                            "[CLINICAL_HANDOFF_REQUIRED] Phiên khám lâm sàng của bệnh nhân vẫn đang mở. Bác sĩ cần kết thúc hoặc bàn giao phiên khám trước khi tiếp nhận vào hàng đợi cận lâm sàng.");
+                    }
+
+                    await MedFlow.Application.Services.Visits.PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+                        _db,
+                        visit.PatientId,
+                        hospitalId,
+                        referenceDate,
+                        excludeQueueEntryId: null,
+                        ct: ct);
+
                     var diagSpId = resolvedSp?.Id;
                     var maxQueueNumber = await _db.QueueEntries
                         .AsNoTracking()
@@ -534,6 +571,7 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
                     {
                         VisitId = visit.Id,
                         AppointmentId = null,
+                        DiagnosticOrderId = order.Id,
                         ServicePointId = diagSpId,
                         CurrentServicePointId = diagSpId,
                         QueueDate = referenceDate,
@@ -570,6 +608,18 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
                 else
                 {
                     previousQueueStatus = NormalizeQueueStatus(linkedQueueEntry.Status);
+                    if (!MedFlow.Application.Services.Visits.PatientSingleActiveQueueGuard.IsActiveServingQueueEntry(linkedQueueEntry))
+                    {
+                        await MedFlow.Application.Services.Visits.PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+                            _db,
+                            visit.PatientId,
+                            hospitalId,
+                            referenceDate,
+                            excludeQueueEntryId: linkedQueueEntry.Id,
+                            ct: ct);
+                    }
+
+                    linkedQueueEntry.DiagnosticOrderId ??= order.Id;
                     previousPresenceStatus = string.IsNullOrWhiteSpace(linkedQueueEntry.PresenceStatus)
                         ? "PRESENT"
                         : linkedQueueEntry.PresenceStatus.Trim().ToUpperInvariant();
@@ -626,7 +676,7 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
                 VisitPresenceEvaluator.StampPresentToday(
                     visit,
                     referenceDate,
-                    visit.CheckedInAt.HasValue && DateOnly.FromDateTime(visit.CheckedInAt.Value) < referenceDate ? nowLocal : null);
+                    nowLocal);
                 if (validated.Instruction is not null)
                 {
                     order.Instruction = validated.Instruction;
@@ -1000,6 +1050,10 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
 
         resolvedSp = lookupBundle.HospitalDiagnosticServicePoints.First(sp => sp.Id == targetSpId);
         lookupBundle.RoomsById.TryGetValue(resolvedSp.RoomId!.Value, out resolvedRoom);
+        DiagnosticDepartmentScopeGuard.EnsureStaffInDepartmentScopeOrThrow(
+            staffAccess.Staff,
+            service.DepartmentId,
+            resolvedRoom?.DepartmentId);
 
         var category = ResolveDiagnosticCategory(service, lookupBundle.SpecialtiesById);
 

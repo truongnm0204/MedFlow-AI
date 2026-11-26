@@ -13,7 +13,10 @@ public sealed record CrossDayVisitPolicySnapshot(
     int ReturnConsultationWindowDays,
     bool RequirePresenceForReturnQueue,
     bool AllowDoctorReassignment,
-    bool AutoCancelOverdueVisit)
+    bool AutoCancelOverdueVisit,
+    int? PresenceTtlMinutes = null,
+    bool AllowHospitalAdminReturnCoordination = false,
+    int? MaxActiveQueuePerDoctor = null)
 {
     public static readonly CrossDayVisitPolicySnapshot Defaults = new(
         AllowCrossDayVisit: true,
@@ -21,7 +24,10 @@ public sealed record CrossDayVisitPolicySnapshot(
         ReturnConsultationWindowDays: 7,
         RequirePresenceForReturnQueue: true,
         AllowDoctorReassignment: true,
-        AutoCancelOverdueVisit: false);
+        AutoCancelOverdueVisit: false,
+        PresenceTtlMinutes: null,
+        AllowHospitalAdminReturnCoordination: false,
+        MaxActiveQueuePerDoctor: null);
 }
 
 public static class CrossDayVisitPolicyKeys
@@ -35,6 +41,9 @@ public static class CrossDayVisitPolicyKeys
     public const string RequirePresenceForReturnQueue = "require_presence_for_return_queue";
     public const string AllowDoctorReassignment = "allow_doctor_reassignment";
     public const string AutoCancelOverdueVisit = "auto_cancel_overdue_visit";
+    public const string PresenceTtlMinutes = "presence_ttl_minutes";
+    public const string AllowHospitalAdminReturnCoordination = "allow_hospital_admin_return_coordination";
+    public const string MaxActiveQueuePerDoctor = "max_active_queue_per_doctor";
 
     public const string OverdueReasonDiagnosticOrder = "DIAGNOSTIC_ORDER_OVERDUE_REVIEW";
     public const string OverdueReasonReturnConsultation = "RETURN_CONSULTATION_OVERDUE_REVIEW";
@@ -113,7 +122,13 @@ public static class CrossDayVisitPolicyReader
             AutoCancelOverdueVisit: ReadBool(
                 activeByKey,
                 CrossDayVisitPolicyKeys.AutoCancelOverdueVisit,
-                defaults.AutoCancelOverdueVisit));
+                defaults.AutoCancelOverdueVisit),
+            PresenceTtlMinutes: ReadOptionalPositiveInt(activeByKey, CrossDayVisitPolicyKeys.PresenceTtlMinutes),
+            AllowHospitalAdminReturnCoordination: ReadBool(
+                activeByKey,
+                CrossDayVisitPolicyKeys.AllowHospitalAdminReturnCoordination,
+                defaults.AllowHospitalAdminReturnCoordination),
+            MaxActiveQueuePerDoctor: ReadOptionalPositiveInt(activeByKey, CrossDayVisitPolicyKeys.MaxActiveQueuePerDoctor));
     }
 
     public const string ExpiredOrderDoctorApprovalRequiredMessage =
@@ -296,5 +311,18 @@ public static class CrossDayVisitPolicyReader
         }
 
         return fallback;
+    }
+
+    private static int? ReadOptionalPositiveInt(
+        IReadOnlyDictionary<string, HospitalPolicy> activeByKey,
+        string key)
+    {
+        if (!activeByKey.TryGetValue(key, out _))
+        {
+            return null;
+        }
+
+        var parsed = ReadInt(activeByKey, key, -1);
+        return parsed > 0 ? parsed : null;
     }
 }

@@ -120,9 +120,28 @@ internal static class DiagnosticOrderLifecycleHelper
         bool includeChargeAndPaymentLocks,
         CancellationToken ct,
         IEnumerable<long>? extraServiceIds = null,
-        IEnumerable<long>? extraRoomIds = null)
+        IEnumerable<long>? extraRoomIds = null,
+        IEnumerable<long>? extraPatientIds = null)
     {
         var anyRelationalLockAcquired = false;
+
+        // Level 02: patients (ADR-0061 lock order, before services 04 / rooms 06 / visits 09)
+        if (extraPatientIds is not null)
+        {
+            var sortedPatientIds = new SortedSet<long>();
+            foreach (var pid in extraPatientIds)
+            {
+                if (pid > 0)
+                {
+                    sortedPatientIds.Add(pid);
+                }
+            }
+
+            if (sortedPatientIds.Count > 0 && await db.TryLockPatientsForUpdateAsync(sortedPatientIds.ToArray(), ct))
+            {
+                anyRelationalLockAcquired = true;
+            }
+        }
 
         // Level 04: services (ADR-0059 lock order, before visits 09)
         if (extraServiceIds is not null)
@@ -1174,21 +1193,23 @@ internal static class DiagnosticOrderLifecycleHelper
         var isPresentToday = !policy.RequirePresenceForReturnQueue ||
                              VisitPresenceEvaluator.IsPresentToday(visit, visitQueueEntries, todayLocal);
 
+        // Stage E2 (QE-10 / E-BR14): Finalizing diagnostic results NEVER auto-creates a RETURN_CONSULTATION QueueEntry!
+        // Reception exclusively coordinates doctor continuity/load balancing and issues the RETURN_CONSULTATION ticket.
+        var existingOpenReturn = clinicalEntries.FirstOrDefault(q =>
+            q.QueueDate == todayLocal &&
+            ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation &&
+            !q.CompletedAt.HasValue &&
+            AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED"));
+
         if (!isPresentToday)
         {
-            // Case B (CD-T05): Patient is NOT durably present today -> do NOT create RETURN_CONSULTATION queue or make callable.
-            foreach (var todayUnstartedReturn in clinicalEntries.Where(q =>
-                         q.QueueDate == todayLocal &&
-                         ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation &&
-                         !q.CompletedAt.HasValue &&
-                         !q.StartedAt.HasValue &&
-                         AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED")))
+            if (existingOpenReturn is not null && !existingOpenReturn.StartedAt.HasValue)
             {
-                todayUnstartedReturn.Status = "DEFERRED";
-                todayUnstartedReturn.PresenceStatus = "LEFT";
-                todayUnstartedReturn.CalledAt = null;
-                todayUnstartedReturn.CompletedAt = nowLocal;
-                todayUnstartedReturn.StateVersion = (todayUnstartedReturn.StateVersion is > 0 ? todayUnstartedReturn.StateVersion.Value : 1) + 1;
+                existingOpenReturn.Status = "DEFERRED";
+                existingOpenReturn.PresenceStatus = "LEFT";
+                existingOpenReturn.CalledAt = null;
+                existingOpenReturn.CompletedAt = nowLocal;
+                existingOpenReturn.StateVersion = (existingOpenReturn.StateVersion is > 0 ? existingOpenReturn.StateVersion.Value : 1) + 1;
             }
 
             visit.Status = "AWAITING_RESULTS";
@@ -1202,82 +1223,21 @@ internal static class DiagnosticOrderLifecycleHelper
             return (false, null);
         }
 
-        // Case A (CD-T07): Patient IS durably present today -> ensure at most 1 active RETURN_CONSULTATION queue entry for todayLocal.
-        var existingOpenReturn = clinicalEntries.FirstOrDefault(q =>
-            q.QueueDate == todayLocal &&
-            ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation &&
-            !q.CompletedAt.HasValue &&
-            AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED"));
-
         if (existingOpenReturn is not null)
         {
-            var existingStatus = AppointmentBookingRules.NormalizeStatusKey(existingOpenReturn.Status);
-            if (existingStatus == "WAITING")
-            {
-                existingOpenReturn.Status = "READY";
-                existingOpenReturn.PresenceStatus = "PRESENT";
-                existingOpenReturn.ArrivedAt ??= nowLocal;
-                existingOpenReturn.ReadyAt ??= nowLocal;
-                existingOpenReturn.BlockedReason = null;
-                existingOpenReturn.StateVersion = (existingOpenReturn.StateVersion is > 0
-                    ? existingOpenReturn.StateVersion.Value
-                    : 1) + 1;
-            }
-            else if (existingStatus == "READY" &&
-                     AppointmentBookingRules.NormalizeStatusKey(existingOpenReturn.PresenceStatus) != "PRESENT")
-            {
-                existingOpenReturn.PresenceStatus = "PRESENT";
-                existingOpenReturn.StateVersion = (existingOpenReturn.StateVersion is > 0
-                    ? existingOpenReturn.StateVersion.Value
-                    : 1) + 1;
-            }
-
             visit.Status = "RETURN_CONSULTATION";
             return (true, existingOpenReturn);
         }
 
-        var referenceClinical = clinicalEntries
-            .FirstOrDefault(q => AppointmentBookingRules.NormalizeStatusKey(q.Status) != "CANCELLED")
-            ?? clinicalEntries.FirstOrDefault();
+        visit.Status = "AWAITING_RESULTS";
 
-        var targetSpId = await ResolveClinicalReturnServicePointIdAsync(
+        await EnqueueZeroPhiReturnReadyNotificationIfMissingAsync(
             db,
             visit,
-            hospitalId,
-            referenceClinical,
+            DateTime.SpecifyKind(nowLocal, DateTimeKind.Unspecified),
             ct);
 
-        var maxQueueNumber = await db.QueueEntries.AsNoTracking()
-            .Where(q =>
-                q.QueueDate == todayLocal &&
-                (targetSpId.HasValue
-                    ? (q.ServicePointId == targetSpId.Value || q.CurrentServicePointId == targetSpId.Value)
-                    : (q.ServicePointId == null && q.CurrentServicePointId == null)))
-            .MaxAsync(q => (int?)q.QueueNumber, ct);
-
-        var returnEntry = new QueueEntry
-        {
-            VisitId = visit.Id,
-            AppointmentId = null,
-            ServicePointId = targetSpId,
-            CurrentServicePointId = targetSpId,
-            QueueDate = todayLocal,
-            QueueNumber = (maxQueueNumber ?? 0) + 1,
-            QueueType = ClinicalQueueRules.QueueTypeReturnConsultation,
-            Status = "READY",
-            ScheduledAt = null,
-            PresenceStatus = "PRESENT",
-            ArrivedAt = nowLocal,
-            ReadyAt = nowLocal,
-            ArrivalClass = "WALK_IN",
-            ManualPriority = ClinicalQueueRules.NormalizeStoredPriority(referenceClinical?.ManualPriority),
-            StateVersion = 1,
-        };
-
-        db.QueueEntries.Add(returnEntry);
-        visit.Status = "RETURN_CONSULTATION";
-
-        return (true, returnEntry);
+        return (false, null);
     }
 
     public static async Task<long?> ResolveClinicalReturnServicePointIdAsync(
@@ -1367,7 +1327,7 @@ internal static class DiagnosticOrderLifecycleHelper
                 Channel = Notification.ChannelInApp,
                 NotificationType = Notification.TypeVisitReturnReady,
                 Subject = "Kết quả cận lâm sàng đã sẵn sàng để khám kết luận",
-                Body = $"Lượt khám {visitCodeLabel} đã đủ điều kiện quay lại khám kết luận. Vui lòng đến quầy Tiếp đón để xác nhận có mặt.",
+                Body = $"Đã có đủ kết quả cận lâm sàng cho lượt khám {visitCodeLabel}. Vui lòng đến Quầy Tiếp Đón (Reception) để được điều phối bác sĩ và cấp số khám kết luận.",
                 Status = Notification.StatusPending,
                 RetryCount = 0,
                 IdempotencyKey = idempotencyKey,

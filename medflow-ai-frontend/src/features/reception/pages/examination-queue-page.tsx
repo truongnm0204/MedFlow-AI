@@ -7,6 +7,8 @@ import {
   ListOrdered,
   RefreshCw,
   ShieldAlert,
+  QrCode,
+  Stethoscope,
 } from 'lucide-react';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
@@ -19,6 +21,8 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { Spinner } from '@/shared/ui/spinner';
+import { Modal } from '@/shared/ui/modal';
+import { JourneySlipViewer } from '@/features/patient/components/journey-slip';
 
 import { ApplyClinicalPriorityModal } from '../components/apply-clinical-priority-modal';
 import { CallNextResultBanner } from '../components/call-next-result-banner';
@@ -40,6 +44,7 @@ import {
   type ReceptionCashCollectionTarget,
 } from '../components/reception-cash-collection-modal';
 import { ReceptionVisitResumeModal } from '../components/reception-visit-resume-modal';
+import { ReturnCoordinationModal } from '../components/return-coordination-modal';
 import { UpdateQueueStatusModal } from '../components/update-queue-status-modal';
 import { ReturnToDoctorQueueModal } from '../components/return-to-doctor-queue-modal';
 import { usePatientDetail } from '../hooks/use-reception-api';
@@ -104,6 +109,8 @@ export function ExaminationQueuePage() {
   const canCollectCash = hasPermission(user?.roles, 'PAYMENT_COLLECT');
   const [cashTarget, setCashTarget] = useState<ReceptionCashCollectionTarget | null>(null);
   const [isCrossDayResumeOpen, setIsCrossDayResumeOpen] = useState(false);
+  const [isReturnCoordinationOpen, setIsReturnCoordinationOpen] = useState(false);
+  const [isJourneySlipOpen, setIsJourneySlipOpen] = useState(false);
   const defaultQueueDate = useMemo(() => getHospitalTodayIso(), []);
 
   const [filters, setFilters] = useState<ExaminationQueueFilterFormValues>(() =>
@@ -626,9 +633,21 @@ export function ExaminationQueuePage() {
 
           <div className="flex items-center gap-3">
             {(canManageQueue || canCheckIn) && (
+              <Button variant="secondary" size="sm" onClick={() => setIsReturnCoordinationOpen(true)}>
+                <Stethoscope className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Điều phối khám kết luận</span>
+              </Button>
+            )}
+            {(canManageQueue || canCheckIn) && (
               <Button variant="primary" size="sm" onClick={() => setIsCrossDayResumeOpen(true)}>
                 <CalendarClock className="w-3.5 h-3.5" aria-hidden="true" />
                 <span>Tiếp tục lượt khám (Qua ngày)</span>
+              </Button>
+            )}
+            {(canManageQueue || canCheckIn) && (
+              <Button variant="secondary" size="sm" onClick={() => setIsJourneySlipOpen(true)}>
+                <QrCode className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Phiếu hành trình</span>
               </Button>
             )}
             <Button variant="secondary" size="sm" onClick={() => void refetch()}>
@@ -1030,6 +1049,29 @@ export function ExaminationQueuePage() {
               setUpdateNotice(`Đã ghi nhận tạm hoãn / rời viện cho lượt khám ${res.visitCode}.`);
             }}
           />
+        )}
+
+        {isReturnCoordinationOpen && (
+          <ReturnCoordinationModal
+            open
+            onClose={() => setIsReturnCoordinationOpen(false)}
+            onEnrolled={(res) => {
+              void refetch();
+              setIsReturnCoordinationOpen(false);
+              setUpdateNotice(
+                `Đã cấp số khám kết luận ${res.ticket.queueNumber} cho ${res.visitCode} — BS ${res.assignedDoctorName}.`,
+              );
+            }}
+          />
+        )}
+
+        {isJourneySlipOpen && (
+          <Modal open onClose={() => setIsJourneySlipOpen(false)} maxWidth="max-w-2xl">
+            <div className="p-6">
+              <h2 className="mb-4 text-lg font-semibold text-ink">Phiếu hành trình khám</h2>
+              <JourneySlipViewer />
+            </div>
+          </Modal>
         )}
       </div>
     </div>

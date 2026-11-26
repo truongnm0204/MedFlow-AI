@@ -131,6 +131,21 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             }
         }
 
+        var preEnrollOrder = await PaymentEnrollmentIntentProcessor.ResolveRequestedEnrollOrderAsync(
+            _db,
+            visit.Id,
+            request?.EnrollDiagnosticOrderId,
+            request?.EnrollDiagnosticOrderCode,
+            ct);
+        if (preEnrollOrder is not null && !actor.IsPatient && actor.Doctor is null)
+        {
+            await PaymentEnrollmentIntentProcessor.EnsureStaffHasQueueEnrollWhenIntentRequestedAsync(
+                _db,
+                actorUserId,
+                actor.RoleLabel,
+                ct);
+        }
+
         var visitId = visit.Id;
 
         await using (var tx = await _db.BeginTransactionAsync(ct))
@@ -140,8 +155,13 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             var txCommitted = false;
             try
             {
-                // ADR-0060 strict lock order: visits (09) -> diagnostic_orders (12) -> visit_charges (15) -> payments (16) -> payment_allocations (16b)
-                await PaymentAllocationLookup.AcquireVisitPaymentChainLocksAsync(_db, visitId, ct);
+                var shouldStampStaffCounterPresence = preEnrollOrder is not null && !actor.IsPatient && actor.Doctor is null;
+                // ADR-0061 strict lock order: [02 patients] -> 09 visits -> 12 diagnostic_orders -> 15 visit_charges -> 16 payments -> 16b payment_allocations -> 16c payment_enrollment_intents
+                await PaymentAllocationLookup.AcquireVisitPaymentChainLocksAsync(
+                    _db,
+                    visitId,
+                    ct,
+                    patientIdToLock: shouldStampStaffCounterPresence ? visit.PatientId : null);
 
                 if (_db is DbContext trackerCtx)
                     trackerCtx.ChangeTracker.Clear();
@@ -165,12 +185,29 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                     ct: ct);
                 actor = new QrActorContext(
                     verifiedActor.IsPatient,
+                    verifiedActor.RoleLabel,
                     verifiedActor.IsPatient ? null : verifiedActor.VisitHospitalId,
                     verifiedActor.Doctor,
                     verifiedActor.OwnedPatientIds);
                 hospitalId = verifiedActor.VisitHospitalId;
 
+                var enrollOrder = await PaymentEnrollmentIntentProcessor.ResolveRequestedEnrollOrderAsync(
+                    _db,
+                    visitId,
+                    request?.EnrollDiagnosticOrderId,
+                    request?.EnrollDiagnosticOrderCode,
+                    ct);
+                if (enrollOrder is not null && !actor.IsPatient && actor.Doctor is null)
+                {
+                    await PaymentEnrollmentIntentProcessor.EnsureStaffHasQueueEnrollWhenIntentRequestedAsync(
+                        _db,
+                        actorUserId,
+                        actor.RoleLabel,
+                        ct);
+                }
+
                 var nowLocal = Clock();
+                var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
 
                 // Check IdempotencyKey post-lock before any mutation
                 if (idempotencyKey is not null)
@@ -184,7 +221,9 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                             hospitalId,
                             existingByKey,
                             explicitChargeIds,
+                            enrollOrder?.Id,
                             nowLocal,
+                            nowUtc,
                             async token =>
                             {
                                 txCommitted = true;
@@ -227,6 +266,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                 }
 
                 var targetChargeIds = targetCharges.Select(c => c.Id).OrderBy(id => id).ToList();
+                PaymentEnrollmentIntentProcessor.EnsureEnrollOrderInPaidChargesOrThrow(enrollOrder, targetCharges);
 
                 // Promote any explicitly selected UNDECIDED optional DiagnosticOrders -> ACCEPTED
                 if (explicitChargeIds is not null)
@@ -237,7 +277,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                 var account = await VietQrAccountPolicyReader.ReadAsync(
                     _db,
                     hospitalId,
-                    _timeProvider.GetUtcNow().UtcDateTime,
+                    nowUtc,
                     ct);
                 var hospital = await _db.Hospitals.AsNoTracking()
                     .FirstOrDefaultAsync(h => h.Id == hospitalId, ct);
@@ -249,6 +289,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                     .ToListAsync(ct);
 
                 var trackedAllocations = await PaymentAllocationLookup.TryLoadTrackedForVisitAsync(_db, visitId, ct);
+                var trackedIntents = await PaymentAllocationLookup.TryLoadTrackedIntentsForVisitAsync(_db, visitId, ct);
 
                 // Critical Invariant (§2.2): Verify zero PAID allocation/payment exists on ANY target charge post-lock
                 var (effectiveCheck, _) = PaymentAllocationLookup.BuildEffectiveAllocations(visitId, trackedPayments, trackedAllocations);
@@ -266,9 +307,11 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                 await ExpireStaleOverlappingPendingAsync(
                     trackedPayments,
                     trackedAllocations,
+                    trackedIntents,
                     targetSet,
                     includeUnlinkedLegacyOnExam,
                     nowLocal,
+                    nowUtc,
                     ct);
 
                 // Find active PENDING payments overlapping ANY target charge
@@ -293,13 +336,16 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
 
                 if (exactSamePending is not null && overlappingPending.Count == 1)
                 {
-                    if (exactSamePending.Amount != amountDue)
+                    var existingPendingIntent = trackedIntents.FirstOrDefault(i => i.PaymentId == exactSamePending.Id);
+                    var intentTargetChanged = existingPendingIntent?.DiagnosticOrderId != enrollOrder?.Id;
+
+                    if (exactSamePending.Amount != amountDue || intentTargetChanged)
                     {
-                        if (!usesStageBAllocatedMode && trackedAllocations.All(pa => pa.PaymentId != exactSamePending.Id))
+                        if (exactSamePending.Amount != amountDue && !usesStageBAllocatedMode && trackedAllocations.All(pa => pa.PaymentId != exactSamePending.Id))
                             throw new ConflictException(AmountMismatchMessage);
 
-                        // Cancel mismatched-amount pending attempt and issue fresh QR
-                        CancelPendingAttempt(exactSamePending, trackedAllocations);
+                        // Cancel mismatched-amount or changed-intent pending attempt and issue fresh QR
+                        CancelPendingAttempt(exactSamePending, trackedAllocations, trackedIntents, nowUtc);
                         await _db.SaveChangesAsync(ct);
                     }
                     else
@@ -342,6 +388,10 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                             mutatedExisting = true;
                         }
 
+                        var reusedEnrollmentDto = existingPendingIntent is not null
+                            ? await PaymentEnrollmentIntentProcessor.BuildIntentDtoAsync(_db, existingPendingIntent, ct)
+                            : null;
+
                         if (string.IsNullOrWhiteSpace(exactSamePending.PaymentCode))
                         {
                             exactSamePending.PaymentCode = CodeFor(exactSamePending.Id);
@@ -365,7 +415,8 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                                 QrPaymentIssueKind.Adopted,
                                 targetCharges,
                                 trackedAllocations,
-                                assessment.Lines);
+                                assessment.Lines,
+                                reusedEnrollmentDto);
                         }
 
                         if (mutatedExisting)
@@ -381,7 +432,8 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                             QrPaymentIssueKind.Reused,
                             targetCharges,
                             trackedAllocations,
-                            assessment.Lines);
+                            assessment.Lines,
+                            reusedEnrollmentDto);
                     }
                 }
                 else if (overlappingPending.Count > 0)
@@ -390,7 +442,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                     // AND ALL of their PENDING allocations (never mutating old Payment.Amount!).
                     foreach (var oldPending in overlappingPending)
                     {
-                        CancelPendingAttempt(oldPending, trackedAllocations);
+                        CancelPendingAttempt(oldPending, trackedAllocations, trackedIntents, nowUtc);
                     }
 
                     await _db.SaveChangesAsync(ct);
@@ -420,6 +472,55 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                     .ToList();
                 PaymentAllocationLookup.TryAddAllocations(_db, createdAllocations);
 
+                PaymentEnrollmentResultDto? createdEnrollmentDto = null;
+                if (enrollOrder is not null && lockedVisit.PatientId is long enrollPatientId && enrollPatientId > 0)
+                {
+                    var todayLocal = DateOnly.FromDateTime(nowLocal);
+                    var effectiveVisitForPresence = lockedVisit;
+                    if (!actor.IsPatient && actor.Doctor is null)
+                    {
+                        var trackedVisitForStamp = await _db.Visits.FirstOrDefaultAsync(v => v.Id == visitId, ct);
+                        if (trackedVisitForStamp is not null)
+                        {
+                            MedFlow.Application.Services.Visits.VisitPresenceEvaluator.StampPresentToday(trackedVisitForStamp, todayLocal, nowLocal);
+                            effectiveVisitForPresence = trackedVisitForStamp;
+                        }
+                    }
+
+                    var policy = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(_db, hospitalId, nowUtc, ct);
+                    var visitQueues = await _db.QueueEntries.AsNoTracking()
+                        .Where(q =>
+                            q.VisitId == visitId ||
+                            (effectiveVisitForPresence.AppointmentId.HasValue && q.AppointmentId == effectiveVisitForPresence.AppointmentId.Value))
+                        .ToListAsync(ct);
+                    var isPresentAtCreation = MedFlow.Application.Services.Visits.VisitPresenceEvaluator.IsPresentToday(
+                        effectiveVisitForPresence,
+                        visitQueues,
+                        todayLocal,
+                        nowLocal,
+                        policy.PresenceTtlMinutes);
+
+                    var createdIntent = new PaymentEnrollmentIntent
+                    {
+                        PaymentId = added.Id,
+                        VisitId = visitId,
+                        PatientId = enrollPatientId,
+                        DiagnosticOrderId = enrollOrder.Id,
+                        RequestedByUserId = actorUserId,
+                        RequestedByRole = actor.RoleLabel,
+                        IdempotencyKey = $"pei:pay:{added.Id}",
+                        PresenceVerifiedDate = isPresentAtCreation ? todayLocal : null,
+                        PresenceSessionNo = isPresentAtCreation ? Math.Max(1, effectiveVisitForPresence.PresenceSessionNo) : null,
+                        Status = PaymentEnrollmentIntentStatuses.PendingSettlement,
+                        RetryCount = 0,
+                        CreatedAt = nowUtc,
+                        ExpiresAt = nowUtc.AddMinutes(Math.Max(30, _qrOptions.PendingExpiryMinutes + 15)),
+                    };
+                    PaymentAllocationLookup.TryAddIntent(_db, createdIntent);
+                    await _db.SaveChangesAsync(ct);
+                    createdEnrollmentDto = await PaymentEnrollmentIntentProcessor.BuildIntentDtoAsync(_db, createdIntent, ct);
+                }
+
                 AddAudit(
                     actorUserId,
                     hospitalId,
@@ -442,7 +543,8 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                     QrPaymentIssueKind.Created,
                     targetCharges,
                     createdAllocations,
-                    assessment.Lines);
+                    assessment.Lines,
+                    createdEnrollmentDto);
             }
             catch (DbUpdateException ex) when (PostgresUniqueViolation.Is(ex) || PostgresConcurrencyException.IsUniqueViolation(ex))
             {
@@ -514,7 +616,8 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             if (hospital.IsActive == false)
                 throw new ForbiddenException(VisitPaymentAccess.InactiveHospitalMessage);
 
-            return new QrActorContext(false, staff.HospitalId, null, []);
+            var roleLabel = isHospitalAdmin ? RoleNames.HospitalAdmin : RoleNames.Reception;
+            return new QrActorContext(false, roleLabel, staff.HospitalId, null, []);
         }
 
         if (isDoctor)
@@ -524,14 +627,14 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                 actorUserId,
                 ForbiddenMessage,
                 ct);
-            return new QrActorContext(false, staff.HospitalId, doctor, []);
+            return new QrActorContext(false, RoleNames.Doctor, staff.HospitalId, doctor, []);
         }
 
         if (!isPatient)
             throw new ForbiddenException(ForbiddenMessage);
 
         var owned = await VisitPaymentAccess.LoadOwnedPatientIdsAsync(_db, actorUserId, _timeProvider, ct);
-        return new QrActorContext(true, null, null, owned);
+        return new QrActorContext(true, RoleNames.Patient, null, null, owned);
     }
 
     public const string QrAttemptExpiredMessage =
@@ -542,12 +645,21 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         long hospitalId,
         Payment existingPayment,
         IReadOnlyList<long>? requestedChargeIds,
+        long? requestedEnrollOrderId,
         DateTime nowLocal,
+        DateTime nowUtc,
         Func<CancellationToken, Task> commitBeforeThrowAsync,
         CancellationToken ct)
     {
         if (existingPayment.VisitId != visit.Id ||
             !string.Equals(existingPayment.PaymentMethod ?? PaymentMethods.VietQr, PaymentMethods.VietQr, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException(IdempotencyMismatchMessage);
+        }
+
+        var existingIntents = await PaymentAllocationLookup.TryLoadNoTrackingIntentsForVisitAsync(_db, visit.Id, ct);
+        var existingIntent = existingIntents.FirstOrDefault(i => i.PaymentId == existingPayment.Id);
+        if (existingIntent?.DiagnosticOrderId != requestedEnrollOrderId)
         {
             throw new ConflictException(IdempotencyMismatchMessage);
         }
@@ -587,6 +699,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             {
                 var trackedPayment = await _db.Payments.FirstOrDefaultAsync(p => p.Id == existingPayment.Id, ct);
                 var trackedAllocs = await PaymentAllocationLookup.TryLoadTrackedForVisitAsync(_db, visit.Id, ct);
+                var trackedIntents = await PaymentAllocationLookup.TryLoadTrackedIntentsForVisitAsync(_db, visit.Id, ct);
 
                 if (trackedPayment is not null)
                     trackedPayment.Status = PaymentStatuses.Expired;
@@ -596,6 +709,15 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                              string.Equals(pa.Status, PaymentAllocationStatuses.Pending, StringComparison.OrdinalIgnoreCase)))
                 {
                     pa.Status = PaymentAllocationStatuses.Expired;
+                }
+
+                foreach (var pi in trackedIntents.Where(i =>
+                             i.PaymentId == existingPayment.Id &&
+                             string.Equals(i.Status, PaymentEnrollmentIntentStatuses.PendingSettlement, StringComparison.OrdinalIgnoreCase)))
+                {
+                    pi.Status = PaymentEnrollmentIntentStatuses.Expired;
+                    pi.OutcomeCode = PaymentEnrollmentIntentOutcomeCodes.IntentExpired;
+                    pi.ProcessedAt = nowUtc;
                 }
 
                 await _db.SaveChangesAsync(ct);
@@ -654,6 +776,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             {
                 var trackedPayment = await _db.Payments.FirstOrDefaultAsync(p => p.Id == existingPayment.Id, ct);
                 var trackedAllocs = await PaymentAllocationLookup.TryLoadTrackedForVisitAsync(_db, visit.Id, ct);
+                var trackedIntents = await PaymentAllocationLookup.TryLoadTrackedIntentsForVisitAsync(_db, visit.Id, ct);
 
                 if (trackedPayment is not null)
                     trackedPayment.Status = PaymentStatuses.Cancelled;
@@ -663,6 +786,15 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                              string.Equals(pa.Status, PaymentAllocationStatuses.Pending, StringComparison.OrdinalIgnoreCase)))
                 {
                     pa.Status = PaymentAllocationStatuses.Cancelled;
+                }
+
+                foreach (var pi in trackedIntents.Where(i =>
+                             i.PaymentId == existingPayment.Id &&
+                             string.Equals(i.Status, PaymentEnrollmentIntentStatuses.PendingSettlement, StringComparison.OrdinalIgnoreCase)))
+                {
+                    pi.Status = PaymentEnrollmentIntentStatuses.Cancelled;
+                    pi.OutcomeCode = "PAYMENT_NOT_SETTLED";
+                    pi.ProcessedAt = nowUtc;
                 }
 
                 await _db.SaveChangesAsync(ct);
@@ -686,6 +818,10 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             ? QrPaymentIssueKind.AlreadyPaid
             : QrPaymentIssueKind.Reused;
 
+        var replayEnrollmentDto = existingIntent is not null
+            ? await PaymentEnrollmentIntentProcessor.BuildIntentDtoAsync(_db, existingIntent, ct)
+            : null;
+
         return ToDto(
             visit,
             existingPayment,
@@ -695,7 +831,8 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             issueKind,
             charges,
             existingAllocs,
-            assessment.Lines);
+            assessment.Lines,
+            replayEnrollmentDto);
     }
 
     private async Task<bool> IsDiagnosticOrderIneligibleForPendingQrAsync(VisitCharge charge, CancellationToken ct)
@@ -917,9 +1054,11 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
     private async Task ExpireStaleOverlappingPendingAsync(
         IReadOnlyList<Payment> trackedPayments,
         IReadOnlyList<PaymentAllocation> trackedAllocations,
+        IReadOnlyList<PaymentEnrollmentIntent> trackedIntents,
         IReadOnlySet<long> targetChargeSet,
         bool includeUnlinkedLegacyOnExam,
         DateTime nowLocal,
+        DateTime nowUtc,
         CancellationToken ct)
     {
         var cutoff = nowLocal.AddMinutes(-_qrOptions.PendingExpiryMinutes);
@@ -944,6 +1083,14 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                                                           string.Equals(pa.Status, PaymentAllocationStatuses.Pending, StringComparison.OrdinalIgnoreCase)))
         {
             pa.Status = PaymentAllocationStatuses.Expired;
+        }
+
+        foreach (var pi in trackedIntents.Where(i => staleIds.Contains(i.PaymentId) &&
+                                                     string.Equals(i.Status, PaymentEnrollmentIntentStatuses.PendingSettlement, StringComparison.OrdinalIgnoreCase)))
+        {
+            pi.Status = PaymentEnrollmentIntentStatuses.Expired;
+            pi.OutcomeCode = PaymentEnrollmentIntentOutcomeCodes.IntentExpired;
+            pi.ProcessedAt = nowUtc;
         }
 
         await _db.SaveChangesAsync(ct);
@@ -1011,13 +1158,25 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         return includeUnlinkedLegacyOnExam && sortedTargetChargeIds.Count == 1;
     }
 
-    private static void CancelPendingAttempt(Payment pending, IReadOnlyList<PaymentAllocation> trackedAllocations)
+    private static void CancelPendingAttempt(
+        Payment pending,
+        IReadOnlyList<PaymentAllocation> trackedAllocations,
+        IReadOnlyList<PaymentEnrollmentIntent> trackedIntents,
+        DateTime nowUtc)
     {
         pending.Status = PaymentStatuses.Cancelled;
         foreach (var pa in trackedAllocations.Where(pa => pa.PaymentId == pending.Id &&
                                                           string.Equals(pa.Status, PaymentAllocationStatuses.Pending, StringComparison.OrdinalIgnoreCase)))
         {
             pa.Status = PaymentAllocationStatuses.Cancelled;
+        }
+
+        foreach (var pi in trackedIntents.Where(i => i.PaymentId == pending.Id &&
+                                                     string.Equals(i.Status, PaymentEnrollmentIntentStatuses.PendingSettlement, StringComparison.OrdinalIgnoreCase)))
+        {
+            pi.Status = PaymentEnrollmentIntentStatuses.Cancelled;
+            pi.OutcomeCode = "PAYMENT_CANCELLED";
+            pi.ProcessedAt = nowUtc;
         }
     }
 
@@ -1096,7 +1255,8 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         string issueKind,
         IReadOnlyList<VisitCharge> charges,
         IReadOnlyList<PaymentAllocation> allocations,
-        IReadOnlyList<VisitChargeLineDto> assessedLines)
+        IReadOnlyList<VisitChargeLineDto> assessedLines,
+        PaymentEnrollmentResultDto? enrollment = null)
     {
         var code = payment.PaymentCode ?? "";
         var nowLocal = Clock();
@@ -1158,7 +1318,8 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             issueKind,
             singleChargeId,
             dtoAllocations,
-            expiresAtLocal);
+            expiresAtLocal,
+            enrollment);
     }
 
     private void Detach(Payment? payment)
@@ -1204,6 +1365,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
 
     private sealed record QrActorContext(
         bool IsPatient,
+        string RoleLabel,
         long? HospitalId,
         Doctor? Doctor,
         HashSet<long> OwnedPatientIds);

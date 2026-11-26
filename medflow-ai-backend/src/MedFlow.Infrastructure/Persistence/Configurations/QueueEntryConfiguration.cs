@@ -98,5 +98,32 @@ public class QueueEntryConfiguration : IEntityTypeConfiguration<QueueEntry>
         builder.Property(q => q.CoordinationPurpose)
             .HasColumnName("coordination_purpose")
             .HasMaxLength(24);
+
+        builder.Property(q => q.DiagnosticOrderId)
+            .HasColumnName("diagnostic_order_id");
+
+        builder.Property(q => q.PrescriptionId)
+            .HasColumnName("prescription_id");
+
+        builder.HasIndex(q => q.DiagnosticOrderId)
+            .HasDatabaseName("ix_queue_entries_diagnostic_order_id");
+
+        builder.HasIndex(q => q.PrescriptionId)
+            .HasDatabaseName("ix_queue_entries_prescription_id");
+
+        builder.HasIndex(q => q.VisitId)
+            .IsUnique()
+            .HasDatabaseName("ux_queue_entries_one_active_post_exam_per_visit")
+            .HasFilter("\"visit_id\" IS NOT NULL AND upper(btrim(coalesce(\"queue_type\", ''))) IN ('DIAGNOSTIC', 'RETURN_CONSULTATION', 'PHARMACY') AND upper(btrim(coalesce(\"status\", ''))) IN ('WAITING', 'READY', 'CALLED', 'IN_PROGRESS', 'IN_CONSULTATION', 'SERVING')");
+
+        builder.HasOne<DiagnosticOrder>()
+            .WithMany()
+            .HasForeignKey(q => q.DiagnosticOrderId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Prescription>()
+            .WithMany()
+            .HasForeignKey(q => q.PrescriptionId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

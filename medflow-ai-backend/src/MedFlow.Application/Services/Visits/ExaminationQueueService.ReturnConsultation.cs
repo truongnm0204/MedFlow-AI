@@ -46,6 +46,16 @@ public sealed partial class ExaminationQueueService
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
         var (hospital, ownerDoctorId) = await ResolveCallNextActorAsync(actorUserId, nowUtc, ct);
 
+        // Stage E2 / RC-01..RC-16: RETURN_CONSULTATION coordination is a Reception workflow.
+        // ResolveCallNextActorAsync also admits DOCTOR (ownerDoctorId != null) for the
+        // queue-management path — a doctor may NOT mint a return-consultation ticket,
+        // that must go through centralized Reception coordination (ReturnCoordinationService).
+        if (ownerDoctorId.HasValue)
+        {
+            throw new ForbiddenException(
+                VisitQueueEnrollmentService.ReturnReceptionRequiredMessage);
+        }
+
         await using var tx = await _db.BeginTransactionAsync(ct);
 
         var (preVisit, preExistingReturn, preExistingExam) = await ResolveVisitAndQueueEntriesForReturnAsync(
@@ -53,6 +63,14 @@ public sealed partial class ExaminationQueueService
             code,
             idOrCode,
             ct);
+
+        // Stage E2 / E-BR10 / QE-07..08: acquire patient lock (level 02) BEFORE the visit
+        // lock (level 09), then enforce the single-active-serving-queue invariant so this
+        // legacy writer can never mint a second active ticket for the patient.
+        if (preVisit.PatientId is > 0)
+        {
+            await _db.TryLockPatientForUpdateAsync(preVisit.PatientId.Value, ct);
+        }
 
         await _db.TryLockVisitForUpdateAsync(preVisit.Id, ct);
 
@@ -305,6 +323,15 @@ public sealed partial class ExaminationQueueService
             var nextQueueNumber = (existingMaxNumber is > 0 ? existingMaxNumber.Value : 0) + 1;
             var inheritedPriority = ClinicalQueueRules.NormalizeStoredPriority(existingExamEntry?.ManualPriority);
 
+            // Stage E2 / QE-07..08: enforce one active serving queue per patient per hospital
+            // before minting the new RETURN_CONSULTATION ticket (post patient+visit locks).
+            await PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+                _db,
+                visit.PatientId,
+                hospital.Id,
+                today,
+                excludeQueueEntryId: existingReturnEntry?.Id ?? existingExamEntry?.Id,
+                ct: ct);
             var createdEntry = new QueueEntry
             {
                 VisitId = visit.Id,

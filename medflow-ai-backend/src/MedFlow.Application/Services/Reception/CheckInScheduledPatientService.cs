@@ -422,6 +422,14 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
             request.AllowNewEpisodeWhileVisitOpen,
             ct);
 
+        await PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+            _db,
+            patient.Id,
+            effectiveHospitalId,
+            today,
+            excludeAppointmentId: appointment.Id,
+            ct: ct);
+
         var recheckedPriceAmount = await ResolveValidatedEffectiveServicePriceAsync(
             slot.ServiceId.Value,
             effectiveHospitalId,
@@ -453,6 +461,7 @@ public sealed class CheckInScheduledPatientService : ICheckInScheduledPatientSer
             CheckedInAt = nowLocal,
             LastPresentDate = today,
             PresenceState = VisitPresenceStates.Present,
+            PresenceSessionNo = 1,
         };
 
         _db.Visits.Add(visit);

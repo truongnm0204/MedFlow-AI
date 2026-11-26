@@ -243,6 +243,7 @@ public sealed class QueueStatusService : IQueueStatusService
             trackEntities: false,
             ct);
 
+        var lockPatientId = preContext.Patient?.Id ?? preContext.Visit?.PatientId;
         var lockRoomId = preContext.Room?.Id ?? preContext.Visit?.ExaminationRoomId;
         var lockVisitId = preContext.Visit?.Id ?? preContext.QueueEntry.VisitId;
         var lockSpId = preContext.QueueEntry.CurrentServicePointId
@@ -252,7 +253,12 @@ public sealed class QueueStatusService : IQueueStatusService
 
         await using var tx = await _db.BeginTransactionAsync(ct);
 
-        // ADR-0059 strict lock order: hospital_rooms (06) -> visits (09) -> queue_service_points (10) -> queue_entries (11)
+        // ADR-0059 / ADR-0061 strict lock order: patients (02) -> hospital_rooms (06) -> visits (09) -> queue_service_points (10) -> queue_entries (11)
+        if (lockPatientId.HasValue)
+        {
+            await _db.TryLockPatientForUpdateAsync(lockPatientId.Value, ct);
+        }
+
         if (lockRoomId.HasValue)
         {
             await _db.TryLockRoomForUpdateAsync(lockRoomId.Value, ct);
@@ -375,6 +381,18 @@ public sealed class QueueStatusService : IQueueStatusService
         if (targetStatus == "IN_PROGRESS")
         {
             await EnsureNoOtherActiveInProgressEntryAsync(queueEntry, visit, context.Room, ct);
+        }
+
+        if (currentStatus is "SKIPPED" or "DEFERRED" or "RESERVED" &&
+            targetStatus is "WAITING" or "READY" or "CALLED" or "IN_PROGRESS")
+        {
+            await PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+                _db,
+                context.Patient?.Id ?? visit?.PatientId,
+                context.HospitalId,
+                DateOnly.FromDateTime(nowLocal),
+                excludeQueueEntryId: queueEntry.Id,
+                ct: ct);
         }
 
         ApplyStatusTransition(

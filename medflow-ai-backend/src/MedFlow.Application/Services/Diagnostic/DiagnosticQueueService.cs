@@ -317,6 +317,12 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                 $"[{DiagnosticServicePointResolver.NoActiveCompatiblePointCode}] Điểm phục vụ hoặc phòng thực hiện cận lâm sàng hiện đang ngừng hoạt động hoặc cấu hình không hợp lệ.");
         }
 
+        dataset.RoomsById.TryGetValue(resolvedServicePoint.RoomId!.Value, out var callNextRoom);
+        DiagnosticDepartmentScopeGuard.EnsureStaffInDepartmentScopeOrThrow(
+            staffAccess.Staff,
+            callNextRoom?.DepartmentId,
+            callNextRoom?.DepartmentId);
+
         var bucket = dataset.ServicePointBuckets
             .FirstOrDefault(b => b.ServicePointId == resolvedServicePoint.Id)
             ?? BuildEmptyServicePointBucket(
@@ -960,6 +966,22 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
             .ToDictionaryAsync(d => d.Id, ct);
 
         long? preOrderServiceIdForLock = null;
+        long? preOrderServiceDeptId = null;
+        if (targetCandidate.OrderId.HasValue)
+        {
+            var preOrderForDept = await _db.DiagnosticOrders
+                .AsNoTracking()
+                .FirstOrDefaultAsync(o => o.Id == targetCandidate.OrderId.Value, ct);
+            if (preOrderForDept?.ServiceId.HasValue == true)
+            {
+                preOrderServiceIdForLock = preOrderForDept.ServiceId;
+                var preServiceForDept = await _db.Services
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(s => s.Id == preOrderForDept.ServiceId.Value, ct);
+                preOrderServiceDeptId = preServiceForDept?.DepartmentId;
+            }
+        }
+
         if (targetStatus is "READY" or "CALLED" or "IN_PROGRESS")
         {
             if (targetCandidate.OrderId.HasValue)
@@ -1001,6 +1023,11 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                     $"[{DiagnosticServicePointResolver.NoActiveCompatiblePointCode}] Điểm phục vụ hoặc phòng thực hiện cận lâm sàng hiện đang ngừng hoạt động hoặc cấu hình không hợp lệ.");
             }
         }
+
+        DiagnosticDepartmentScopeGuard.EnsureStaffInDepartmentScopeOrThrow(
+            staffAccess.Staff,
+            preOrderServiceDeptId ?? resolvedRoom?.DepartmentId,
+            resolvedRoom?.DepartmentId);
 
         var entryQueueDate = DateOnly.TryParseExact(
             targetCandidate.QueueDate,
@@ -1050,6 +1077,18 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
         string? updatedOrderStatus = previousOrderStatus;
         long? returnConsultationServicePointId = null;
 
+        long? preLockPatientId = null;
+        if (targetCandidate.VisitId > 0 &&
+            (targetCandidate.QueueEntryId <= 0 || previousStatus is "SKIPPED" or "DEFERRED") &&
+            targetStatus is "WAITING" or "READY" or "CALLED" or "IN_PROGRESS")
+        {
+            preLockPatientId = await _db.Visits
+                .AsNoTracking()
+                .Where(v => v.Id == targetCandidate.VisitId)
+                .Select(v => v.PatientId)
+                .FirstOrDefaultAsync(ct);
+        }
+
         try
         {
             await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
@@ -1067,7 +1106,8 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                     : null,
                 extraRoomIds: targetStatus is "READY" or "CALLED" or "IN_PROGRESS"
                     ? roomsById.Keys
-                    : null);
+                    : null,
+                extraPatientIds: preLockPatientId.HasValue ? new[] { preLockPatientId.Value } : null);
 
             DiagnosticOrder? trackedOrder = null;
             if (targetCandidate.OrderId.HasValue)
@@ -1075,6 +1115,17 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                 trackedOrder = await _db.DiagnosticOrders
                     .FirstOrDefaultAsync(o => o.Id == targetCandidate.OrderId.Value, ct);
             }
+
+            var postLockDeptService = trackedOrder?.ServiceId.HasValue == true
+                ? await _db.Services.AsNoTracking().FirstOrDefaultAsync(s => s.Id == trackedOrder.ServiceId.Value, ct)
+                : null;
+            await DiagnosticDepartmentScopeGuard.ReloadLiveStaffAndEnsureDepartmentScopeAsync(
+                _db,
+                actorUserId,
+                staffAccess.Staff,
+                postLockDeptService?.DepartmentId ?? preOrderServiceDeptId ?? resolvedRoom?.DepartmentId,
+                resolvedRoom?.DepartmentId,
+                ct);
 
             if (trackedOrder is not null && targetStatus is "CALLED" or "IN_PROGRESS" or "COMPLETED")
             {
@@ -1101,6 +1152,17 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                     throw new NotFoundException("DiagnosticQueueEntry", targetCandidate.Id);
                 }
 
+                if (targetStatus is "WAITING" or "READY" or "CALLED" or "IN_PROGRESS")
+                {
+                    await MedFlow.Application.Services.Visits.PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+                        _db,
+                        preLockPatientId,
+                        staffAccess.Hospital.Id,
+                        todayLocal,
+                        excludeQueueEntryId: null,
+                        ct: ct);
+                }
+
                 var maxQueueNumber = await _db.QueueEntries
                     .AsNoTracking()
                     .Where(q =>
@@ -1118,6 +1180,7 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                 {
                     VisitId = targetCandidate.VisitId,
                     AppointmentId = null,
+                    DiagnosticOrderId = trackedOrder.Id,
                     ServicePointId = effectiveSpId,
                     CurrentServicePointId = effectiveSpId,
                     QueueDate = entryQueueDate,
@@ -1136,6 +1199,25 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                 await SaveChangesWithConcurrencyGuardAsync(ct);
 
                 trackedOrder.QueueEntryId = trackedQueueEntry.Id;
+            }
+            else
+            {
+                if (trackedOrder is not null)
+                {
+                    trackedQueueEntry.DiagnosticOrderId ??= trackedOrder.Id;
+                }
+
+                if (!MedFlow.Application.Services.Visits.PatientSingleActiveQueueGuard.IsActiveServingQueueEntry(trackedQueueEntry) &&
+                    targetStatus is "WAITING" or "READY" or "CALLED" or "IN_PROGRESS")
+                {
+                    await MedFlow.Application.Services.Visits.PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+                        _db,
+                        preLockPatientId,
+                        staffAccess.Hospital.Id,
+                        todayLocal,
+                        excludeQueueEntryId: trackedQueueEntry.Id,
+                        ct: ct);
+                }
             }
 
             var currentDbStateVersion = trackedQueueEntry.StateVersion is > 0 ? trackedQueueEntry.StateVersion.Value : 1;

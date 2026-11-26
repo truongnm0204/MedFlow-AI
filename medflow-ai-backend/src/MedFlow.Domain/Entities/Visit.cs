@@ -14,6 +14,7 @@ public class Visit
     public DateTime? CheckedInAt { get; set; }
     public DateOnly? LastPresentDate { get; set; }
     public string PresenceState { get; set; } = "PRESENT";
+    public int PresenceSessionNo { get; set; } = 1;
     public DateTime? LastResumedAt { get; set; }
     public DateTime? ReadyForReturnAt { get; set; }
     public long? OverdueReturnApprovedByDoctorId { get; set; }

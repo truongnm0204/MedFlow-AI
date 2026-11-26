@@ -21,4 +21,5 @@ public static class PermissionCodes
     public const string PaymentView = "PAYMENT_VIEW";
     public const string PaymentCollect = "PAYMENT_COLLECT";
     public const string PatientIdentityVerify = "PATIENT_IDENTITY_VERIFY";
+    public const string QueueEnroll = "QUEUE_ENROLL";
 }

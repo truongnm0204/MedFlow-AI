@@ -30,6 +30,7 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
         VisitCharges = 15,
         Payments = 16,
         PaymentAllocations = 17,
+        PaymentEnrollmentIntents = 18,
     }
 
     public MedFlowDbContext(DbContextOptions<MedFlowDbContext> options) : base(options) { }
@@ -60,6 +61,7 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<QueueEntry> QueueEntries => Set<QueueEntry>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentAllocation> PaymentAllocations => Set<PaymentAllocation>();
+    public DbSet<PaymentEnrollmentIntent> PaymentEnrollmentIntents => Set<PaymentEnrollmentIntent>();
     public DbSet<PatientIdentityClaim> PatientIdentityClaims => Set<PatientIdentityClaim>();
     public DbSet<PaymentGatewayEvent> PaymentGatewayEvents => Set<PaymentGatewayEvent>();
     public DbSet<VisitCharge> VisitCharges => Set<VisitCharge>();
@@ -224,6 +226,9 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public Task<bool> TryLockVisitForUpdateAsync(long visitId, CancellationToken ct = default)
         => LockRowsForUpdateAsync(LockTargetTable.Visits, [visitId], ct);
 
+    public Task<bool> TryLockVisitsForUpdateAsync(IReadOnlyCollection<long> visitIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Visits, visitIds, ct);
+
     public Task<bool> TryLockServicePointForUpdateAsync(long servicePointId, CancellationToken ct = default)
         => LockRowsForUpdateAsync(LockTargetTable.QueueServicePoints, [servicePointId], ct);
 
@@ -263,6 +268,9 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public Task<bool> TryLockPrescriptionForUpdateAsync(long prescriptionId, CancellationToken ct = default)
         => LockRowsForUpdateAsync(LockTargetTable.Prescriptions, [prescriptionId], ct);
 
+    public Task<bool> TryLockPrescriptionsForUpdateAsync(IReadOnlyCollection<long> prescriptionIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Prescriptions, prescriptionIds, ct);
+
     public Task<bool> TryLockMedicineBatchesForUpdateAsync(IReadOnlyCollection<long> batchIds, CancellationToken ct = default)
         => LockRowsForUpdateAsync(LockTargetTable.MedicineBatches, batchIds, ct);
 
@@ -283,6 +291,12 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
 
     public Task<bool> TryLockPaymentAllocationsForUpdateAsync(IReadOnlyCollection<long> allocationIds, CancellationToken ct = default)
         => LockRowsForUpdateAsync(LockTargetTable.PaymentAllocations, allocationIds, ct);
+
+    public Task<bool> TryLockPaymentEnrollmentIntentForUpdateAsync(long intentId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.PaymentEnrollmentIntents, [intentId], ct);
+
+    public Task<bool> TryLockPaymentEnrollmentIntentsForUpdateAsync(IReadOnlyCollection<long> intentIds, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.PaymentEnrollmentIntents, intentIds, ct);
 
     private async Task<bool> LockRowsForUpdateAsync(
         LockTargetTable table,
@@ -345,6 +359,8 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
                 $"SELECT id AS \"Value\" FROM payments WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
             LockTargetTable.PaymentAllocations => await Database.SqlQuery<long>(
                 $"SELECT id AS \"Value\" FROM payment_allocations WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.PaymentEnrollmentIntents => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM payment_enrollment_intents WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
             _ => throw new ArgumentOutOfRangeException(nameof(table), table, "Unsupported lock target table."),
         };
 

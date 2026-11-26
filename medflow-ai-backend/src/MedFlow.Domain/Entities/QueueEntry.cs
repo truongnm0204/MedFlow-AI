@@ -26,4 +26,6 @@ public class QueueEntry
     public string? BackfillReason { get; set; }
     public string? IdempotencyKey { get; set; }
     public string? CoordinationPurpose { get; set; }
+    public long? DiagnosticOrderId { get; set; }
+    public long? PrescriptionId { get; set; }
 }

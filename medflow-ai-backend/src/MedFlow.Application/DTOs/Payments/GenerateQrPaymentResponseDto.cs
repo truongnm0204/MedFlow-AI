@@ -1,3 +1,5 @@
+using MedFlow.Application.DTOs.Visits;
+
 namespace MedFlow.Application.DTOs.Payments;
 
 public static class QrPaymentIssueKind
@@ -17,6 +19,14 @@ public sealed record PaymentAllocationItemDto(
     decimal AllocatedAmount,
     string Status);
 
+public sealed record PaymentEnrollmentResultDto(
+    long? IntentId,
+    long DiagnosticOrderId,
+    string EnrollmentStatus,
+    string? OutcomeCode = null,
+    string? OutcomeMessage = null,
+    VisitQueueEnrollmentTicketDto? QueueEntry = null);
+
 public sealed record GenerateQrPaymentResponseDto(
     long VisitId,
     string? VisitCode,
@@ -33,4 +43,5 @@ public sealed record GenerateQrPaymentResponseDto(
     string IssueKind,
     long? VisitChargeId = null,
     IReadOnlyList<PaymentAllocationItemDto>? Allocations = null,
-    DateTime? ExpiresAtLocal = null);
+    DateTime? ExpiresAtLocal = null,
+    PaymentEnrollmentResultDto? Enrollment = null);

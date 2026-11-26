@@ -795,6 +795,14 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
         await using var tx = await _db.BeginTransactionAsync(ct);
 
         // ADR-0059 strict lock order: doctors (05) -> hospital_rooms (06) -> visits (09) -> queue_service_points / unrouted advisory (10) -> queue_entries (11)
+        // Stage E2 / E-BR10 / QE-07..08: patient lock (level 02) is acquired FIRST in the
+        // canonical order so every queue-creating writer serializes on the patient row
+        // before any doctor/room/visit lock — consistent with all other Stage-E2 writers.
+        if (visit.PatientId is > 0)
+        {
+            await _db.TryLockPatientForUpdateAsync(visit.PatientId.Value, ct);
+        }
+
         if (doctorIdsToLock.Length > 0)
         {
             await _db.TryLockDoctorsForUpdateAsync(doctorIdsToLock, ct);
@@ -804,6 +812,7 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
         {
             await _db.TryLockRoomsForUpdateAsync(roomIdsToLock, ct);
         }
+
 
         await _db.TryLockVisitForUpdateAsync(visit.Id, ct);
 
@@ -826,6 +835,16 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
             dbCtx.ChangeTracker.Clear();
         }
 
+        // Stage E2 / QE-07..08: enforce one active serving queue per patient per hospital
+        // post-lock. The examination ticket minted downstream (UpsertExaminationQueueEntryAsync)
+        // must never coexist with another active serving queue for this patient.
+        await PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+            _db,
+            visit.PatientId,
+            effectiveHospitalId,
+            today,
+            excludeQueueEntryId: preQueueId,
+            ct: ct);
         visit = await LoadVisitAsync((visit.Id, null), asNoTracking: false, ct)
             ?? throw new NotFoundException("Visit", visitIdOrCode.Trim());
         existingQueueEntry = await FindExistingExaminationQueueEntryAsync(visit, asNoTracking: false, ct);

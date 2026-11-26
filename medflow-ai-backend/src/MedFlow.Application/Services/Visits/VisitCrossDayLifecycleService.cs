@@ -355,6 +355,11 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
         {
             tx = await TryBeginTransactionAsync(ct);
 
+            if (preVisit.PatientId is long deferPatientId && deferPatientId > 0)
+            {
+                await _db.TryLockPatientForUpdateAsync(deferPatientId, ct);
+            }
+
             await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
                 _db,
                 new[] { preVisit.Id },
@@ -515,10 +520,10 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
 
             if (request.PatientLeftHospital)
             {
-                visit.LastPresentDate = todayLocal;
-                visit.PresenceState = request.DeferredUntilDate.HasValue
-                    ? VisitPresenceStates.Deferred
-                    : VisitPresenceStates.Left;
+                VisitPresenceEvaluator.StampDepartedOrDeferred(
+                    visit,
+                    todayLocal,
+                    isDeferred: request.DeferredUntilDate.HasValue);
 
                 if (AppointmentBookingRules.NormalizeStatusKey(visit.Status) == "RETURN_CONSULTATION")
                 {
@@ -710,6 +715,14 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
 
             // Levels 09 -> 10 -> 11 -> 12
             var spIdsToLock = hospitalServicePoints.Select(sp => sp.Id).Where(id => id > 0).Distinct().OrderBy(id => id).ToArray();
+            // Stage E2 / E-BR10 / QE-07..08: patient lock (level 02) precedes every visit /
+            // service-point / queue lock in the canonical order. The resume path mints a
+            // RETURN_CONSULTATION ticket below — serialize on the patient row so a concurrent
+            // queue-creating writer for the same patient cannot race a second active ticket.
+            if (preVisit.PatientId is > 0)
+            {
+                await _db.TryLockPatientForUpdateAsync(preVisit.PatientId.Value, ct);
+            }
             await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
                 _db,
                 new[] { visitId },
@@ -979,6 +992,15 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                         ? visitQueues.FirstOrDefault(q => q.Id == order.QueueEntryId.Value)
                         : null;
 
+                    // Stage E2 / QE-07..08: enforce one active serving queue per patient per
+                    // hospital before minting the DIAGNOSTIC ticket (post patient+visit locks).
+                    await PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+                        _db,
+                        visit.PatientId,
+                        effectiveHospitalId > 0 ? effectiveHospitalId : null,
+                        todayLocal,
+                        excludeQueueEntryId: existingTodayDiag?.Id,
+                        ct: ct);
                     var newDiagQueue = new QueueEntry
                     {
                         VisitId = visit.Id,
@@ -1282,6 +1304,15 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                                 : (q.ServicePointId == null && q.CurrentServicePointId == null)))
                         .MaxAsync(q => (int?)q.QueueNumber, ct);
 
+                    // Stage E2 / QE-07..08: enforce one active serving queue per patient per
+                    // hospital before minting the RETURN_CONSULTATION ticket.
+                    await PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+                        _db,
+                        visit.PatientId,
+                        effectiveHospitalId > 0 ? effectiveHospitalId : null,
+                        todayLocal,
+                        excludeQueueEntryId: existingTodayReturn?.Id,
+                        ct: ct);
                     var newReturnQueue = new QueueEntry
                     {
                         VisitId = visit.Id,

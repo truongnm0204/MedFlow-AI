@@ -17,5 +17,6 @@ public sealed class ScheduleJobsOptions
     public int DefaultRollingSlotWindowDays { get; set; } = 14;
     public int MaxRollingSlotWindowDays { get; set; } = 60;
     public int DefaultSlotDurationMinutes { get; set; } = 30;
+    public int PaymentIntentRecoveryIntervalSeconds { get; set; } = 30;
     public int DefaultSlotCapacity { get; set; } = 3;
 }
