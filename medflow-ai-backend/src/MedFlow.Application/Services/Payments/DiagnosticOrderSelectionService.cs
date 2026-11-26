@@ -287,14 +287,20 @@ public sealed class DiagnosticOrderSelectionService : IDiagnosticOrderSelectionS
         {
             try
             {
+                // P0 lock-order fix (ADR-0061): level 02 patients MUST be locked before level 09 visits.
+                // The decline path enqueues a VISIT_RETURN_READY notification whose patient_id FK takes an
+                // implicit KEY SHARE on the patient row; without an explicit level-02 lock that KEY SHARE is
+                // acquired *after* the visit lock, inverting the global order against execution-start
+                // (which locks patient -> visit) and deadlocking (Postgres 40P01).
                 await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
                     _db,
-                    visitId: visitId,
+                    visitIds: new[] { visitId },
                     extraServicePointIds: null,
                     extraQueueEntryIds: null,
                     extraDiagnosticOrderIds: orderNumericId.HasValue ? [orderNumericId.Value] : null,
                     includeChargeAndPaymentLocks: true,
-                    ct: ct);
+                    ct: ct,
+                    extraPatientIds: preVisit.PatientId is > 0 ? new[] { preVisit.PatientId.Value } : null);
 
                 if (_db is DbContext trackerCtx)
                     trackerCtx.ChangeTracker.Clear();

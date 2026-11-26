@@ -573,7 +573,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                 go.SetResult();
 
                 var errs = await Task.WhenAll(tSingle, tGrouped);
-                AssertZeroDeadlockOrUnhandledServerFailure(errs);
+                AssertZeroDeadlockOrUnhandledServerFailure(errs, "3.1 QR-single-vs-grouped");
 
                 await using var checkScope = _app.Services.CreateAsyncScope();
                 var checkDb = checkScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
@@ -652,7 +652,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                 go.SetResult();
 
                 var errs = await Task.WhenAll(tCash, tWh);
-                AssertZeroDeadlockOrUnhandledServerFailure(errs);
+                AssertZeroDeadlockOrUnhandledServerFailure(errs, "3.2 cash-vs-webhook");
 
                 await using var checkScope = _app.Services.CreateAsyncScope();
                 var checkDb = checkScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
@@ -715,7 +715,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
 
                 var decErr = await tDecline;
                 var startErr = await tStart;
-                AssertZeroDeadlockOrUnhandledServerFailure([decErr, startErr]);
+                AssertZeroDeadlockOrUnhandledServerFailure([decErr, startErr], "3.3 decline-vs-start");
                 Assert.True((decErr is null) ^ (startErr is null));
 
                 await using var checkScope = _app.Services.CreateAsyncScope();
@@ -798,7 +798,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
 
                 var deferErr = await tDefer;
                 var startErr = await tStart;
-                AssertZeroDeadlockOrUnhandledServerFailure([deferErr, startErr]);
+                AssertZeroDeadlockOrUnhandledServerFailure([deferErr, startErr], "3.4 defer-vs-start");
                 Assert.True((deferErr is null) ^ (startErr is null));
                 if (startErr is null)
                 {
@@ -880,7 +880,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
 
                 var resumeErr = await tResume;
                 var uc43Err = await tUc43;
-                AssertZeroDeadlockOrUnhandledServerFailure([resumeErr, uc43Err]);
+                AssertZeroDeadlockOrUnhandledServerFailure([resumeErr, uc43Err], "3.5 resume-return-vs-finalize");
                 Assert.Null(uc43Err);
 
                 if (resumeErr is not null)
@@ -1415,7 +1415,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
     // Invariant Assertions & Isolated Self-Cleaning Fixture Helpers
     // =========================================================================
 
-    private static void AssertZeroDeadlockOrUnhandledServerFailure(IEnumerable<Exception?> exceptions)
+    private static void AssertZeroDeadlockOrUnhandledServerFailure(IEnumerable<Exception?> exceptions, string? context = null)
     {
         foreach (var ex in exceptions)
         {
@@ -1425,10 +1425,12 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
             }
 
             var sqlState = PostgresConcurrencyException.TryGetSqlState(ex);
-            Assert.NotEqual("40P01", sqlState);
+            Assert.True(
+                sqlState != "40P01",
+                $"PostgreSQL 40P01 deadlock detected in [{context ?? "unknown"}] : {ex.Message}");
             Assert.True(
                 ex is ConflictException or ForbiddenException,
-                $"Unexpected non-domain exception {ex.GetType().Name} (SqlState={sqlState ?? "none"}): {ex.Message}");
+                $"Unexpected non-domain exception {ex.GetType().Name} (SqlState={sqlState ?? "none"}) in [{context ?? "unknown"}]: {ex.Message}");
         }
     }
 

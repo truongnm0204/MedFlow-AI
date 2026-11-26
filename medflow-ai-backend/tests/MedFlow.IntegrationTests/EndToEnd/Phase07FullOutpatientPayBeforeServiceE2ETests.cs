@@ -394,6 +394,16 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                 Assert.Equal(HttpStatusCode.Conflict, confirmStillUnpaidUs.StatusCode);
             }
 
+            // Stage E2 (QE-23 / PE-06): the clinical session must be handed off before CLS execution.
+            using (var handoffResp = await SendJsonAsync(
+                HttpMethod.Post,
+                $"/api/v1/doctor/consultation/{visitCode}/handoff-to-diagnostic",
+                new HandoffToDiagnosticRequest(),
+                doctorToken))
+            {
+                Assert.Equal(HttpStatusCode.OK, handoffResp.StatusCode);
+            }
+
             await ExecuteUc40ToUc42Async(bloodOrderCode, fx.LabServicePointId, visitCode, fx.PatientId, labStaff1Token);
 
             using (var wsGet = await SendJsonAsync(HttpMethod.Get, $"/api/v1/doctor/consultation/{visitCode}", null, doctorToken))
@@ -414,7 +424,8 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                     IsConfirmed: false),
                 doctorToken))
             {
-                Assert.Equal(HttpStatusCode.OK, provAllowedResp.StatusCode);
+                // Stage E2 (QE-23): after handoff the visit is AWAITING_RESULTS and clinical writes are gated.
+                Assert.Equal(HttpStatusCode.Conflict, provAllowedResp.StatusCode);
             }
 
             using (var draftRxAllowedResp = await SendJsonAsync(
@@ -437,7 +448,8 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                     ]),
                 doctorToken))
             {
-                Assert.Equal(HttpStatusCode.OK, draftRxAllowedResp.StatusCode);
+                // Stage E2 (QE-23): clinical writes (incl. draft Rx) are gated post-handoff (AWAITING_RESULTS).
+                Assert.Equal(HttpStatusCode.Conflict, draftRxAllowedResp.StatusCode);
             }
 
             using (var blockedConfirmedDx = await SendJsonAsync(
@@ -482,17 +494,10 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                 Assert.Equal(HttpStatusCode.Conflict, blockedComplete.StatusCode);
             }
 
-            // Release examination room into AWAITING_RESULTS
-            using (var awaitResultsResp = await SendJsonAsync(
-                HttpMethod.Post,
-                $"/api/v1/visits/{visitCode}/return-to-doctor",
-                new CreateReturnToDoctorQueueEntryRequest(
-                    ConfirmPresent: true,
-                    Reason: "Chuyển bệnh nhân ra chờ kết quả xét nghiệm máu và siêu âm"),
-                doctorToken))
-            {
-                Assert.Equal(HttpStatusCode.OK, awaitResultsResp.StatusCode);
-            }
+            // Stage E2 (QE-10): the handoff above already released the exam room into AWAITING_RESULTS, and the
+            // legacy doctor-initiated return-to-doctor ticket mint is Forbidden (Reception-only). Assert the state.
+            Db.ChangeTracker.Clear();
+            Assert.Equal("AWAITING_RESULTS", (await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id)).Status);
 
             // STEP 7 & 8: Pay Ultrasound (150k) + parallel UC40..UC42
             await IssueSingleQrAndSettleAsync(visitCode, ultrasoundCharge.Id, 150_000m, patientToken, $"FT-E2E01-US-{fx.Suffix}");
@@ -585,17 +590,38 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
 
             Db.ChangeTracker.Clear();
             var visitReturn = await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id);
-            Assert.Equal("RETURN_CONSULTATION", visitReturn.Status);
+            // Stage E2 (QE-10): finalizing the last order stamps ReadyForReturnAt and holds AWAITING_RESULTS;
+            // it does NOT auto-mint a RETURN_CONSULTATION ticket. Reception coordinates the single READY ticket.
+            Assert.Equal("AWAITING_RESULTS", visitReturn.Status);
             Assert.NotNull(visitReturn.ReadyForReturnAt);
-
-            var activeReturnQueues = await Db.QueueEntries.AsNoTracking()
+            Assert.Empty(await Db.QueueEntries.AsNoTracking()
                 .Where(q =>
                     q.VisitId == visit.Id &&
                     q.QueueType == "RETURN_CONSULTATION" &&
                     q.Status != "CANCELLED" &&
                     q.Status != "COMPLETED")
-                .ToListAsync();
-            var singleReturnQueue = Assert.Single(activeReturnQueues);
+                .ToListAsync());
+
+            using (var enrollReturnResp = await SendJsonAsync(
+                HttpMethod.Post,
+                $"/api/v1/reception/visits/{visitCode}/return-enrollment",
+                new CreateReturnEnrollmentRequestDto(
+                    Purpose: QueueCoordinationPurposes.ResultConclusion,
+                    IdempotencyKey: $"e2e01-return-{visitCode}"),
+                receptionToken))
+            {
+                Assert.True(enrollReturnResp.StatusCode == HttpStatusCode.OK, await enrollReturnResp.Content.ReadAsStringAsync());
+            }
+
+            Db.ChangeTracker.Clear();
+            Assert.Equal("RETURN_CONSULTATION", (await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id)).Status);
+            var singleReturnQueue = Assert.Single(await Db.QueueEntries.AsNoTracking()
+                .Where(q =>
+                    q.VisitId == visit.Id &&
+                    q.QueueType == "RETURN_CONSULTATION" &&
+                    q.Status != "CANCELLED" &&
+                    q.Status != "COMPLETED")
+                .ToListAsync());
             Assert.Equal("READY", singleReturnQueue.Status);
 
             // STEP 10: Reopen, record all 7 MedicalRecordRevision fields without overwriting ClinicalFindings,

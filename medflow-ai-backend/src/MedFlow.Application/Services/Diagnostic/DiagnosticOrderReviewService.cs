@@ -364,6 +364,17 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
         DiagnosticOrder reloadOrder;
         Visit? reloadVisit;
 
+        // P0 lock-order fix: resolve the visit's patient (no-lock read) so level 02 patient is locked BEFORE
+        // level 09 visit. Cancellation can enqueue a VISIT_RETURN_READY notification (patient_id FK -> implicit
+        // KEY SHARE on the patient); acquiring that after the visit lock inverts the global order against
+        // execution-start (patient -> visit) and deadlocks (Postgres 40P01).
+        long? preCancelPatientId = preOrder.VisitId.HasValue
+            ? await _db.Visits.AsNoTracking()
+                .Where(v => v.Id == preOrder.VisitId.Value)
+                .Select(v => v.PatientId)
+                .FirstOrDefaultAsync(ct)
+            : null;
+
         try
         {
             await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
@@ -373,7 +384,8 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
             preOrder.QueueEntryId.HasValue ? new[] { preOrder.QueueEntryId.Value } : Array.Empty<long>(),
             new[] { preOrder.Id },
             includeChargeAndPaymentLocks: true,
-            ct);
+            ct,
+            extraPatientIds: preCancelPatientId is > 0 ? new[] { preCancelPatientId.Value } : null);
 
             reloadOrder = await _db.DiagnosticOrders.FirstOrDefaultAsync(o => o.Id == preOrder.Id, ct)
                 ?? throw new NotFoundException("DiagnosticOrder", preOrder.Id);

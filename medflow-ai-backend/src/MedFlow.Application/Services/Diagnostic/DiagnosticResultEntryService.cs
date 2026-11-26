@@ -597,7 +597,12 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                 trackedQueueEntry is not null ? new[] { trackedQueueEntry.Id } : Array.Empty<long>(),
                 new[] { trackedOrder.Id },
                 includeChargeAndPaymentLocks: false,
-                ct);
+                ct,
+                // P0 lock-order fix: level 02 patients before level 09 visits. The UC43 finalize enqueues a
+                // VISIT_RETURN_READY notification whose patient_id FK takes an implicit KEY SHARE on the
+                // patient; without the explicit level-02 lock that KEY SHARE lands after the visit lock and
+                // inverts the global order against execution-start (patient -> visit) -> 40P01 deadlock.
+                extraPatientIds: visit.PatientId is > 0 ? new[] { visit.PatientId.Value } : null);
 
             trackedOrder = await _db.DiagnosticOrders.FirstOrDefaultAsync(o => o.Id == trackedOrder.Id, ct)
                 ?? throw new NotFoundException("DiagnosticOrder", orderCode);
@@ -1502,7 +1507,9 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                 trackedQueueEntry is not null ? new[] { trackedQueueEntry.Id } : Array.Empty<long>(),
                 new[] { trackedOrder.Id },
                 includeChargeAndPaymentLocks: false,
-                ct);
+                ct,
+                // P0 lock-order fix: lock level 02 patient before level 09 visit (VISIT_RETURN_READY notification FK).
+                extraPatientIds: visit?.PatientId is > 0 ? new[] { visit.PatientId!.Value } : null);
 
             trackedOrder = await _db.DiagnosticOrders.FirstOrDefaultAsync(o => o.Id == trackedOrder.Id, ct)
                 ?? throw new NotFoundException("DiagnosticOrder", orderCode);
