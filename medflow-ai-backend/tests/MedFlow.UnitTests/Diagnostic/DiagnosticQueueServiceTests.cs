@@ -1097,6 +1097,14 @@ public sealed class DiagnosticQueueServiceTests : IDisposable
         Assert.Equal("LEFT", skipped.PresenceStatus);
         Assert.Contains("Gọi 3 lần", skipped.BlockedReason);
 
+        // Fixture fix (ADR-0061 strict single-active-queue invariant): close the patient's
+        // other active diagnostic queue entry (q-011) so restoring q-012 does not mint a
+        // second simultaneous active queue for patient 1.
+        var priorEntry11 = await _dbContext.QueueEntries.FindAsync(11L);
+        priorEntry11!.Status = "COMPLETED";
+        priorEntry11.CompletedAt = new DateTime(2026, 10, 20, 8, 55, 0);
+        await _dbContext.SaveChangesAsync();
+
         // Restore skipped turn (SKIPPED -> READY)
         var restored = await _service.RestoreDiagnosticSkippedTurnAsync(
             actorUserId: 7,

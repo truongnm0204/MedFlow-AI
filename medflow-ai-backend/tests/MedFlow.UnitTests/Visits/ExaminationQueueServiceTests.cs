@@ -1257,6 +1257,16 @@ public sealed class ExaminationQueueServiceTests : IDisposable
                 StateVersion = 1,
             });
 
+        // Stage E2 single-active invariant: restoring/minting a ticket for Patient 1 would
+        // conflict with the still-active base-seed queue entry q-001 (same patient, same day).
+        // Close it so the missed-turn scenario leaves no other active serving queue.
+        var staleEntry = _db.QueueEntries.Single(q => q.Id == 1);
+        staleEntry.Status = "COMPLETED";
+        staleEntry.CompletedAt = new DateTime(2026, 10, 22, 8, 15, 0);
+        var staleVisit = _db.Visits.Single(v => v.Id == 1);
+        staleVisit.Status = "COMPLETED";
+        staleVisit.CompletedAt = new DateTime(2026, 10, 22, 8, 15, 0);
+
         _db.HospitalPolicies.Add(new HospitalPolicy
         {
             Id = 141,
@@ -2254,28 +2264,53 @@ public sealed class ExaminationQueueServiceTests : IDisposable
             });
         await _db.SaveChangesAsync();
 
+        // Stage E2 single-active invariant (STRICT): minting a RETURN_CONSULTATION ticket while
+        // the patient's DIAGNOSTIC queue is still IN_PROGRESS must conflict — enrollment is only
+        // allowed sequentially once the prior ticket is completed.
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.CreateReturnToDoctorQueueEntryAsync(
+                actorUserId: 5,
+                idOrCode: "VIS-202610-0075",
+                request: new CreateReturnToDoctorQueueEntryRequest(
+                    ServicePointId: "sp-1",
+                    ConfirmPresent: true,
+                    Reason: "Tiếp nhận bệnh nhân quay lại buồng khám chờ kết quả siêu âm",
+                    Notes: "Đang chờ kết quả CLS")));
+
+        // Call-next has nothing eligible on sp-1 while no return ticket exists.
+        var noCall = await _service.CallNextPatientAsync(actorUserId: 5, servicePointId: "sp-1");
+        Assert.Equal("NO_ELIGIBLE_PATIENT", noCall.Outcome);
+
+        // Complete the diagnostic entry — the sequential workflow then succeeds.
+        var diagEntry = await _db.QueueEntries.SingleAsync(q => q.Id == 76);
+        diagEntry.Status = "COMPLETED";
+        diagEntry.CompletedAt = new DateTime(2026, 10, 22, 8, 28, 0);
+        await _db.SaveChangesAsync();
+
         var created = await _service.CreateReturnToDoctorQueueEntryAsync(
             actorUserId: 5,
             idOrCode: "VIS-202610-0075",
             request: new CreateReturnToDoctorQueueEntryRequest(
                 ServicePointId: "sp-1",
                 ConfirmPresent: true,
-                Reason: "Tiếp nhận bệnh nhân quay lại buồng khám chờ kết quả siêu âm",
-                Notes: "Đang chờ kết quả CLS"));
+                Reason: "Kết quả siêu âm đã hoàn tất, tiếp nhận bệnh nhân quay lại đọc kết quả"));
 
         Assert.Equal("CREATED", created.ActionOutcome);
-        Assert.Equal("WAITING", created.CurrentStatus);
+        Assert.Equal("READY", created.CurrentStatus);
         Assert.Equal("RETURN_CONSULTATION", created.QueueType);
         Assert.Equal(2, created.QueueNumber);
         Assert.True(created.FinalResultRequired);
-        Assert.False(created.AllDiagnosticResultsReady);
-        Assert.Equal(1, created.OpenDiagnosticCount);
-        Assert.False(created.IsEligible);
-        Assert.Equal("NOT_ELIGIBLE", created.QueueGroup);
-        Assert.Equal("AWAITING_RESULTS", created.IneligibleReason);
+        Assert.True(created.AllDiagnosticResultsReady);
+        Assert.Equal(0, created.OpenDiagnosticCount);
+        Assert.True(created.IsEligible);
+        Assert.Equal("ELIGIBLE", created.QueueGroup);
+        Assert.Null(created.IneligibleReason);
         Assert.Equal(1, created.StateVersion);
 
-        // Re-activating while diagnostic is still open must throw ConflictException
+        var updatedVisit = await _db.Visits.SingleAsync(v => v.Id == 75);
+        Assert.Equal("RETURN_CONSULTATION", updatedVisit.Status);
+
+        // Duplicate activation when already READY throws ConflictException.
         await Assert.ThrowsAsync<ConflictException>(() =>
             _service.CreateReturnToDoctorQueueEntryAsync(
                 actorUserId: 5,
@@ -2283,51 +2318,14 @@ public sealed class ExaminationQueueServiceTests : IDisposable
                 request: new CreateReturnToDoctorQueueEntryRequest(
                     ServicePointId: "sp-1",
                     ConfirmPresent: true,
-                    Reason: "Thử kích hoạt khi CLS chưa xong",
+                    Reason: "Kích hoạt trùng khi đã READY",
                     ExpectedStateVersion: 1)));
 
-        // Call-next cannot call the waiting return entry while diagnostic is open
-        var noCall = await _service.CallNextPatientAsync(actorUserId: 5, servicePointId: "sp-1");
-        Assert.Equal("NO_ELIGIBLE_PATIENT", noCall.Outcome);
-
-        // Complete the diagnostic entry
-        var diagEntry = await _db.QueueEntries.SingleAsync(q => q.Id == 76);
-        diagEntry.Status = "COMPLETED";
-        diagEntry.CompletedAt = new DateTime(2026, 10, 22, 8, 28, 0);
-        await _db.SaveChangesAsync();
-
-        // Activate the existing RETURN_CONSULTATION entry in place
-        var activated = await _service.CreateReturnToDoctorQueueEntryAsync(
-            actorUserId: 3, // Assigned doctor 1
-            idOrCode: created.QueueEntryId,
-            request: new CreateReturnToDoctorQueueEntryRequest(
-                ServicePointId: "sp-1",
-                ConfirmPresent: true,
-                Reason: "Kết quả siêu âm đã hoàn tất, kích hoạt lượt khám lại",
-                ExpectedStateVersion: 1));
-
-        Assert.Equal("ACTIVATED", activated.ActionOutcome);
-        Assert.Equal(created.QueueEntryId, activated.QueueEntryId);
-        Assert.Equal(2, activated.QueueNumber); // Preserved queueNumber
-        Assert.Equal("READY", activated.CurrentStatus);
-        Assert.True(activated.AllDiagnosticResultsReady);
-        Assert.Equal(0, activated.OpenDiagnosticCount);
-        Assert.True(activated.IsEligible);
-        Assert.Equal("ELIGIBLE", activated.QueueGroup);
-        Assert.Null(activated.IneligibleReason);
-        Assert.Equal(1, activated.PreviousStateVersion);
-        Assert.Equal(2, activated.StateVersion);
-
-        // Duplicate activation when already READY throws ConflictException
-        await Assert.ThrowsAsync<ConflictException>(() =>
-            _service.CreateReturnToDoctorQueueEntryAsync(
-                actorUserId: 3,
-                idOrCode: created.QueueEntryId,
-                request: new CreateReturnToDoctorQueueEntryRequest(
-                    ServicePointId: "sp-1",
-                    ConfirmPresent: true,
-                    Reason: "Kích hoạt trùng khi đã READY",
-                    ExpectedStateVersion: 2)));
+        // Call-next picks the ready return-consultation ticket.
+        var callNext = await _service.CallNextPatientAsync(actorUserId: 5, servicePointId: "sp-1");
+        Assert.Equal("CALLED", callNext.Outcome);
+        Assert.Equal(created.QueueEntryId, callNext.CalledEntry!.Id);
+        Assert.Equal("RETURN_CONSULTATION", callNext.SelectionReason);
     }
 
     [Fact]
@@ -2455,7 +2453,9 @@ public sealed class ExaminationQueueServiceTests : IDisposable
             {
                 Id = 83,
                 VisitCode = "VIS-202610-0083",
-                PatientId = 4,
+                // Stage E2 single-active invariant: must differ from PatientId 4 (visit 82's
+                // patient) so q-083 does not block minting the return ticket for visit 82.
+                PatientId = 3,
                 AssignedDoctorId = 1,
                 ExaminationRoomId = 1,
                 CheckedInByStaffId = 3,
