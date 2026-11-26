@@ -2099,10 +2099,17 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
             .ExecuteDeleteAsync();
 
         // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit + fk_queue_entries_prescription_visit
-        // are ON DELETE RESTRICT — clear queue_entries bindings before orders/prescriptions/visits below.
+        // are ON DELETE RESTRICT. Clear diagnostic_orders.queue_entry_id + queue_fairness_states
+        // .last_started_queue_entry_id back-pointers before deleting queue_entries.
+        var spIds = new[] { fx.ExamServicePoint1Id, fx.ExamServicePoint2Id, fx.DiagServicePointId, fx.DiagServicePoint2Id };
+        await db.DiagnosticOrders
+            .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
+        await db.QueueFairnessStates.Where(f => spIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
         await db.QueueEntries
             .Where(q => (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
-                        (q.AppointmentId.HasValue && apptIds.Contains(q.AppointmentId.Value)))
+                        (q.AppointmentId.HasValue && apptIds.Contains(q.AppointmentId.Value)) ||
+                        (q.ServicePointId.HasValue && spIds.Contains(q.ServicePointId.Value)))
             .ExecuteDeleteAsync();
         var orderIds = await db.DiagnosticOrders.AsNoTracking()
             .Where(o => o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
@@ -2170,8 +2177,6 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
             await db.Payments.Where(p => paymentIds.Contains(p.Id)).ExecuteDeleteAsync();
         }
 
-        var spIds = new[] { fx.ExamServicePoint1Id, fx.ExamServicePoint2Id, fx.DiagServicePointId, fx.DiagServicePoint2Id };
-        await db.QueueFairnessStates.Where(f => spIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
 
         if (visitIds.Count > 0 || apptIds.Count > 0)
         {

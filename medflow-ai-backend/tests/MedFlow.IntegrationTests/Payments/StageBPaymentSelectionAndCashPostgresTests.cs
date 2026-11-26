@@ -2429,7 +2429,13 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
         }
 
         // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit + fk_queue_entries_prescription_visit
-        // are ON DELETE RESTRICT — clear queue_entries bindings before orders/visits below.
+        // are ON DELETE RESTRICT. Before deleting queue_entries we must (1) clear diagnostic_orders.queue_entry_id
+        // (fk_diagnostic_orders_queue_entry_id) and (2) clear queue_fairness_states.last_started_queue_entry_id
+        // (fk_queue_fairness_states_last_started_queue_entry_id) — both back-reference queue_entries.
+        await Db.DiagnosticOrders
+            .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
+        await Db.QueueFairnessStates.Where(f => fx.AllSpIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
         await Db.QueueEntries.Where(q => q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)).ExecuteDeleteAsync();
         if (visitIds.Count > 0)
         {

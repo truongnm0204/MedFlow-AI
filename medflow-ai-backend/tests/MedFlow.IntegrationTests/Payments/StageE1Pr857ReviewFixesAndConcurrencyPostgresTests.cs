@@ -2172,7 +2172,12 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
             n.PatientId == fx.PatientId).ExecuteDeleteAsync();
 
         // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit + fk_queue_entries_prescription_visit
-        // are ON DELETE RESTRICT — clear queue_entries bindings before prescriptions/orders/visits below.
+        // are ON DELETE RESTRICT. Clear diagnostic_orders.queue_entry_id + queue_fairness_states
+        // .last_started_queue_entry_id back-pointers before deleting queue_entries.
+        await Db.DiagnosticOrders
+            .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
+        await Db.QueueFairnessStates.Where(f => fx.AllSpIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
         await Db.QueueEntries.Where(q => q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)).ExecuteDeleteAsync();
         if (visitIds.Count > 0)
         {

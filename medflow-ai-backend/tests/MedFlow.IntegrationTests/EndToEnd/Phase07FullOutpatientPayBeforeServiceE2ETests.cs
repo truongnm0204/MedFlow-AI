@@ -3234,15 +3234,19 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
             fx.ImagingServicePointId,
             fx.FunctionalServicePointId,
         };
+        // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit ON DELETE RESTRICT, and
+        // fk_diagnostic_orders_queue_entry_id / fk_queue_fairness_states_last_started_queue_entry_id back-
+        // reference queue_entries. Clear those pointers, then fairness, then queue_entries BEFORE the
+        // diagnostic_orders / prescriptions they bind are deleted below.
+        await Db.DiagnosticOrders
+            .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
         await Db.QueueFairnessStates.Where(f => spIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
 
         if (visitIds.Count > 0 || apptIds.Count > 0)
         {
             await Db.VisitCharges.Where(c => c.VisitId.HasValue && visitIds.Contains(c.VisitId.Value)).ExecuteDeleteAsync();
 
-            // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit ON DELETE RESTRICT —
-            // queue_entries must be cleared BEFORE diagnostic_orders they bind (and before prescriptions
-            // bound via fk_queue_entries_prescription_visit).
             await Db.QueueEntries
                 .Where(q => (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
                             (q.AppointmentId.HasValue && apptIds.Contains(q.AppointmentId.Value)) ||
