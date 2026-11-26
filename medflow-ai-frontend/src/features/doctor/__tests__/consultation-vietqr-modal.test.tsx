@@ -228,159 +228,175 @@ describe('ConsultationVietQrModal', () => {
     expect(key2).not.toBe(key1);
   });
 
-  it('supports Doctor expired-order revalidation and overdue-return clinical snapshot approval', async () => {
+  it('supports Doctor expired-order revalidation, dedicated CLINICAL_REVIEW completion, and SN-16/SN-17 overdue snapshot safeguards', async () => {
     const user = userEvent.setup();
     const onRevalidate = vi.fn().mockResolvedValue(true);
+    const onCompleteReview = vi.fn().mockResolvedValue(true);
     const onApproveOverdue = vi.fn().mockResolvedValue(true);
+    const onRefreshWorkspace = vi.fn().mockResolvedValue(undefined);
+    const snapA = 'a'.repeat(64);
+    const snapB = 'b'.repeat(64);
 
-    render(
+    const baseVisit = {
+      visitId: 88,
+      visitCode,
+      status: 'IN_PROGRESS',
+      statusLabel: 'Đang khám',
+      visitType: 'WALK_IN' as const,
+      visitTypeLabel: 'Khám vãng lai',
+      reasonForVisit: 'Đau đầu',
+      appointmentId: null,
+      appointmentCode: null,
+      scheduledStartAt: null,
+      scheduledEndAt: null,
+      checkedInAt: '2026-11-10T08:00:00',
+      startedAt: '2026-11-26T09:00:00',
+      completedAt: null,
+      hospitalId: 1,
+      hospitalCode: 'H-01',
+      hospitalName: 'BV MedFlow',
+      departmentId: 1,
+      departmentCode: 'NOI',
+      departmentName: 'Khoa Nội',
+      specialtyId: 1,
+      specialtyCode: 'NOI',
+      specialtyName: 'Nội khoa',
+      roomId: 1,
+      roomCode: 'P.101',
+      roomName: 'Phòng 101',
+      roomLocation: 'Tầng 1',
+      assignedDoctorId: 11,
+      assignedDoctorCode: 'DOC-11',
+      assignedDoctorName: 'BS. Khôi',
+      assignedDoctorTitle: 'BS',
+      serviceId: 1,
+      serviceCode: 'KHAM-01',
+      serviceName: 'Khám Nội',
+      isCrossDayVisit: true,
+      isOverdueForReview: true,
+      isReturnOverdue: true,
+      isOverdueReturnApproved: false,
+      currentResultSnapshot: snapA,
+    };
+
+    const baseClinicalContext = {
+      medicalRecordId: 10,
+      medicalRecordStatus: 'DRAFT' as const,
+      finalizedAt: null,
+      currentRevisionNo: 2,
+      isConfirmed: true,
+      lastRecordedAt: '2026-11-26T09:05:00',
+      presentingComplaint: 'Đau đầu',
+      symptomHistory: '3 ngày',
+      relevantHistoryAllergies: null,
+      vitalSigns: {
+        bpSystolicMmhg: 120,
+        bpDiastolicMmhg: 80,
+        bloodPressureLabel: '120/80 mmHg',
+        pulseBpm: 72,
+        temperatureC: 36.7,
+        spo2Percent: 98,
+        heightCm: 170,
+        weightKg: 65,
+        bmi: 22.5,
+      },
+      clinicalFindings: 'Tỉnh',
+      clinicalConclusion: 'Theo dõi đau đầu căng thẳng',
+      amendmentReason: null,
+      diagnoses: [
+        {
+          id: 1,
+          icd10CodeId: 100,
+          code: 'G44.2',
+          name: 'Đau đầu căng thẳng',
+          isPrimary: true,
+          clinicalDiagnosis: 'Đau đầu căng thẳng',
+          status: 'CONFIRMED' as const,
+          confirmedAt: '2026-11-26T09:05:00',
+          recordedAt: '2026-11-26T09:05:00',
+        },
+      ],
+      diagnosticSummary: {
+        totalQueueEntries: 1,
+        openQueueEntries: 0,
+        completedQueueEntries: 1,
+        allMandatoryResultsReady: true,
+        finalResultRequired: true,
+      },
+      prescriptionSummary: {
+        totalPrescriptions: 0,
+        latestPrescriptionCode: null,
+        latestPrescriptionStatus: null,
+        latestIssuedAt: null,
+        itemCount: 0,
+      },
+    };
+
+    const expiredOrder = {
+      orderId: 777,
+      orderCode: 'DIA-777',
+      visitId: 88,
+      visitCode,
+      orderingDoctorId: 11,
+      orderingDoctorCode: 'DOC-11',
+      orderingDoctorName: 'BS. Khôi',
+      serviceId: 5,
+      serviceCode: 'DIA-CBC',
+      serviceName: 'Công thức máu',
+      category: 'LABORATORY' as const,
+      unitPrice: 120000,
+      requiresResultVerification: true,
+      queueEntryId: 500,
+      formattedQueueEntryId: 'q-500',
+      ticketNo: 'CLS-001',
+      queueNumber: 1,
+      queueStatus: 'DEFERRED',
+      servicePointId: 3,
+      servicePointName: 'Phòng Xét nghiệm',
+      roomId: 5,
+      roomCode: 'RM-005',
+      roomName: 'Phòng CLS 205',
+      priority: 'NORMAL' as const,
+      status: 'CONFIRMED' as const,
+      requiredForConclusion: true,
+      instruction: 'Nhịn ăn sáng',
+      orderedAt: '2026-11-10T08:00:00',
+      confirmedAt: '2026-11-10T08:05:00',
+      isResultFinalized: false,
+      selectionStatus: 'ACCEPTED' as const,
+      paymentStatus: 'PAID',
+      isExpiredForReview: true,
+    };
+
+    const { rerender } = render(
       <div>
         <ConsultationDiagnosticOrderPanel
-          existingOrders={[
-            {
-              orderId: 777,
-              orderCode: 'DIA-777',
-              visitId: 88,
-              visitCode,
-              orderingDoctorId: 11,
-              orderingDoctorCode: 'DOC-11',
-              orderingDoctorName: 'BS. Khôi',
-              serviceId: 5,
-              serviceCode: 'DIA-CBC',
-              serviceName: 'Công thức máu',
-              category: 'LABORATORY',
-              unitPrice: 120000,
-              requiresResultVerification: true,
-              queueEntryId: 500,
-              formattedQueueEntryId: 'q-500',
-              ticketNo: 'CLS-001',
-              queueNumber: 1,
-              queueStatus: 'DEFERRED',
-              servicePointId: 3,
-              servicePointName: 'Phòng Xét nghiệm',
-              roomId: 5,
-              roomCode: 'RM-005',
-              roomName: 'Phòng CLS 205',
-              priority: 'NORMAL',
-              status: 'CONFIRMED',
-              requiredForConclusion: true,
-              instruction: 'Nhịn ăn sáng',
-              orderedAt: '2026-11-10T08:00:00',
-              confirmedAt: '2026-11-10T08:05:00',
-              isResultFinalized: false,
-              selectionStatus: 'ACCEPTED',
-              paymentStatus: 'PAID',
-              isExpiredForReview: true,
-            },
-          ]}
+          existingOrders={[expiredOrder]}
           catalogServices={[]}
           canCreateOrder
           hasOrderPermission
           expectedStateVersion={3}
+          coordinationPurpose="CLINICAL_REVIEW"
+          queueStatus="IN_PROGRESS"
           onRevalidateOrder={onRevalidate}
+          onCompleteClinicalReview={onCompleteReview}
         />
 
         <ConsultationCompleteVisitPanel
           workspaceState="IN_PROGRESS"
-          visit={{
-            visitId: 88,
-            visitCode,
-            status: 'IN_PROGRESS',
-            statusLabel: 'Đang khám',
-            visitType: 'WALK_IN',
-            visitTypeLabel: 'Khám vãng lai',
-            reasonForVisit: 'Đau đầu',
-            appointmentId: null,
-            appointmentCode: null,
-            scheduledStartAt: null,
-            scheduledEndAt: null,
-            checkedInAt: '2026-11-10T08:00:00',
-            startedAt: '2026-11-26T09:00:00',
-            completedAt: null,
-            hospitalId: 1,
-            hospitalCode: 'H-01',
-            hospitalName: 'BV MedFlow',
-            departmentId: 1,
-            departmentCode: 'NOI',
-            departmentName: 'Khoa Nội',
-            specialtyId: 1,
-            specialtyCode: 'NOI',
-            specialtyName: 'Nội khoa',
-            roomId: 1,
-            roomCode: 'P.101',
-            roomName: 'Phòng 101',
-            roomLocation: 'Tầng 1',
-            assignedDoctorId: 11,
-            assignedDoctorCode: 'DOC-11',
-            assignedDoctorName: 'BS. Khôi',
-            assignedDoctorTitle: 'BS',
-            serviceId: 1,
-            serviceCode: 'KHAM-01',
-            serviceName: 'Khám Nội',
-            isCrossDayVisit: true,
-            isOverdueForReview: true,
-            isReturnOverdue: true,
-            isOverdueReturnApproved: false,
-          }}
-          clinicalContext={{
-            medicalRecordId: 10,
-            medicalRecordStatus: 'DRAFT',
-            finalizedAt: null,
-            currentRevisionNo: 2,
-            isConfirmed: true,
-            lastRecordedAt: '2026-11-26T09:05:00',
-            presentingComplaint: 'Đau đầu',
-            symptomHistory: '3 ngày',
-            relevantHistoryAllergies: null,
-            vitalSigns: {
-              bpSystolicMmhg: 120,
-              bpDiastolicMmhg: 80,
-              bloodPressureLabel: '120/80 mmHg',
-              pulseBpm: 72,
-              temperatureC: 36.7,
-              spo2Percent: 98,
-              heightCm: 170,
-              weightKg: 65,
-              bmi: 22.5,
-            },
-            clinicalFindings: 'Tỉnh',
-            clinicalConclusion: 'Theo dõi đau đầu căng thẳng',
-            amendmentReason: null,
-            diagnoses: [
-              {
-                id: 1,
-                icd10CodeId: 100,
-                code: 'G44.2',
-                name: 'Đau đầu căng thẳng',
-                isPrimary: true,
-                clinicalDiagnosis: 'Đau đầu căng thẳng',
-                status: 'CONFIRMED',
-                confirmedAt: '2026-11-26T09:05:00',
-                recordedAt: '2026-11-26T09:05:00',
-              },
-            ],
-            diagnosticSummary: {
-              totalQueueEntries: 1,
-              openQueueEntries: 0,
-              completedQueueEntries: 1,
-              allMandatoryResultsReady: true,
-              finalResultRequired: true,
-            },
-            prescriptionSummary: {
-              totalPrescriptions: 0,
-              latestPrescriptionCode: null,
-              latestPrescriptionStatus: null,
-              latestIssuedAt: null,
-              itemCount: 0,
-            },
-          }}
+          visit={baseVisit}
+          clinicalContext={baseClinicalContext}
           canCompleteVisit
           hasWritePermission
           expectedStateVersion={4}
           onApproveOverdueResults={onApproveOverdue}
+          onRefreshWorkspace={onRefreshWorkspace}
         />
       </div>,
     );
+
+    // E1-02: Complete clinical review button is disabled while an order is still expired
+    expect(screen.getByRole('button', { name: /Kết thúc phiên đánh giá/i })).toBeDisabled();
 
     await user.click(screen.getByRole('button', { name: /Gia hạn hiệu lực chỉ định/i }));
     await user.type(
@@ -391,18 +407,83 @@ describe('ConsultationVietQrModal', () => {
 
     expect(onRevalidate).toHaveBeenCalledWith(777, {
       reason: 'Tình trạng lâm sàng ổn định, đồng ý gia hạn thực hiện xét nghiệm máu',
+      extendDays: 7,
       expectedStateVersion: 3,
     });
+
+    // Rerender with order revalidated AND snapshot changed via SignalR/refetch (SN-16)
+    rerender(
+      <div>
+        <ConsultationDiagnosticOrderPanel
+          existingOrders={[{ ...expiredOrder, isExpiredForReview: false }]}
+          catalogServices={[]}
+          canCreateOrder
+          hasOrderPermission
+          expectedStateVersion={3}
+          coordinationPurpose="CLINICAL_REVIEW"
+          queueStatus="IN_PROGRESS"
+          onRevalidateOrder={onRevalidate}
+          onCompleteClinicalReview={onCompleteReview}
+        />
+
+        <ConsultationCompleteVisitPanel
+          workspaceState="IN_PROGRESS"
+          visit={{ ...baseVisit, currentResultSnapshot: snapB }}
+          clinicalContext={baseClinicalContext}
+          canCompleteVisit
+          hasWritePermission
+          expectedStateVersion={4}
+          onApproveOverdueResults={onApproveOverdue}
+          onRefreshWorkspace={onRefreshWorkspace}
+        />
+      </div>,
+    );
+
+    // E1-02: Now complete-clinical-review is enabled and fires dedicated callback
+    const finishReviewBtn = screen.getByRole('button', { name: /Kết thúc phiên đánh giá/i });
+    expect(finishReviewBtn).not.toBeDisabled();
+    await user.type(
+      screen.getByLabelText('Ghi chú kết thúc phiên đánh giá chỉ định'),
+      'Đã gia hạn đầy đủ các chỉ định quá hạn',
+    );
+    await user.click(finishReviewBtn);
+    expect(onCompleteReview).toHaveBeenCalledWith({
+      expectedStateVersion: 3,
+      clinicalNote: 'Đã gia hạn đầy đủ các chỉ định quá hạn',
+    });
+
+    // SN-16: Snapshot drift warning shown & approve button disabled until Doctor clicks "Tôi đã xem kết quả mới"
+    expect(
+      screen.getByText(
+        'Kết quả cận lâm sàng vừa thay đổi. Vui lòng xem lại kết quả mới trước khi xác nhận',
+      ),
+    ).toBeInTheDocument();
+    const approveBtn = screen.getByRole('button', { name: /Xác nhận giá trị kết quả quá hạn/i });
+    expect(approveBtn).toBeDisabled();
 
     await user.type(
       screen.getByLabelText('Nhận định chuyên môn xác nhận giá trị kết quả quá hạn'),
       'Kết quả xét nghiệm vẫn còn giá trị chẩn đoán trên lâm sàng hiện tại',
     );
-    await user.click(screen.getByRole('button', { name: /Xác nhận giá trị kết quả quá hạn/i }));
+    expect(approveBtn).toBeDisabled();
 
-    expect(onApproveOverdue).toHaveBeenCalledWith({
+    await user.click(screen.getByRole('button', { name: /Tôi đã xem kết quả mới/i }));
+    expect(approveBtn).not.toBeDisabled();
+
+    // SN-17: First click simulates 409 [OVERDUE_RESULT_SNAPSHOT_MISMATCH] -> calls onRefreshWorkspace, shows message, zero auto-retry
+    onApproveOverdue.mockRejectedValueOnce(
+      new Error('[OVERDUE_RESULT_SNAPSHOT_MISMATCH] Tập kết quả đã thay đổi.'),
+    );
+    await user.click(approveBtn);
+    expect(onApproveOverdue).toHaveBeenCalledTimes(1);
+    expect(onApproveOverdue).toHaveBeenLastCalledWith({
       reason: 'Kết quả xét nghiệm vẫn còn giá trị chẩn đoán trên lâm sàng hiện tại',
+      expectedResultSnapshot: snapB,
       expectedStateVersion: 4,
     });
+    expect(onRefreshWorkspace).toHaveBeenCalledTimes(1);
+    expect(
+      await screen.findByText('Kết quả đã thay đổi. Vui lòng xem lại trước khi xác nhận'),
+    ).toBeInTheDocument();
   });
 });

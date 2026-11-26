@@ -86,6 +86,7 @@ export interface ConsultationVisitSummaryDto {
   isOverdueReturnApproved?: boolean;
   overdueReturnApprovedAt?: string | null;
   overdueReturnApprovalNote?: string | null;
+  currentResultSnapshot?: string | null;
 }
 
 export interface ConsultationPatientSummaryDto {
@@ -397,6 +398,7 @@ export interface CompleteVisitRequest {
   expectedRevisionNo?: number | null;
   closeUndecidedOptionalOrders?: boolean | null;
   overdueReturnApprovalNote?: string | null;
+  expectedResultSnapshot?: string | null;
 }
 
 export interface RevalidateDiagnosticOrderRequest {
@@ -409,7 +411,13 @@ export interface RevalidateDiagnosticOrderRequest {
 
 export interface ApproveOverdueReturnResultsRequest {
   reason: string;
+  expectedResultSnapshot: string;
   expectedStateVersion?: number | null;
+}
+
+export interface CompleteClinicalReviewRequest {
+  expectedStateVersion: number;
+  clinicalNote?: string | null;
 }
 
 export interface Icd10CatalogItemDto {

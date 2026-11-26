@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Text;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Services.Appointments;
-using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,29 +11,144 @@ namespace MedFlow.Application.Services.Consultation;
 public static class OverdueReturnSnapshotHelper
 {
     public const string OverdueDoctorApprovalRequiredMessage =
-        "[OVERDUE_RETURN_DOCTOR_APPROVAL_REQUIRED] Lượt khám kết luận đã quá thời hạn quy định. Bác sĩ phụ trách cần xác nhận giá trị chuyên môn của các kết quả cận lâm sàng hiện hành trước khi xác nhận chẩn đoán, kê đơn phát hành hoặc hoàn tất lượt khám.";
+        "[OVERDUE_RETURN_DOCTOR_APPROVAL_REQUIRED] Lượt khám kết luận đã quá thời hạn quy định. Bác sĩ phụ trách cần xác nhận giá trị chuyên môn của các kết quả cận lâm sàng hiện tại trước khi xác nhận chẩn đoán, kê đơn phát hành hoặc hoàn tất lượt khám.";
 
+    public const string SnapshotMismatchMessage =
+        "[OVERDUE_RESULT_SNAPSHOT_MISMATCH] Tập kết quả hoặc chỉ định cận lâm sàng đã thay đổi kể từ lần hiển thị gần nhất. Vui lòng tải lại và xem xét kết quả mới trước khi xác nhận.";
+
+    public static bool IsValidSnapshotHex(string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return false;
+        }
+
+        var trimmed = candidate.Trim();
+        if (trimmed.Length != 64)
+        {
+            return false;
+        }
+
+        foreach (var ch in trimmed)
+        {
+            var isHex = (ch >= '0' && ch <= '9') ||
+                        (ch >= 'a' && ch <= 'f') ||
+                        (ch >= 'A' && ch <= 'F');
+            if (!isHex)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Computes a deterministic SHA-256 hex digest (<c>v2</c>) from pre-loaded entities so read endpoints
+    /// (<c>GetWorkspaceAsync</c>, <c>GetDiagnosticResultsAsync</c>) return a <c>CurrentResultSnapshot</c>
+    /// guaranteed to match the exact orders, results, and result versions serialized in the same response.
+    /// </summary>
+    public static string ComputeSnapshotHash(
+        Visit visit,
+        IEnumerable<DiagnosticOrder> orders,
+        IEnumerable<DiagnosticResult> results,
+        IEnumerable<DiagnosticResultVersion> versions)
+    {
+        ArgumentNullException.ThrowIfNull(visit);
+        ArgumentNullException.ThrowIfNull(orders);
+        ArgumentNullException.ThrowIfNull(results);
+        ArgumentNullException.ThrowIfNull(versions);
+
+        var nonCancelledOrders = orders
+            .Where(o => AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED")
+            .OrderBy(o => o.Id)
+            .ToList();
+
+        var resultsByOrderId = results
+            .Where(r => r.DiagnosticOrderId.HasValue)
+            .GroupBy(r => r.DiagnosticOrderId!.Value)
+            .ToDictionary(
+                g => g.Key,
+                g => g
+                    .OrderByDescending(r =>
+                        r.FinalizedAt.HasValue ||
+                        AppointmentBookingRules.NormalizeStatusKey(r.Status) is "FINALIZED" or "VERIFIED"
+                            ? 1
+                            : 0)
+                    .ThenByDescending(r => r.FinalizedAt ?? DateTime.MinValue)
+                    .ThenByDescending(r => r.Id)
+                    .First());
+
+        var latestVersionByResultId = versions
+            .Where(v => v.DiagnosticResultId.HasValue)
+            .GroupBy(v => v.DiagnosticResultId!.Value)
+            .ToDictionary(
+                g => g.Key,
+                g => g
+                    .OrderByDescending(v => v.VersionNo ?? 0)
+                    .ThenByDescending(v => v.Id)
+                    .First());
+
+        var entries = new List<string>(nonCancelledOrders.Count);
+        foreach (var order in nonCancelledOrders)
+        {
+            resultsByOrderId.TryGetValue(order.Id, out var res);
+            DiagnosticResultVersion? ver = null;
+            if (res is not null)
+            {
+                latestVersionByResultId.TryGetValue(res.Id, out ver);
+            }
+
+            var contentCanonical = string.Concat(
+                ver?.ResultText?.Trim() ?? string.Empty,
+                "\n",
+                ver?.Conclusion?.Trim() ?? string.Empty,
+                "\n",
+                ver?.ReportFileUrl?.Trim() ?? string.Empty);
+            var contentDigest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(contentCanonical)))
+                .ToLowerInvariant();
+
+            var orderStatus = AppointmentBookingRules.NormalizeStatusKey(order.Status);
+            var selectionStatus = AppointmentBookingRules.NormalizeStatusKey(order.SelectionStatus);
+            var reqFlag = order.RequiredForConclusion == true ? "1" : "0";
+            var resultId = res?.Id ?? 0;
+            var resultStatus = AppointmentBookingRules.NormalizeStatusKey(res?.Status);
+            var versionId = ver?.Id ?? 0;
+            var versionNo = ver?.VersionNo ?? 0;
+            var isFinalizedFlag = ver?.IsFinalized == true ? "1" : "0";
+            var verifiedByStaffId = ver?.VerifiedByStaffId ?? 0;
+
+            entries.Add(string.Create(
+                CultureInfo.InvariantCulture,
+                $"{order.Id}:{orderStatus}:{selectionStatus}:{reqFlag}:{resultId}:{resultStatus}:{versionId}:{versionNo}:{isFinalizedFlag}:{verifiedByStaffId}:{contentDigest}"));
+        }
+
+        var canonical = string.Create(
+            CultureInfo.InvariantCulture,
+            $"v2|visitId={visit.Id}|assignedDoctorId={visit.AssignedDoctorId ?? 0}|orders={string.Join(";", entries)}");
+
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Queries live <see cref="DiagnosticOrder"/>, <see cref="DiagnosticResult"/>, and <see cref="DiagnosticResultVersion"/>
+    /// rows for <paramref name="visit"/> and computes the <c>v2</c> SHA-256 snapshot digest.
+    /// Fails closed (never swallows <see cref="NotSupportedException"/> or returns an empty-order digest on query failure).
+    /// </summary>
     public static async Task<string> ComputeSnapshotHashAsync(
         IApplicationDbContext db,
         Visit visit,
-        CancellationToken ct = default)
+        CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(db);
         ArgumentNullException.ThrowIfNull(visit);
 
-        List<DiagnosticOrder> orders;
-        try
-        {
-            orders = await db.DiagnosticOrders
-                .AsNoTracking()
-                .Where(o => o.VisitId == visit.Id)
-                .OrderBy(o => o.Id)
-                .ToListAsync(ct);
-        }
-        catch (NotSupportedException)
-        {
-            orders = [];
-        }
+        var orders = await db.DiagnosticOrders
+            .AsNoTracking()
+            .Where(o => o.VisitId == visit.Id)
+            .OrderBy(o => o.Id)
+            .ToListAsync(ct);
 
         var nonCancelledOrders = orders
             .Where(o => AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED")
@@ -42,117 +156,59 @@ public static class OverdueReturnSnapshotHelper
             .ToList();
 
         var orderIds = nonCancelledOrders.Select(o => o.Id).ToList();
+        var results = orderIds.Count == 0
+            ? []
+            : await db.DiagnosticResults
+                .AsNoTracking()
+                .Where(r => r.DiagnosticOrderId.HasValue && orderIds.Contains(r.DiagnosticOrderId.Value))
+                .ToListAsync(ct);
 
-        List<DiagnosticResult> results = [];
-        List<DiagnosticResultVersion> versions = [];
+        var resultIds = results.Select(r => r.Id).Distinct().ToList();
+        var versions = resultIds.Count == 0
+            ? []
+            : await db.DiagnosticResultVersions
+                .AsNoTracking()
+                .Where(v => v.DiagnosticResultId.HasValue && resultIds.Contains(v.DiagnosticResultId.Value))
+                .ToListAsync(ct);
 
-        if (orderIds.Count > 0)
+        return ComputeSnapshotHash(visit, nonCancelledOrders, results, versions);
+    }
+
+    public static bool IsApprovedForComputedSnapshot(
+        Visit visit,
+        long actingDoctorId,
+        string currentSnapshotHash)
+    {
+        if (!visit.OverdueReturnApprovedByDoctorId.HasValue ||
+            !visit.OverdueReturnApprovedAt.HasValue ||
+            !IsValidSnapshotHex(visit.OverdueReturnResultSnapshot))
         {
-            try
-            {
-                results = await db.DiagnosticResults
-                    .AsNoTracking()
-                    .Where(r => r.DiagnosticOrderId.HasValue && orderIds.Contains(r.DiagnosticOrderId.Value))
-                    .OrderByDescending(r => r.Id)
-                    .ToListAsync(ct);
-
-                var resultIds = results.Select(r => r.Id).Distinct().ToList();
-                if (resultIds.Count > 0)
-                {
-                    versions = await db.DiagnosticResultVersions
-                        .AsNoTracking()
-                        .Where(v => v.DiagnosticResultId.HasValue && resultIds.Contains(v.DiagnosticResultId.Value))
-                        .OrderByDescending(v => v.VersionNo)
-                        .ThenByDescending(v => v.Id)
-                        .ToListAsync(ct);
-                }
-            }
-            catch (NotSupportedException)
-            {
-                results = [];
-                versions = [];
-            }
+            return false;
         }
 
-        var latestResultByOrderId = results
-            .Where(r => r.DiagnosticOrderId.HasValue && AppointmentBookingRules.NormalizeStatusKey(r.Status) != "CANCELLED")
-            .GroupBy(r => r.DiagnosticOrderId!.Value)
-            .ToDictionary(g => g.Key, g => g.OrderByDescending(r => r.Id).First());
-
-        var latestVersionByResultId = versions
-            .Where(v => v.DiagnosticResultId.HasValue)
-            .GroupBy(v => v.DiagnosticResultId!.Value)
-            .ToDictionary(
-                g => g.Key,
-                g => g.OrderByDescending(v => v.VersionNo ?? 0).ThenByDescending(v => v.Id).First());
-
-        var sb = new StringBuilder(256);
-        sb.Append("v1|assignedDoctorId=");
-        sb.Append((visit.AssignedDoctorId ?? 0).ToString(CultureInfo.InvariantCulture));
-        sb.Append("|orders=");
-
-        for (var i = 0; i < nonCancelledOrders.Count; i++)
+        if (visit.OverdueReturnApprovedByDoctorId.Value != actingDoctorId)
         {
-            if (i > 0)
-                sb.Append(';');
-
-            var order = nonCancelledOrders[i];
-            latestResultByOrderId.TryGetValue(order.Id, out var res);
-            DiagnosticResultVersion? ver = null;
-            if (res is not null)
-            {
-                latestVersionByResultId.TryGetValue(res.Id, out ver);
-            }
-
-            var reqFlag = order.RequiredForConclusion == false ? 0 : 1;
-            var ordStatus = AppointmentBookingRules.NormalizeStatusKey(order.Status);
-            var selStatus = string.IsNullOrWhiteSpace(order.SelectionStatus)
-                ? DiagnosticSelectionStatuses.Accepted
-                : order.SelectionStatus.Trim().ToUpperInvariant();
-            var resId = res?.Id ?? 0;
-            var resStatus = res is not null ? AppointmentBookingRules.NormalizeStatusKey(res.Status) : "NONE";
-            var verNo = ver?.VersionNo ?? 0;
-            var isFin = (ver?.IsFinalized == true || resStatus is "FINALIZED" or "VERIFIED" or "AMENDED") ? 1 : 0;
-            var verifiedBy = ver?.VerifiedByStaffId ?? res?.FinalizedByStaffId ?? 0;
-
-            sb.Append(order.Id.ToString(CultureInfo.InvariantCulture)).Append(':')
-              .Append((order.ServiceId ?? 0).ToString(CultureInfo.InvariantCulture)).Append(':')
-              .Append(reqFlag.ToString(CultureInfo.InvariantCulture)).Append(':')
-              .Append(ordStatus).Append(':')
-              .Append(selStatus).Append(':')
-              .Append(resId.ToString(CultureInfo.InvariantCulture)).Append(':')
-              .Append(resStatus).Append(':')
-              .Append(verNo.ToString(CultureInfo.InvariantCulture)).Append(':')
-              .Append(isFin.ToString(CultureInfo.InvariantCulture)).Append(':')
-              .Append(verifiedBy.ToString(CultureInfo.InvariantCulture));
+            return false;
         }
 
-        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
-        return Convert.ToHexString(hashBytes).ToLowerInvariant();
+        if (visit.AssignedDoctorId.HasValue && visit.AssignedDoctorId.Value != actingDoctorId)
+        {
+            return false;
+        }
+
+        return string.Equals(
+            visit.OverdueReturnResultSnapshot!.Trim(),
+            currentSnapshotHash,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     public static async Task<bool> IsApprovedForCurrentSnapshotAsync(
         IApplicationDbContext db,
         Visit visit,
-        long doctorId,
-        CancellationToken ct = default)
+        long actingDoctorId,
+        CancellationToken ct)
     {
-        if (visit.OverdueReturnApprovedByDoctorId != doctorId ||
-            !visit.OverdueReturnApprovedAt.HasValue ||
-            string.IsNullOrWhiteSpace(visit.OverdueReturnResultSnapshot))
-        {
-            return false;
-        }
-
         var currentHash = await ComputeSnapshotHashAsync(db, visit, ct);
-        return string.Equals(visit.OverdueReturnResultSnapshot.Trim(), currentHash, StringComparison.OrdinalIgnoreCase);
-    }
-
-    public static void InvalidateSnapshot(Visit? visit)
-    {
-        if (visit is null)
-            return;
-
-        visit.OverdueReturnResultSnapshot = null;
+        return IsApprovedForComputedSnapshot(visit, actingDoctorId, currentHash);
     }
 }

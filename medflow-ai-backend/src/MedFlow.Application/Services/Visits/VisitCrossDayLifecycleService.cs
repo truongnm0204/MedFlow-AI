@@ -679,6 +679,23 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                 roomIdsToLock.Add(r.Id);
             }
 
+            var preOrderServiceIds = await _db.DiagnosticOrders
+                .AsNoTracking()
+                .Where(o => o.VisitId == visitId && o.ServiceId.HasValue)
+                .Select(o => o.ServiceId!.Value)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToListAsync(ct);
+
+            // Level 04: services (ADR-0059 order, before doctors 05 and rooms 06)
+            foreach (var sid in preOrderServiceIds)
+            {
+                if (sid > 0)
+                {
+                    await _db.TryLockServiceForUpdateAsync(sid, ct);
+                }
+            }
+
             // Level 05: doctors
             if (doctorIdsToLock.Count > 0)
             {
@@ -702,7 +719,8 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                 includeChargeAndPaymentLocks: false,
                 ct: ct);
 
-            if (_db is DbContext efContext)
+            if (_db is DbContext efContext &&
+                !string.Equals(efContext.Database.ProviderName, "Microsoft.EntityFrameworkCore.InMemory", StringComparison.Ordinal))
             {
                 efContext.ChangeTracker.Clear();
             }
@@ -718,6 +736,7 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                     $"[VISIT_NOT_RESUMABLE] Lượt khám '{visitCode}' đã ở trạng thái kết thúc '{visitStatus}', không thể tiếp tục (Resume).");
             }
 
+            var effectiveHospitalId = visitHospitalId ?? actor.Doctor?.HospitalId ?? actor.Staff?.HospitalId ?? 0;
             var policy = await CrossDayVisitPolicyReader.LoadAsync(_db, visitHospitalId, nowUtc, ct);
             if (!policy.AllowCrossDayVisit &&
                 visit.CheckedInAt.HasValue &&
@@ -751,7 +770,26 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                     .Where(s => orderServiceIds.Contains(s.Id))
                     .ToListAsync(ct))
                     .ToDictionary(s => s.Id);
+
+            // Reload rooms, departments, and service points post-lock so concurrent Admin deactivations are strictly enforced
+            hospitalRooms = await _db.HospitalRooms
+                .AsNoTracking()
+                .Where(r => r.HospitalId == effectiveHospitalId)
+                .OrderBy(r => r.Id)
+                .ToListAsync(ct);
             var roomsById = hospitalRooms.ToDictionary(r => r.Id);
+
+            var departmentsById = (await _db.Departments
+                .AsNoTracking()
+                .Where(d => d.HospitalId == effectiveHospitalId)
+                .ToListAsync(ct))
+                .ToDictionary(d => d.Id);
+
+            hospitalServicePoints = await _db.QueueServicePoints
+                .AsNoTracking()
+                .Where(sp => sp.HospitalId == effectiveHospitalId)
+                .OrderBy(sp => sp.Id)
+                .ToListAsync(ct);
             var normalizedCoordinationPurpose = string.IsNullOrWhiteSpace(request.CoordinationPurpose)
                 ? (normalizedTarget == "RETURN_CONSULTATION" ? QueueCoordinationPurposes.ResultConclusion : null)
                 : request.CoordinationPurpose.Trim().ToUpperInvariant();
@@ -874,9 +912,11 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                         order,
                         orderService,
                         request.TargetServicePointId,
-                        visitQueues,
                         hospitalServicePoints,
-                        roomsById);
+                        roomsById,
+                        visitQueues,
+                        effectiveHospitalId,
+                        departmentsById);
 
                     var scopedKey = normalizedIdempotencyKey is not null
                         ? BuildScopedQueueIdempotencyKey(normalizedIdempotencyKey, $"D{order.Id}")

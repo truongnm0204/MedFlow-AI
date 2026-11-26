@@ -107,7 +107,9 @@ public sealed partial class ConsultationWorkspaceService
             await EnsureOverdueReturnApprovedIfRequiredAsync(
                 visit,
                 doctorAccess,
-                inlineApprovalNote: null,
+                actorUserId,
+                request.OverdueReturnApprovalNote,
+                request.ExpectedResultSnapshot,
                 nowLocal,
                 nowUtc,
                 ipAddress,

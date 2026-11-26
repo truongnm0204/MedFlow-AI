@@ -159,4 +159,9 @@ public sealed record RevalidateDiagnosticOrderRequest(
 
 public sealed record ApproveOverdueReturnResultsRequest(
     string Reason,
-    int? ExpectedStateVersion = null);
+    int? ExpectedStateVersion = null,
+    string? ExpectedResultSnapshot = null);
+
+public sealed record CompleteClinicalReviewRequest(
+    int? ExpectedStateVersion = null,
+    string? ClinicalNote = null);

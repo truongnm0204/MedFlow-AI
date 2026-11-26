@@ -1021,10 +1021,12 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                 RoleNames.Reception));
             Assert.Equal(HttpStatusCode.OK, callReviewRes.StatusCode);
 
+            int reviewStateVersion;
             await using (var reviewScope = _app.Services.CreateAsyncScope())
             {
                 var consultSvc = reviewScope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
-                await consultSvc.OpenWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
+                var wsReview = await consultSvc.OpenWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
+                reviewStateVersion = wsReview.Queue!.StateVersion;
             }
 
             var revalidateRes = await _client.SendAsync(AuthedPostJson(
@@ -1034,6 +1036,16 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                 RoleNames.Doctor));
             var revalidateBody = await revalidateRes.Content.ReadAsStringAsync();
             Assert.True(revalidateRes.StatusCode == HttpStatusCode.OK, revalidateBody);
+
+            var completeReviewRes = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/doctor/consultation/{visit.VisitCode}/complete-clinical-review",
+                new CompleteClinicalReviewRequest(
+                    ExpectedStateVersion: reviewStateVersion,
+                    ClinicalNote: "Đã gia hạn chỉ định xét nghiệm máu, chuyển tiếp tục thực hiện CLS"),
+                fx.Doctor1UserId,
+                RoleNames.Doctor));
+            var completeReviewBody = await completeReviewRes.Content.ReadAsStringAsync();
+            Assert.True(completeReviewRes.StatusCode == HttpStatusCode.OK, completeReviewBody);
 
             var revalidatedResume = await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(
                 Target: "DIAGNOSTIC",
@@ -1079,10 +1091,13 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                 RoleNames.Reception));
             Assert.Equal(HttpStatusCode.OK, callOverdueReturnRes.StatusCode);
 
+            string overdueSnapshot;
             await using (var overdueScope = _app.Services.CreateAsyncScope())
             {
                 var consultSvc = overdueScope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
-                await consultSvc.OpenWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
+                var wsOverdue = await consultSvc.OpenWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
+                overdueSnapshot = wsOverdue.Visit.CurrentResultSnapshot!;
+                Assert.False(string.IsNullOrWhiteSpace(overdueSnapshot));
 
                 var blockedDx = await Assert.ThrowsAsync<ConflictException>(() =>
                     consultSvc.RecordDiagnosisAsync(
@@ -1097,7 +1112,9 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
 
             var approveOverdueRes = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/doctor/consultation/{visit.VisitCode}/approve-overdue-results",
-                new ApproveOverdueReturnResultsRequest(Reason: "Kết quả xét nghiệm và siêu âm vẫn còn giá trị lâm sàng để kết luận"),
+                new ApproveOverdueReturnResultsRequest(
+                    Reason: "Kết quả xét nghiệm và siêu âm vẫn còn giá trị lâm sàng để kết luận",
+                    ExpectedResultSnapshot: overdueSnapshot),
                 fx.Doctor1UserId,
                 RoleNames.Doctor));
             var approveOverdueBody = await approveOverdueRes.Content.ReadAsStringAsync();

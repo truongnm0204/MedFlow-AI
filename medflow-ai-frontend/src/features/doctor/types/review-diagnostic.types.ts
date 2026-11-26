@@ -114,6 +114,7 @@ export interface DiagnosticResultsReviewResponseDto {
   mandatoryReadyCount: number;
   mandatoryPendingCount: number;
   items: ConsultationDiagnosticResultItemDto[];
+  currentResultSnapshot?: string | null;
 }
 
 export interface ReviewDiagnosticResultsRequest {

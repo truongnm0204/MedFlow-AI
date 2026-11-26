@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import { ConsultationDiagnosticOrderPanel } from './consultation-diagnostic-order-panel';
 import type {
+  CompleteClinicalReviewRequest,
   ConsultationDiagnosisItemDto,
   ConsultationDiagnosticOrderDto,
   ConsultationDiagnosticSummaryDto,
@@ -41,6 +42,12 @@ export interface ConsultationDiagnosisAndOrdersCardProps {
     payload: RevalidateDiagnosticOrderRequest,
   ) => Promise<boolean | void> | boolean | void;
   isRevalidatingDiagnosticOrder?: boolean;
+  coordinationPurpose?: string | null;
+  queueStatus?: string | null;
+  onCompleteClinicalReview?: (
+    payload: CompleteClinicalReviewRequest,
+  ) => Promise<boolean | void> | boolean | void;
+  isCompletingClinicalReview?: boolean;
 }
 
 export function ConsultationDiagnosisAndOrdersCard({
@@ -65,6 +72,10 @@ export function ConsultationDiagnosisAndOrdersCard({
   onOpenVietQrModal,
   onRevalidateDiagnosticOrder,
   isRevalidatingDiagnosticOrder = false,
+  coordinationPurpose = null,
+  queueStatus = null,
+  onCompleteClinicalReview,
+  isCompletingClinicalReview = false,
 }: ConsultationDiagnosisAndOrdersCardProps) {
   return (
     <Card>
@@ -220,6 +231,10 @@ export function ConsultationDiagnosisAndOrdersCard({
           onOpenVietQrModal={onOpenVietQrModal}
           onRevalidateOrder={onRevalidateDiagnosticOrder}
           isRevalidatingOrder={isRevalidatingDiagnosticOrder}
+          coordinationPurpose={coordinationPurpose}
+          queueStatus={queueStatus}
+          onCompleteClinicalReview={onCompleteClinicalReview}
+          isCompletingClinicalReview={isCompletingClinicalReview}
         />
       </CardContent>
     </Card>

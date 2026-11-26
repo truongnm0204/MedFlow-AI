@@ -2,6 +2,7 @@ import { apiClient } from '@/shared/lib/axios';
 
 import type {
   ApproveOverdueReturnResultsRequest,
+  CompleteClinicalReviewRequest,
   CompleteVisitRequest,
   ConsultationWorkspaceResponseDto,
   CreateDiagnosticOrderRequest,
@@ -240,6 +241,23 @@ export async function revalidateDiagnosticOrder(
   const encodedOrder = encodeURIComponent(String(orderIdOrCode).trim());
   const { data } = await apiClient.post<ConsultationWorkspaceResponseDto>(
     `/doctor/consultation/${encodedVisit}/diagnostic-orders/${encodedOrder}/revalidate`,
+    payload,
+  );
+  return data;
+}
+
+/**
+ * Bác sĩ phụ trách kết thúc phiên đánh giá lại chỉ định quá hạn (`CLINICAL_REVIEW`)
+ * sau khi đã xử lý hết các chỉ định quá hạn / REVIEW_REQUIRED
+ * (`POST /doctor/consultation/{idOrCode}/complete-clinical-review` — ADR-0061 / E1-02).
+ */
+export async function completeClinicalReview(
+  idOrCode: string,
+  payload: CompleteClinicalReviewRequest,
+): Promise<ConsultationWorkspaceResponseDto> {
+  const encodedVisit = encodeURIComponent(idOrCode.trim());
+  const { data } = await apiClient.post<ConsultationWorkspaceResponseDto>(
+    `/doctor/consultation/${encodedVisit}/complete-clinical-review`,
     payload,
   );
   return data;

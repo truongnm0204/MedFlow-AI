@@ -1544,8 +1544,18 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         }
 
         var hasNewMandatoryOrAcceptedActive = resolvedItems.Any(r => r.Item.RequiredForConclusion);
+        var crossDayPolicyForOrder = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(
+            _db,
+            doctorAccess.Hospital.Id,
+            nowUtc,
+            ct);
+        var wasAlreadyReturnOverdue = MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsReturnConsultationOverdue(
+            visit,
+            crossDayPolicyForOrder.ReturnConsultationWindowDays,
+            nowLocal);
+
         visit.OverdueReturnResultSnapshot = null;
-        if (hasNewMandatoryOrAcceptedActive || validated.TransitionToAwaitingResults)
+        if ((hasNewMandatoryOrAcceptedActive || validated.TransitionToAwaitingResults) && !wasAlreadyReturnOverdue)
         {
             visit.ReadyForReturnAt = null;
         }
@@ -1851,9 +1861,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             ct,
             acquireWriteLocks: true);
 
-        // Post-lock live user/role/permission verification
+        // Post-lock live user/role/permission & strict assigned-doctor verification (RV-03)
         doctorAccess = await EnsureDoctorAccessAsync(actorUserId, nowUtc, PermissionDiagnosticOrder, ct);
-        if (context.Visit.AssignedDoctorId.HasValue && context.Visit.AssignedDoctorId.Value != doctorAccess.Doctor.Id)
+        if (!context.Visit.AssignedDoctorId.HasValue || context.Visit.AssignedDoctorId.Value != doctorAccess.Doctor.Id)
         {
             throw new ForbiddenException("Bác sĩ chỉ được phép gia hạn chỉ định cho lượt khám được phân công.");
         }
@@ -1872,14 +1882,21 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED), không thể gia hạn phiếu chỉ định cận lâm sàng.");
         }
 
-        if (request.ExpectedStateVersion.HasValue && activeEntry is not null)
+        var activeQueueStatus = activeEntry is not null ? NormalizeQueueStatus(activeEntry.Status) : string.Empty;
+        if (activeEntry is null ||
+            activeEntry.CompletedAt.HasValue ||
+            !activeEntry.StartedAt.HasValue ||
+            activeQueueStatus != "IN_PROGRESS")
         {
-            var currentStateVersion = activeEntry.StateVersion is > 0 ? activeEntry.StateVersion.Value : 1;
-            if (request.ExpectedStateVersion.Value != currentStateVersion)
-            {
-                throw new ConflictException(
-                    "Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
-            }
+            throw new ConflictException(
+                "[CLINICAL_SESSION_NOT_IN_PROGRESS] Chỉ có thể gia hạn hiệu lực chỉ định cận lâm sàng khi phiên khám lâm sàng đang diễn ra (IN_PROGRESS). Vui lòng gọi bệnh nhân và mở phiên khám trước.");
+        }
+
+        var currentStateVersion = activeEntry.StateVersion is > 0 ? activeEntry.StateVersion.Value : 1;
+        if (request.ExpectedStateVersion.HasValue && request.ExpectedStateVersion.Value != currentStateVersion)
+        {
+            throw new ConflictException(
+                "Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
         }
 
         var latestRecord = await TryLoadLatestMedicalRecordAsync(visit.Id, ct);
@@ -1890,7 +1907,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 "Hồ sơ bệnh án đã được khóa hoàn tất (FINALIZED), không thể gia hạn phiếu chỉ định cận lâm sàng.");
         }
 
-        var referenceDate = activeEntry?.QueueDate
+        var referenceDate = activeEntry.QueueDate
             ?? (visit.CheckedInAt.HasValue
                 ? DateOnly.FromDateTime(visit.CheckedInAt.Value)
                 : DateOnly.FromDateTime(nowLocal));
@@ -1918,10 +1935,17 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         }
 
         var targetOrderStatus = AppointmentBookingRules.NormalizeStatusKey(targetOrder.Status);
-        if (targetOrderStatus is "CANCELLED" or "COMPLETED")
+        if (targetOrderStatus is not ("ORDERED" or "CONFIRMED"))
         {
             throw new ConflictException(
-                $"Phiếu chỉ định cận lâm sàng '{FormatOrderCode(targetOrder, referenceDate)}' đang ở trạng thái '{targetOrderStatus}', không thể gia hạn hiệu lực thực hiện.");
+                $"Phiếu chỉ định cận lâm sàng '{FormatOrderCode(targetOrder, referenceDate)}' đang ở trạng thái '{targetOrderStatus}', chỉ được phép gia hạn hiệu lực cho chỉ định ở trạng thái ORDERED hoặc CONFIRMED.");
+        }
+
+        var normalizedSelectionStatus = AppointmentBookingRules.NormalizeStatusKey(targetOrder.SelectionStatus);
+        if (normalizedSelectionStatus is "DECLINED" or "SKIPPED_AFTER_PAID")
+        {
+            throw new ConflictException(
+                $"Phiếu chỉ định cận lâm sàng '{FormatOrderCode(targetOrder, referenceDate)}' đã bị từ chối hoặc bỏ qua ({normalizedSelectionStatus}), không thể gia hạn hiệu lực.");
         }
 
         var crossDayPolicy = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(
@@ -1930,6 +1954,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             nowUtc,
             ct);
 
+        var maxExtendDays = request.ExtendDays ?? 365;
         DateTime newValidityExtendedUntil;
         if (request.ValidityExtendedUntil.HasValue)
         {
@@ -1937,6 +1962,12 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             if (newValidityExtendedUntil <= nowLocal)
             {
                 throw new ValidationException("Thời điểm gia hạn hiệu lực (ValidityExtendedUntil) phải lớn hơn thời điểm hiện tại.");
+            }
+
+            if (newValidityExtendedUntil > nowLocal.AddDays(maxExtendDays))
+            {
+                throw new ValidationException(
+                    $"Thời điểm gia hạn hiệu lực (ValidityExtendedUntil) vượt quá giới hạn tối đa cho phép ({maxExtendDays} ngày).");
             }
         }
         else
@@ -1954,48 +1985,10 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         targetOrder.RevalidationNote = reason;
         targetOrder.DeferredUntilDate = null;
 
-        if (string.Equals(targetOrder.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.ReviewRequired, StringComparison.OrdinalIgnoreCase))
-        {
-            targetOrder.SelectionStatus = DiagnosticSelectionStatuses.Accepted;
-        }
-
+        // E1-02 / RV-T14: Revalidation ONLY extends execution validity on the target order.
+        // It NEVER auto-flips REVIEW_REQUIRED to ACCEPTED and NEVER closes the active clinical session
+        // (even if TransitionToAwaitingResults was passed); closing CLINICAL_REVIEW requires CompleteClinicalReviewAsync.
         visit.OverdueReturnResultSnapshot = null;
-
-        var releasedToAwaitingResults = false;
-        if (activeEntry is not null && !activeEntry.CompletedAt.HasValue)
-        {
-            var activeQStatus = NormalizeQueueStatus(activeEntry.Status);
-            if (activeQStatus is "IN_PROGRESS" or "CALLED" or "READY" or "WAITING")
-            {
-                var isClinicalReviewEntry = string.Equals(
-                    activeEntry.CoordinationPurpose?.Trim(),
-                    QueueCoordinationPurposes.ClinicalReview,
-                    StringComparison.OrdinalIgnoreCase);
-
-                var anyOtherStillNeedsReview = visitOrders.Any(o =>
-                    o.Id != targetOrder.Id &&
-                    AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED" &&
-                    (MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsOrderExpiredForExecution(
-                         o,
-                         crossDayPolicy.DiagnosticOrderValidityDays,
-                         nowLocal) ||
-                     string.Equals(o.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.ReviewRequired, StringComparison.OrdinalIgnoreCase)));
-
-                var shouldRelease = request.TransitionToAwaitingResults == true ||
-                                    (request.TransitionToAwaitingResults is null && isClinicalReviewEntry && !anyOtherStillNeedsReview);
-
-                if (shouldRelease)
-                {
-                    var prevVer = activeEntry.StateVersion is > 0 ? activeEntry.StateVersion.Value : 1;
-                    activeEntry.Status = "COMPLETED";
-                    activeEntry.CompletedAt = nowLocal;
-                    activeEntry.StateVersion = prevVer + 1;
-                    visit.Status = "AWAITING_RESULTS";
-                    visit.ReadyForReturnAt = null;
-                    releasedToAwaitingResults = true;
-                }
-            }
-        }
 
         var resolvedOrderCode = FormatOrderCode(targetOrder, referenceDate);
         _db.AuditLogs.Add(new AuditLog
@@ -2017,7 +2010,7 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 newValidityExtendedUntil,
                 previousSelectionStatus,
                 selectionStatus = targetOrder.SelectionStatus,
-                releasedToAwaitingResults,
+                releasedToAwaitingResults = false,
                 reason,
             }, AuditJsonOptions),
             IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
@@ -2029,18 +2022,6 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         if (tx is not null)
         {
             await tx.CommitAsync(ct);
-        }
-
-        if (releasedToAwaitingResults && activeEntry is not null)
-        {
-            await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
-                _realtimePublisher,
-                new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
-                    HospitalId: doctorAccess.Hospital.Id,
-                    ServicePointId: activeEntry.CurrentServicePointId ?? activeEntry.ServicePointId,
-                    RoomId: visit.ExaminationRoomId ?? context.Room?.Id,
-                    AppointmentId: visit.AppointmentId),
-                ct);
         }
 
         var refreshedAfterReval = await ResolveAndAuthorizeVisitContextAsync(
@@ -2055,6 +2036,210 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             doctorAccess,
             refreshedAfterReval,
             actionOutcome: "DIAGNOSTIC_ORDER_REVALIDATED",
+            nowUtc,
+            nowLocal,
+            ct);
+    }
+
+    public async Task<ConsultationWorkspaceResponseDto> CompleteClinicalReviewAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        CompleteClinicalReviewRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+    {
+        if (actorUserId <= 0)
+        {
+            throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        if (request is null || !request.ExpectedStateVersion.HasValue || request.ExpectedStateVersion.Value < 1)
+        {
+            throw new ValidationException(
+                "Phiên bản trạng thái hàng đợi (ExpectedStateVersion >= 1) là bắt buộc khi kết thúc phiên đánh giá lại chỉ định cận lâm sàng.");
+        }
+
+        var clinicalNote = ValidateClinicalTextField(
+            request.ClinicalNote,
+            "Ghi chú kết thúc phiên đánh giá chỉ định cận lâm sàng",
+            500);
+
+        var (numericId, code, isQueuePrefix) = ParseVisitOrQueueIdentifier(visitIdOrCode);
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var nowLocal = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+
+        var doctorAccess = await EnsureDoctorAccessAsync(actorUserId, nowUtc, PermissionMedicalRecordWrite, ct);
+
+        await using var tx = await _db.BeginTransactionAsync(ct);
+
+        var context = await ResolveAndAuthorizeVisitContextAsync(
+            doctorAccess,
+            numericId,
+            code,
+            isQueuePrefix,
+            visitIdOrCode,
+            ct,
+            acquireWriteLocks: true);
+
+        // Post-lock live user/role/permission & strict assigned-doctor verification (RV-03)
+        doctorAccess = await EnsureDoctorAccessAsync(actorUserId, nowUtc, PermissionMedicalRecordWrite, ct);
+        if (!context.Visit.AssignedDoctorId.HasValue || context.Visit.AssignedDoctorId.Value != doctorAccess.Doctor.Id)
+        {
+            throw new ForbiddenException("Bác sĩ chỉ được phép kết thúc phiên đánh giá cho lượt khám được phân công.");
+        }
+
+        var visit = context.Visit;
+        var activeEntry = context.ActiveClinicalEntry;
+        var visitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
+
+        if (visitStatus is "CANCELLED" or "NO_SHOW")
+        {
+            throw new ConflictException("Không thể kết thúc phiên đánh giá cho lượt khám đã hủy hoặc vắng mặt (NO_SHOW).");
+        }
+
+        if (visitStatus is "COMPLETED" or "DONE")
+        {
+            throw new ConflictException("Lượt khám đã hoàn tất (COMPLETED).");
+        }
+
+        var latestRecord = await TryLoadLatestMedicalRecordAsync(visit.Id, ct);
+        if (latestRecord is not null &&
+            string.Equals(latestRecord.Status?.Trim(), "FINALIZED", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException("Hồ sơ bệnh án đã được khóa hoàn tất (FINALIZED).");
+        }
+
+        var activeQueueStatus = activeEntry is not null ? NormalizeQueueStatus(activeEntry.Status) : string.Empty;
+        if (activeEntry is null ||
+            activeEntry.CompletedAt.HasValue ||
+            !activeEntry.StartedAt.HasValue ||
+            activeQueueStatus != "IN_PROGRESS")
+        {
+            throw new ConflictException(
+                "[CLINICAL_REVIEW_NOT_IN_PROGRESS] Phiên đánh giá lại chỉ định cận lâm sàng chưa mở hoặc không ở trạng thái đang thực hiện (IN_PROGRESS).");
+        }
+
+        if (!string.Equals(
+                activeEntry.CoordinationPurpose?.Trim(),
+                QueueCoordinationPurposes.ClinicalReview,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException(
+                "[INVALID_SESSION_PURPOSE_FOR_REVIEW_COMPLETION] Thao tác này chỉ áp dụng cho phiên khám đánh giá lại chỉ định quá hạn (CLINICAL_REVIEW). Với phiên khám ban đầu hoặc khám kết luận, vui lòng hoàn tất lượt khám (UC38) hoặc chuyển chờ kết quả cận lâm sàng (UC34).");
+        }
+
+        var currentStateVersion = activeEntry.StateVersion is > 0 ? activeEntry.StateVersion.Value : 1;
+        if (request.ExpectedStateVersion.Value != currentStateVersion)
+        {
+            throw new ConflictException(
+                "[STATE_VERSION_MISMATCH] Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại không gian khám.");
+        }
+
+        var crossDayPolicy = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(
+            _db,
+            doctorAccess.Hospital.Id,
+            nowUtc,
+            ct);
+
+        var visitOrders = await _db.DiagnosticOrders
+            .AsNoTracking()
+            .Where(o => o.VisitId == visit.Id)
+            .OrderBy(o => o.Id)
+            .ToListAsync(ct);
+
+        var hasUnresolvedReviewItems = visitOrders.Any(o =>
+            AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED" &&
+            (MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsOrderExpiredForExecution(
+                 o,
+                 crossDayPolicy.DiagnosticOrderValidityDays,
+                 nowLocal) ||
+             string.Equals(o.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.ReviewRequired, StringComparison.OrdinalIgnoreCase)));
+
+        if (hasUnresolvedReviewItems)
+        {
+            throw new ConflictException(
+                "[UNRESOLVED_CLINICAL_REVIEW_ITEMS] Vẫn còn chỉ định cận lâm sàng quá hạn hiệu lực hoặc đang chờ bác sĩ xem xét lại (REVIEW_REQUIRED). Vui lòng gia hạn, chỉ định thay thế hoặc hủy lâm sàng trước khi kết thúc phiên đánh giá.");
+        }
+
+        var nextStateVersion = currentStateVersion + 1;
+        activeEntry.Status = "COMPLETED";
+        activeEntry.CompletedAt = nowLocal;
+        activeEntry.StateVersion = nextStateVersion;
+
+        var isReadyForReturn = await MedFlow.Application.Services.Diagnostic.DiagnosticOrderLifecycleHelper
+            .EvaluateVisitReturnReadinessAsync(_db, visit.Id, ct: ct);
+        var wasAlreadyReturnOverdue = MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsReturnConsultationOverdue(
+            visit,
+            crossDayPolicy.ReturnConsultationWindowDays,
+            nowLocal);
+
+        visit.OverdueReturnResultSnapshot = null;
+        if (isReadyForReturn)
+        {
+            visit.Status = "RETURN_CONSULTATION";
+            visit.ReadyForReturnAt ??= nowLocal;
+        }
+        else
+        {
+            visit.Status = "AWAITING_RESULTS";
+            if (!wasAlreadyReturnOverdue)
+            {
+                visit.ReadyForReturnAt = null;
+            }
+        }
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            ActorUserId = actorUserId,
+            HospitalId = doctorAccess.Hospital.Id,
+            Action = "CLINICAL_REVIEW_COMPLETED",
+            EntityType = "VISIT",
+            EntityId = visit.Id.ToString(CultureInfo.InvariantCulture),
+            Reason = clinicalNote ?? "Bác sĩ kết thúc phiên đánh giá lại chỉ định cận lâm sàng (CLINICAL_REVIEW)",
+            ChangeData = JsonSerializer.Serialize(new
+            {
+                visitId = visit.Id,
+                visitCode = visit.VisitCode,
+                queueEntryId = activeEntry.Id,
+                doctorId = doctorAccess.Doctor.Id,
+                previousStateVersion = currentStateVersion,
+                newStateVersion = nextStateVersion,
+                resultingVisitStatus = visit.Status,
+                isReadyForReturn,
+                clinicalNote,
+            }, AuditJsonOptions),
+            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+            OccurredAt = nowUtc,
+        });
+
+        await SaveChangesWithConcurrencyGuardAsync(ct);
+
+        if (tx is not null)
+        {
+            await tx.CommitAsync(ct);
+        }
+
+        await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+            _realtimePublisher,
+            new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                HospitalId: doctorAccess.Hospital.Id,
+                ServicePointId: activeEntry.CurrentServicePointId ?? activeEntry.ServicePointId,
+                RoomId: visit.ExaminationRoomId ?? context.Room?.Id,
+                AppointmentId: visit.AppointmentId),
+            ct);
+
+        var refreshedAfterReviewComplete = await ResolveAndAuthorizeVisitContextAsync(
+            doctorAccess,
+            visit.Id,
+            null,
+            isQueuePrefix: false,
+            visitIdOrCode,
+            ct);
+
+        return await BuildWorkspaceResponseAsync(
+            doctorAccess,
+            refreshedAfterReviewComplete,
+            actionOutcome: "CLINICAL_REVIEW_COMPLETED",
             nowUtc,
             nowLocal,
             ct);
@@ -2080,6 +2265,12 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         if (request.ExpectedStateVersion is < 1)
         {
             throw new ValidationException("Phiên bản trạng thái (ExpectedStateVersion) phải lớn hơn hoặc bằng 1.");
+        }
+
+        if (!OverdueReturnSnapshotHelper.IsValidSnapshotHex(request.ExpectedResultSnapshot))
+        {
+            throw new ValidationException(
+                "Mã đối chiếu tập kết quả cận lâm sàng (ExpectedResultSnapshot) bắt buộc là chuỗi băm SHA-256 hợp lệ gồm 64 ký tự hex.");
         }
 
         var reason = ValidateClinicalTextField(
@@ -2108,9 +2299,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             ct,
             acquireWriteLocks: true);
 
-        // Post-lock live user/role/permission verification
+        // Post-lock live user/role/permission & strict assigned-doctor verification (SN-05)
         doctorAccess = await EnsureDoctorAccessAsync(actorUserId, nowUtc, PermissionMedicalRecordWrite, ct);
-        if (context.Visit.AssignedDoctorId.HasValue && context.Visit.AssignedDoctorId.Value != doctorAccess.Doctor.Id)
+        if (!context.Visit.AssignedDoctorId.HasValue || context.Visit.AssignedDoctorId.Value != doctorAccess.Doctor.Id)
         {
             throw new ForbiddenException("Bác sĩ chỉ được phép xác nhận kết quả cho lượt khám được phân công.");
         }
@@ -2156,15 +2347,21 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 "Chưa thể xác nhận giá trị chuyên môn cho khám kết luận quá hạn khi các kết quả cận lâm sàng bắt buộc chưa hoàn tất.");
         }
 
-        await StampOverdueReturnApprovalAsync(
+        var liveSnapshotHash = await OverdueReturnSnapshotHelper.ComputeSnapshotHashAsync(_db, visit, ct);
+        if (!string.Equals(request.ExpectedResultSnapshot!.Trim(), liveSnapshotHash, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ConflictException(OverdueReturnSnapshotHelper.SnapshotMismatchMessage);
+        }
+
+        StampOverdueReturnApproval(
             visit,
             doctorAccess,
             actorUserId,
             reason,
+            liveSnapshotHash,
             nowLocal,
             nowUtc,
-            ipAddress,
-            ct);
+            ipAddress);
 
         await SaveChangesWithConcurrencyGuardAsync(ct);
 
@@ -2193,7 +2390,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
     private async Task EnsureOverdueReturnApprovedIfRequiredAsync(
         Visit visit,
         DoctorAccessContext doctorAccess,
+        long actorUserId,
         string? inlineApprovalNote,
+        string? expectedResultSnapshot,
         DateTime nowLocal,
         DateTime nowUtc,
         string? ipAddress,
@@ -2213,14 +2412,12 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             return;
         }
 
-        if (await OverdueReturnSnapshotHelper.IsApprovedForCurrentSnapshotAsync(
-                _db,
-                visit,
-                doctorAccess.Doctor.Id,
-                ct))
+        if (!visit.AssignedDoctorId.HasValue || visit.AssignedDoctorId.Value != doctorAccess.Doctor.Id)
         {
-            return;
+            throw new ForbiddenException("Bác sĩ chỉ được phép kết luận hoặc xác nhận kết quả quá hạn cho lượt khám được phân công.");
         }
+
+        var currentSnapshotHash = await OverdueReturnSnapshotHelper.ComputeSnapshotHashAsync(_db, visit, ct);
 
         if (!string.IsNullOrWhiteSpace(inlineApprovalNote))
         {
@@ -2234,33 +2431,64 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                     "Ghi chú xác nhận chuyên môn kết quả cận lâm sàng quá hạn phải có ít nhất 3 ký tự.");
             }
 
-            await StampOverdueReturnApprovalAsync(
+            if (!OverdueReturnSnapshotHelper.IsValidSnapshotHex(expectedResultSnapshot))
+            {
+                throw new ValidationException(
+                    "Khi xác nhận giá trị kết quả quá hạn trực tiếp (inline), bắt buộc gửi kèm mã đối chiếu kết quả hợp lệ (ExpectedResultSnapshot 64 ký tự hex).");
+            }
+
+            if (!string.Equals(expectedResultSnapshot!.Trim(), currentSnapshotHash, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ConflictException(OverdueReturnSnapshotHelper.SnapshotMismatchMessage);
+            }
+
+            StampOverdueReturnApproval(
                 visit,
                 doctorAccess,
-                doctorAccess.Doctor.Staff?.UserId ?? 0,
+                actorUserId,
                 validatedInlineNote,
+                currentSnapshotHash,
                 nowLocal,
                 nowUtc,
-                ipAddress,
-                ct);
+                ipAddress);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(expectedResultSnapshot))
+        {
+            if (!OverdueReturnSnapshotHelper.IsValidSnapshotHex(expectedResultSnapshot))
+            {
+                throw new ValidationException(
+                    "Mã đối chiếu tập kết quả cận lâm sàng (ExpectedResultSnapshot) phải là chuỗi băm SHA-256 hợp lệ gồm 64 ký tự hex.");
+            }
+
+            if (!string.Equals(expectedResultSnapshot.Trim(), currentSnapshotHash, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ConflictException(OverdueReturnSnapshotHelper.SnapshotMismatchMessage);
+            }
+        }
+
+        if (OverdueReturnSnapshotHelper.IsApprovedForComputedSnapshot(
+                visit,
+                doctorAccess.Doctor.Id,
+                currentSnapshotHash))
+        {
             return;
         }
 
         throw new ConflictException(OverdueReturnSnapshotHelper.OverdueDoctorApprovalRequiredMessage);
     }
 
-    private async Task StampOverdueReturnApprovalAsync(
+    private void StampOverdueReturnApproval(
         Visit visit,
         DoctorAccessContext doctorAccess,
         long actorUserId,
         string reason,
+        string snapshotHash,
         DateTime nowLocal,
         DateTime nowUtc,
-        string? ipAddress,
-        CancellationToken ct)
+        string? ipAddress)
     {
-        var snapshotHash = await OverdueReturnSnapshotHelper.ComputeSnapshotHashAsync(_db, visit, ct);
-
         visit.OverdueReturnApprovedByDoctorId = doctorAccess.Doctor.Id;
         visit.OverdueReturnApprovedAt = nowLocal;
         visit.OverdueReturnApprovalNote = reason;
@@ -2424,6 +2652,12 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             latestRevision?.RelevantHistoryAllergies,
             referenceDate);
 
+        var currentResultSnapshot = OverdueReturnSnapshotHelper.ComputeSnapshotHash(
+            visit,
+            visitDiagnosticOrders,
+            resultsBundle.ResultsByOrderId.Values,
+            resultsBundle.VersionsByResultId.Values.SelectMany(v => v));
+
         return new DiagnosticResultsReviewResponseDto(
             VisitId: visit.Id,
             VisitCode: visitCode,
@@ -2442,7 +2676,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             MandatoryOrdersCount: mandatoryOrdersCount,
             MandatoryReadyCount: mandatoryReadyCount,
             MandatoryPendingCount: mandatoryPendingCount,
-            Items: filteredItems);
+            Items: filteredItems,
+            CurrentResultSnapshot: currentResultSnapshot);
     }
 
     public async Task<ConsultationDiagnosticResultItemDto> GetDiagnosticResultByOrderAsync(
@@ -3042,7 +3277,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             await EnsureOverdueReturnApprovedIfRequiredAsync(
                 visit,
                 doctorAccess,
-                inlineApprovalNote: null,
+                actorUserId,
+                request.OverdueReturnApprovalNote,
+                request.ExpectedResultSnapshot,
                 nowLocal,
                 nowUtc,
                 ipAddress,
@@ -3425,7 +3662,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         await EnsureOverdueReturnApprovedIfRequiredAsync(
             visit,
             doctorAccess,
+            actorUserId,
             validated.OverdueReturnApprovalNote,
+            validated.ExpectedResultSnapshot,
             nowLocal,
             nowUtc,
             ipAddress,
@@ -4590,7 +4829,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 ExpectedStateVersion: null,
                 ExpectedRevisionNo: null,
                 CloseUndecidedOptionalOrders: null,
-                OverdueReturnApprovalNote: null);
+                OverdueReturnApprovalNote: null,
+                ExpectedResultSnapshot: null);
         }
 
         if (request.ExpectedStateVersion is < 1)
@@ -4650,7 +4890,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             ExpectedStateVersion: request.ExpectedStateVersion,
             ExpectedRevisionNo: request.ExpectedRevisionNo,
             CloseUndecidedOptionalOrders: request.CloseUndecidedOptionalOrders,
-            OverdueReturnApprovalNote: overdueApprovalNote);
+            OverdueReturnApprovalNote: overdueApprovalNote,
+            ExpectedResultSnapshot: request.ExpectedResultSnapshot);
     }
 
     private async Task<List<ResolvedDiagnosisItem>> ResolveAndValidateDiagnosisItemsAsync(
@@ -5918,12 +6159,16 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             visit,
             crossDayPolicy.ReturnConsultationWindowDays,
             nowLocal);
+        var currentResultSnapshot = OverdueReturnSnapshotHelper.ComputeSnapshotHash(
+            visit,
+            visitDiagnosticOrders,
+            resultsBundle.ResultsByOrderId.Values,
+            resultsBundle.VersionsByResultId.Values.SelectMany(v => v));
         var isOverdueReturnApproved = isReturnOverdueForReview &&
-            await OverdueReturnSnapshotHelper.IsApprovedForCurrentSnapshotAsync(
-                _db,
+            OverdueReturnSnapshotHelper.IsApprovedForComputedSnapshot(
                 visit,
                 doctorAccess.Doctor.Id,
-                ct);
+                currentResultSnapshot);
 
         var visitSummary = BuildVisitSummary(
             doctorAccess.Hospital,
@@ -5931,7 +6176,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             queueDate,
             isOverdueForReview: hasExpiredOrderForReview || (isReturnOverdueForReview && !isOverdueReturnApproved),
             isReturnOverdue: isReturnOverdueForReview,
-            isOverdueReturnApproved: isOverdueReturnApproved);
+            isOverdueReturnApproved: isOverdueReturnApproved,
+            currentResultSnapshot: currentResultSnapshot);
 
         var patientSummary = BuildPatientSummary(
             patient,
@@ -5958,7 +6204,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         DateOnly referenceDate,
         bool isOverdueForReview = false,
         bool isReturnOverdue = false,
-        bool isOverdueReturnApproved = false)
+        bool isOverdueReturnApproved = false,
+        string? currentResultSnapshot = null)
     {
         var visit = context.Visit;
         var appointment = context.Appointment;
@@ -6029,7 +6276,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
             IsReturnOverdue: isReturnOverdue,
             IsOverdueReturnApproved: isOverdueReturnApproved,
             OverdueReturnApprovedAt: visit.OverdueReturnApprovedAt,
-            OverdueReturnApprovalNote: visit.OverdueReturnApprovalNote);
+            OverdueReturnApprovalNote: visit.OverdueReturnApprovalNote,
+            CurrentResultSnapshot: currentResultSnapshot);
     }
 
     private static ConsultationPatientSummaryDto BuildPatientSummary(
@@ -8645,7 +8893,8 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         int? ExpectedStateVersion,
         int? ExpectedRevisionNo,
         bool? CloseUndecidedOptionalOrders = null,
-        string? OverdueReturnApprovalNote = null);
+        string? OverdueReturnApprovalNote = null,
+        string? ExpectedResultSnapshot = null);
 
     private sealed record ValidatedGetDiagnosticResultsFilter(
         string? Category,

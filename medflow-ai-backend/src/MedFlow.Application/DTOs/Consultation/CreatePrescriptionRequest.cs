@@ -6,7 +6,9 @@ public sealed record CreatePrescriptionRequest(
     int? ExpectedStateVersion = null,
     int? ExpectedRevisionNo = null,
     string? Status = null,
-    bool? IssueImmediately = null);
+    bool? IssueImmediately = null,
+    string? OverdueReturnApprovalNote = null,
+    string? ExpectedResultSnapshot = null);
 
 public sealed record CreatePrescriptionItemRequest(
     long? MedicineId = null,

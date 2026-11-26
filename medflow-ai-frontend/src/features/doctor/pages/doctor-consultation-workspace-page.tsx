@@ -23,6 +23,7 @@ import { CONSULTATION_QUICK_SWITCH_ITEMS } from '../data/consultation-workspace-
 import { DOCTOR_WORKBENCH_META } from '../data/doctor-mock-data';
 import {
   useApproveOverdueReturnResults,
+  useCompleteClinicalReview,
   useCompleteVisit,
   useConsultationWorkspace,
   useCreateDiagnosticOrder,
@@ -34,6 +35,7 @@ import {
 import { consultationIdentifierSchema } from '../schemas/consultation-workspace.schema';
 import type {
   ApproveOverdueReturnResultsRequest,
+  CompleteClinicalReviewRequest,
   CompleteVisitRequest,
   ConsultationWorkspaceActionDto,
   CreateDiagnosticOrderRequest,
@@ -118,6 +120,7 @@ export function DoctorConsultationWorkspacePage({
   const recordMutation = useRecordClinicalExamination();
   const createOrderMutation = useCreateDiagnosticOrder();
   const revalidateOrderMutation = useRevalidateDiagnosticOrder();
+  const completeClinicalReviewMutation = useCompleteClinicalReview();
   const approveOverdueMutation = useApproveOverdueReturnResults();
   const completeVisitMutation = useCompleteVisit();
   const doctorDisplayName =
@@ -230,6 +233,25 @@ export function DoctorConsultationWorkspacePage({
     }
   };
 
+  const handleCompleteClinicalReview = async (
+    payload: CompleteClinicalReviewRequest,
+  ): Promise<boolean> => {
+    setDiagnosticOrderError(null);
+    setSelectedActionNotice(null);
+    try {
+      await completeClinicalReviewMutation.mutateAsync({
+        idOrCode: activeIdentifier,
+        payload,
+      });
+      return true;
+    } catch (err) {
+      setDiagnosticOrderError(
+        getErrorMessage(err, 'Không thể kết thúc phiên đánh giá lại chỉ định cận lâm sàng.'),
+      );
+      return false;
+    }
+  };
+
   const handleApproveOverdueResults = async (
     payload: ApproveOverdueReturnResultsRequest,
   ): Promise<boolean> => {
@@ -242,9 +264,16 @@ export function DoctorConsultationWorkspacePage({
       });
       return true;
     } catch (err) {
-      setCompleteVisitError(
-        getErrorMessage(err, 'Không thể xác nhận giá trị chuyên môn cho kết quả quá hạn.'),
+      const rawMessage = getErrorMessage(
+        err,
+        'Không thể xác nhận giá trị chuyên môn cho kết quả quá hạn.',
       );
+      if (rawMessage.includes('OVERDUE_RESULT_SNAPSHOT_MISMATCH')) {
+        await refetch();
+        setCompleteVisitError('Kết quả đã thay đổi. Vui lòng xem lại trước khi xác nhận');
+        return false;
+      }
+      setCompleteVisitError(rawMessage);
       return false;
     }
   };
@@ -264,9 +293,16 @@ export function DoctorConsultationWorkspacePage({
       setIsCompleteVisitFormOpen(false);
       return true;
     } catch (err) {
-      setCompleteVisitError(
-        getErrorMessage(err, 'Không thể hoàn tất lượt khám và khóa hồ sơ bệnh án cho ca khám này.'),
+      const rawMessage = getErrorMessage(
+        err,
+        'Không thể hoàn tất lượt khám và khóa hồ sơ bệnh án cho ca khám này.',
       );
+      if (rawMessage.includes('OVERDUE_RESULT_SNAPSHOT_MISMATCH')) {
+        await refetch();
+        setCompleteVisitError('Kết quả đã thay đổi. Vui lòng xem lại trước khi xác nhận');
+        return false;
+      }
+      setCompleteVisitError(rawMessage);
       return false;
     }
   };
@@ -628,6 +664,10 @@ export function DoctorConsultationWorkspacePage({
                       onOpenVietQrModal={() => setIsVietQrModalOpen(true)}
                       onRevalidateDiagnosticOrder={handleRevalidateDiagnosticOrder}
                       isRevalidatingDiagnosticOrder={revalidateOrderMutation.isPending}
+                      coordinationPurpose={data.queue?.coordinationPurpose ?? null}
+                      queueStatus={data.queue?.status ?? null}
+                      onCompleteClinicalReview={handleCompleteClinicalReview}
+                      isCompletingClinicalReview={completeClinicalReviewMutation.isPending}
                     />
                     <ConsultationCompleteVisitPanel
                       workspaceState={data.workspaceState}
@@ -645,6 +685,7 @@ export function DoctorConsultationWorkspacePage({
                       onSubmitCompleteVisit={handleCompleteVisit}
                       onApproveOverdueResults={handleApproveOverdueResults}
                       isApprovingOverdueResults={approveOverdueMutation.isPending}
+                      onRefreshWorkspace={() => refetch()}
                       onClearSubmitError={() => setCompleteVisitError(null)}
                     />
                   </div>

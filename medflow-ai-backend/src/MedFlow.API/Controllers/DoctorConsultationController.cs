@@ -204,6 +204,29 @@ public sealed class DoctorConsultationController : ControllerBase
             ct));
 
     /// <summary>
+    /// POST /api/v1/doctor/consultation/{idOrCode}/complete-clinical-review — Bác sĩ phụ trách kết thúc phiên đánh giá lại chỉ định quá hạn (CLINICAL_REVIEW) sau khi đã xử lý hết các chỉ định cần xem xét (ADR-0061 / E1-02).
+    /// </summary>
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/complete-clinical-review")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/complete-clinical-review")]
+    [HttpPost("/api/v1/visits/{idOrCode}/complete-clinical-review")]
+    [ProducesResponseType<ConsultationWorkspaceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ConsultationWorkspaceResponseDto>> CompleteClinicalReview(
+        string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CompleteClinicalReviewRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.CompleteClinicalReviewAsync(
+            GetUserId(),
+            idOrCode,
+            request!,
+            GetIp(),
+            ct));
+
+    /// <summary>
     /// POST /api/v1/doctor/consultation/{idOrCode}/approve-overdue-results — Bác sĩ phụ trách xác nhận giá trị chuyên môn của tập kết quả cận lâm sàng hiện hành khi khám kết luận quá hạn (ADR-0061 / BUG-04).
     /// </summary>
     [HttpPost("/api/v1/doctor/consultation/{idOrCode}/approve-overdue-results")]

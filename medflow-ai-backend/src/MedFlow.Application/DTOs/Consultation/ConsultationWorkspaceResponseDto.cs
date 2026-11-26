@@ -55,7 +55,8 @@ public sealed record ConsultationVisitSummaryDto(
     bool IsReturnOverdue = false,
     bool IsOverdueReturnApproved = false,
     DateTime? OverdueReturnApprovedAt = null,
-    string? OverdueReturnApprovalNote = null);
+    string? OverdueReturnApprovalNote = null,
+    string? CurrentResultSnapshot = null);
 
 public sealed record ConsultationPatientSummaryDto(
     long PatientId,

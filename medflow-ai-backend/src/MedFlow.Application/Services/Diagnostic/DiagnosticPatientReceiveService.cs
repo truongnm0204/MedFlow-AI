@@ -397,11 +397,31 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
             await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
                 _db,
                 visitIds,
-                executionPlans.Where(p => p.ServicePoint is not null).Select(p => p.ServicePoint!.Id),
+                lookupBundle.HospitalDiagnosticServicePoints.Select(sp => sp.Id)
+                    .Concat(executionPlans.Where(p => p.ServicePoint is not null).Select(p => p.ServicePoint!.Id)),
                 executionPlans.Where(p => p.LinkedQueueEntry is not null).Select(p => p.LinkedQueueEntry!.Id),
                 executionPlans.Select(p => p.Order.Id),
                 includeChargeAndPaymentLocks: false,
-                ct);
+                ct,
+                extraServiceIds: executionPlans.Select(p => p.Service.Id),
+                extraRoomIds: lookupBundle.RoomsById.Keys);
+
+            var postLockServiceIds = executionPlans.Select(p => p.Service.Id).Distinct().ToList();
+            var postLockServicesById = postLockServiceIds.Count == 0
+                ? new Dictionary<long, Service>()
+                : (await _db.Services.AsNoTracking()
+                    .Where(s => postLockServiceIds.Contains(s.Id))
+                    .ToListAsync(ct))
+                    .ToDictionary(s => s.Id);
+            var postLockDepartmentsById = (await _db.Departments.AsNoTracking()
+                .Where(d => d.HospitalId == hospitalId)
+                .ToListAsync(ct))
+                .ToDictionary(d => d.Id);
+            var postLockRoomsById = (await _db.HospitalRooms.AsNoTracking()
+                .Where(r => r.HospitalId == hospitalId)
+                .ToListAsync(ct))
+                .ToDictionary(r => r.Id);
+            var postLockHospitalServicePoints = await TryLoadHospitalDiagnosticServicePointsAsync(hospitalId, ct);
 
             foreach (var plan in executionPlans)
             {
@@ -410,14 +430,37 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
                 var visit = await _db.Visits.FirstOrDefaultAsync(v => v.Id == plan.Visit.Id, ct)
                     ?? throw new ConflictException("Phiếu chỉ định cận lâm sàng không gắn với lượt khám hợp lệ.");
                 var patient = plan.Patient;
-                var service = plan.Service;
-                var resolvedSp = plan.ServicePoint;
-                var resolvedRoom = plan.Room;
                 var linkedQueueEntry = plan.LinkedQueueEntry is not null
                     ? await _db.QueueEntries.FirstOrDefaultAsync(q => q.Id == plan.LinkedQueueEntry.Id, ct)
                     : (order.QueueEntryId.HasValue
                         ? await _db.QueueEntries.FirstOrDefaultAsync(q => q.Id == order.QueueEntryId.Value, ct)
                         : null);
+
+                var service = order.ServiceId.HasValue && postLockServicesById.TryGetValue(order.ServiceId.Value, out var liveSvc)
+                    ? liveSvc
+                    : (order.ServiceId.HasValue
+                        ? await _db.Services.AsNoTracking().FirstOrDefaultAsync(s => s.Id == order.ServiceId.Value, ct)
+                        : null) ?? plan.Service;
+
+                var postLockSpId = DiagnosticServicePointResolver.ResolveForExecutionOrThrow(
+                    order,
+                    service,
+                    validated.ServicePointId,
+                    postLockHospitalServicePoints,
+                    postLockRoomsById,
+                    linkedQueueEntry is not null ? [linkedQueueEntry] : null,
+                    hospitalId,
+                    postLockDepartmentsById,
+                    validated.RoomId);
+
+                var resolvedSp = postLockHospitalServicePoints.First(sp => sp.Id == postLockSpId);
+                postLockRoomsById.TryGetValue(resolvedSp.RoomId!.Value, out var resolvedRoom);
+                lookupBundle.ServicesById[service.Id] = service;
+                lookupBundle.ServicePointsById[resolvedSp.Id] = resolvedSp;
+                if (resolvedRoom is not null)
+                {
+                    lookupBundle.RoomsById[resolvedRoom.Id] = resolvedRoom;
+                }
 
                 var postLockOrderStatus = ResolveEffectiveOrderStatus(order, lookupBundle.FinalizedOrderIds);
                 if (postLockOrderStatus != "CONFIRMED")
@@ -942,50 +985,21 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
             {
                 throw new ValidationException("Phòng thực hiện (RoomId) không khớp với điểm phục vụ cận lâm sàng (ServicePointId) đã chọn.");
             }
-
-            if (resolvedSp is null)
-            {
-                resolvedSp = lookupBundle.HospitalDiagnosticServicePoints
-                    .Where(sp => sp.RoomId == resolvedRoom.Id && (!sp.ServiceId.HasValue || sp.ServiceId.Value == service.Id))
-                    .OrderBy(sp => sp.IsActive == false ? 1 : 0)
-                    .ThenBy(sp => sp.Id)
-                    .FirstOrDefault();
-
-                if (resolvedSp is not null && resolvedSp.IsActive == false)
-                {
-                    throw new ConflictException($"Điểm phục vụ cận lâm sàng '{resolvedSp.Name}' hiện đang ngừng hoạt động.");
-                }
-            }
         }
 
-        if (resolvedSp is null)
-        {
-            var existingSpId = linkedQueueEntry?.CurrentServicePointId ?? linkedQueueEntry?.ServicePointId;
-            if (existingSpId.HasValue && lookupBundle.ServicePointsById.TryGetValue(existingSpId.Value, out var existingSp))
-            {
-                resolvedSp = existingSp;
-            }
-            else
-            {
-                resolvedSp = ResolveDiagnosticServicePointForCatalog(service.Id, lookupBundle.HospitalDiagnosticServicePoints);
-            }
-        }
+        var targetSpId = DiagnosticServicePointResolver.ResolveForExecutionOrThrow(
+            order,
+            service,
+            validated.ServicePointId,
+            lookupBundle.HospitalDiagnosticServicePoints,
+            lookupBundle.RoomsById,
+            linkedQueueEntry is not null ? [linkedQueueEntry] : null,
+            hospitalId,
+            lookupBundle.DepartmentsById,
+            validated.RoomId);
 
-        if (resolvedSp is not null && resolvedSp.IsActive == false)
-        {
-            throw new ConflictException($"Điểm phục vụ cận lâm sàng cho dịch vụ '{service.Name}' hiện đang ngừng hoạt động.");
-        }
-
-        if (resolvedRoom is null && resolvedSp?.RoomId.HasValue == true)
-        {
-            lookupBundle.RoomsById.TryGetValue(resolvedSp.RoomId.Value, out resolvedRoom);
-        }
-
-        if (resolvedRoom is not null &&
-            !string.Equals(resolvedRoom.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ConflictException($"Phòng thực hiện cận lâm sàng '{resolvedRoom.RoomCode}' cho dịch vụ '{service.Name}' hiện đang bảo trì hoặc ngừng hoạt động.");
-        }
+        resolvedSp = lookupBundle.HospitalDiagnosticServicePoints.First(sp => sp.Id == targetSpId);
+        lookupBundle.RoomsById.TryGetValue(resolvedSp.RoomId!.Value, out resolvedRoom);
 
         var category = ResolveDiagnosticCategory(service, lookupBundle.SpecialtiesById);
 

@@ -118,4 +118,12 @@ public interface IConsultationWorkspaceService
         string? ipAddress = null,
         CancellationToken ct = default)
         => throw new NotSupportedException("ApproveOverdueReturnResultsAsync is not implemented by this test double.");
+
+    Task<ConsultationWorkspaceResponseDto> CompleteClinicalReviewAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        CompleteClinicalReviewRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+        => throw new NotSupportedException("CompleteClinicalReviewAsync is not implemented by this test double.");
 }

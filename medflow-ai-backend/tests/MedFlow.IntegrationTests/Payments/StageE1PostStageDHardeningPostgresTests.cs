@@ -80,6 +80,7 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
         _client.Dispose();
         _scope.Dispose();
         _app.Dispose();
+        NpgsqlConnection.ClearAllPools();
     }
 
     // =========================================================================
@@ -698,11 +699,13 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
                 RoleNames.Reception));
             Assert.Equal(HttpStatusCode.OK, callReviewRes.StatusCode);
 
+            int reviewQueueStateVer;
             await using (var docScope = _app.Services.CreateAsyncScope())
             {
                 var consultSvc = docScope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
                 var ws = await consultSvc.OpenWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
                 Assert.Equal(QueueCoordinationPurposes.ClinicalReview, ws.Queue!.CoordinationPurpose);
+                reviewQueueStateVer = ws.Queue.StateVersion;
 
                 // Mandatory missing result STILL blocks CONFIRMED diagnosis, ISSUED prescription, and CompleteVisit!
                 await Assert.ThrowsAsync<ConflictException>(() =>
@@ -748,7 +751,7 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
                 RoleNames.Doctor));
             Assert.Equal(HttpStatusCode.Forbidden, doc2RevalRes.StatusCode);
 
-            // 5) Assigned Doctor1 revalidates -> stamps ValidityExtendedUntil, audits DIAGNOSTIC_ORDER_REVALIDATED, releases Visit to AWAITING_RESULTS
+            // 5) Assigned Doctor1 revalidates -> stamps ValidityExtendedUntil & keeps CLINICAL_REVIEW IN_PROGRESS until CompleteClinicalReview!
             var doc1RevalRes = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/doctor/consultation/{visit.VisitCode}/diagnostic-orders/{labOrderId}/revalidate",
                 new RevalidateDiagnosticOrderRequest(Reason: "Tình trạng lâm sàng ổn định, gia hạn chỉ định xét nghiệm máu thêm 7 ngày"),
@@ -758,13 +761,30 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
 
             Db.ChangeTracker.Clear();
             var revalidatedOrder = await Db.DiagnosticOrders.AsNoTracking().SingleAsync(o => o.Id == labOrderId);
-            var releasedVisit = await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id);
+            var stillInProgressVisit = await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id);
             Assert.NotNull(revalidatedOrder.ValidityExtendedUntil);
             Assert.Equal(fx.Doctor1Id, revalidatedOrder.RevalidatedByDoctorId);
-            Assert.Equal("AWAITING_RESULTS", releasedVisit.Status);
+            Assert.Equal("IN_PROGRESS", stillInProgressVisit.Status);
             Assert.True(await Db.AuditLogs.AsNoTracking().AnyAsync(a =>
                 a.HospitalId == fx.HospitalId &&
                 a.Action == "DIAGNOSTIC_ORDER_REVALIDATED" &&
+                a.ActorUserId == fx.Doctor1UserId));
+
+            var completeReviewRes = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/doctor/consultation/{visit.VisitCode}/complete-clinical-review",
+                new CompleteClinicalReviewRequest(
+                    ExpectedStateVersion: reviewQueueStateVer,
+                    ClinicalNote: "Hoàn tất đánh giá lại chỉ định, chuyển sang chờ thực hiện CLS"),
+                fx.Doctor1UserId,
+                RoleNames.Doctor));
+            Assert.Equal(HttpStatusCode.OK, completeReviewRes.StatusCode);
+
+            Db.ChangeTracker.Clear();
+            var releasedVisit = await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id);
+            Assert.Equal("AWAITING_RESULTS", releasedVisit.Status);
+            Assert.True(await Db.AuditLogs.AsNoTracking().AnyAsync(a =>
+                a.HospitalId == fx.HospitalId &&
+                a.Action == "CLINICAL_REVIEW_COMPLETED" &&
                 a.ActorUserId == fx.Doctor1UserId));
 
             // 6) Reception resumes DIAGNOSTIC without re-charging -> UC39..UC43 + Return Consultation complete!
@@ -827,12 +847,15 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
             Assert.Equal(HttpStatusCode.OK, callRes.StatusCode);
 
             // Before approval: provisional Dx & DRAFT Rx succeed, while CONFIRMED Dx / ISSUED Rx / CompleteVisit fail 409
+            string initialSnap;
             await using (var preScope = _app.Services.CreateAsyncScope())
             {
                 var consultSvc = preScope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
                 var ws = await consultSvc.OpenWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
                 Assert.True(ws.Visit.IsReturnOverdue);
                 Assert.False(ws.Visit.IsOverdueReturnApproved);
+                initialSnap = ws.Visit.CurrentResultSnapshot!;
+                Assert.Equal(64, initialSnap.Length);
 
                 var provDx = await consultSvc.RecordDiagnosisAsync(
                     fx.Doctor1UserId,
@@ -904,7 +927,9 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
             // Unassigned Doctor2 gets 403 Forbidden on approve-overdue-results
             var doc2ApproveRes = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/doctor/consultation/{visit.VisitCode}/approve-overdue-results",
-                new ApproveOverdueReturnResultsRequest(Reason: "BS không phụ trách thử duyệt"),
+                new ApproveOverdueReturnResultsRequest(
+                    Reason: "BS không phụ trách thử duyệt",
+                    ExpectedResultSnapshot: initialSnap),
                 fx.Doctor2UserId,
                 RoleNames.Doctor));
             Assert.Equal(HttpStatusCode.Forbidden, doc2ApproveRes.StatusCode);
@@ -912,7 +937,9 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
             // Doctor1 approves current snapshot -> 64-hex SHA-256 stamped + audit recorded -> CONFIRMED Dx succeeds
             var approve1Res = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/doctor/consultation/{visit.VisitCode}/approve-overdue-results",
-                new ApproveOverdueReturnResultsRequest(Reason: "Kết quả men gan vẫn còn giá trị lâm sàng để kết luận"),
+                new ApproveOverdueReturnResultsRequest(
+                    Reason: "Kết quả men gan vẫn còn giá trị lâm sàng để kết luận",
+                    ExpectedResultSnapshot: initialSnap),
                 fx.Doctor1UserId,
                 RoleNames.Doctor));
             Assert.Equal(HttpStatusCode.OK, approve1Res.StatusCode);
@@ -951,9 +978,14 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
                         AmendmentReason: "Đính chính sai số hiệu chuẩn máy sinh hóa"));
             }
 
+            string snap2;
             await using (var inv1Scope = _app.Services.CreateAsyncScope())
             {
                 var consultSvc = inv1Scope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
+                var wsAfterAmend = await consultSvc.GetWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
+                snap2 = wsAfterAmend.Visit.CurrentResultSnapshot!;
+                Assert.NotEqual(initialSnap, snap2);
+
                 var inv1Ex = await Assert.ThrowsAsync<ConflictException>(() =>
                     consultSvc.CompleteVisitAsync(
                         fx.Doctor1UserId,
@@ -965,12 +997,15 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
             // Invalidation 2: Doctor1 re-approves, then adds an optional DiagnosticOrder -> snapshot cleared -> CompleteVisit blocked 409!
             var approve2Res = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/doctor/consultation/{visit.VisitCode}/approve-overdue-results",
-                new ApproveOverdueReturnResultsRequest(Reason: "Đã xem lại bản đính chính kết quả xét nghiệm men gan"),
+                new ApproveOverdueReturnResultsRequest(
+                    Reason: "Đã xem lại bản đính chính kết quả xét nghiệm men gan",
+                    ExpectedResultSnapshot: snap2),
                 fx.Doctor1UserId,
                 RoleNames.Doctor));
             Assert.Equal(HttpStatusCode.OK, approve2Res.StatusCode);
 
             string optOrderCode;
+            string snap3;
             await using (var inv2Scope = _app.Services.CreateAsyncScope())
             {
                 var consultSvc = inv2Scope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
@@ -997,12 +1032,17 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
                         visit.VisitCode!,
                         new CompleteVisitRequest(DischargeInstructions: "Thử hoàn tất sau khi phát sinh chỉ định mới")));
                 Assert.Contains("OVERDUE_RETURN_DOCTOR_APPROVAL_REQUIRED", inv2Ex.Message, StringComparison.Ordinal);
+
+                var wsAfterDecline = await consultSvc.GetWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
+                snap3 = wsAfterDecline.Visit.CurrentResultSnapshot!;
             }
 
             // Invalidation 3: Doctor1 re-approves, then Visit moves to D+11 and is reassigned to Doctor2 -> Doctor2 must re-approve!
             var approve3Res = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/doctor/consultation/{visit.VisitCode}/approve-overdue-results",
-                new ApproveOverdueReturnResultsRequest(Reason: "Xác nhận lại kết quả sau khi hủy chỉ định siêu âm tùy chọn"),
+                new ApproveOverdueReturnResultsRequest(
+                    Reason: "Xác nhận lại kết quả sau khi hủy chỉ định siêu âm tùy chọn",
+                    ExpectedResultSnapshot: snap3),
                 fx.Doctor1UserId,
                 RoleNames.Doctor));
             Assert.Equal(HttpStatusCode.OK, approve3Res.StatusCode);
@@ -1026,12 +1066,14 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
                 RoleNames.Reception));
             Assert.Equal(HttpStatusCode.OK, callDoc2Res.StatusCode);
 
+            string snapDoc2;
             await using (var inv3Scope = _app.Services.CreateAsyncScope())
             {
                 var consultSvc = inv3Scope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
                 var wsDoc2 = await consultSvc.OpenWorkspaceAsync(fx.Doctor2UserId, visit.VisitCode!);
                 Assert.True(wsDoc2.Visit.IsReturnOverdue);
                 Assert.False(wsDoc2.Visit.IsOverdueReturnApproved);
+                snapDoc2 = wsDoc2.Visit.CurrentResultSnapshot!;
 
                 var inv3Ex = await Assert.ThrowsAsync<ConflictException>(() =>
                     consultSvc.CompleteVisitAsync(
@@ -1044,7 +1086,9 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
             // Doctor2 approves current snapshot, issues Rx, and completes the Visit!
             var approveDoc2Res = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/doctor/consultation/{visit.VisitCode}/approve-overdue-results",
-                new ApproveOverdueReturnResultsRequest(Reason: "BS Hai trực tiếp đối chiếu lâm sàng và xác nhận kết quả xét nghiệm còn giá trị"),
+                new ApproveOverdueReturnResultsRequest(
+                    Reason: "BS Hai trực tiếp đối chiếu lâm sàng và xác nhận kết quả xét nghiệm còn giá trị",
+                    ExpectedResultSnapshot: snapDoc2),
                 fx.Doctor2UserId,
                 RoleNames.Doctor));
             Assert.Equal(HttpStatusCode.OK, approveDoc2Res.StatusCode);

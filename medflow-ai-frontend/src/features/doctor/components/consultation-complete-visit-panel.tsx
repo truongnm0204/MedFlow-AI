@@ -44,6 +44,7 @@ export interface ConsultationCompleteVisitPanelProps {
     payload: ApproveOverdueReturnResultsRequest,
   ) => Promise<boolean | void> | boolean | void;
   isApprovingOverdueResults?: boolean;
+  onRefreshWorkspace?: () => Promise<unknown> | void;
   onClearSubmitError?: () => void;
 }
 
@@ -63,6 +64,7 @@ export function ConsultationCompleteVisitPanel({
   onSubmitCompleteVisit,
   onApproveOverdueResults,
   isApprovingOverdueResults = false,
+  onRefreshWorkspace,
   onClearSubmitError,
 }: ConsultationCompleteVisitPanelProps) {
   const isFinalized =
@@ -103,6 +105,23 @@ export function ConsultationCompleteVisitPanel({
   const [closeUndecidedOptionalInput, setCloseUndecidedOptionalInput] = useState(false);
   const [overdueApprovalReason, setOverdueApprovalReason] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [snapshotVisitKey, setSnapshotVisitKey] = useState(visit.visitCode);
+  const [capturedResultSnapshot, setCapturedResultSnapshot] = useState<string | null>(
+    () => visit.currentResultSnapshot ?? null,
+  );
+
+  if (snapshotVisitKey !== visit.visitCode) {
+    setSnapshotVisitKey(visit.visitCode);
+    setCapturedResultSnapshot(visit.currentResultSnapshot ?? null);
+  } else if (capturedResultSnapshot === null && visit.currentResultSnapshot) {
+    setCapturedResultSnapshot(visit.currentResultSnapshot);
+  } else if (
+    visit.isOverdueReturnApproved &&
+    visit.currentResultSnapshot &&
+    capturedResultSnapshot !== visit.currentResultSnapshot
+  ) {
+    setCapturedResultSnapshot(visit.currentResultSnapshot);
+  }
 
   if (syncKey !== lastSyncKey) {
     setLastSyncKey(syncKey);
@@ -242,10 +261,20 @@ export function ConsultationCompleteVisitPanel({
   ];
 
   const isReturnOverdue = Boolean(visit.isReturnOverdue);
+  const isSnapshotStale = Boolean(
+    isReturnOverdue &&
+    !visit.isOverdueReturnApproved &&
+    capturedResultSnapshot &&
+    visit.currentResultSnapshot &&
+    capturedResultSnapshot !== visit.currentResultSnapshot,
+  );
+  const hasSnapshotForApproval = Boolean(
+    capturedResultSnapshot && /^[0-9a-fA-F]{64}$/.test(capturedResultSnapshot),
+  );
   const isOverdueReturnApproved =
     !isReturnOverdue ||
     Boolean(visit.isOverdueReturnApproved) ||
-    overdueApprovalReason.trim().length >= 3;
+    (!isSnapshotStale && hasSnapshotForApproval && overdueApprovalReason.trim().length >= 3);
 
   const allChecklistReady =
     isSessionInProgress &&
@@ -253,7 +282,8 @@ export function ConsultationCompleteVisitPanel({
     hasNoPendingDiagnostics &&
     hasClinicalConclusion &&
     isPrescriptionValid &&
-    isOverdueReturnApproved;
+    isOverdueReturnApproved &&
+    !isSnapshotStale;
 
   const handleResetDraft = () => {
     clearErrors();
@@ -293,6 +323,10 @@ export function ConsultationCompleteVisitPanel({
         isReturnOverdue && !visit.isOverdueReturnApproved && overdueApprovalReason.trim()
           ? overdueApprovalReason.trim()
           : null,
+      expectedResultSnapshot:
+        isReturnOverdue && !visit.isOverdueReturnApproved && overdueApprovalReason.trim()
+          ? capturedResultSnapshot
+          : null,
       expectedStateVersion: expectedStateVersion ?? null,
       expectedRevisionNo: effectiveRevisionNo,
     };
@@ -326,6 +360,25 @@ export function ConsultationCompleteVisitPanel({
     if (!isPrescriptionValid) {
       setValidationError(
         'Đơn thuốc nháp hiện chưa có thuốc kê đơn. Vui lòng bổ sung thuốc hoặc hủy đơn nháp trước khi hoàn tất.',
+      );
+      return;
+    }
+
+    if (isSnapshotStale) {
+      setValidationError(
+        'Kết quả cận lâm sàng vừa thay đổi. Vui lòng xem lại kết quả mới trước khi xác nhận',
+      );
+      return;
+    }
+
+    if (
+      isReturnOverdue &&
+      !visit.isOverdueReturnApproved &&
+      overdueApprovalReason.trim() &&
+      !hasSnapshotForApproval
+    ) {
+      setValidationError(
+        'Chưa tải được mã đối chiếu kết quả cận lâm sàng hiện hành. Vui lòng làm mới không gian khám và xem lại kết quả.',
       );
       return;
     }
@@ -468,6 +521,28 @@ export function ConsultationCompleteVisitPanel({
                   chuyên môn của các kết quả cận lâm sàng hiện tại trước khi xác nhận chẩn đoán, kê
                   đơn phát hành hoặc hoàn tất lượt khám.
                 </p>
+                {isSnapshotStale && (
+                  <div
+                    role="alert"
+                    className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-rose-900 flex flex-wrap items-center justify-between gap-2"
+                  >
+                    <span className="font-semibold">
+                      Kết quả cận lâm sàng vừa thay đổi. Vui lòng xem lại kết quả mới trước khi xác
+                      nhận
+                    </span>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        clearErrors();
+                        setCapturedResultSnapshot(visit.currentResultSnapshot ?? null);
+                      }}
+                    >
+                      <span>Tôi đã xem kết quả mới</span>
+                    </Button>
+                  </div>
+                )}
                 <div className="flex flex-col sm:flex-row gap-2">
                   <input
                     type="text"
@@ -486,6 +561,9 @@ export function ConsultationCompleteVisitPanel({
                       variant="primary"
                       size="sm"
                       loading={isApprovingOverdueResults}
+                      disabled={
+                        isApprovingOverdueResults || isSnapshotStale || !hasSnapshotForApproval
+                      }
                       onClick={async () => {
                         const trimmed = overdueApprovalReason.trim();
                         if (trimmed.length < 3) {
@@ -494,10 +572,35 @@ export function ConsultationCompleteVisitPanel({
                           );
                           return;
                         }
-                        await onApproveOverdueResults({
-                          reason: trimmed,
-                          expectedStateVersion: expectedStateVersion ?? null,
-                        });
+                        if (isSnapshotStale) {
+                          setValidationError(
+                            'Kết quả cận lâm sàng vừa thay đổi. Vui lòng xem lại kết quả mới trước khi xác nhận',
+                          );
+                          return;
+                        }
+                        if (!capturedResultSnapshot || !hasSnapshotForApproval) {
+                          setValidationError(
+                            'Chưa tải được mã đối chiếu kết quả cận lâm sàng hiện hành. Vui lòng làm mới không gian khám.',
+                          );
+                          return;
+                        }
+                        try {
+                          await onApproveOverdueResults({
+                            reason: trimmed,
+                            expectedResultSnapshot: capturedResultSnapshot,
+                            expectedStateVersion: expectedStateVersion ?? null,
+                          });
+                        } catch (err) {
+                          const rawMsg = err instanceof Error ? err.message : String(err ?? '');
+                          if (rawMsg.includes('OVERDUE_RESULT_SNAPSHOT_MISMATCH')) {
+                            await onRefreshWorkspace?.();
+                            setValidationError(
+                              'Kết quả đã thay đổi. Vui lòng xem lại trước khi xác nhận',
+                            );
+                            return;
+                          }
+                          throw err;
+                        }
                       }}
                     >
                       <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -507,6 +610,27 @@ export function ConsultationCompleteVisitPanel({
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {(validationError || submitError) && !isActionable && (
+          <div role="alert">
+            <Alert tone="error">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{validationError ?? submitError}</span>
+              </div>
+            </Alert>
+          </div>
+        )}
+        {(validationError || submitError) && isActionable && !isFormOpen && (
+          <div role="alert">
+            <Alert tone="error">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{validationError ?? submitError}</span>
+              </div>
+            </Alert>
           </div>
         )}
 

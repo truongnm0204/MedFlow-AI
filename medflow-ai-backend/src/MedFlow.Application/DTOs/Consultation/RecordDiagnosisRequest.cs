@@ -18,7 +18,9 @@ public sealed record RecordDiagnosisRequest(
     int? ExpectedStateVersion = null,
     int? ExpectedRevisionNo = null,
     string? TreatmentPlan = null,
-    string? ClinicalProgressionNote = null);
+    string? ClinicalProgressionNote = null,
+    string? OverdueReturnApprovalNote = null,
+    string? ExpectedResultSnapshot = null);
 
 public sealed record RecordDiagnosisItemRequest(
     long? Icd10CodeId = null,

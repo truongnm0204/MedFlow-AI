@@ -2,6 +2,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 
 import {
   approveOverdueReturnResults,
+  completeClinicalReview,
   completeVisit,
   createDiagnosticOrder,
   fetchConsultationWorkspace,
@@ -17,6 +18,7 @@ import {
 } from '../api/consultation-workspace.api';
 import type {
   ApproveOverdueReturnResultsRequest,
+  CompleteClinicalReviewRequest,
   CompleteVisitRequest,
   ConsultationWorkspaceResponseDto,
   CreateDiagnosticOrderRequest,
@@ -339,6 +341,38 @@ export function useRevalidateDiagnosticOrder() {
       },
     },
   );
+}
+
+export interface CompleteClinicalReviewVariables {
+  idOrCode: string;
+  payload: CompleteClinicalReviewRequest;
+}
+
+export function useCompleteClinicalReview() {
+  const queryClient = useQueryClient();
+
+  return useMutation<ConsultationWorkspaceResponseDto, unknown, CompleteClinicalReviewVariables>({
+    mutationFn: ({ idOrCode, payload }) => completeClinicalReview(idOrCode, payload),
+    onSuccess: (data, variables) => {
+      const normalized = variables.idOrCode.trim();
+      queryClient.setQueryData(['doctor', 'consultation', normalized], data);
+      if (data.visit?.visitCode) {
+        queryClient.setQueryData(['doctor', 'consultation', data.visit.visitCode], data);
+      }
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'consultation', normalized, 'diagnostic-orders'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'assigned-queue'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'dashboard'],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['reception', 'examination-queue'],
+      });
+    },
+  });
 }
 
 export interface ApproveOverdueReturnResultsVariables {

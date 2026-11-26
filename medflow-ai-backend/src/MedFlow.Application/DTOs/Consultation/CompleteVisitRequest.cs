@@ -12,4 +12,5 @@ public sealed record CompleteVisitRequest(
     int? ExpectedStateVersion = null,
     int? ExpectedRevisionNo = null,
     bool? CloseUndecidedOptionalOrders = null,
-    string? OverdueReturnApprovalNote = null);
+    string? OverdueReturnApprovalNote = null,
+    string? ExpectedResultSnapshot = null);

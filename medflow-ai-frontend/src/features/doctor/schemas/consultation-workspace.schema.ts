@@ -469,6 +469,15 @@ export function createCompleteVisitSchema(referenceDateIso?: string) {
       'Ghi chú xác nhận chuyên môn kết quả cận lâm sàng quá hạn',
       500,
     ),
+    expectedResultSnapshot: z
+      .string()
+      .trim()
+      .regex(
+        /^[0-9a-fA-F]{64}$/,
+        'Mã đối chiếu kết quả cận lâm sàng (ExpectedResultSnapshot) không hợp lệ.',
+      )
+      .nullable()
+      .optional(),
     expectedStateVersion: z
       .number()
       .int('Phiên bản trạng thái phải là số nguyên.')
