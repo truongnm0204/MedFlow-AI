@@ -44,7 +44,7 @@ describe('RoleListPage (SCR-ADM-ROLE-01)', () => {
     expect(screen.getByText('QUYỀN HẠT NHÂN')).toBeInTheDocument();
     expect(screen.getByText('10')).toBeInTheDocument();
     expect(screen.getByText('09')).toBeInTheDocument();
-    expect(screen.getByText('14')).toBeInTheDocument();
+    expect(screen.getByText('15')).toBeInTheDocument();
 
     for (const column of [
       'MÃ VAI TRÒ',

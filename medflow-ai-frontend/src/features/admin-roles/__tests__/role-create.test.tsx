@@ -87,7 +87,7 @@ describe('Create Role UI (M2-073 / Issue #235 / UC58)', () => {
     );
     fireEvent.click(within(dialog).getByLabelText('Quyền PATIENT_CHECKIN - Tiếp nhận & Check-in'));
 
-    expect(within(dialog).getByText('Đã chọn: 2 / 14 quyền')).toBeInTheDocument();
+    expect(within(dialog).getByText('Đã chọn: 2 / 15 quyền')).toBeInTheDocument();
 
     fireEvent.change(within(dialog).getByLabelText('Ghi chú kiểm toán tạo vai trò'), {
       target: { value: 'Khởi tạo vai trò điều phối viên M2' },
