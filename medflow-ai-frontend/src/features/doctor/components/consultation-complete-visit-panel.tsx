@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import { completeVisitSchema } from '../schemas/consultation-workspace.schema';
 import type {
+  ApproveOverdueReturnResultsRequest,
   CompleteVisitRequest,
   ConsultationClinicalContextDto,
   ConsultationVisitSummaryDto,
@@ -39,6 +40,10 @@ export interface ConsultationCompleteVisitPanelProps {
   onSubmitCompleteVisit?: (
     payload: CompleteVisitRequest,
   ) => Promise<boolean | void> | boolean | void;
+  onApproveOverdueResults?: (
+    payload: ApproveOverdueReturnResultsRequest,
+  ) => Promise<boolean | void> | boolean | void;
+  isApprovingOverdueResults?: boolean;
   onClearSubmitError?: () => void;
 }
 
@@ -56,6 +61,8 @@ export function ConsultationCompleteVisitPanel({
   isFormOpen: controlledIsFormOpen,
   onToggleForm,
   onSubmitCompleteVisit,
+  onApproveOverdueResults,
+  isApprovingOverdueResults = false,
   onClearSubmitError,
 }: ConsultationCompleteVisitPanelProps) {
   const isFinalized =
@@ -94,6 +101,7 @@ export function ConsultationCompleteVisitPanel({
   const [completionNoteInput, setCompletionNoteInput] = useState('');
   const [confirmNoPrescriptionInput, setConfirmNoPrescriptionInput] = useState(false);
   const [closeUndecidedOptionalInput, setCloseUndecidedOptionalInput] = useState(false);
+  const [overdueApprovalReason, setOverdueApprovalReason] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
   if (syncKey !== lastSyncKey) {
@@ -233,12 +241,19 @@ export function ConsultationCompleteVisitPanel({
     },
   ];
 
+  const isReturnOverdue = Boolean(visit.isReturnOverdue);
+  const isOverdueReturnApproved =
+    !isReturnOverdue ||
+    Boolean(visit.isOverdueReturnApproved) ||
+    overdueApprovalReason.trim().length >= 3;
+
   const allChecklistReady =
     isSessionInProgress &&
     hasPrimaryDiagnosis &&
     hasNoPendingDiagnostics &&
     hasClinicalConclusion &&
-    isPrescriptionValid;
+    isPrescriptionValid &&
+    isOverdueReturnApproved;
 
   const handleResetDraft = () => {
     clearErrors();
@@ -274,6 +289,10 @@ export function ConsultationCompleteVisitPanel({
       notes: completionNoteInput.trim() || null,
       confirmNoPrescription: confirmNoPrescriptionInput,
       closeUndecidedOptionalOrders: closeUndecidedOptionalInput || null,
+      overdueReturnApprovalNote:
+        isReturnOverdue && !visit.isOverdueReturnApproved && overdueApprovalReason.trim()
+          ? overdueApprovalReason.trim()
+          : null,
       expectedStateVersion: expectedStateVersion ?? null,
       expectedRevisionNo: effectiveRevisionNo,
     };
@@ -416,6 +435,78 @@ export function ConsultationCompleteVisitPanel({
                 ? 'Tài khoản chưa được cấp quyền ghi nhận hồ sơ bệnh án (MEDICAL_RECORD_WRITE).'
                 : disabledReason}
             </span>
+          </div>
+        )}
+
+        {!isFinalized && isReturnOverdue && (
+          <div
+            className={`rounded-xl border p-3.5 space-y-2.5 text-xs ${
+              visit.isOverdueReturnApproved
+                ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900'
+                : 'border-amber-200 bg-amber-50/70 text-amber-900'
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-bold text-navy flex items-center gap-1.5">
+                <ShieldAlert className="h-4 w-4 text-amber-700" aria-hidden="true" />
+                <span>Xác nhận giá trị kết quả quá hạn (Khám kết luận quá thời hạn)</span>
+              </div>
+              <Badge tone={visit.isOverdueReturnApproved ? 'emerald' : 'amber'}>
+                {visit.isOverdueReturnApproved ? 'Đã xác nhận chuyên môn' : 'Chờ bác sĩ xác nhận'}
+              </Badge>
+            </div>
+
+            {visit.isOverdueReturnApproved ? (
+              <p className="text-[11px] text-sub">
+                Đã xác nhận sử dụng bộ kết quả cận lâm sàng hiện hành
+                {visit.overdueReturnApprovalNote ? `: "${visit.overdueReturnApprovalNote}"` : '.'}
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <p>
+                  Lượt khám kết luận đã quá thời hạn quy định. Bác sĩ phụ trách cần xác nhận giá trị
+                  chuyên môn của các kết quả cận lâm sàng hiện tại trước khi xác nhận chẩn đoán, kê
+                  đơn phát hành hoặc hoàn tất lượt khám.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    aria-label="Nhận định chuyên môn xác nhận giá trị kết quả quá hạn"
+                    value={overdueApprovalReason}
+                    onChange={(e) => {
+                      clearErrors();
+                      setOverdueApprovalReason(e.target.value);
+                    }}
+                    placeholder="Nhập nhận định chuyên môn xác nhận sử dụng kết quả quá hạn..."
+                    className="flex-1 rounded-lg border border-border bg-white px-3 py-1.5 text-xs text-ink focus:border-primary focus:outline-none"
+                  />
+                  {onApproveOverdueResults && hasWritePermission ? (
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      loading={isApprovingOverdueResults}
+                      onClick={async () => {
+                        const trimmed = overdueApprovalReason.trim();
+                        if (trimmed.length < 3) {
+                          setValidationError(
+                            'Vui lòng nhập nhận định chuyên môn xác nhận kết quả quá hạn (tối thiểu 3 ký tự).',
+                          );
+                          return;
+                        }
+                        await onApproveOverdueResults({
+                          reason: trimmed,
+                          expectedStateVersion: expectedStateVersion ?? null,
+                        });
+                      }}
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Xác nhận giá trị kết quả quá hạn</span>
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

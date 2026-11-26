@@ -11,6 +11,7 @@ import type {
   ConsultationPrescriptionSummaryDto,
   CreateDiagnosticOrderRequest,
   DiagnosticServiceCatalogItemDto,
+  RevalidateDiagnosticOrderRequest,
 } from '../types/consultation-workspace.types';
 
 export interface ConsultationDiagnosisAndOrdersCardProps {
@@ -35,6 +36,11 @@ export interface ConsultationDiagnosisAndOrdersCardProps {
   ) => Promise<boolean | void> | boolean | void;
   onClearDiagnosticOrderSubmitError?: () => void;
   onOpenVietQrModal?: () => void;
+  onRevalidateDiagnosticOrder?: (
+    orderIdOrCode: number | string,
+    payload: RevalidateDiagnosticOrderRequest,
+  ) => Promise<boolean | void> | boolean | void;
+  isRevalidatingDiagnosticOrder?: boolean;
 }
 
 export function ConsultationDiagnosisAndOrdersCard({
@@ -57,6 +63,8 @@ export function ConsultationDiagnosisAndOrdersCard({
   onSubmitDiagnosticOrder,
   onClearDiagnosticOrderSubmitError,
   onOpenVietQrModal,
+  onRevalidateDiagnosticOrder,
+  isRevalidatingDiagnosticOrder = false,
 }: ConsultationDiagnosisAndOrdersCardProps) {
   return (
     <Card>
@@ -210,6 +218,8 @@ export function ConsultationDiagnosisAndOrdersCard({
           onSubmitOrder={onSubmitDiagnosticOrder}
           onClearSubmitError={onClearDiagnosticOrderSubmitError}
           onOpenVietQrModal={onOpenVietQrModal}
+          onRevalidateOrder={onRevalidateDiagnosticOrder}
+          isRevalidatingOrder={isRevalidatingDiagnosticOrder}
         />
       </CardContent>
     </Card>

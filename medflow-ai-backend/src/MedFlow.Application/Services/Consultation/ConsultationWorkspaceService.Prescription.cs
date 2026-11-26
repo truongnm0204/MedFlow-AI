@@ -102,6 +102,18 @@ public sealed partial class ConsultationWorkspaceService
                 "Chưa thể phát hành đơn thuốc chính thức (ISSUED) khi kết quả cận lâm sàng bắt buộc chưa hoàn tất. Bác sĩ có thể lưu đơn thuốc nháp (DRAFT).");
         }
 
+        if (validated.IssueImmediately)
+        {
+            await EnsureOverdueReturnApprovedIfRequiredAsync(
+                visit,
+                doctorAccess,
+                inlineApprovalNote: null,
+                nowLocal,
+                nowUtc,
+                ipAddress,
+                ct);
+        }
+
         if (currentQueueStatus != "IN_PROGRESS" ||
             visitStatus is not ("IN_PROGRESS" or "IN_CONSULTATION" or "SERVING"))
         {

@@ -189,6 +189,20 @@ public sealed class Phase02AuthFamilyPhiSignalRPostgresTests(TestWebAppFactory f
         return (user.Id, staff.Id, token);
     }
 
+    private async Task<long> CreateIsolatedDepartmentAsync(long hospitalId, string suffix)
+    {
+        var dept = new Department
+        {
+            HospitalId = hospitalId,
+            DepartmentCode = $"P2D-{suffix}".ToUpperInvariant(),
+            Name = $"Khoa Kiểm Thử P2 {suffix}",
+            IsActive = true,
+        };
+        Db.Departments.Add(dept);
+        await Db.SaveChangesAsync();
+        return dept.Id;
+    }
+
     // ── BUG-P2-03: Durable OTP Attempts Under Concurrency & Single-Use Anti-Replay ──
 
     [Fact]
@@ -421,7 +435,7 @@ public sealed class Phase02AuthFamilyPhiSignalRPostgresTests(TestWebAppFactory f
     {
         var suffix = Guid.NewGuid().ToString("N")[..6];
         var hospitalId = (await Db.Hospitals.AsNoTracking().OrderBy(h => h.Id).FirstAsync()).Id;
-        var deptId = (await Db.Departments.AsNoTracking().Where(d => d.HospitalId == hospitalId).Select(d => d.Id).FirstAsync());
+        var deptId = await CreateIsolatedDepartmentAsync(hospitalId, $"gp{suffix}");
 
         var room = new HospitalRoom
         {
@@ -860,7 +874,7 @@ public sealed class Phase02AuthFamilyPhiSignalRPostgresTests(TestWebAppFactory f
 
         // Seed a visit for patient so all 3 devices can join SignalR VisitPaymentGroup
         var hospitalId = (await Db.Hospitals.AsNoTracking().OrderBy(h => h.Id).FirstAsync()).Id;
-        var deptId = (await Db.Departments.AsNoTracking().Where(d => d.HospitalId == hospitalId).Select(d => d.Id).FirstAsync());
+        var deptId = await CreateIsolatedDepartmentAsync(hospitalId, $"ln{suffix}");
         var room = new HospitalRoom
         {
             HospitalId = hospitalId,
@@ -1018,7 +1032,7 @@ public sealed class Phase02AuthFamilyPhiSignalRPostgresTests(TestWebAppFactory f
     {
         var suffix = Guid.NewGuid().ToString("N")[..6];
         var hospitalId = (await Db.Hospitals.AsNoTracking().OrderBy(h => h.Id).FirstAsync()).Id;
-        var deptId = (await Db.Departments.AsNoTracking().Where(d => d.HospitalId == hospitalId).Select(d => d.Id).FirstAsync());
+        var deptId = await CreateIsolatedDepartmentAsync(hospitalId, $"ph{suffix}");
         var (_, staffId, _) = await CreateStaffTokenAsync("DIAGNOSTIC_STAFF", hospitalId, $"dg{suffix}");
 
         var (callerUser, callerPatient, callerTokens) = await CreateVerifiedPatientSessionAsync($"phi-caller-{suffix}");

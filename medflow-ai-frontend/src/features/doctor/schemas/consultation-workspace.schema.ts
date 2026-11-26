@@ -465,6 +465,10 @@ export function createCompleteVisitSchema(referenceDateIso?: string) {
     completionNote: clinicalTextFieldSchema('Ghi chú hoàn tất lượt khám', 500),
     confirmNoPrescription: z.boolean().nullable().optional(),
     closeUndecidedOptionalOrders: z.boolean().nullable().optional(),
+    overdueReturnApprovalNote: clinicalTextFieldSchema(
+      'Ghi chú xác nhận chuyên môn kết quả cận lâm sàng quá hạn',
+      500,
+    ),
     expectedStateVersion: z
       .number()
       .int('Phiên bản trạng thái phải là số nguyên.')

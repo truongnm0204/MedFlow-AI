@@ -521,6 +521,12 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
 
                 if (targetStatus == "IN_PROGRESS")
                 {
+                    var postLockPolicy = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(_db, hospitalId, nowUtc, ct);
+                    if (MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsOrderExpiredForExecution(order, postLockPolicy.DiagnosticOrderValidityDays, nowLocal))
+                    {
+                        throw new ConflictException(MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.ExpiredOrderDoctorApprovalRequiredMessage);
+                    }
+
                     var postLockVisitQueues = await _db.QueueEntries
                         .AsNoTracking()
                         .Where(q =>
@@ -1149,6 +1155,17 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
         if (resultState?.IsResultFinalized == true)
         {
             throw new ConflictException($"Kết quả cận lâm sàng của phiếu chỉ định '{orderCode}' đã được khóa cuối (FINALIZED), không thể cập nhật trạng thái thực hiện.");
+        }
+
+        if (targetStatus == "IN_PROGRESS")
+        {
+            var nowUtcForPolicy = _timeProvider.GetUtcNow().UtcDateTime;
+            var nowLocalForPolicy = AppointmentBookingRules.GetVietnamNow(_timeProvider);
+            var crossDayPolicy = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(_db, hospitalId, nowUtcForPolicy, ct);
+            if (MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsOrderExpiredForExecution(order, crossDayPolicy.DiagnosticOrderValidityDays, nowLocalForPolicy))
+            {
+                throw new ConflictException(MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.ExpiredOrderDoctorApprovalRequiredMessage);
+            }
         }
 
         QueueEntry? linkedQueueEntry = null;
@@ -3537,19 +3554,7 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
     }
 
     private static QueueServicePoint? ResolveDiagnosticServicePointForCatalog(long serviceId, IReadOnlyList<QueueServicePoint> hospitalDiagPoints)
-    {
-        var serviceSpecific = hospitalDiagPoints
-            .Where(sp => sp.ServiceId == serviceId)
-            .OrderBy(sp => sp.IsActive == false ? 1 : 0)
-            .ThenBy(sp => sp.Id)
-            .FirstOrDefault();
-        if (serviceSpecific is not null)
-        {
-            return serviceSpecific;
-        }
-
-        return hospitalDiagPoints.Where(sp => sp.IsActive != false).OrderBy(sp => sp.ServiceId.HasValue ? 1 : 0).ThenBy(sp => sp.Id).FirstOrDefault();
-    }
+        => DiagnosticServicePointResolver.TryResolveCompatibleForCatalog(serviceId, null, hospitalDiagPoints);
 
     private static string ResolveDiagnosticCategory(Service service, IReadOnlyDictionary<long, Specialty> specialtiesById)
     {

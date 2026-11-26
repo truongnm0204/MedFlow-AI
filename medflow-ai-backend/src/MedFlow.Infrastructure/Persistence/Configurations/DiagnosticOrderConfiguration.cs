@@ -65,6 +65,28 @@ public class DiagnosticOrderConfiguration : IEntityTypeConfiguration<DiagnosticO
             .HasColumnName("ordered_at")
             .HasColumnType("timestamp without time zone");
 
+        builder.Property(x => x.ValidityExtendedUntil)
+            .HasColumnName("validity_extended_until")
+            .HasColumnType("timestamp without time zone");
+
+        builder.Property(x => x.RevalidatedByDoctorId)
+            .HasColumnName("revalidated_by_doctor_id");
+
+        builder.Property(x => x.RevalidatedAt)
+            .HasColumnName("revalidated_at")
+            .HasColumnType("timestamp without time zone");
+
+        builder.Property(x => x.RevalidationNote)
+            .HasColumnName("revalidation_note");
+
+        builder.HasIndex(x => x.RevalidatedByDoctorId)
+            .HasDatabaseName("ix_diagnostic_orders_revalidated_by_doctor_id");
+
+        builder.HasOne<Doctor>()
+            .WithMany()
+            .HasForeignKey(x => x.RevalidatedByDoctorId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasOne<Visit>()
             .WithMany()
             .HasForeignKey(x => x.VisitId)

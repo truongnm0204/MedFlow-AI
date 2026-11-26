@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
+  approveOverdueReturnResults,
   completeVisit,
   createDiagnosticOrder,
   fetchConsultationWorkspace,
@@ -9,11 +10,13 @@ import {
   openConsultationWorkspace,
   recordClinicalExamination,
   recordDiagnosis,
+  revalidateDiagnosticOrder,
   reviewDiagnosticResults,
   savePrescription,
   searchIcd10Codes,
 } from '../api/consultation-workspace.api';
 import type {
+  ApproveOverdueReturnResultsRequest,
   CompleteVisitRequest,
   ConsultationWorkspaceResponseDto,
   CreateDiagnosticOrderRequest,
@@ -21,6 +24,7 @@ import type {
   OpenConsultationWorkspaceRequest,
   RecordClinicalExaminationRequest,
   RecordDiagnosisRequest,
+  RevalidateDiagnosticOrderRequest,
 } from '../types/consultation-workspace.types';
 import type { ReviewDiagnosticResultsRequest } from '../types/review-diagnostic.types';
 
@@ -302,6 +306,63 @@ export function useReviewDiagnosticResults() {
       });
       void queryClient.invalidateQueries({
         queryKey: ['doctor', 'dashboard'],
+      });
+    },
+  });
+}
+
+export interface RevalidateDiagnosticOrderVariables {
+  idOrCode: string;
+  orderIdOrCode: number | string;
+  payload: RevalidateDiagnosticOrderRequest;
+}
+
+export function useRevalidateDiagnosticOrder() {
+  const queryClient = useQueryClient();
+
+  return useMutation<ConsultationWorkspaceResponseDto, unknown, RevalidateDiagnosticOrderVariables>(
+    {
+      mutationFn: ({ idOrCode, orderIdOrCode, payload }) =>
+        revalidateDiagnosticOrder(idOrCode, orderIdOrCode, payload),
+      onSuccess: (data, variables) => {
+        const normalized = variables.idOrCode.trim();
+        queryClient.setQueryData(['doctor', 'consultation', normalized], data);
+        if (data.visit?.visitCode) {
+          queryClient.setQueryData(['doctor', 'consultation', data.visit.visitCode], data);
+        }
+        void queryClient.invalidateQueries({
+          queryKey: ['doctor', 'consultation', normalized, 'diagnostic-orders'],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: ['doctor', 'assigned-queue'],
+        });
+      },
+    },
+  );
+}
+
+export interface ApproveOverdueReturnResultsVariables {
+  idOrCode: string;
+  payload: ApproveOverdueReturnResultsRequest;
+}
+
+export function useApproveOverdueReturnResults() {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    ConsultationWorkspaceResponseDto,
+    unknown,
+    ApproveOverdueReturnResultsVariables
+  >({
+    mutationFn: ({ idOrCode, payload }) => approveOverdueReturnResults(idOrCode, payload),
+    onSuccess: (data, variables) => {
+      const normalized = variables.idOrCode.trim();
+      queryClient.setQueryData(['doctor', 'consultation', normalized], data);
+      if (data.visit?.visitCode) {
+        queryClient.setQueryData(['doctor', 'consultation', data.visit.visitCode], data);
+      }
+      void queryClient.invalidateQueries({
+        queryKey: ['doctor', 'assigned-queue'],
       });
     },
   });

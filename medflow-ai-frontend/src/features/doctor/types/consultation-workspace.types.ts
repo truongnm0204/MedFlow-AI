@@ -82,6 +82,10 @@ export interface ConsultationVisitSummaryDto {
   presenceState?: string | null;
   isCrossDayVisit?: boolean;
   isOverdueForReview?: boolean;
+  isReturnOverdue?: boolean;
+  isOverdueReturnApproved?: boolean;
+  overdueReturnApprovedAt?: string | null;
+  overdueReturnApprovalNote?: string | null;
 }
 
 export interface ConsultationPatientSummaryDto {
@@ -127,6 +131,7 @@ export interface ConsultationQueueContextDto {
   calledAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  coordinationPurpose?: string | null;
 }
 
 export interface ConsultationVitalSignsDto {
@@ -232,6 +237,10 @@ export interface ConsultationDiagnosticOrderDto {
   paymentStatus?: string | null;
   deferredUntilDate?: string | null;
   isExpiredForReview?: boolean;
+  validityExpiresAt?: string | null;
+  validityExtendedUntil?: string | null;
+  revalidatedAt?: string | null;
+  revalidationNote?: string | null;
 }
 
 export interface DiagnosticServiceCatalogItemDto {
@@ -387,6 +396,20 @@ export interface CompleteVisitRequest {
   expectedStateVersion?: number | null;
   expectedRevisionNo?: number | null;
   closeUndecidedOptionalOrders?: boolean | null;
+  overdueReturnApprovalNote?: string | null;
+}
+
+export interface RevalidateDiagnosticOrderRequest {
+  reason: string;
+  extendDays?: number | null;
+  validityExtendedUntil?: string | null;
+  transitionToAwaitingResults?: boolean | null;
+  expectedStateVersion?: number | null;
+}
+
+export interface ApproveOverdueReturnResultsRequest {
+  reason: string;
+  expectedStateVersion?: number | null;
 }
 
 export interface Icd10CatalogItemDto {

@@ -30,6 +30,7 @@ import type {
   DiagnosticOrderPriority,
   DiagnosticServiceCatalogItemDto,
   DiagnosticServiceCategory,
+  RevalidateDiagnosticOrderRequest,
 } from '../types/consultation-workspace.types';
 
 export interface DraftDiagnosticOrderItem {
@@ -64,6 +65,11 @@ export interface ConsultationDiagnosticOrderPanelProps {
   ) => Promise<boolean | void> | boolean | void;
   onClearSubmitError?: () => void;
   onOpenVietQrModal?: () => void;
+  onRevalidateOrder?: (
+    orderIdOrCode: number | string,
+    payload: RevalidateDiagnosticOrderRequest,
+  ) => Promise<boolean | void> | boolean | void;
+  isRevalidatingOrder?: boolean;
 }
 
 const CATEGORY_META: Record<
@@ -136,10 +142,15 @@ export function ConsultationDiagnosticOrderPanel({
   onSubmitOrder,
   onClearSubmitError,
   onOpenVietQrModal,
+  onRevalidateOrder,
+  isRevalidatingOrder = false,
 }: ConsultationDiagnosticOrderPanelProps) {
   const isOrderable = canCreateOrder && hasOrderPermission;
 
   const [internalFormOpen, setInternalFormOpen] = useState(false);
+  const [revalidatingOrderId, setRevalidatingOrderId] = useState<number | null>(null);
+  const [revalidationReason, setRevalidationReason] = useState('');
+  const [revalidationLocalError, setRevalidationLocalError] = useState<string | null>(null);
   const isFormOpen = controlledIsFormOpen ?? internalFormOpen;
 
   const setFormOpen = (nextOpen: boolean) => {
@@ -445,6 +456,11 @@ export function ConsultationDiagnosticOrderPanel({
                     <Badge tone={catMeta.tone}>{catMeta.label}</Badge>
                     <Badge tone={prioMeta.tone}>{prioMeta.label}</Badge>
                     <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
+                    {order.isExpiredForReview ? (
+                      <Badge tone="amber">Quá hạn hiệu lực</Badge>
+                    ) : order.validityExtendedUntil ? (
+                      <Badge tone="emerald">Đã gia hạn hiệu lực</Badge>
+                    ) : null}
                   </div>
                 </div>
 
@@ -478,6 +494,95 @@ export function ConsultationDiagnosticOrderPanel({
                     <span>{order.instruction}</span>
                   </div>
                 )}
+
+                {order.status !== 'CANCELLED' &&
+                  order.status !== 'COMPLETED' &&
+                  (order.isExpiredForReview || order.selectionStatus === 'REVIEW_REQUIRED') &&
+                  hasOrderPermission &&
+                  onRevalidateOrder && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 space-y-2 text-[11px]">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-semibold text-amber-900">
+                          {order.isExpiredForReview
+                            ? 'Phiếu chỉ định đã quá thời hạn hiệu lực — cần Bác sĩ xác nhận gia hạn trước khi thực hiện CLS.'
+                            : 'Phiếu chỉ định đang chờ Bác sĩ xem xét lại (REVIEW_REQUIRED).'}
+                        </span>
+                        {revalidatingOrderId !== order.orderId ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setRevalidatingOrderId(order.orderId);
+                              setRevalidationReason('');
+                              setRevalidationLocalError(null);
+                            }}
+                          >
+                            <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                            <span>Gia hạn hiệu lực chỉ định</span>
+                          </Button>
+                        ) : null}
+                      </div>
+
+                      {revalidatingOrderId === order.orderId ? (
+                        <div className="space-y-2 pt-1">
+                          <input
+                            type="text"
+                            aria-label={`Lý do gia hạn chỉ định ${order.orderCode}`}
+                            value={revalidationReason}
+                            onChange={(e) => {
+                              setRevalidationReason(e.target.value);
+                              if (revalidationLocalError) setRevalidationLocalError(null);
+                            }}
+                            placeholder="Nhập nhận định chuyên môn để gia hạn hiệu lực chỉ định..."
+                            className="w-full rounded-lg border border-border bg-white px-3 py-1.5 text-xs text-ink focus:border-primary focus:outline-none"
+                          />
+                          {revalidationLocalError ? (
+                            <p className="text-rose-700 font-semibold">{revalidationLocalError}</p>
+                          ) : null}
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setRevalidatingOrderId(null);
+                                setRevalidationLocalError(null);
+                              }}
+                            >
+                              Hủy
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="primary"
+                              size="sm"
+                              loading={isRevalidatingOrder}
+                              onClick={async () => {
+                                const trimmed = revalidationReason.trim();
+                                if (trimmed.length < 3) {
+                                  setRevalidationLocalError(
+                                    'Vui lòng nhập lý do chuyên môn gia hạn (tối thiểu 3 ký tự).',
+                                  );
+                                  return;
+                                }
+                                const ok = await onRevalidateOrder(order.orderId, {
+                                  reason: trimmed,
+                                  expectedStateVersion: expectedStateVersion ?? null,
+                                });
+                                if (ok !== false) {
+                                  setRevalidatingOrderId(null);
+                                  setRevalidationReason('');
+                                }
+                              }}
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                              <span>Xác nhận gia hạn hiệu lực</span>
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                 {(order.isResultFinalized ||
                   Boolean(order.resultText) ||
                   Boolean(order.conclusion)) && (

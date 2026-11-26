@@ -903,14 +903,16 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
     }
 
     // =========================================================================
-    // CD-T11, CD-T12 & CD-T13:
-    // - CD-T11: Unexecuted order > 7 days flags IsOverdueForReview = true, blocks Resume with
-    //   409 [DIAGNOSTIC_ORDER_EXPIRED_REVIEW_REQUIRED] without cancelling/refunding, and allows
-    //   Resume when ConfirmOverdueOverride = true + Notes.
+    // CD-T11, CD-T12 & CD-T13 (Updated for Stage E1 / ADR-0061 BUG-04):
+    // - CD-T11: Unexecuted order > 7 days flags IsOverdueForReview = true, rejects Resume with
+    //   409 [DIAGNOSTIC_ORDER_EXPIRED_DOCTOR_APPROVAL_REQUIRED] (even with ConfirmOverdueOverride = true)
+    //   without cancelling/refunding, coordinates CLINICAL_REVIEW (0 extra exam charge), and resumes after
+    //   Doctor calls POST .../diagnostic-orders/{orderId}/revalidate.
     // - CD-T12: Order that already completed UC42 (Status = COMPLETED) NEVER expires even at D+19 (> 7 days),
     //   and UC43 result entry still succeeds.
     // - CD-T13: Return consultation > 7 days after ReadyForReturnAt flags RETURN_CONSULTATION_OVERDUE_REVIEW,
-    //   keeps Visit open (auto_cancel_overdue_visit = false), and allows override Resume.
+    //   keeps Visit open, allows Reception RESULT_CONCLUSION enqueue without override, and requires Doctor
+    //   POST .../approve-overdue-results before CONFIRMED diagnosis / ISSUED prescription / CompleteVisit.
     // =========================================================================
 
     [Fact]
@@ -977,7 +979,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             Assert.Equal("ORDERED", labCtx.OrderStatus); // Never auto-cancelled!
             Assert.False(imgCtx.IsExpiredForReview); // CD-T12: COMPLETED UC42 order never expires!
 
-            // CD-T11: Resume overdue Lab without override -> 409 [DIAGNOSTIC_ORDER_EXPIRED_REVIEW_REQUIRED]
+            // CD-T11 (Stage E1): Resume overdue Lab without OR with Reception ConfirmOverdueOverride -> 409 [DIAGNOSTIC_ORDER_EXPIRED_DOCTOR_APPROVAL_REQUIRED]
             var blockedOverdueRes = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/reception/visits/{visit.VisitCode}/resume",
                 new ResumeCrossDayVisitRequestDto(Target: "DIAGNOSTIC", DiagnosticOrderId: labOrderId),
@@ -985,17 +987,59 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                 RoleNames.Reception));
             Assert.Equal(HttpStatusCode.Conflict, blockedOverdueRes.StatusCode);
             Assert.Contains(
-                "DIAGNOSTIC_ORDER_EXPIRED_REVIEW_REQUIRED",
+                "DIAGNOSTIC_ORDER_EXPIRED_DOCTOR_APPROVAL_REQUIRED",
                 await blockedOverdueRes.Content.ReadAsStringAsync(),
                 StringComparison.Ordinal);
 
-            // Resume overdue Lab WITH ConfirmOverdueOverride = true + clinical note -> 200 OK, zero re-charge
-            var overrideResume = await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(
+            var blockedReceptionOverrideRes = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/reception/visits/{visit.VisitCode}/resume",
+                new ResumeCrossDayVisitRequestDto(
+                    Target: "DIAGNOSTIC",
+                    DiagnosticOrderId: labOrderId,
+                    ConfirmOverdueOverride: true,
+                    Notes: "Lễ tân thử ghi đè quá hạn"),
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            Assert.Equal(HttpStatusCode.Conflict, blockedReceptionOverrideRes.StatusCode);
+            Assert.Contains(
+                "DIAGNOSTIC_ORDER_EXPIRED_DOCTOR_APPROVAL_REQUIRED",
+                await blockedReceptionOverrideRes.Content.ReadAsStringAsync(),
+                StringComparison.Ordinal);
+
+            // Reception coordinates same-visit CLINICAL_REVIEW (zero extra examination charge)
+            var clinicalReviewResume = await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(
+                Target: "RETURN_CONSULTATION",
+                CoordinationPurpose: QueueCoordinationPurposes.ClinicalReview,
+                Notes: "Điều phối gặp bác sĩ đánh giá lại chỉ định quá hạn"));
+            Assert.Single(clinicalReviewResume.ResumedQueues);
+            Assert.Equal(1, await Db.VisitCharges.AsNoTracking().CountAsync(c => c.VisitId == visit.Id && c.ChargeType == "EXAMINATION"));
+
+            var callReviewRes = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/queue/service-points/{fx.ExamSp1Id}/call-next",
+                new { notes = "Gọi bệnh nhân vào đánh giá lại chỉ định quá hạn" },
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            Assert.Equal(HttpStatusCode.OK, callReviewRes.StatusCode);
+
+            await using (var reviewScope = _app.Services.CreateAsyncScope())
+            {
+                var consultSvc = reviewScope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
+                await consultSvc.OpenWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
+            }
+
+            var revalidateRes = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/doctor/consultation/{visit.VisitCode}/diagnostic-orders/{labOrderId}/revalidate",
+                new RevalidateDiagnosticOrderRequest(Reason: "Tình trạng lâm sàng ổn định, gia hạn hiệu lực xét nghiệm máu không thu lại phí"),
+                fx.Doctor1UserId,
+                RoleNames.Doctor));
+            var revalidateBody = await revalidateRes.Content.ReadAsStringAsync();
+            Assert.True(revalidateRes.StatusCode == HttpStatusCode.OK, revalidateBody);
+
+            var revalidatedResume = await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(
                 Target: "DIAGNOSTIC",
                 DiagnosticOrderId: labOrderId,
-                ConfirmOverdueOverride: true,
-                Notes: "Bác sĩ xác nhận gia hạn hiệu lực chỉ định xét nghiệm máu không thu lại phí"));
-            Assert.Single(overrideResume.ResumedQueues);
+                Notes: "Tiếp tục thực hiện CLS sau khi bác sĩ gia hạn hiệu lực"));
+            Assert.Single(revalidatedResume.ResumedQueues);
             await ExecuteDiagnosticOrderThroughUc42Async(fx, labOrderCode);
             await FinalizeDiagnosticResultAsync(fx.DiagStaff1UserId, labOrderCode, "Men gan AST/ALT bình thường.", "Bình thường.");
 
@@ -1011,7 +1055,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             var visitAfterUc43 = await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id);
             Assert.NotNull(visitAfterUc43.ReadyForReturnAt);
 
-            // CD-T13: Advance another 9 days to D+28 (2026-12-08, > 7 days after ReadyForReturnAt)
+            // CD-T13 (Stage E1): Advance another 9 days to D+28 (2026-12-08, > 7 days after ReadyForReturnAt)
             _clock.SetVietnamLocalTime(new DateTime(2026, 12, 8, 9, 0, 0, DateTimeKind.Unspecified));
             var ctxD28Res = await _client.SendAsync(AuthedGet(
                 $"/api/v1/reception/visits/{visit.VisitCode}/resume-context",
@@ -1023,22 +1067,42 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             Assert.True(ctxD28.IsOverdueForReview);
             Assert.Contains("RETURN_CONSULTATION_OVERDUE_REVIEW", ctxD28.OverdueReviewReasons);
 
-            // Override required for overdue return consultation
-            var blockedReturnRes = await _client.SendAsync(AuthedPostJson(
-                $"/api/v1/reception/visits/{visit.VisitCode}/resume",
-                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"),
-                fx.Reception1UserId,
-                RoleNames.Reception));
-            Assert.Equal(HttpStatusCode.Conflict, blockedReturnRes.StatusCode);
-            Assert.Contains(
-                "RETURN_CONSULTATION_OVERDUE_REVIEW_REQUIRED",
-                await blockedReturnRes.Content.ReadAsStringAsync(),
-                StringComparison.Ordinal);
-
+            // Reception coordinates RESULT_CONCLUSION without clinical override; Doctor must approve overdue snapshot before conclusion
             await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(
                 Target: "RETURN_CONSULTATION",
-                ConfirmOverdueOverride: true,
-                Notes: "Bác sĩ đồng ý tiếp nhận khám kết luận quá hạn 9 ngày"));
+                Notes: "Tiếp nhận khám kết luận quá hạn để bác sĩ xác nhận giá trị lâm sàng"));
+
+            var callOverdueReturnRes = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/queue/service-points/{fx.ExamSp1Id}/call-next",
+                new { notes = "Gọi bệnh nhân khám kết luận quá hạn" },
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            Assert.Equal(HttpStatusCode.OK, callOverdueReturnRes.StatusCode);
+
+            await using (var overdueScope = _app.Services.CreateAsyncScope())
+            {
+                var consultSvc = overdueScope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
+                await consultSvc.OpenWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
+
+                var blockedDx = await Assert.ThrowsAsync<ConflictException>(() =>
+                    consultSvc.RecordDiagnosisAsync(
+                        fx.Doctor1UserId,
+                        visit.VisitCode!,
+                        new RecordDiagnosisRequest(
+                            PrimaryIcd10Code: fx.Icd10Code,
+                            ClinicalConclusion: "Thử xác nhận chẩn đoán khi chưa duyệt kết quả quá hạn",
+                            IsConfirmed: true)));
+                Assert.Contains("OVERDUE_RETURN_DOCTOR_APPROVAL_REQUIRED", blockedDx.Message, StringComparison.Ordinal);
+            }
+
+            var approveOverdueRes = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/doctor/consultation/{visit.VisitCode}/approve-overdue-results",
+                new ApproveOverdueReturnResultsRequest(Reason: "Kết quả xét nghiệm và siêu âm vẫn còn giá trị lâm sàng để kết luận"),
+                fx.Doctor1UserId,
+                RoleNames.Doctor));
+            var approveOverdueBody = await approveOverdueRes.Content.ReadAsStringAsync();
+            Assert.True(approveOverdueRes.StatusCode == HttpStatusCode.OK, approveOverdueBody);
+
             await CallNextAndCompleteVisitAsync(fx, visit.VisitCode!, fx.ExamSp1Id, fx.Doctor1UserId);
         }
         finally

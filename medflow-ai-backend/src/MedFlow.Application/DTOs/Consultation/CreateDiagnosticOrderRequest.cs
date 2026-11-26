@@ -96,7 +96,11 @@ public sealed record ConsultationDiagnosticOrderDto(
     string? ChargeStatus = null,
     string? PaymentStatus = null,
     DateOnly? DeferredUntilDate = null,
-    bool IsExpiredForReview = false);
+    bool IsExpiredForReview = false,
+    DateTime? ValidityExpiresAt = null,
+    DateTime? ValidityExtendedUntil = null,
+    DateTime? RevalidatedAt = null,
+    string? RevalidationNote = null);
 
 public sealed record DiagnosticServiceCatalogItemDto(
     long ServiceId,
@@ -145,3 +149,14 @@ public sealed record CancelConsultationDiagnosticOrderRequest(
     int? ExpectedStateVersion = null,
     bool? VoluntarySkipByPatient = null,
     bool? ReconciliationRequired = null);
+
+public sealed record RevalidateDiagnosticOrderRequest(
+    string Reason,
+    int? ExtendDays = null,
+    DateTime? ValidityExtendedUntil = null,
+    bool? TransitionToAwaitingResults = null,
+    int? ExpectedStateVersion = null);
+
+public sealed record ApproveOverdueReturnResultsRequest(
+    string Reason,
+    int? ExpectedStateVersion = null);

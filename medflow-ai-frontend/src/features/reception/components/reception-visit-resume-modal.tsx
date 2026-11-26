@@ -89,7 +89,6 @@ export function ReceptionVisitResumeModal({
 
   const [mode, setMode] = useState<ModalMode>('DIAGNOSTIC');
   const [selectedOrderById, setSelectedOrderById] = useState<Record<number, boolean>>({});
-  const [confirmOverdueOverride, setConfirmOverdueOverride] = useState(false);
   const [resumeNotes, setResumeNotes] = useState('');
   const [selectedReassignDoctorId, setSelectedReassignDoctorId] = useState<string>('');
 
@@ -113,7 +112,11 @@ export function ReceptionVisitResumeModal({
   const assignableDoctorsQuery = useQuery({
     queryKey: ['reception-visit-assignable-doctors', activeVisitKey],
     queryFn: () => fetchAssignableDoctorsForResumeApi(activeVisitKey),
-    enabled: open && Boolean(activeVisitKey) && mode === 'RETURN_CONSULTATION' && Boolean(ctx),
+    enabled:
+      open &&
+      Boolean(activeVisitKey) &&
+      (mode === 'RETURN_CONSULTATION' || mode === 'DIAGNOSTIC') &&
+      Boolean(ctx),
     retry: false,
   });
 
@@ -124,21 +127,28 @@ export function ReceptionVisitResumeModal({
         const isEligibleOrder =
           order.selectionStatus === 'ACCEPTED' &&
           (order.orderStatus === 'ORDERED' || order.orderStatus === 'CONFIRMED') &&
-          order.isPaymentSettled;
+          order.isPaymentSettled &&
+          !order.isExpiredForReview;
         if (!isEligibleOrder) return false;
         const explicit = selectedOrderById[order.orderId];
-        return explicit !== undefined
-          ? explicit
-          : order.canResumeToday && !order.isExpiredForReview;
+        return explicit !== undefined ? explicit : order.canResumeToday;
       })
       .map((order) => order.orderId);
   }, [ctx, selectedOrderById]);
 
-  const hasSelectedExpiredOrder = useMemo(() => {
-    if (!ctx || selectedResumeOrderIds.length === 0) return false;
-    const selectedSet = new Set(selectedResumeOrderIds);
-    return ctx.diagnosticOrders.some((o) => selectedSet.has(o.orderId) && o.isExpiredForReview);
-  }, [ctx, selectedResumeOrderIds]);
+  const hasExpiredOrReviewRequiredOrders = useMemo(() => {
+    if (!ctx) return false;
+    return ctx.diagnosticOrders.some(
+      (o) =>
+        o.orderStatus !== 'CANCELLED' &&
+        (o.isExpiredForReview || o.selectionStatus === 'REVIEW_REQUIRED'),
+    );
+  }, [ctx]);
+
+  const isReturnWindowOverdue = useMemo(() => {
+    if (!ctx) return false;
+    return ctx.overdueReviewReasons.includes('RETURN_CONSULTATION_OVERDUE_REVIEW');
+  }, [ctx]);
 
   const selectedDeferOrderIds = useMemo<number[]>(() => {
     if (!ctx) return [];
@@ -148,11 +158,16 @@ export function ReceptionVisitResumeModal({
   }, [ctx, deferOrderById]);
 
   const resumeMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (coordinationPurpose?: 'RESULT_CONCLUSION' | 'CLINICAL_REVIEW') => {
       if (!ctx) throw new Error('Chưa tải ngữ cảnh lượt khám.');
-      const target = mode === 'RETURN_CONSULTATION' ? 'RETURN_CONSULTATION' : 'DIAGNOSTIC';
+      const target =
+        coordinationPurpose === 'CLINICAL_REVIEW' || mode === 'RETURN_CONSULTATION'
+          ? 'RETURN_CONSULTATION'
+          : 'DIAGNOSTIC';
+      const effectivePurpose =
+        target === 'RETURN_CONSULTATION' ? (coordinationPurpose ?? 'RESULT_CONCLUSION') : null;
       const sortedOrders = [...selectedResumeOrderIds].sort((a, b) => a - b);
-      const cacheKey = `${ctx.visitCode}:${target}:${sortedOrders.join(',')}:${selectedReassignDoctorId}`;
+      const cacheKey = `${ctx.visitCode}:${target}:${effectivePurpose ?? 'NONE'}:${sortedOrders.join(',')}:${selectedReassignDoctorId}`;
       if (!idempotencyKeysRef.current[cacheKey]) {
         idempotencyKeysRef.current[cacheKey] = generateIdempotencyKey();
       }
@@ -168,7 +183,7 @@ export function ReceptionVisitResumeModal({
           target === 'RETURN_CONSULTATION' && reassignIdNum && Number.isFinite(reassignIdNum)
             ? reassignIdNum
             : null,
-        confirmOverdueOverride: confirmOverdueOverride || null,
+        coordinationPurpose: effectivePurpose,
         idempotencyKey: idempotencyKeysRef.current[cacheKey],
         notes: resumeNotes.trim() || null,
       });
@@ -220,18 +235,10 @@ export function ReceptionVisitResumeModal({
     if (mode === 'DIAGNOSTIC') {
       if (selectedResumeOrderIds.length === 0) {
         setLocalValidationError(
-          'Vui lòng chọn ít nhất một chỉ định cận lâm sàng đã thanh toán để tiếp tục thực hiện.',
+          hasExpiredOrReviewRequiredOrders
+            ? 'Chỉ định cận lâm sàng đã quá hạn hiệu lực không thể tự gia hạn tại quầy Tiếp đón. Vui lòng điều phối bệnh nhân gặp bác sĩ đánh giá lại (CLINICAL_REVIEW).'
+            : 'Vui lòng chọn ít nhất một chỉ định cận lâm sàng hợp lệ đã thanh toán để tiếp tục thực hiện.',
         );
-        return;
-      }
-      if (hasSelectedExpiredOrder && !confirmOverdueOverride) {
-        setLocalValidationError(
-          'Chỉ định được chọn đã quá hạn hiệu lực. Vui lòng tích xác nhận gia hạn và nhập ghi chú lý do.',
-        );
-        return;
-      }
-      if (hasSelectedExpiredOrder && !resumeNotes.trim()) {
-        setLocalValidationError('Vui lòng nhập ghi chú lý do xác nhận tiếp tục chỉ định quá hạn.');
         return;
       }
     } else if (mode === 'RETURN_CONSULTATION') {
@@ -250,7 +257,26 @@ export function ReceptionVisitResumeModal({
     }
 
     try {
-      await resumeMutation.mutateAsync();
+      await resumeMutation.mutateAsync(
+        mode === 'RETURN_CONSULTATION' ? 'RESULT_CONCLUSION' : undefined,
+      );
+    } catch {
+      /* Hiển thị qua resumeMutation.error */
+    }
+  };
+
+  const handleCoordinateClinicalReview = async () => {
+    setLocalValidationError(null);
+    if (!ctx) return;
+    if (ctx.isAssignedDoctorActive === false && !selectedReassignDoctorId.trim()) {
+      setLocalValidationError(
+        'Bác sĩ phụ trách ban đầu đang nghỉ trực / tạm ngưng. Vui lòng chọn bác sĩ thay thế trước khi điều phối đánh giá lại.',
+      );
+      return;
+    }
+
+    try {
+      await resumeMutation.mutateAsync('CLINICAL_REVIEW');
     } catch {
       /* Hiển thị qua resumeMutation.error */
     }
@@ -535,7 +561,8 @@ export function ReceptionVisitResumeModal({
                       const selectable =
                         order.selectionStatus === 'ACCEPTED' &&
                         (order.orderStatus === 'ORDERED' || order.orderStatus === 'CONFIRMED') &&
-                        order.isPaymentSettled;
+                        order.isPaymentSettled &&
+                        !order.isExpiredForReview;
                       const checked = selectedResumeOrderIds.includes(order.orderId);
 
                       return (
@@ -585,19 +612,63 @@ export function ReceptionVisitResumeModal({
                   </div>
                 )}
 
-                {hasSelectedExpiredOrder ? (
-                  <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 space-y-2 text-xs">
-                    <label className="flex items-center gap-2 font-semibold text-amber-900">
-                      <input
-                        type="checkbox"
-                        checked={confirmOverdueOverride}
-                        onChange={(e) => setConfirmOverdueOverride(e.target.checked)}
-                        className="h-4 w-4 rounded border-amber-400 text-primary"
+                {hasExpiredOrReviewRequiredOrders ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 space-y-2.5 text-xs text-amber-900">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle
+                        className="mt-0.5 h-4 w-4 shrink-0 text-amber-700"
+                        aria-hidden="true"
                       />
-                      <span>
-                        Xác nhận bác sĩ / quản lý đồng ý gia hạn thực hiện chỉ định quá hạn
-                      </span>
-                    </label>
+                      <div className="space-y-1">
+                        <p className="font-bold text-navy">
+                          Yêu cầu Bác sĩ đánh giá lại chuyên môn (không cho phép Lễ tân tự gia hạn)
+                        </p>
+                        <p>
+                          Phiếu chỉ định cận lâm sàng quá hạn hiệu lực hoặc đang ở trạng thái{' '}
+                          <span className="font-mono font-semibold">REVIEW_REQUIRED</span> vẫn được
+                          bảo lưu trạng thái thanh toán nhưng cần Bác sĩ phụ trách gia hạn hoặc điều
+                          chỉnh chỉ định trên cùng lượt khám (không phát sinh thêm phí khám).
+                        </p>
+                      </div>
+                    </div>
+
+                    {ctx.isAssignedDoctorActive === false ? (
+                      <div>
+                        <label
+                          htmlFor="clinical-review-reassign-doctor"
+                          className="block text-xs font-semibold text-navy"
+                        >
+                          Chọn bác sĩ tiếp nhận đánh giá lại (bác sĩ cũ đang nghỉ trực)
+                        </label>
+                        <select
+                          id="clinical-review-reassign-doctor"
+                          value={selectedReassignDoctorId}
+                          onChange={(e) => setSelectedReassignDoctorId(e.target.value)}
+                          className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-xs text-ink focus:border-primary focus:outline-none"
+                        >
+                          <option value="">-- Chọn bác sĩ thay thế --</option>
+                          {(assignableDoctorsQuery.data ?? []).map((doc) => (
+                            <option key={doc.doctorId} value={String(doc.doctorId)}>
+                              {doc.fullName} ({doc.doctorCode})
+                              {doc.roomCode ? ` • ${doc.roomCode}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
+
+                    <div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        loading={resumeMutation.isPending}
+                        onClick={() => void handleCoordinateClinicalReview()}
+                      >
+                        <Stethoscope className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Điều phối gặp bác sĩ đánh giá lại (CLINICAL_REVIEW)</span>
+                      </Button>
+                    </div>
                   </div>
                 ) : null}
 
@@ -606,8 +677,7 @@ export function ReceptionVisitResumeModal({
                     htmlFor="resume-diag-notes"
                     className="block text-xs font-semibold text-navy"
                   >
-                    Ghi chú tiếp đón{' '}
-                    {hasSelectedExpiredOrder ? '(bắt buộc khi quá hạn)' : '(tùy chọn)'}
+                    Ghi chú tiếp đón (tùy chọn)
                   </label>
                   <textarea
                     id="resume-diag-notes"
@@ -649,6 +719,17 @@ export function ReceptionVisitResumeModal({
                       : 'Chưa đủ kết quả CLS bắt buộc'}
                   </Badge>
                 </div>
+
+                {isReturnWindowOverdue ? (
+                  <Alert tone="warning">
+                    <div className="text-xs">
+                      <strong>Khám kết luận quá thời hạn quy định:</strong> Lễ tân vẫn được phép xếp
+                      hàng để bệnh nhân gặp Bác sĩ. Bác sĩ phụ trách sẽ trực tiếp đánh giá và xác
+                      nhận giá trị chuyên môn của các kết quả cận lâm sàng trong không gian khám
+                      trước khi kết luận.
+                    </div>
+                  </Alert>
+                ) : null}
 
                 <div>
                   <label

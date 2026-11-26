@@ -2254,9 +2254,10 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
 
             // Replay identical webhook externalId
             await SendRawSePayWebhookAsync(payNewWhId, payNew.PaymentCode, 200_000m, $"FT-E2E08-NEW-{fx.Suffix}");
-            // Replay different externalId on already-PAID PAY-NEW
+            // Replay different externalId on already-PAID PAY-NEW -> DUPLICATE_RECONCILE while preserving PAID intact
             var secondOnPaidOutcome = await PostSePayWebhookAsync(payNew.PaymentCode, 200_000m, $"FT-E2E08-NEW-DUP-{fx.Suffix}");
-            Assert.Equal(PaymentGatewayOutcomes.AlreadyPaid, secondOnPaidOutcome);
+            Assert.Equal(SePayWebhookService.DuplicateChargeReconcileOutcome, secondOnPaidOutcome);
+            Assert.Equal(PaymentStatuses.Paid, (await Db.Payments.AsNoTracking().SingleAsync(p => p.Id == payNew.PaymentId)).Status);
 
             Db.ChangeTracker.Clear();
             Assert.Equal(

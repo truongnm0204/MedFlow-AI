@@ -179,6 +179,54 @@ public sealed class DoctorConsultationController : ControllerBase
             ct));
 
     /// <summary>
+    /// POST /api/v1/doctor/consultation/{idOrCode}/diagnostic-orders/{orderIdOrCode}/revalidate — Bác sĩ phụ trách gia hạn hiệu lực chuyên môn cho phiếu chỉ định cận lâm sàng quá hạn (ADR-0061 / BUG-04).
+    /// </summary>
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/diagnostic-orders/{orderIdOrCode}/revalidate")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/diagnostic-orders/{orderIdOrCode}/revalidate")]
+    [HttpPost("/api/v1/visits/{idOrCode}/diagnostic-orders/{orderIdOrCode}/revalidate")]
+    [ProducesResponseType<ConsultationWorkspaceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ConsultationWorkspaceResponseDto>> RevalidateDiagnosticOrder(
+        string idOrCode,
+        string orderIdOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] RevalidateDiagnosticOrderRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.RevalidateDiagnosticOrderAsync(
+            GetUserId(),
+            idOrCode,
+            orderIdOrCode,
+            request!,
+            GetIp(),
+            ct));
+
+    /// <summary>
+    /// POST /api/v1/doctor/consultation/{idOrCode}/approve-overdue-results — Bác sĩ phụ trách xác nhận giá trị chuyên môn của tập kết quả cận lâm sàng hiện hành khi khám kết luận quá hạn (ADR-0061 / BUG-04).
+    /// </summary>
+    [HttpPost("/api/v1/doctor/consultation/{idOrCode}/approve-overdue-results")]
+    [HttpPost("/api/v1/doctor/visits/{idOrCode}/approve-overdue-results")]
+    [HttpPost("/api/v1/visits/{idOrCode}/approve-overdue-results")]
+    [ProducesResponseType<ConsultationWorkspaceResponseDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ConsultationWorkspaceResponseDto>> ApproveOverdueReturnResults(
+        string idOrCode,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] ApproveOverdueReturnResultsRequest? request = null,
+        CancellationToken ct = default)
+        => Ok(await _consultationWorkspaceService.ApproveOverdueReturnResultsAsync(
+            GetUserId(),
+            idOrCode,
+            request!,
+            GetIp(),
+            ct));
+
+    /// <summary>
     /// GET /api/v1/doctor/consultation/{idOrCode}/diagnostic-results — Xem danh sách và lịch sử phiên bản kết quả cận lâm sàng của lượt khám (UC35 / #114).
     /// </summary>
     [HttpGet("/api/v1/doctor/consultation/{idOrCode}/diagnostic-results")]

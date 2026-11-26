@@ -342,6 +342,18 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
 
         if (candidateDto is null)
         {
+            var expiredBlockedExists = bucket.Entries
+                .Where(e => e.Status is "READY" or "WAITING")
+                .Where(e => normalizedCategory is null || string.Equals(e.Category, normalizedCategory, StringComparison.OrdinalIgnoreCase))
+                .Any(e => e.IneligibleReason != null &&
+                          e.IneligibleReason.Contains("DIAGNOSTIC_ORDER_EXPIRED_DOCTOR_APPROVAL_REQUIRED", StringComparison.Ordinal));
+
+            if (expiredBlockedExists)
+            {
+                throw new ConflictException(
+                    MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.ExpiredOrderDoctorApprovalRequiredMessage);
+            }
+
             var unpaidBlockedExists = bucket.Entries
                 .Where(e => e.Status is "READY" or "WAITING")
                 .Where(e => normalizedCategory is null || string.Equals(e.Category, normalizedCategory, StringComparison.OrdinalIgnoreCase))
@@ -1091,6 +1103,23 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
             {
                 throw new ConflictException(
                     "Dữ liệu hàng đợi cận lâm sàng đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
+            }
+
+            if (targetStatus is "READY" or "CALLED" or "IN_PROGRESS" && trackedOrder is not null)
+            {
+                var postLockPolicy = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(
+                    _db,
+                    staffAccess.Hospital.Id,
+                    nowUtc,
+                    ct);
+                if (MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsOrderExpiredForExecution(
+                        trackedOrder,
+                        postLockPolicy.DiagnosticOrderValidityDays,
+                        nowLocal))
+                {
+                    throw new ConflictException(
+                        MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.ExpiredOrderDoctorApprovalRequiredMessage);
+                }
             }
 
             if (targetStatus is "CALLED" or "IN_PROGRESS")
@@ -1853,6 +1882,12 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
             paymentGatesByOrderId[hospOrder.Id] = await _settlementReader.CheckDiagnosticOrderEligibilityAsync(hospOrder.Id, ct);
         }
 
+        var crossDayPolicy = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(
+            _db,
+            staffAccess.Hospital.Id,
+            _timeProvider.GetUtcNow().UtcDateTime,
+            ct);
+
         // Build unsorted item DTOs
         var preliminaryItems = new List<DiagnosticQueueEntryItemDto>(rawCandidates.Count);
         foreach (var candidate in rawCandidates)
@@ -1879,7 +1914,9 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                 doctorsById,
                 staffById,
                 resultsByOrderId,
-                paymentGate);
+                paymentGate,
+                crossDayPolicy.DiagnosticOrderValidityDays,
+                nowLocal);
 
             if (explicitDate.HasValue)
             {
@@ -1939,7 +1976,9 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
         IReadOnlyDictionary<long, Doctor> doctorsById,
         IReadOnlyDictionary<long, Staff> staffById,
         IReadOnlyDictionary<long, DiagnosticResult> resultsByOrderId,
-        VisitChargeGateResult? paymentGate = null)
+        VisitChargeGateResult? paymentGate = null,
+        int diagnosticOrderValidityDays = 7,
+        DateTime? nowLocal = null)
     {
         var visitId = qe?.VisitId ?? order?.VisitId ?? 0;
         visitsById.TryGetValue(visitId, out var visit);
@@ -2113,6 +2152,26 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
 
             allowedTargetStatuses = allowedTargetStatuses
                 .Where(t => t is not ("CALLED" or "IN_PROGRESS" or "COMPLETED"))
+                .ToList();
+        }
+
+        var effectiveNowLocal = nowLocal ?? todayLocal.ToDateTime(TimeOnly.MinValue);
+        if (order is not null &&
+            MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsOrderExpiredForExecution(
+                order,
+                diagnosticOrderValidityDays,
+                effectiveNowLocal) &&
+            !IsTerminalVisitStatus(visitStatus))
+        {
+            isEligible = false;
+            ineligibleReason = MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.ExpiredOrderDoctorApprovalRequiredMessage;
+            if (string.IsNullOrWhiteSpace(effectiveBlockedReason))
+            {
+                effectiveBlockedReason = "DIAGNOSTIC_ORDER_EXPIRED_DOCTOR_APPROVAL_REQUIRED";
+            }
+
+            allowedTargetStatuses = allowedTargetStatuses
+                .Where(t => t is not ("READY" or "CALLED" or "IN_PROGRESS" or "COMPLETED"))
                 .ToList();
         }
 
@@ -3796,24 +3855,7 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
     private static QueueServicePoint? ResolveDiagnosticServicePointForService(
         long serviceId,
         IReadOnlyList<QueueServicePoint> hospitalDiagPoints)
-    {
-        var specific = hospitalDiagPoints
-            .Where(sp => sp.ServiceId == serviceId)
-            .OrderBy(sp => sp.IsActive == false ? 1 : 0)
-            .ThenBy(sp => sp.Id)
-            .FirstOrDefault();
-
-        if (specific is not null)
-        {
-            return specific;
-        }
-
-        return hospitalDiagPoints
-            .Where(sp => sp.IsActive != false)
-            .OrderBy(sp => sp.ServiceId.HasValue ? 1 : 0)
-            .ThenBy(sp => sp.Id)
-            .FirstOrDefault();
-    }
+        => DiagnosticServicePointResolver.TryResolveCompatibleForCatalog(serviceId, null, hospitalDiagPoints);
 
     private static string ResolveDiagnosticCategory(
         Service service,

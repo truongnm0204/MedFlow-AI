@@ -299,9 +299,11 @@ public sealed class SePayWebhookServiceTests : IDisposable
 
         var result = await _service.HandleAsync(Request(content: payment.PaymentCode, amount: 100_000m));
 
-        Assert.Equal(PaymentGatewayOutcomes.AlreadyPaid, result.Outcome);
+        Assert.Equal(SePayWebhookService.DuplicateChargeReconcileOutcome, result.Outcome);
         var stored = await _db.Payments.FindAsync(payment.Id);
-        Assert.Equal(paidAt, stored!.PaidAt);
+        Assert.Equal(PaymentStatuses.Paid, stored!.Status);
+        Assert.Equal(paidAt, stored.PaidAt);
+        Assert.Single(_db.AuditLogs.Where(a => a.Action == SePayWebhookService.LateDuplicateAuditAction));
     }
 
     [Fact]

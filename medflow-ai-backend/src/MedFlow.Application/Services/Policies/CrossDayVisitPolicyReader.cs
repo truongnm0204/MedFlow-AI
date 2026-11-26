@@ -116,15 +116,24 @@ public static class CrossDayVisitPolicyReader
                 defaults.AutoCancelOverdueVisit));
     }
 
+    public const string ExpiredOrderDoctorApprovalRequiredMessage =
+        "[DIAGNOSTIC_ORDER_EXPIRED_DOCTOR_APPROVAL_REQUIRED] Phiếu chỉ định cận lâm sàng đã quá thời hạn hiệu lực. Cần bác sĩ phụ trách đánh giá lại hoặc gia hạn hiệu lực trước khi thực hiện.";
+
     public static DateTime? ComputeOrderValidityExpiresAt(DiagnosticOrder order, int validityDays)
     {
         ArgumentNullException.ThrowIfNull(order);
-        if (!order.OrderedAt.HasValue || validityDays <= 0)
+        DateTime? baseExpiry = order.OrderedAt.HasValue && validityDays > 0
+            ? order.OrderedAt.Value.AddDays(validityDays)
+            : null;
+
+        if (order.ValidityExtendedUntil.HasValue)
         {
-            return null;
+            return baseExpiry.HasValue && baseExpiry.Value > order.ValidityExtendedUntil.Value
+                ? baseExpiry.Value
+                : order.ValidityExtendedUntil.Value;
         }
 
-        return order.OrderedAt.Value.AddDays(validityDays);
+        return baseExpiry;
     }
 
     /// <summary>

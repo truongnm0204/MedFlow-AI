@@ -25,4 +25,5 @@ public class QueueEntry
     public DateTime? BackfilledAt { get; set; }
     public string? BackfillReason { get; set; }
     public string? IdempotencyKey { get; set; }
+    public string? CoordinationPurpose { get; set; }
 }

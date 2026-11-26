@@ -87,7 +87,9 @@ describe('VisitPaymentPage', () => {
     expect(await screen.findByText('120.000 VNĐ')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /Tạo mã QR thanh toán/i }));
 
-    expect(post).toHaveBeenCalledWith(`/patients/visits/${visitCode}/payments/qr`, {});
+    expect(post).toHaveBeenCalledWith(`/patients/visits/${visitCode}/payments/qr`, {
+      idempotencyKey: expect.any(String),
+    });
     expect(get).toHaveBeenCalledWith(`/patients/visits/${visitCode}/charges`);
     expect(await screen.findByText('Quét mã để chuyển khoản')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Mã QR thanh toán MF5' })).toBeInTheDocument();
@@ -233,6 +235,7 @@ describe('VisitPaymentPage', () => {
 
     expect(post).toHaveBeenCalledWith(`/patients/visits/${visitCode}/payments/qr`, {
       visitChargeId: 202,
+      idempotencyKey: expect.any(String),
     });
     expect(await screen.findByRole('img', { name: 'Mã QR thanh toán MF66' })).toBeInTheDocument();
   });
@@ -350,6 +353,7 @@ describe('VisitPaymentPage', () => {
 
     expect(post).toHaveBeenCalledWith(`/patients/visits/${visitCode}/payments/qr`, {
       visitChargeIds: [201, 202],
+      idempotencyKey: expect.any(String),
     });
     expect(await screen.findByRole('img', { name: 'Mã QR thanh toán MF77' })).toBeInTheDocument();
     expect(screen.getByText('Chi tiết gộp (2 dịch vụ)')).toBeInTheDocument();
@@ -430,5 +434,47 @@ describe('VisitPaymentPage', () => {
       `/patients/visits/${visitCode}/diagnostic-orders/911/decline`,
       { reason: 'Bệnh nhân chọn không thực hiện dịch vụ tùy chọn.' },
     );
+  });
+
+  it('hides QR image when response is EXPIRED/CANCELLED or PAID and rotates idempotencyKey on regeneration', async () => {
+    const user = userEvent.setup();
+    renderPage(baseCharges);
+
+    const post = vi
+      .spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({
+        data: {
+          ...qrResponse,
+          paymentId: 80,
+          paymentCode: 'MF80',
+          status: 'CANCELLED',
+          qrPayload: '',
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          ...qrResponse,
+          paymentId: 81,
+          paymentCode: 'MF81',
+          status: 'PENDING',
+          qrPayload: '0002010102123854-FRESH',
+        },
+      });
+
+    await user.click(await screen.findByRole('button', { name: /Tạo mã QR thanh toán/i }));
+
+    // Closed QR response MUST NOT render any QR image and MUST prompt fresh generation
+    expect(await screen.findByText('Mã QR đã hết hạn')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /Mã QR thanh toán/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Tạo mã QR mới' }));
+
+    expect(await screen.findByRole('img', { name: 'Mã QR thanh toán MF81' })).toBeInTheDocument();
+    expect(post).toHaveBeenCalledTimes(2);
+    const firstBody = post.mock.calls[0]?.[1] as { idempotencyKey?: string };
+    const secondBody = post.mock.calls[1]?.[1] as { idempotencyKey?: string };
+    expect(firstBody?.idempotencyKey).toBeTruthy();
+    expect(secondBody?.idempotencyKey).toBeTruthy();
+    expect(secondBody?.idempotencyKey).not.toBe(firstBody?.idempotencyKey);
   });
 });

@@ -137,6 +137,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         {
             Payment? added = null;
             VisitCharge? materializedCharge = null;
+            var txCommitted = false;
             try
             {
                 // ADR-0060 strict lock order: visits (09) -> diagnostic_orders (12) -> visit_charges (15) -> payments (16) -> payment_allocations (16b)
@@ -148,6 +149,26 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                 var lockedVisit = await _db.Visits.AsNoTracking()
                     .FirstOrDefaultAsync(v => v.Id == visitId, ct)
                     ?? throw new NotFoundException(VisitPaymentAccess.VisitNotFoundMessage);
+
+                var verifiedActor = await VisitPaymentAccess.RevalidateActorPostLockAsync(
+                    _db,
+                    actorUserId,
+                    lockedVisit,
+                    _timeProvider,
+                    ForbiddenMessage,
+                    [
+                        PermissionCodes.PaymentView,
+                        PermissionCodes.PatientCheckin,
+                        PermissionCodes.PaymentCollect,
+                        PermissionCodes.HospitalConfig,
+                    ],
+                    ct: ct);
+                actor = new QrActorContext(
+                    verifiedActor.IsPatient,
+                    verifiedActor.IsPatient ? null : verifiedActor.VisitHospitalId,
+                    verifiedActor.Doctor,
+                    verifiedActor.OwnedPatientIds);
+                hospitalId = verifiedActor.VisitHospitalId;
 
                 var nowLocal = Clock();
 
@@ -164,8 +185,18 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                             existingByKey,
                             explicitChargeIds,
                             nowLocal,
+                            async token =>
+                            {
+                                txCommitted = true;
+                                await tx.CommitAsync(token);
+                            },
                             ct);
-                        await tx.CommitAsync(ct);
+                        if (!txCommitted)
+                        {
+                            txCommitted = true;
+                            await tx.CommitAsync(ct);
+                        }
+
                         return replayDto;
                     }
                 }
@@ -436,7 +467,8 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             {
                 Detach(added);
                 DetachCharge(materializedCharge);
-                await SafeRollback(tx, ct);
+                if (!txCommitted)
+                    await SafeRollback(tx, ct);
                 throw;
             }
         }
@@ -502,12 +534,16 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         return new QrActorContext(true, null, null, owned);
     }
 
+    public const string QrAttemptExpiredMessage =
+        "[QR_ATTEMPT_EXPIRED] Mã QR thanh toán của yêu cầu này đã hết hạn hiệu lực. Vui lòng tạo yêu cầu thanh toán mới.";
+
     private async Task<GenerateQrPaymentResponseDto> ValidateAndBuildIdempotentQrReplayAsync(
         Visit visit,
         long hospitalId,
         Payment existingPayment,
         IReadOnlyList<long>? requestedChargeIds,
         DateTime nowLocal,
+        Func<CancellationToken, Task> commitBeforeThrowAsync,
         CancellationToken ct)
     {
         if (existingPayment.VisitId != visit.Id ||
@@ -531,10 +567,110 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             throw new ConflictException(IdempotencyMismatchMessage);
         }
 
+        var normalizedStatus = string.IsNullOrWhiteSpace(existingPayment.Status)
+            ? PendingStatus
+            : existingPayment.Status.Trim().ToUpperInvariant();
+
+        if (normalizedStatus is PaymentStatuses.Cancelled
+            or PaymentStatuses.Expired
+            or SePayWebhookService.MismatchPaymentStatus)
+        {
+            await commitBeforeThrowAsync(ct);
+            throw new ConflictException(
+                $"[QR_ATTEMPT_CLOSED] Yêu cầu mã QR này đã đóng ({normalizedStatus}) và không còn hiệu lực thanh toán. Vui lòng tạo mã QR mới.");
+        }
+
+        if (normalizedStatus == PendingStatus)
+        {
+            var expiresAtLocal = (existingPayment.CreatedAt ?? nowLocal).AddMinutes(_qrOptions.PendingExpiryMinutes);
+            if (expiresAtLocal <= nowLocal)
+            {
+                var trackedPayment = await _db.Payments.FirstOrDefaultAsync(p => p.Id == existingPayment.Id, ct);
+                var trackedAllocs = await PaymentAllocationLookup.TryLoadTrackedForVisitAsync(_db, visit.Id, ct);
+
+                if (trackedPayment is not null)
+                    trackedPayment.Status = PaymentStatuses.Expired;
+
+                foreach (var pa in trackedAllocs.Where(pa =>
+                             pa.PaymentId == existingPayment.Id &&
+                             string.Equals(pa.Status, PaymentAllocationStatuses.Pending, StringComparison.OrdinalIgnoreCase)))
+                {
+                    pa.Status = PaymentAllocationStatuses.Expired;
+                }
+
+                await _db.SaveChangesAsync(ct);
+                await commitBeforeThrowAsync(ct);
+                throw new ConflictException(QrAttemptExpiredMessage);
+            }
+        }
+        else if (normalizedStatus != PaymentStatuses.Paid)
+        {
+            await commitBeforeThrowAsync(ct);
+            throw new ConflictException(
+                $"[QR_ATTEMPT_CLOSED] Yêu cầu mã QR này đã đóng ({normalizedStatus}) và không còn hiệu lực thanh toán. Vui lòng tạo mã QR mới.");
+        }
+
         var charges = await _db.VisitCharges.AsNoTracking()
             .Where(c => c.VisitId == visit.Id && existingChargeIds.Contains(c.Id))
             .OrderBy(c => c.Id)
             .ToListAsync(ct);
+
+        if (normalizedStatus == PendingStatus)
+        {
+            var allPayments = await _db.Payments.AsNoTracking()
+                .Where(p => p.VisitId == visit.Id)
+                .OrderBy(p => p.Id)
+                .ToListAsync(ct);
+            var (effectiveAllocs, _) = PaymentAllocationLookup.BuildEffectiveAllocations(visit.Id, allPayments, persistedAllocs);
+            var targetChargeSet = existingChargeIds.ToHashSet();
+
+            var targetInvalidOrSettled =
+                IsBlocked(visit.Status) ||
+                (existingChargeIds.Count > 0 && charges.Count != existingChargeIds.Count) ||
+                charges.Any(c =>
+                {
+                    var cs = string.IsNullOrWhiteSpace(c.Status)
+                        ? VisitChargeStatuses.Active
+                        : c.Status.Trim().ToUpperInvariant();
+                    return cs != VisitChargeStatuses.Active;
+                }) ||
+                effectiveAllocs.Any(a =>
+                    targetChargeSet.Contains(a.VisitChargeId) &&
+                    string.Equals(a.Status, PaymentAllocationStatuses.Paid, StringComparison.OrdinalIgnoreCase));
+
+            if (!targetInvalidOrSettled)
+            {
+                foreach (var c in charges)
+                {
+                    if (await IsDiagnosticOrderIneligibleForPendingQrAsync(c, ct))
+                    {
+                        targetInvalidOrSettled = true;
+                        break;
+                    }
+                }
+            }
+
+            if (targetInvalidOrSettled)
+            {
+                var trackedPayment = await _db.Payments.FirstOrDefaultAsync(p => p.Id == existingPayment.Id, ct);
+                var trackedAllocs = await PaymentAllocationLookup.TryLoadTrackedForVisitAsync(_db, visit.Id, ct);
+
+                if (trackedPayment is not null)
+                    trackedPayment.Status = PaymentStatuses.Cancelled;
+
+                foreach (var pa in trackedAllocs.Where(pa =>
+                             pa.PaymentId == existingPayment.Id &&
+                             string.Equals(pa.Status, PaymentAllocationStatuses.Pending, StringComparison.OrdinalIgnoreCase)))
+                {
+                    pa.Status = PaymentAllocationStatuses.Cancelled;
+                }
+
+                await _db.SaveChangesAsync(ct);
+                await commitBeforeThrowAsync(ct);
+                throw new ConflictException(
+                    "[QR_ATTEMPT_CLOSED] Yêu cầu mã QR này đã đóng (CANCELLED) do khoản phí mục tiêu không còn hiệu lực hoặc đã được tất toán. Vui lòng tạo mã QR mới.");
+            }
+        }
 
         var assessment = await VisitChargeAssessor.AssessAsync(_db, _timeProvider, visit, ct);
         var account = await VietQrAccountPolicyReader.ReadAsync(
@@ -546,6 +682,9 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             .FirstOrDefaultAsync(h => h.Id == hospitalId, ct);
         var merchant = VietQrPayloadBuilder.MerchantName(hospital?.Name);
         var amount = existingPayment.Amount ?? charges.Sum(c => c.UnitPrice ?? 0m);
+        var issueKind = normalizedStatus == PaymentStatuses.Paid
+            ? QrPaymentIssueKind.AlreadyPaid
+            : QrPaymentIssueKind.Reused;
 
         return ToDto(
             visit,
@@ -553,10 +692,32 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             account,
             merchant,
             amount,
-            QrPaymentIssueKind.Reused,
+            issueKind,
             charges,
             existingAllocs,
             assessment.Lines);
+    }
+
+    private async Task<bool> IsDiagnosticOrderIneligibleForPendingQrAsync(VisitCharge charge, CancellationToken ct)
+    {
+        if (!charge.DiagnosticOrderId.HasValue)
+            return false;
+
+        try
+        {
+            var order = await _db.DiagnosticOrders.AsNoTracking()
+                .FirstOrDefaultAsync(o => o.Id == charge.DiagnosticOrderId.Value, ct);
+
+            return order is null ||
+                   string.Equals(order.Status?.Trim(), "CANCELLED", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(order.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.Declined, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(order.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.SkippedAfterPaid, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(order.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.ReviewRequired, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (NotSupportedException)
+        {
+            return false;
+        }
     }
 
     private async Task<(List<VisitCharge> TargetCharges, decimal TotalAmount)> ResolveTargetChargesAndAmountAsync(
@@ -938,7 +1099,11 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         IReadOnlyList<VisitChargeLineDto> assessedLines)
     {
         var code = payment.PaymentCode ?? "";
-        var payload = VietQrPayloadBuilder.Build(account, amount, code, merchantName);
+        var nowLocal = Clock();
+        var expiresAtLocal = (payment.CreatedAt ?? nowLocal).AddMinutes(_qrOptions.PendingExpiryMinutes);
+        var payload = IsPending(payment.Status) && expiresAtLocal > nowLocal && !string.IsNullOrWhiteSpace(code)
+            ? VietQrPayloadBuilder.Build(account, amount, code, merchantName)
+            : string.Empty;
         var lineByChargeId = assessedLines
             .Where(l => l.ChargeId.HasValue)
             .ToDictionary(l => l.ChargeId!.Value);
@@ -975,7 +1140,6 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                     PaymentAllocationLookup.MapPaymentStatusToAllocationStatus(payment.Status));
             }).ToList();
 
-        var expiresAtLocal = (payment.CreatedAt ?? Clock()).AddMinutes(_qrOptions.PendingExpiryMinutes);
         var singleChargeId = charges.Count == 1 ? charges[0].Id : payment.VisitChargeId;
 
         return new GenerateQrPaymentResponseDto(

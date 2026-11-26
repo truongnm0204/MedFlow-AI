@@ -429,4 +429,81 @@ describe('Stage C Cross-Day Visit Lifecycle UI', () => {
     expect(screen.getByText('Hẹn ngày 2026-11-28')).toBeInTheDocument();
     expect(screen.getByText('Tạm hoãn qua ngày')).toBeInTheDocument();
   });
+
+  it('never renders a Reception overdue-override checkbox for expired diagnostic orders and coordinates CLINICAL_REVIEW instead', async () => {
+    const user = userEvent.setup();
+    const expiredOrderContext: VisitResumeContextResponseDto = {
+      ...mockContext,
+      isReadyForReturn: false,
+      isAssignedDoctorActive: true,
+      overdueReviewReasons: [
+        'DIAGNOSTIC_ORDER_OVERDUE_REVIEW',
+        'RETURN_CONSULTATION_OVERDUE_REVIEW',
+      ],
+      diagnosticOrders: [
+        {
+          orderId: 799,
+          orderCode: 'DIA-202611-0799',
+          serviceName: 'Xét nghiệm sinh hóa gan',
+          requiredForConclusion: true,
+          selectionStatus: 'ACCEPTED',
+          orderStatus: 'CONFIRMED',
+          isPaymentSettled: true,
+          deferredUntilDate: null,
+          validityExpiresAt: '2026-11-20T08:15:00',
+          isExpiredForReview: true,
+          canResumeToday: false,
+        },
+      ],
+    };
+
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: expiredOrderContext });
+    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: {
+        visitId: 42,
+        visitCode,
+        checkedInAt: expiredOrderContext.checkedInAt,
+        visitStatus: 'RETURN_CONSULTATION',
+        presenceState: 'PRESENT',
+        lastPresentDate: '2026-11-26',
+        lastResumedAt: '2026-11-26T09:15:00',
+        target: 'RETURN_CONSULTATION',
+        coordinationPurpose: 'CLINICAL_REVIEW',
+        isIdempotentReplay: false,
+        assignedDoctorId: 11,
+        assignedDoctorName: expiredOrderContext.assignedDoctorName,
+        examinationRoomId: 101,
+        resumedQueues: [],
+        closedPriorDayQueueCount: 0,
+      } satisfies ResumeCrossDayVisitResponseDto,
+    });
+
+    renderWithProviders(
+      <ReceptionVisitResumeModal open initialVisitCode={visitCode} onClose={vi.fn()} />,
+    );
+
+    expect(await screen.findByText('DIA-202611-0799')).toBeInTheDocument();
+    // Reception clinical override checkbox MUST NOT exist
+    expect(
+      screen.queryByText(/Xác nhận bác sĩ \/ quản lý đồng ý gia hạn thực hiện chỉ định quá hạn/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Chọn tiếp tục DIA-202611-0799')).toBeDisabled();
+
+    await user.click(
+      screen.getByRole('button', {
+        name: /Điều phối gặp bác sĩ đánh giá lại \(CLINICAL_REVIEW\)/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(postSpy).toHaveBeenCalledWith(
+        `/reception/visits/${visitCode}/resume`,
+        expect.objectContaining({
+          target: 'RETURN_CONSULTATION',
+          coordinationPurpose: 'CLINICAL_REVIEW',
+          idempotencyKey: expect.any(String),
+        }),
+      );
+    });
+  });
 });

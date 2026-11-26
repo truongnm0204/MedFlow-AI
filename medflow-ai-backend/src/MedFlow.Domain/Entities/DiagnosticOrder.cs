@@ -19,4 +19,8 @@ public class DiagnosticOrder
     public long? ConfirmedByStaffId { get; set; }
     public DateTime? ConfirmedAt { get; set; }
     public DateTime? OrderedAt { get; set; }
+    public DateTime? ValidityExtendedUntil { get; set; }
+    public long? RevalidatedByDoctorId { get; set; }
+    public DateTime? RevalidatedAt { get; set; }
+    public string? RevalidationNote { get; set; }
 }

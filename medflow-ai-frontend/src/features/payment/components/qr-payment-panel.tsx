@@ -41,8 +41,10 @@ export function QrPaymentPanel({
   transferContent,
   expiresAtLabel,
 }: QrPaymentPanelProps) {
-  const isPending = status === 'PENDING';
-  const isPaid = status === 'PAID';
+  const normalizedStatus = status?.trim().toUpperCase() ?? '';
+  const isPending = normalizedStatus === 'PENDING';
+  const isPaid = normalizedStatus === 'PAID';
+  const canRenderQrImage = isPending && Boolean(qrPayload?.trim());
 
   const handleCopy = async () => {
     try {
@@ -80,7 +82,7 @@ export function QrPaymentPanel({
           </div>
         ) : null}
 
-        {qrPayload ? (
+        {canRenderQrImage && qrPayload ? (
           <div className="flex justify-center">
             <div
               role="img"
@@ -90,11 +92,13 @@ export function QrPaymentPanel({
               <QRCodeSVG value={qrPayload} size={220} level="M" />
             </div>
           </div>
-        ) : (
+        ) : !isPaid ? (
           <Alert tone="warning">
-            Chưa tải được ảnh QR cho mã này. Dùng số tài khoản và nội dung bên dưới để chuyển khoản.
+            {isPending
+              ? 'Chưa tải được ảnh QR cho mã này. Dùng số tài khoản và nội dung bên dưới để chuyển khoản.'
+              : 'Mã QR này đã đóng hoặc hết hạn hiệu lực. Vui lòng tạo mã VietQR mới để thanh toán.'}
           </Alert>
-        )}
+        ) : null}
 
         <div>
           {bankBin ? <InfoRow label="Ngân hàng (BIN)" value={bankBin} /> : null}

@@ -101,4 +101,21 @@ public interface IConsultationWorkspaceService
         string? ipAddress = null,
         CancellationToken ct = default)
         => throw new NotSupportedException("CancelDiagnosticOrderAsync is not implemented by this test double.");
+
+    Task<ConsultationWorkspaceResponseDto> RevalidateDiagnosticOrderAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        string orderIdOrCode,
+        RevalidateDiagnosticOrderRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+        => throw new NotSupportedException("RevalidateDiagnosticOrderAsync is not implemented by this test double.");
+
+    Task<ConsultationWorkspaceResponseDto> ApproveOverdueReturnResultsAsync(
+        long actorUserId,
+        string visitIdOrCode,
+        ApproveOverdueReturnResultsRequest request,
+        string? ipAddress = null,
+        CancellationToken ct = default)
+        => throw new NotSupportedException("ApproveOverdueReturnResultsAsync is not implemented by this test double.");
 }

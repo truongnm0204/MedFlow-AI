@@ -320,6 +320,7 @@ describe('Phase 07 — Optional vs Mandatory CLS Selection, Reconciliation Isola
 
     expect(postSpy).toHaveBeenCalledWith(`/patients/visits/${visitCode}/payments/qr`, {
       visitChargeIds: [7002, 7003],
+      idempotencyKey: expect.stringMatching(/^qr-/),
     });
     expect(await screen.findByRole('img', { name: 'Mã QR thanh toán MF501' })).toBeInTheDocument();
 
@@ -346,6 +347,7 @@ describe('Phase 07 — Optional vs Mandatory CLS Selection, Reconciliation Isola
     await user.click(singleQrBtn);
     expect(postSpy).toHaveBeenCalledWith(`/patients/visits/${visitCode}/payments/qr`, {
       visitChargeId: 7002,
+      idempotencyKey: expect.stringMatching(/^qr-/),
     });
     expect(await screen.findByRole('img', { name: 'Mã QR thanh toán MF502' })).toBeInTheDocument();
     expect(getSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -513,6 +515,7 @@ describe('Phase 07 — Optional vs Mandatory CLS Selection, Reconciliation Isola
 
     expect(postSpy).toHaveBeenCalledWith(`/patients/visits/${visitCode}/payments/qr`, {
       visitChargeId: 7102,
+      idempotencyKey: expect.stringMatching(/^qr-/),
     });
     expect(await screen.findByRole('img', { name: 'Mã QR thanh toán MF99' })).toBeInTheDocument();
   });
@@ -687,6 +690,7 @@ describe('Phase 07 — Optional vs Mandatory CLS Selection, Reconciliation Isola
     await user.click(reopenBtn);
     expect(postSpy).toHaveBeenCalledWith(`/patients/visits/${visitCode}/payments/qr`, {
       visitChargeIds: [7201, 7202],
+      idempotencyKey: expect.stringMatching(/^qr-/),
     });
     expect(await screen.findByRole('img', { name: 'Mã QR thanh toán MF88' })).toBeInTheDocument();
 

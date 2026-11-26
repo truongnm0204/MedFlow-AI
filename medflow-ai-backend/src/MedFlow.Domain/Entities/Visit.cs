@@ -16,6 +16,10 @@ public class Visit
     public string PresenceState { get; set; } = "PRESENT";
     public DateTime? LastResumedAt { get; set; }
     public DateTime? ReadyForReturnAt { get; set; }
+    public long? OverdueReturnApprovedByDoctorId { get; set; }
+    public DateTime? OverdueReturnApprovedAt { get; set; }
+    public string? OverdueReturnApprovalNote { get; set; }
+    public string? OverdueReturnResultSnapshot { get; set; }
     public DateTime? CompletedAt { get; set; }
     public long? CompletedByDoctorId { get; set; }
 }

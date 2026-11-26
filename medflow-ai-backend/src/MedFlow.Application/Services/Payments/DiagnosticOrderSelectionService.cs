@@ -89,8 +89,33 @@ public sealed class DiagnosticOrderSelectionService : IDiagnosticOrderSelectionS
                     includeChargeAndPaymentLocks: true,
                     ct: ct);
 
+                if (_db is DbContext trackerCtx)
+                    trackerCtx.ChangeTracker.Clear();
+
                 var lockedVisit = await _db.Visits.FirstOrDefaultAsync(v => v.Id == visitId, ct)
                     ?? throw new NotFoundException(VisitPaymentAccess.VisitNotFoundMessage);
+
+                var verifiedActor = await VisitPaymentAccess.RevalidateActorPostLockAsync(
+                    _db,
+                    actorUserId,
+                    lockedVisit,
+                    _timeProvider,
+                    ForbiddenMessage,
+                    [
+                        PermissionCodes.PaymentView,
+                        PermissionCodes.PatientCheckin,
+                        PermissionCodes.PaymentCollect,
+                        PermissionCodes.QueueManage,
+                        PermissionCodes.HospitalConfig,
+                    ],
+                    ct: ct);
+                actor = new SelectionActor(
+                    verifiedActor.IsPatient,
+                    verifiedActor.RoleLabel,
+                    verifiedActor.IsPatient ? null : verifiedActor.VisitHospitalId,
+                    verifiedActor.Doctor,
+                    verifiedActor.OwnedPatientIds);
+                hospitalId = verifiedActor.VisitHospitalId;
 
                 EnsureVisitEditable(lockedVisit);
 
@@ -271,8 +296,33 @@ public sealed class DiagnosticOrderSelectionService : IDiagnosticOrderSelectionS
                     includeChargeAndPaymentLocks: true,
                     ct: ct);
 
+                if (_db is DbContext trackerCtx)
+                    trackerCtx.ChangeTracker.Clear();
+
                 var lockedVisit = await _db.Visits.FirstOrDefaultAsync(v => v.Id == visitId, ct)
                     ?? throw new NotFoundException(VisitPaymentAccess.VisitNotFoundMessage);
+
+                var verifiedActor = await VisitPaymentAccess.RevalidateActorPostLockAsync(
+                    _db,
+                    actorUserId,
+                    lockedVisit,
+                    _timeProvider,
+                    ForbiddenMessage,
+                    [
+                        PermissionCodes.PaymentView,
+                        PermissionCodes.PatientCheckin,
+                        PermissionCodes.PaymentCollect,
+                        PermissionCodes.QueueManage,
+                        PermissionCodes.HospitalConfig,
+                    ],
+                    ct: ct);
+                actor = new SelectionActor(
+                    verifiedActor.IsPatient,
+                    verifiedActor.RoleLabel,
+                    verifiedActor.IsPatient ? null : verifiedActor.VisitHospitalId,
+                    verifiedActor.Doctor,
+                    verifiedActor.OwnedPatientIds);
+                hospitalId = verifiedActor.VisitHospitalId;
 
                 EnsureVisitEditable(lockedVisit);
 

@@ -194,6 +194,111 @@ internal static class VisitPaymentAccess
         throw new ForbiddenException(forbiddenMessage);
     }
 
+    public static async Task<PostLockActorVerification> RevalidateActorPostLockAsync(
+        IApplicationDbContext db,
+        long actorUserId,
+        Visit lockedVisit,
+        TimeProvider time,
+        string forbiddenMessage,
+        IReadOnlyCollection<string>? allowedStaffPermissions = null,
+        string? missingRequiredPermissionMessage = null,
+        bool allowPatient = true,
+        bool allowDoctor = true,
+        CancellationToken ct = default)
+    {
+        await RequireActiveUserAsync(db, actorUserId, time, ct);
+        var (roleIds, roleCodes) = await LoadActorRolesAsync(db, actorUserId, ct);
+
+        var isReception = roleCodes.Contains(RoleNames.Reception);
+        var isHospitalAdmin = roleCodes.Contains(RoleNames.HospitalAdmin);
+        var isDoctor = roleCodes.Contains(RoleNames.Doctor);
+        var isPatient = roleCodes.Contains(RoleNames.Patient);
+
+        if (!isReception && !isHospitalAdmin && !(allowDoctor && isDoctor) && allowPatient && isPatient)
+        {
+            var owned = await LoadOwnedPatientIdsAsync(db, actorUserId, time, ct);
+            if (!owned.Contains(lockedVisit.PatientId ?? 0))
+                throw new NotFoundException(VisitNotFoundMessage);
+
+            var patientHospitalIds = await VisitHospitalResolver.CollectAsync(db, lockedVisit, ct);
+            if (patientHospitalIds.Count == 0)
+                throw new NotFoundException(VisitNotFoundMessage);
+            if (patientHospitalIds.Count > 1)
+                throw new ConflictException(HospitalConflictMessage);
+
+            return new PostLockActorVerification(true, RoleNames.Patient, patientHospitalIds.First(), null, null, owned);
+        }
+
+        var hospitalIds = await VisitHospitalResolver.CollectAsync(db, lockedVisit, ct);
+        if (hospitalIds.Count == 0)
+            throw new NotFoundException(VisitNotFoundMessage);
+        if (hospitalIds.Count > 1)
+            throw new ConflictException(HospitalConflictMessage);
+
+        var visitHospitalId = hospitalIds.First();
+
+        if (isReception || isHospitalAdmin)
+        {
+            var permSet = await LoadRolePermissionCodesAsync(db, roleIds, ct);
+            if (allowedStaffPermissions is { Count: > 0 })
+            {
+                var hasPerm = allowedStaffPermissions.Any(p => permSet.Contains(p));
+                if (!hasPerm)
+                    throw new ForbiddenException(missingRequiredPermissionMessage ?? forbiddenMessage);
+            }
+
+            var staff = await db.Staff.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.UserId == actorUserId, ct)
+                ?? throw new ForbiddenException(forbiddenMessage);
+
+            if (!string.Equals(staff.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase) ||
+                staff.HospitalId is null)
+            {
+                throw new ForbiddenException(forbiddenMessage);
+            }
+
+            var hospital = await db.Hospitals.AsNoTracking()
+                .FirstOrDefaultAsync(h => h.Id == staff.HospitalId.Value, ct)
+                ?? throw new ForbiddenException(forbiddenMessage);
+
+            if (hospital.IsActive == false)
+                throw new ForbiddenException(InactiveHospitalMessage);
+
+            if (staff.HospitalId.Value != visitHospitalId)
+                throw new ForbiddenException(forbiddenMessage);
+
+            var roleLabel = isHospitalAdmin ? RoleNames.HospitalAdmin : RoleNames.Reception;
+            return new PostLockActorVerification(false, roleLabel, visitHospitalId, staff, null, []);
+        }
+
+        if (allowDoctor && isDoctor)
+        {
+            var (staff, doctor) = await RequireActiveDoctorStaffAsync(db, actorUserId, forbiddenMessage, ct);
+            if (staff.HospitalId != visitHospitalId)
+                throw new ForbiddenException(forbiddenMessage);
+
+            await EnsureDoctorAssignedToVisitAsync(
+                db,
+                doctor,
+                lockedVisit,
+                visitHospitalId,
+                forbiddenMessage,
+                ct);
+
+            return new PostLockActorVerification(false, RoleNames.Doctor, visitHospitalId, staff, doctor, []);
+        }
+
+        throw new ForbiddenException(forbiddenMessage);
+    }
+
+    internal sealed record PostLockActorVerification(
+        bool IsPatient,
+        string RoleLabel,
+        long VisitHospitalId,
+        Staff? Staff,
+        Doctor? Doctor,
+        HashSet<long> OwnedPatientIds);
+
     public static IReadOnlyList<long>? ParseExplicitVisitChargeIds(
         long? visitChargeId,
         IReadOnlyList<long>? visitChargeIds,

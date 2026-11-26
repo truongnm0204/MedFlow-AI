@@ -737,6 +737,9 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                 }
             }
 
+            // Invalidate any prior overdue return consultation result snapshot whenever a diagnostic result version is entered/updated/verified
+            visit.OverdueReturnResultSnapshot = null;
+
             actionCode = isTwoPersonVerifyStep
                 ? DiagnosticResultVerifiedAction
                 : (isFinalized ? DiagnosticResultFinalizedAction : DiagnosticResultEnteredAction);
