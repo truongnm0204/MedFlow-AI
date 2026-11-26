@@ -1237,6 +1237,39 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                     .OrderByDescending(q => q.Id)
                     .FirstOrDefault();
 
+                // Cross-day return (re)resume: a return ticket left open on a PRIOR day (e.g. an ongoing/overdue
+                // discussion carried overnight) must be rolled to DEFERRED before minting today's fresh ticket.
+                // Otherwise the single-active guard treats yesterday's still-open ticket as an active serving
+                // queue and rejects the new-day resume with ACTIVE_QUEUE_ALREADY_EXISTS (Stage E2 regression for
+                // cross-day return reassignment). Only applies when there is no same-day ticket to reuse.
+                if (existingTodayReturn is null)
+                {
+                    var stalePriorDayReturns = visitQueues
+                        .Where(q =>
+                            q.QueueDate.HasValue && q.QueueDate.Value < todayLocal &&
+                            ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation &&
+                            AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("CANCELLED" or "COMPLETED" or "DONE" or "NO_SHOW"))
+                        .ToList();
+
+                    foreach (var staleReturn in stalePriorDayReturns)
+                    {
+                        staleReturn.Status = "DEFERRED";
+                        staleReturn.PresenceStatus = "LEFT";
+                        staleReturn.CalledAt = null;
+                        staleReturn.CompletedAt = nowLocal;
+                        staleReturn.BlockedReason = "Lượt khám kết luận của ngày trước được chuyển tiếp sang ngày mới.";
+                        staleReturn.StateVersion = (staleReturn.StateVersion is > 0 ? staleReturn.StateVersion.Value : 1) + 1;
+                        isIdempotentReplay = false;
+                    }
+
+                    if (stalePriorDayReturns.Count > 0)
+                    {
+                        // Flush the DEFERRED rollover so the subsequent single-active guard (which reads the DB,
+                        // not the change tracker) no longer sees the prior-day ticket as an active serving queue.
+                        await _db.SaveChangesAsync(ct);
+                    }
+                }
+
                 if (effectivePurpose == QueueCoordinationPurposes.ResultConclusion)
                 {
                     visit.ReadyForReturnAt ??= nowLocal;
