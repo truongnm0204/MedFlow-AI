@@ -5673,7 +5673,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         if (effectiveRoomId.HasValue)
         {
             var candidateVisitIds = candidateEntries
-                .Where(q => q.VisitId.HasValue)
+                .Where(q =>
+                    q.VisitId.HasValue &&
+                    ClinicalQueueRules.IsClinicalExaminationQueueType(q.QueueType))
                 .Select(q => q.VisitId!.Value)
                 .Distinct()
                 .ToList();

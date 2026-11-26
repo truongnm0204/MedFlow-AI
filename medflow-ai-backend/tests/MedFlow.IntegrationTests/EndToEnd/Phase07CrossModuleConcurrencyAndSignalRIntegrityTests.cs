@@ -732,6 +732,11 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                 {
                     Assert.Equal("IN_PROGRESS", finalOrder.Status);
                     Assert.Equal(VisitChargeStatuses.Active, finalCharge.Status);
+                    var cleanExecSvc = checkScope.ServiceProvider.GetRequiredService<IDiagnosticServiceExecutionService>();
+                    await cleanExecSvc.CompleteServiceExecutionAsync(
+                        fx.DiagStaffUserId,
+                        orderCode,
+                        new UpdateDiagnosticServiceStatusRequest(TargetStatus: "COMPLETED"));
                 }
             }
 
@@ -795,6 +800,15 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                 var startErr = await tStart;
                 AssertZeroDeadlockOrUnhandledServerFailure([deferErr, startErr]);
                 Assert.True((deferErr is null) ^ (startErr is null));
+                if (startErr is null)
+                {
+                    await using var cleanScope = _app.Services.CreateAsyncScope();
+                    var cleanExecSvc = cleanScope.ServiceProvider.GetRequiredService<IDiagnosticServiceExecutionService>();
+                    await cleanExecSvc.CompleteServiceExecutionAsync(
+                        fx.DiagStaffUserId,
+                        orderCode,
+                        new UpdateDiagnosticServiceStatusRequest(TargetStatus: "COMPLETED"));
+                }
             }
 
             // --- 3.5: Resume(RETURN_CONSULTATION) vs Finalize UC43 on Day D+1 ---
