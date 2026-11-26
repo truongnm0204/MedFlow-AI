@@ -94,5 +94,9 @@ public class QueueEntryConfiguration : IEntityTypeConfiguration<QueueEntry>
         builder.Property(q => q.IdempotencyKey)
             .HasColumnName("idempotency_key")
             .HasMaxLength(100);
+
+        builder.Property(q => q.CoordinationPurpose)
+            .HasColumnName("coordination_purpose")
+            .HasMaxLength(24);
     }
 }

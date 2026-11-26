@@ -624,7 +624,12 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
                 var blockedReason = !string.IsNullOrWhiteSpace(q?.BlockedReason)
                     ? q.BlockedReason.Trim()
                     : (pendingPaymentSettlement ? UnpaidExaminationFeeReason : null);
+                var isClinicalReviewCoordination = string.Equals(
+                    q?.CoordinationPurpose?.Trim(),
+                    QueueCoordinationPurposes.ClinicalReview,
+                    StringComparison.OrdinalIgnoreCase);
                 var pendingRequiredResults = v is not null
+                    && !isClinicalReviewCoordination
                     && (visitsWithOpenDiagnostics.Contains(v.Id)
                         || AppointmentBookingRules.NormalizeStatusKey(v.Status) is "AWAITING_DIAGNOSTIC" or "AWAITING_RESULTS");
 

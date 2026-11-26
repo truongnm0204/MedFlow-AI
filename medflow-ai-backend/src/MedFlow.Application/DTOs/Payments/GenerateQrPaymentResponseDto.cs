@@ -5,6 +5,7 @@ public static class QrPaymentIssueKind
     public const string Created = "CREATED";
     public const string Adopted = "ADOPTED";
     public const string Reused = "REUSED";
+    public const string AlreadyPaid = "ALREADY_PAID";
 }
 
 public sealed record PaymentAllocationItemDto(

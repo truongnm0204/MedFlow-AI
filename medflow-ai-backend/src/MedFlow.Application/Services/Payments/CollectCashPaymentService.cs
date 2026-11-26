@@ -100,12 +100,24 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                 if (_db is DbContext trackerCtx)
                     trackerCtx.ChangeTracker.Clear();
 
-                // Re-verify live PAYMENT_COLLECT permission inside transaction so concurrent UC58 revocation takes immediate effect
-                await VerifyLivePaymentCollectPermissionAsync(actorUserId, ct);
-
                 var lockedVisit = await _db.Visits.AsNoTracking()
                     .FirstOrDefaultAsync(v => v.Id == visitId, ct)
                     ?? throw new NotFoundException(VisitPaymentAccess.VisitNotFoundMessage);
+
+                // Re-verify live actor status, hospital scope, and PAYMENT_COLLECT permission inside transaction
+                var verifiedCollector = await VisitPaymentAccess.RevalidateActorPostLockAsync(
+                    _db,
+                    actorUserId,
+                    lockedVisit,
+                    _timeProvider,
+                    ForbiddenMessage,
+                    [PermissionCodes.PaymentCollect],
+                    MissingPaymentCollectPermissionMessage,
+                    allowPatient: false,
+                    allowDoctor: false,
+                    ct: ct);
+                staff = verifiedCollector.Staff!;
+                visitHospitalId = verifiedCollector.VisitHospitalId;
 
                 // Check IdempotencyKey post-lock first
                 var existingByKey = await _db.Payments.AsNoTracking()

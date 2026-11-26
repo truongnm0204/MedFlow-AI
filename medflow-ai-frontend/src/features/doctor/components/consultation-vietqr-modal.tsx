@@ -36,13 +36,21 @@ async function fetchDoctorVisitChargesApi(visitIdOrCode: string): Promise<VisitC
   return data;
 }
 
+function createDoctorQrIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `doc-qr-${crypto.randomUUID().slice(0, 36)}`;
+  }
+  return `doc-qr-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 async function generateDoctorQrApi(
   visitIdOrCode: string,
   visitChargeIds: number[],
+  idempotencyKey: string,
 ): Promise<GenerateQrPaymentResponse> {
   const { data } = await apiClient.post<GenerateQrPaymentResponse>(
     `/doctor/visits/${encodeURIComponent(visitIdOrCode.trim())}/payments/qr`,
-    { visitChargeIds },
+    { visitChargeIds, idempotencyKey },
   );
   return data;
 }
@@ -66,7 +74,8 @@ export function ConsultationVietQrModal({
   });
 
   const qrMutation = useMutation({
-    mutationFn: (chargeIds: number[]) => generateDoctorQrApi(visitIdOrCode, chargeIds),
+    mutationFn: (chargeIds: number[]) =>
+      generateDoctorQrApi(visitIdOrCode, chargeIds, createDoctorQrIdempotencyKey()),
     onSuccess: (created) => {
       setQr(created);
       setExpiresAt(Date.now() + PAYMENT_QR_TTL_MS);
@@ -155,16 +164,33 @@ export function ConsultationVietQrModal({
                   >
                     Chọn lại danh sách dịch vụ
                   </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    loading={chargesQuery.isFetching}
-                    onClick={() => void chargesQuery.refetch()}
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>Làm mới trạng thái</span>
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {(isExpired ||
+                      (qr.status?.trim().toUpperCase() !== 'PENDING' &&
+                        qr.status?.trim().toUpperCase() !== 'PAID')) &&
+                    selectedIds.length > 0 ? (
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        loading={qrMutation.isPending}
+                        onClick={() => void qrMutation.mutateAsync(selectedIds)}
+                      >
+                        <QrCode className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Tạo mã VietQR mới</span>
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      loading={chargesQuery.isFetching}
+                      onClick={() => void chargesQuery.refetch()}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Làm mới trạng thái</span>
+                    </Button>
+                  </div>
                 </div>
               </div>
             ) : (

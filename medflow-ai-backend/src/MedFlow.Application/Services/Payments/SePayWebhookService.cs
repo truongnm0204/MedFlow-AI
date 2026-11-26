@@ -211,8 +211,31 @@ public sealed class SePayWebhookService : ISePayWebhookService
 
                 if (status == PaymentStatuses.Paid)
                 {
-                    // Never downgrade or mutate an already-PAID Payment
-                    outcome = PaymentGatewayOutcomes.AlreadyPaid;
+                    // PE-02 (ADR-0061 Stage E1): Same externalId replay was already short-circuited above via _store.ExistsAsync -> IGNORED.
+                    // Reaching here means a brand-new externalId (distinct bank transfer) hit an already-PAID Payment.
+                    // Keep Payment.Status == PAID and all PAID PaymentAllocations 100% untouched, while flagging DUPLICATE_RECONCILE + audit!
+                    outcome = DuplicateChargeReconcileOutcome;
+                    AddReconciliationAudit(
+                        hospitalId,
+                        payment,
+                        LateDuplicateAuditAction,
+                        new
+                        {
+                            paymentCode = code,
+                            provider = Provider,
+                            externalId,
+                            receivedAmount = amount,
+                            expectedAmount = payment.Amount,
+                            referenceCode,
+                            currency = VisitChargesService.CurrencyVnd,
+                            outcome,
+                            reasonCode = DuplicateChargeReasonCode,
+                            visitId = payment.VisitId,
+                            visitChargeId = payment.VisitChargeId,
+                            visitChargeIds = targetChargeIds,
+                            alreadyPaidPaymentId = payment.Id,
+                            alreadyPaidPaymentCode = payment.PaymentCode,
+                        });
                 }
                 else if (IsAnyTargetCancelledOrDeclined(visit, targetOrders, targetCharges))
                 {

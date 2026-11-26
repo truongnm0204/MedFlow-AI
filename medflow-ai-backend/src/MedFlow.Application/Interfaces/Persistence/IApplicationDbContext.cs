@@ -32,6 +32,7 @@ public interface IApplicationDbContext
     DbSet<QueueEntry> QueueEntries { get; }
     DbSet<Payment> Payments { get; }
     DbSet<PaymentAllocation> PaymentAllocations => throw new NotSupportedException("PaymentAllocations DbSet is not configured in this test context.");
+    DbSet<PaymentGatewayEvent> PaymentGatewayEvents => throw new NotSupportedException("PaymentGatewayEvents DbSet is not configured in this test context.");
     DbSet<VisitCharge> VisitCharges => throw new NotSupportedException("VisitCharges DbSet is not configured in this test context.");
     DbSet<Medicine> Medicines => throw new NotSupportedException("Medicines DbSet is not configured in this test context.");
     DbSet<MedicineBatch> MedicineBatches => throw new NotSupportedException("MedicineBatches DbSet is not configured in this test context.");

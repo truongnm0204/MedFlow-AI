@@ -148,7 +148,9 @@ internal static class VisitChargeAssessor
             (hasLegacyMismatch || legacyPaid.Count > 0);
 
         var evaluatedLines = new List<VisitChargeLineDto>(rawLines.Count);
+        var hasGatewayReconciliationEvents = await HasReconciliationGatewayEventsAsync(db, payments, ct);
         var hasReconciliationItems = isLegacyMismatchWithoutChargePayments ||
+                                     hasGatewayReconciliationEvents ||
                                      payments.Any(p => IsStatus(p.Status, VisitChargesService.SettlementMismatch)) ||
                                      effectiveAllocations.Any(a => IsStatus(a.Status, PaymentAllocationStatuses.Reconcile));
         var anyActiveLineMismatch = isLegacyMismatchWithoutChargePayments;
@@ -571,6 +573,8 @@ internal static class VisitChargeAssessor
             CanSelect = canPayByQr,
         };
 
+        var hasGatewayReconciliationEvents = await HasReconciliationGatewayEventsAsync(db, payments, ct);
+
         return new VisitChargeAssessment(
             [enrichedLine],
             payableTotal,
@@ -588,7 +592,42 @@ internal static class VisitChargeAssessor
             latest?.ExternalReference,
             canPayByQr,
             SelectedAmountDue: amountDue,
-            HasReconciliationItems: settlement == VisitChargesService.SettlementMismatch);
+            HasReconciliationItems: settlement == VisitChargesService.SettlementMismatch || hasGatewayReconciliationEvents);
+    }
+
+    private static async Task<bool> HasReconciliationGatewayEventsAsync(
+        IApplicationDbContext db,
+        IReadOnlyList<Payment> payments,
+        CancellationToken ct)
+    {
+        if (payments.Count == 0)
+            return false;
+
+        var paymentIds = payments.Select(p => p.Id).Where(id => id > 0).Distinct().ToList();
+        var paymentCodes = payments
+            .Select(p => p.PaymentCode?.Trim().ToUpperInvariant())
+            .Where(code => !string.IsNullOrWhiteSpace(code))
+            .Select(code => code!)
+            .Distinct()
+            .ToList();
+
+        if (paymentIds.Count == 0 && paymentCodes.Count == 0)
+            return false;
+
+        try
+        {
+            return await db.PaymentGatewayEvents.AsNoTracking()
+                .AnyAsync(e =>
+                    ((e.PaymentId.HasValue && paymentIds.Contains(e.PaymentId.Value)) ||
+                     (e.PaymentCode != null && paymentCodes.Contains(e.PaymentCode.ToUpper()))) &&
+                    (e.Outcome == SePayWebhookService.DuplicateChargeReconcileOutcome ||
+                     e.Outcome == SePayWebhookService.CancelledServiceRefundRequiredOutcome),
+                    ct);
+        }
+        catch (NotSupportedException)
+        {
+            return false;
+        }
     }
 
     private static VisitChargeLineDto MapPersistedBase(

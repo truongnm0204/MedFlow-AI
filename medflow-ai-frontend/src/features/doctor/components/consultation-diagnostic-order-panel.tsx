@@ -25,11 +25,13 @@ import {
   createDiagnosticOrderSchema,
 } from '../schemas/consultation-workspace.schema';
 import type {
+  CompleteClinicalReviewRequest,
   ConsultationDiagnosticOrderDto,
   CreateDiagnosticOrderRequest,
   DiagnosticOrderPriority,
   DiagnosticServiceCatalogItemDto,
   DiagnosticServiceCategory,
+  RevalidateDiagnosticOrderRequest,
 } from '../types/consultation-workspace.types';
 
 export interface DraftDiagnosticOrderItem {
@@ -64,6 +66,17 @@ export interface ConsultationDiagnosticOrderPanelProps {
   ) => Promise<boolean | void> | boolean | void;
   onClearSubmitError?: () => void;
   onOpenVietQrModal?: () => void;
+  onRevalidateOrder?: (
+    orderIdOrCode: number | string,
+    payload: RevalidateDiagnosticOrderRequest,
+  ) => Promise<boolean | void> | boolean | void;
+  isRevalidatingOrder?: boolean;
+  coordinationPurpose?: string | null;
+  queueStatus?: string | null;
+  onCompleteClinicalReview?: (
+    payload: CompleteClinicalReviewRequest,
+  ) => Promise<boolean | void> | boolean | void;
+  isCompletingClinicalReview?: boolean;
 }
 
 const CATEGORY_META: Record<
@@ -136,10 +149,21 @@ export function ConsultationDiagnosticOrderPanel({
   onSubmitOrder,
   onClearSubmitError,
   onOpenVietQrModal,
+  onRevalidateOrder,
+  isRevalidatingOrder = false,
+  coordinationPurpose = null,
+  queueStatus = null,
+  onCompleteClinicalReview,
+  isCompletingClinicalReview = false,
 }: ConsultationDiagnosticOrderPanelProps) {
   const isOrderable = canCreateOrder && hasOrderPermission;
 
   const [internalFormOpen, setInternalFormOpen] = useState(false);
+  const [revalidatingOrderId, setRevalidatingOrderId] = useState<number | null>(null);
+  const [revalidationReason, setRevalidationReason] = useState('');
+  const [revalidationExtendDays, setRevalidationExtendDays] = useState<number>(7);
+  const [revalidationLocalError, setRevalidationLocalError] = useState<string | null>(null);
+  const [clinicalReviewNote, setClinicalReviewNote] = useState('');
   const isFormOpen = controlledIsFormOpen ?? internalFormOpen;
 
   const setFormOpen = (nextOpen: boolean) => {
@@ -445,6 +469,11 @@ export function ConsultationDiagnosticOrderPanel({
                     <Badge tone={catMeta.tone}>{catMeta.label}</Badge>
                     <Badge tone={prioMeta.tone}>{prioMeta.label}</Badge>
                     <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
+                    {order.isExpiredForReview ? (
+                      <Badge tone="amber">Quá hạn hiệu lực</Badge>
+                    ) : order.validityExtendedUntil ? (
+                      <Badge tone="emerald">Đã gia hạn hiệu lực</Badge>
+                    ) : null}
                   </div>
                 </div>
 
@@ -478,6 +507,154 @@ export function ConsultationDiagnosticOrderPanel({
                     <span>{order.instruction}</span>
                   </div>
                 )}
+
+                {(order.status === 'ORDERED' || order.status === 'CONFIRMED') &&
+                  order.selectionStatus !== 'DECLINED' &&
+                  order.selectionStatus !== 'SKIPPED_AFTER_PAID' &&
+                  order.isExpiredForReview &&
+                  hasOrderPermission &&
+                  onRevalidateOrder && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 space-y-2 text-[11px]">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-semibold text-amber-900">
+                          Phiếu chỉ định đã quá thời hạn hiệu lực — Bác sĩ cần gia hạn hiệu lực hoặc
+                          hủy lâm sàng trước khi kết thúc phiên đánh giá.
+                        </span>
+                        {revalidatingOrderId !== order.orderId ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setRevalidatingOrderId(order.orderId);
+                              setRevalidationReason('');
+                              setRevalidationExtendDays(7);
+                              setRevalidationLocalError(null);
+                            }}
+                          >
+                            <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                            <span>Gia hạn hiệu lực chỉ định</span>
+                          </Button>
+                        ) : null}
+                      </div>
+
+                      {revalidatingOrderId === order.orderId ? (
+                        <div className="space-y-2 pt-1">
+                          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-white px-2.5 py-1.5 text-[11px] text-sub">
+                            <span>
+                              Dịch vụ:{' '}
+                              <strong className="text-navy">
+                                {order.serviceName} ({order.serviceCode})
+                              </strong>
+                            </span>
+                            <span>
+                              Hạn hiện tại:{' '}
+                              <strong className="font-mono text-navy">
+                                {order.validityExtendedUntil ??
+                                  order.validityExpiresAt ??
+                                  'Đã hết hạn'}
+                              </strong>
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                            <div className="sm:col-span-1">
+                              <input
+                                type="number"
+                                min={1}
+                                max={365}
+                                aria-label={`Số ngày gia hạn ${order.orderCode}`}
+                                value={revalidationExtendDays}
+                                onChange={(e) => {
+                                  const parsedDays = Number(e.target.value);
+                                  setRevalidationExtendDays(
+                                    Number.isFinite(parsedDays) ? parsedDays : 7,
+                                  );
+                                  if (revalidationLocalError) setRevalidationLocalError(null);
+                                }}
+                                className="w-full rounded-lg border border-border bg-white px-2.5 py-1.5 font-mono text-xs text-ink focus:border-primary focus:outline-none"
+                              />
+                            </div>
+                            <div className="sm:col-span-3">
+                              <input
+                                type="text"
+                                aria-label={`Lý do gia hạn chỉ định ${order.orderCode}`}
+                                value={revalidationReason}
+                                onChange={(e) => {
+                                  setRevalidationReason(e.target.value);
+                                  if (revalidationLocalError) setRevalidationLocalError(null);
+                                }}
+                                placeholder="Nhập nhận định chuyên môn để gia hạn hiệu lực chỉ định..."
+                                className="w-full rounded-lg border border-border bg-white px-3 py-1.5 text-xs text-ink focus:border-primary focus:outline-none"
+                              />
+                            </div>
+                          </div>
+                          {revalidationLocalError ? (
+                            <p className="text-rose-700 font-semibold">{revalidationLocalError}</p>
+                          ) : null}
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setRevalidatingOrderId(null);
+                                setRevalidationLocalError(null);
+                              }}
+                            >
+                              Hủy
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="primary"
+                              size="sm"
+                              loading={isRevalidatingOrder}
+                              onClick={async () => {
+                                const trimmed = revalidationReason.trim();
+                                if (trimmed.length < 3) {
+                                  setRevalidationLocalError(
+                                    'Vui lòng nhập lý do chuyên môn gia hạn (tối thiểu 3 ký tự).',
+                                  );
+                                  return;
+                                }
+                                if (
+                                  !Number.isInteger(revalidationExtendDays) ||
+                                  revalidationExtendDays < 1 ||
+                                  revalidationExtendDays > 365
+                                ) {
+                                  setRevalidationLocalError(
+                                    'Số ngày gia hạn phải từ 1 đến 365 ngày.',
+                                  );
+                                  return;
+                                }
+                                const ok = await onRevalidateOrder(order.orderId, {
+                                  reason: trimmed,
+                                  extendDays: revalidationExtendDays,
+                                  expectedStateVersion: expectedStateVersion ?? null,
+                                });
+                                if (ok !== false) {
+                                  setRevalidatingOrderId(null);
+                                  setRevalidationReason('');
+                                }
+                              }}
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                              <span>Xác nhận gia hạn hiệu lực</span>
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+
+                {order.status !== 'CANCELLED' &&
+                  order.status !== 'COMPLETED' &&
+                  order.selectionStatus === 'REVIEW_REQUIRED' && (
+                    <div className="rounded-lg border border-rose-200 bg-rose-50/70 p-2.5 text-[11px] text-rose-900">
+                      <strong>Chờ bác sĩ xử lý lâm sàng (REVIEW_REQUIRED):</strong> Chỉ định này cần
+                      được hủy lâm sàng hoặc tạo chỉ định thay thế; gia hạn thời hạn không tự động
+                      xóa trạng thái chờ xem xét.
+                    </div>
+                  )}
                 {(order.isResultFinalized ||
                   Boolean(order.resultText) ||
                   Boolean(order.conclusion)) && (
@@ -521,6 +698,78 @@ export function ConsultationDiagnosticOrderPanel({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {coordinationPurpose === 'CLINICAL_REVIEW' && onCompleteClinicalReview && (
+        <div className="rounded-xl border border-primary/30 bg-sky-50/50 p-3.5 space-y-2.5 text-xs">
+          {(() => {
+            const unresolvedCount = existingOrders.filter(
+              (order) =>
+                order.status !== 'CANCELLED' &&
+                (Boolean(order.isExpiredForReview) || order.selectionStatus === 'REVIEW_REQUIRED'),
+            ).length;
+            const isReviewSessionInProgress = queueStatus === 'IN_PROGRESS';
+            const canFinishReview =
+              isReviewSessionInProgress &&
+              unresolvedCount === 0 &&
+              expectedStateVersion !== null &&
+              expectedStateVersion !== undefined &&
+              !isCompletingClinicalReview;
+
+            return (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="font-bold text-navy">
+                      Phiên đánh giá lại chỉ định quá hạn (CLINICAL_REVIEW)
+                    </div>
+                    <p className="text-[11px] text-sub">
+                      Gia hạn từng chỉ định không tự động đóng phiên khám. Sau khi xử lý hết chỉ
+                      định quá hạn / REVIEW_REQUIRED, bấm nút bên dưới để chuyển bệnh nhân tiếp tục
+                      thực hiện CLS.
+                    </p>
+                  </div>
+                  <Badge tone={unresolvedCount === 0 ? 'emerald' : 'amber'}>
+                    {unresolvedCount === 0
+                      ? 'Sẵn sàng kết thúc đánh giá'
+                      : `Còn ${unresolvedCount} chỉ định cần xử lý`}
+                  </Badge>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    aria-label="Ghi chú kết thúc phiên đánh giá chỉ định"
+                    value={clinicalReviewNote}
+                    onChange={(e) => setClinicalReviewNote(e.target.value)}
+                    placeholder="Ghi chú chuyển tiếp sau khi đánh giá lại chỉ định (không bắt buộc)..."
+                    className="flex-1 rounded-lg border border-border bg-white px-3 py-1.5 text-xs text-ink focus:border-primary focus:outline-none"
+                  />
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    loading={isCompletingClinicalReview}
+                    disabled={!canFinishReview}
+                    onClick={async () => {
+                      if (!expectedStateVersion) return;
+                      const ok = await onCompleteClinicalReview({
+                        expectedStateVersion,
+                        clinicalNote: clinicalReviewNote.trim() || null,
+                      });
+                      if (ok !== false) {
+                        setClinicalReviewNote('');
+                      }
+                    }}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Kết thúc phiên đánh giá</span>
+                  </Button>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 

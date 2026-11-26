@@ -17,7 +17,7 @@ export type DiagnosticSelectionStatus =
 export type PaymentStatus =
   'UNPAID' | 'PENDING' | 'PAID' | 'MISMATCH' | 'EXPIRED' | 'CANCELLED' | 'FAILED';
 
-export type QrPaymentIssueKind = 'CREATED' | 'ADOPTED' | 'REUSED';
+export type QrPaymentIssueKind = 'CREATED' | 'ADOPTED' | 'REUSED' | 'ALREADY_PAID';
 
 export interface VisitChargeLine {
   chargeId: number | null;

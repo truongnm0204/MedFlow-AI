@@ -16,7 +16,9 @@ public sealed record VisitResumeDiagnosticOrderItemDto(
     DateOnly? DeferredUntilDate,
     DateTime? ValidityExpiresAt,
     bool IsExpiredForReview,
-    bool CanResumeToday);
+    bool CanResumeToday,
+    DateTime? ValidityExtendedUntil = null,
+    string? RevalidationNote = null);
 
 public sealed record VisitActiveQueueBriefDto(
     long QueueEntryId,
@@ -28,7 +30,8 @@ public sealed record VisitActiveQueueBriefDto(
     string PresenceStatus,
     long? ServicePointId,
     string? ServicePointName,
-    string? RoomCode);
+    string? RoomCode,
+    string? CoordinationPurpose = null);
 
 public sealed record VisitResumeContextResponseDto(
     long VisitId,
@@ -49,7 +52,8 @@ public sealed record VisitResumeContextResponseDto(
     VisitChargesBriefDto ChargesSummary,
     IReadOnlyList<VisitResumeDiagnosticOrderItemDto> DiagnosticOrders,
     IReadOnlyList<VisitActiveQueueBriefDto> ActiveTodayQueues,
-    bool IsAssignedDoctorActive = true);
+    bool IsAssignedDoctorActive = true,
+    bool IsOverdueReturnApproved = false);
 
 public sealed record ResumeCrossDayVisitRequestDto(
     string Target,
@@ -59,7 +63,8 @@ public sealed record ResumeCrossDayVisitRequestDto(
     long? ReassignDoctorId = null,
     bool? ConfirmOverdueOverride = null,
     string? IdempotencyKey = null,
-    string? Notes = null);
+    string? Notes = null,
+    string? CoordinationPurpose = null);
 
 public sealed record ResumeCrossDayVisitResponseDto(
     long VisitId,
@@ -75,7 +80,8 @@ public sealed record ResumeCrossDayVisitResponseDto(
     string? AssignedDoctorName,
     long? ExaminationRoomId,
     IReadOnlyList<VisitActiveQueueBriefDto> ResumedQueues,
-    int ClosedPriorDayQueueCount);
+    int ClosedPriorDayQueueCount,
+    string? CoordinationPurpose = null);
 
 public sealed record DeferVisitOrOrdersRequestDto(
     string Reason,

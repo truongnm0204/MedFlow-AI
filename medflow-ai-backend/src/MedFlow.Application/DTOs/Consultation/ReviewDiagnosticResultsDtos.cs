@@ -118,4 +118,5 @@ public sealed record DiagnosticResultsReviewResponseDto(
     int MandatoryOrdersCount,
     int MandatoryReadyCount,
     int MandatoryPendingCount,
-    IReadOnlyList<ConsultationDiagnosticResultItemDto> Items);
+    IReadOnlyList<ConsultationDiagnosticResultItemDto> Items,
+    string? CurrentResultSnapshot = null);

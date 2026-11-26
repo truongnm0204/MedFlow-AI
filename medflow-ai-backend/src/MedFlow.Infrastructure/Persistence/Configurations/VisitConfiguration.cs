@@ -63,6 +63,28 @@ public class VisitConfiguration : IEntityTypeConfiguration<Visit>
             .HasColumnName("ready_for_return_at")
             .HasColumnType("timestamp without time zone");
 
+        builder.Property(v => v.OverdueReturnApprovedByDoctorId)
+            .HasColumnName("overdue_return_approved_by_doctor_id");
+
+        builder.Property(v => v.OverdueReturnApprovedAt)
+            .HasColumnName("overdue_return_approved_at")
+            .HasColumnType("timestamp without time zone");
+
+        builder.Property(v => v.OverdueReturnApprovalNote)
+            .HasColumnName("overdue_return_approval_note");
+
+        builder.Property(v => v.OverdueReturnResultSnapshot)
+            .HasColumnName("overdue_return_result_snapshot")
+            .HasMaxLength(128);
+
+        builder.HasIndex(v => v.OverdueReturnApprovedByDoctorId)
+            .HasDatabaseName("ix_visits_overdue_return_approved_by_doctor_id");
+
+        builder.HasOne<Doctor>()
+            .WithMany()
+            .HasForeignKey(v => v.OverdueReturnApprovedByDoctorId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.Property(v => v.CompletedAt)
             .HasColumnName("completed_at")
             .HasColumnType("timestamp without time zone");

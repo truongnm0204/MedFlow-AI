@@ -164,7 +164,15 @@ export function PatientPaymentDetailPage() {
 
   const handleGenerateQr = (visitChargeId?: number | null) => {
     setHydratedQr(null);
-    createQr.mutate(visitChargeId);
+    const freshKey =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? `qr-${crypto.randomUUID().slice(0, 36)}`
+        : `qr-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    createQr.mutate(
+      visitChargeId != null
+        ? { visitChargeId, idempotencyKey: freshKey }
+        : { idempotencyKey: freshKey },
+    );
   };
 
   return (
@@ -404,17 +412,38 @@ export function PatientPaymentDetailPage() {
               ) : null}
 
               {showPanel && panelCode ? (
-                <QrPaymentPanel
-                  paymentCode={panelCode}
-                  amount={panelAmount}
-                  status={panelStatus}
-                  qrPayload={activeQr?.qrPayload ?? null}
-                  bankBin={activeQr?.bankBin ?? null}
-                  accountNumber={activeQr?.accountNumber ?? null}
-                  accountName={activeQr?.accountName ?? null}
-                  transferContent={activeQr?.transferContent ?? panelCode}
-                  expiresAtLabel={null}
-                />
+                <div className="space-y-3">
+                  <QrPaymentPanel
+                    paymentCode={panelCode}
+                    amount={panelAmount}
+                    status={panelStatus}
+                    qrPayload={activeQr?.qrPayload ?? null}
+                    bankBin={activeQr?.bankBin ?? null}
+                    accountNumber={activeQr?.accountNumber ?? null}
+                    accountName={activeQr?.accountName ?? null}
+                    transferContent={activeQr?.transferContent ?? panelCode}
+                    expiresAtLabel={null}
+                  />
+                  {!isAllSettled &&
+                  (panelStatus === 'EXPIRED' ||
+                    panelStatus === 'CANCELLED' ||
+                    panelStatus === 'MISMATCH') ? (
+                    <Button
+                      onClick={() =>
+                        handleGenerateQr(
+                          activeQr?.visitChargeId ??
+                            (payableRowButtons.length === 1
+                              ? payableRowButtons[0]?.chargeId
+                              : undefined),
+                        )
+                      }
+                      loading={createQr.isPending}
+                      disabled={!visitCode.trim()}
+                    >
+                      Tạo mã VietQR mới
+                    </Button>
+                  ) : null}
+                </div>
               ) : null}
             </>
           ) : null}

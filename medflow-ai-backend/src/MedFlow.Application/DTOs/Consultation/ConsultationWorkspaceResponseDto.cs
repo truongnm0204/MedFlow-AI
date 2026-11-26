@@ -51,7 +51,12 @@ public sealed record ConsultationVisitSummaryDto(
     DateTime? ReadyForReturnAt = null,
     string? PresenceState = null,
     bool IsCrossDayVisit = false,
-    bool IsOverdueForReview = false);
+    bool IsOverdueForReview = false,
+    bool IsReturnOverdue = false,
+    bool IsOverdueReturnApproved = false,
+    DateTime? OverdueReturnApprovedAt = null,
+    string? OverdueReturnApprovalNote = null,
+    string? CurrentResultSnapshot = null);
 
 public sealed record ConsultationPatientSummaryDto(
     long PatientId,
@@ -94,7 +99,8 @@ public sealed record ConsultationQueueContextDto(
     string? ReadyAt,
     string? CalledAt,
     string? StartedAt,
-    string? CompletedAt);
+    string? CompletedAt,
+    string? CoordinationPurpose = null);
 
 public sealed record ConsultationClinicalContextDto(
     long? MedicalRecordId,

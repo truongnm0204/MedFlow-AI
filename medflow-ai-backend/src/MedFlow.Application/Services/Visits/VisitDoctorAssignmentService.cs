@@ -863,6 +863,10 @@ public sealed class VisitDoctorAssignmentService : IVisitDoctorAssignmentService
         var roomChanged = effectiveRoom is not null && previousRoomId.HasValue && previousRoomId.Value != effectiveRoom.Id;
 
         visit.AssignedDoctorId = targetDoctor.Id;
+        if (doctorChanged)
+        {
+            visit.OverdueReturnResultSnapshot = null;
+        }
         if (effectiveRoom is not null)
         {
             visit.ExaminationRoomId = effectiveRoom.Id;

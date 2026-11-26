@@ -1166,3 +1166,31 @@ CREATE UNIQUE INDEX IF NOT EXISTS "ux_queue_entries_idempotency_key"
 
 CREATE INDEX IF NOT EXISTS "ix_queue_entries_visit_date_type_status"
   ON "queue_entries" ("visit_id", "queue_date", "queue_type", "status");
+
+-- 026_clinical_revalidation_overdue_approval_and_review_purpose (ADR-0061 Stage E1)
+ALTER TABLE "diagnostic_orders"
+  ADD COLUMN IF NOT EXISTS "validity_extended_until" timestamp without time zone NULL,
+  ADD COLUMN IF NOT EXISTS "revalidated_by_doctor_id" bigint NULL,
+  ADD COLUMN IF NOT EXISTS "revalidated_at" timestamp without time zone NULL,
+  ADD COLUMN IF NOT EXISTS "revalidation_note" text NULL,
+  ADD CONSTRAINT "fk_diagnostic_orders_revalidated_by_doctor_id"
+    FOREIGN KEY ("revalidated_by_doctor_id") REFERENCES "doctors" ("id");
+
+CREATE INDEX IF NOT EXISTS "ix_diagnostic_orders_revalidated_by_doctor_id"
+  ON "diagnostic_orders" ("revalidated_by_doctor_id");
+
+ALTER TABLE "visits"
+  ADD COLUMN IF NOT EXISTS "overdue_return_approved_by_doctor_id" bigint NULL,
+  ADD COLUMN IF NOT EXISTS "overdue_return_approved_at" timestamp without time zone NULL,
+  ADD COLUMN IF NOT EXISTS "overdue_return_approval_note" text NULL,
+  ADD COLUMN IF NOT EXISTS "overdue_return_result_snapshot" varchar(128) NULL,
+  ADD CONSTRAINT "fk_visits_overdue_return_approved_by_doctor_id"
+    FOREIGN KEY ("overdue_return_approved_by_doctor_id") REFERENCES "doctors" ("id");
+
+CREATE INDEX IF NOT EXISTS "ix_visits_overdue_return_approved_by_doctor_id"
+  ON "visits" ("overdue_return_approved_by_doctor_id");
+
+ALTER TABLE "queue_entries"
+  ADD COLUMN IF NOT EXISTS "coordination_purpose" varchar(24) NULL,
+  ADD CONSTRAINT "chk_queue_entries_coordination_purpose"
+    CHECK ("coordination_purpose" IS NULL OR "coordination_purpose" IN ('RESULT_CONCLUSION', 'CLINICAL_REVIEW'));

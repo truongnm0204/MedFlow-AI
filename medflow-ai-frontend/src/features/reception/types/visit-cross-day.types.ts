@@ -16,6 +16,8 @@ export interface VisitResumeDiagnosticOrderItemDto {
   validityExpiresAt: string | null;
   isExpiredForReview: boolean;
   canResumeToday: boolean;
+  validityExtendedUntil?: string | null;
+  revalidationNote?: string | null;
 }
 
 export interface VisitActiveQueueBriefDto {
@@ -29,6 +31,7 @@ export interface VisitActiveQueueBriefDto {
   servicePointId: number | null;
   servicePointName: string | null;
   roomCode: string | null;
+  coordinationPurpose?: string | null;
 }
 
 export interface VisitResumeContextResponseDto {
@@ -51,9 +54,11 @@ export interface VisitResumeContextResponseDto {
   diagnosticOrders: VisitResumeDiagnosticOrderItemDto[];
   activeTodayQueues: VisitActiveQueueBriefDto[];
   isAssignedDoctorActive?: boolean;
+  isOverdueReturnApproved?: boolean;
 }
 
 export type ResumeCrossDayTarget = 'DIAGNOSTIC' | 'RETURN_CONSULTATION';
+export type QueueCoordinationPurpose = 'RESULT_CONCLUSION' | 'CLINICAL_REVIEW';
 
 export interface ResumeCrossDayVisitRequestDto {
   target: ResumeCrossDayTarget;
@@ -64,6 +69,7 @@ export interface ResumeCrossDayVisitRequestDto {
   confirmOverdueOverride?: boolean | null;
   idempotencyKey?: string | null;
   notes?: string | null;
+  coordinationPurpose?: QueueCoordinationPurpose | null;
 }
 
 export interface ResumeCrossDayVisitResponseDto {
@@ -81,6 +87,7 @@ export interface ResumeCrossDayVisitResponseDto {
   examinationRoomId: number | null;
   resumedQueues: VisitActiveQueueBriefDto[];
   closedPriorDayQueueCount: number;
+  coordinationPurpose?: QueueCoordinationPurpose | (string & {}) | null;
 }
 
 export interface DeferVisitOrOrdersRequestDto {

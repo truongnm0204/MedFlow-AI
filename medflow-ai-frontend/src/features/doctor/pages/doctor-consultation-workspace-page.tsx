@@ -22,19 +22,25 @@ import { DoctorSidebar } from '../components/doctor-sidebar';
 import { CONSULTATION_QUICK_SWITCH_ITEMS } from '../data/consultation-workspace-mock';
 import { DOCTOR_WORKBENCH_META } from '../data/doctor-mock-data';
 import {
+  useApproveOverdueReturnResults,
+  useCompleteClinicalReview,
   useCompleteVisit,
   useConsultationWorkspace,
   useCreateDiagnosticOrder,
   useDiagnosticOrderCatalog,
   useOpenConsultationWorkspace,
   useRecordClinicalExamination,
+  useRevalidateDiagnosticOrder,
 } from '../hooks/use-consultation-workspace';
 import { consultationIdentifierSchema } from '../schemas/consultation-workspace.schema';
 import type {
+  ApproveOverdueReturnResultsRequest,
+  CompleteClinicalReviewRequest,
   CompleteVisitRequest,
   ConsultationWorkspaceActionDto,
   CreateDiagnosticOrderRequest,
   RecordClinicalExaminationRequest,
+  RevalidateDiagnosticOrderRequest,
 } from '../types/consultation-workspace.types';
 
 const DEFAULT_VISIT_CODE = 'VIS-2026-0212';
@@ -113,6 +119,9 @@ export function DoctorConsultationWorkspacePage({
   const openMutation = useOpenConsultationWorkspace();
   const recordMutation = useRecordClinicalExamination();
   const createOrderMutation = useCreateDiagnosticOrder();
+  const revalidateOrderMutation = useRevalidateDiagnosticOrder();
+  const completeClinicalReviewMutation = useCompleteClinicalReview();
+  const approveOverdueMutation = useApproveOverdueReturnResults();
   const completeVisitMutation = useCompleteVisit();
   const doctorDisplayName =
     data?.visit.assignedDoctorName?.trim() ||
@@ -203,6 +212,72 @@ export function DoctorConsultationWorkspacePage({
     }
   };
 
+  const handleRevalidateDiagnosticOrder = async (
+    orderIdOrCode: number | string,
+    payload: RevalidateDiagnosticOrderRequest,
+  ): Promise<boolean> => {
+    setDiagnosticOrderError(null);
+    setSelectedActionNotice(null);
+    try {
+      await revalidateOrderMutation.mutateAsync({
+        idOrCode: activeIdentifier,
+        orderIdOrCode,
+        payload,
+      });
+      return true;
+    } catch (err) {
+      setDiagnosticOrderError(
+        getErrorMessage(err, 'Không thể gia hạn hiệu lực phiếu chỉ định cận lâm sàng.'),
+      );
+      return false;
+    }
+  };
+
+  const handleCompleteClinicalReview = async (
+    payload: CompleteClinicalReviewRequest,
+  ): Promise<boolean> => {
+    setDiagnosticOrderError(null);
+    setSelectedActionNotice(null);
+    try {
+      await completeClinicalReviewMutation.mutateAsync({
+        idOrCode: activeIdentifier,
+        payload,
+      });
+      return true;
+    } catch (err) {
+      setDiagnosticOrderError(
+        getErrorMessage(err, 'Không thể kết thúc phiên đánh giá lại chỉ định cận lâm sàng.'),
+      );
+      return false;
+    }
+  };
+
+  const handleApproveOverdueResults = async (
+    payload: ApproveOverdueReturnResultsRequest,
+  ): Promise<boolean> => {
+    setCompleteVisitError(null);
+    setSelectedActionNotice(null);
+    try {
+      await approveOverdueMutation.mutateAsync({
+        idOrCode: activeIdentifier,
+        payload,
+      });
+      return true;
+    } catch (err) {
+      const rawMessage = getErrorMessage(
+        err,
+        'Không thể xác nhận giá trị chuyên môn cho kết quả quá hạn.',
+      );
+      if (rawMessage.includes('OVERDUE_RESULT_SNAPSHOT_MISMATCH')) {
+        await refetch();
+        setCompleteVisitError('Kết quả đã thay đổi. Vui lòng xem lại trước khi xác nhận');
+        return false;
+      }
+      setCompleteVisitError(rawMessage);
+      return false;
+    }
+  };
+
   const handleCompleteVisit = async (payload: CompleteVisitRequest): Promise<boolean> => {
     setCompleteVisitError(null);
     setOpenError(null);
@@ -218,9 +293,16 @@ export function DoctorConsultationWorkspacePage({
       setIsCompleteVisitFormOpen(false);
       return true;
     } catch (err) {
-      setCompleteVisitError(
-        getErrorMessage(err, 'Không thể hoàn tất lượt khám và khóa hồ sơ bệnh án cho ca khám này.'),
+      const rawMessage = getErrorMessage(
+        err,
+        'Không thể hoàn tất lượt khám và khóa hồ sơ bệnh án cho ca khám này.',
       );
+      if (rawMessage.includes('OVERDUE_RESULT_SNAPSHOT_MISMATCH')) {
+        await refetch();
+        setCompleteVisitError('Kết quả đã thay đổi. Vui lòng xem lại trước khi xác nhận');
+        return false;
+      }
+      setCompleteVisitError(rawMessage);
       return false;
     }
   };
@@ -580,6 +662,12 @@ export function DoctorConsultationWorkspacePage({
                       onSubmitDiagnosticOrder={handleCreateDiagnosticOrder}
                       onClearDiagnosticOrderSubmitError={() => setDiagnosticOrderError(null)}
                       onOpenVietQrModal={() => setIsVietQrModalOpen(true)}
+                      onRevalidateDiagnosticOrder={handleRevalidateDiagnosticOrder}
+                      isRevalidatingDiagnosticOrder={revalidateOrderMutation.isPending}
+                      coordinationPurpose={data.queue?.coordinationPurpose ?? null}
+                      queueStatus={data.queue?.status ?? null}
+                      onCompleteClinicalReview={handleCompleteClinicalReview}
+                      isCompletingClinicalReview={completeClinicalReviewMutation.isPending}
                     />
                     <ConsultationCompleteVisitPanel
                       workspaceState={data.workspaceState}
@@ -595,6 +683,9 @@ export function DoctorConsultationWorkspacePage({
                       isFormOpen={isCompleteVisitFormOpen}
                       onToggleForm={setIsCompleteVisitFormOpen}
                       onSubmitCompleteVisit={handleCompleteVisit}
+                      onApproveOverdueResults={handleApproveOverdueResults}
+                      isApprovingOverdueResults={approveOverdueMutation.isPending}
+                      onRefreshWorkspace={() => refetch()}
                       onClearSubmitError={() => setCompleteVisitError(null)}
                     />
                   </div>

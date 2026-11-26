@@ -70,6 +70,13 @@ function isDefaultCheckedLine(line: VisitChargeLineDto, charges: VisitChargesRes
   return true;
 }
 
+function createQrIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `qr-${crypto.randomUUID().slice(0, 36)}`;
+  }
+  return `qr-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function VisitPaymentPage() {
   const { visitIdOrCode = '' } = useParams<{ visitIdOrCode: string }>();
   const {
@@ -119,9 +126,17 @@ export function VisitPaymentPage() {
     });
   }, [qr, charges, qrChargeIds]);
 
+  const qrStatusUpper = qr?.status?.trim().toUpperCase() ?? '';
+  const qrPayloadNonEmpty = Boolean(qr?.qrPayload?.trim());
+  const isQrAttemptClosedOrExpired =
+    qr !== null &&
+    ((qrStatusUpper !== '' && qrStatusUpper !== 'PENDING' && qrStatusUpper !== 'PAID') ||
+      (qrStatusUpper === 'PENDING' && !qrPayloadNonEmpty));
+
   const isExpired =
     (qr === null && paymentStatus === 'EXPIRED' && (charges?.charges.length ?? 0) <= 1) ||
-    (expiresAt !== null && remainingMs === 0);
+    (expiresAt !== null && remainingMs === 0) ||
+    isQrAttemptClosedOrExpired;
 
   const hasMultipleCharges = Boolean(charges && charges.charges.length > 1);
   const singleChargeId =
@@ -169,11 +184,38 @@ export function VisitPaymentPage() {
     !isMismatch &&
     (isPayable || isExpired || paymentStatus === 'PENDING');
   const showQr =
-    qr !== null && !isPaid && !isClosed && !isExpired && !activeQrSettled && !isMismatch;
+    qr !== null &&
+    qrStatusUpper === 'PENDING' &&
+    qrPayloadNonEmpty &&
+    !isPaid &&
+    !isClosed &&
+    !isExpired &&
+    !activeQrSettled &&
+    !isMismatch;
 
   const handleCreate = async (input?: QrPaymentCreateInput) => {
+    const freshKey = createQrIdempotencyKey();
+    let requestInput: QrPaymentCreateInput;
+    if (typeof input === 'number') {
+      requestInput = { visitChargeId: input, idempotencyKey: freshKey };
+    } else if (input && typeof input === 'object') {
+      requestInput = {
+        ...input,
+        idempotencyKey: input.idempotencyKey ?? freshKey,
+      };
+    } else {
+      requestInput = { idempotencyKey: freshKey };
+    }
+
     try {
-      const created = await createMutation.mutateAsync(input);
+      const created = await createMutation.mutateAsync(requestInput);
+      const createdStatus = created.status?.trim().toUpperCase() ?? '';
+      if (createdStatus === 'PAID') {
+        setQr(null);
+        setExpiresAt(null);
+        void refetch();
+        return;
+      }
       setQr(created);
       setExpiresAt(Date.now() + PAYMENT_QR_TTL_MS);
     } catch {
@@ -183,6 +225,8 @@ export function VisitPaymentPage() {
 
   const handleToggleChargeCheckbox = async (line: VisitChargeLineDto, checked: boolean) => {
     if (line.chargeId == null) return;
+    setQr(null);
+    setExpiresAt(null);
     setManualSelectionByChargeId((prev) => ({ ...prev, [line.chargeId!]: checked }));
 
     if (line.diagnosticOrderId != null && line.requiredForConclusion === false) {

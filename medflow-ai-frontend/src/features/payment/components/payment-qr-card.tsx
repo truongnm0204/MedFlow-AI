@@ -62,6 +62,10 @@ function CopyRow({ label, value, tone = 'default' }: CopyRowProps) {
 }
 
 export function PaymentQrCard({ qr, remainingMs, isExpired }: PaymentQrCardProps) {
+  const normalizedStatus = qr.status?.trim().toUpperCase() ?? '';
+  const hasPayload = Boolean(qr.qrPayload?.trim());
+  const canRenderQrImage = normalizedStatus === 'PENDING' && !isExpired && hasPayload;
+
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-6 py-4">
@@ -71,8 +75,10 @@ export function PaymentQrCard({ qr, remainingMs, isExpired }: PaymentQrCardProps
             Mở app ngân hàng, chọn quét QR và kiểm tra đúng số tiền, nội dung.
           </p>
         </div>
-        {isExpired ? (
-          <Badge tone="slate">MÃ ĐÃ HẾT HẠN</Badge>
+        {normalizedStatus === 'PAID' ? (
+          <Badge tone="emerald">ĐÃ THANH TOÁN</Badge>
+        ) : isExpired || normalizedStatus !== 'PENDING' ? (
+          <Badge tone="slate">MÃ ĐÃ ĐÓNG / HẾT HẠN</Badge>
         ) : (
           <Badge tone="amber">CHỜ THANH TOÁN</Badge>
         )}
@@ -80,15 +86,29 @@ export function PaymentQrCard({ qr, remainingMs, isExpired }: PaymentQrCardProps
 
       <div className="grid gap-6 px-6 py-6 sm:grid-cols-[208px_1fr] sm:items-start">
         <div className="mx-auto flex flex-col items-center gap-2">
-          <div
-            role="img"
-            aria-label={`Mã QR thanh toán ${qr.paymentCode}`}
-            className={`rounded-2xl border border-border bg-white p-3 ${
-              isExpired ? 'opacity-40' : ''
-            }`}
-          >
-            <QRCodeSVG value={qr.qrPayload} size={184} level="M" marginSize={0} />
-          </div>
+          {canRenderQrImage ? (
+            <div
+              role="img"
+              aria-label={`Mã QR thanh toán ${qr.paymentCode}`}
+              className="rounded-2xl border border-border bg-white p-3"
+            >
+              <QRCodeSVG value={qr.qrPayload} size={184} level="M" marginSize={0} />
+            </div>
+          ) : (
+            <div className="flex h-[210px] w-[210px] flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-canvas p-4 text-center text-xs text-sub">
+              <Clock className="mb-2 h-6 w-6 text-sub" aria-hidden="true" />
+              <span className="font-semibold text-navy">
+                {normalizedStatus === 'PAID'
+                  ? 'Giao dịch này đã được thanh toán'
+                  : 'Mã QR không còn hiệu lực quét'}
+              </span>
+              <span className="mt-1 text-[11px]">
+                {normalizedStatus === 'PAID'
+                  ? 'Không hiển thị lại mã QR cho giao dịch đã hoàn tất.'
+                  : 'Vui lòng tạo mã QR mới để tiếp tục thanh toán.'}
+              </span>
+            </div>
+          )}
           <p className="flex items-center gap-1.5 text-xs font-semibold text-sub">
             <ScanLine className="h-4 w-4 text-primary" aria-hidden="true" />
             <span>VietQR • {qr.bankBin}</span>

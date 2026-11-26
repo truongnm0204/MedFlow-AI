@@ -307,16 +307,14 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
             staffAccess.Hospital.Id,
             dataset);
 
-        if (resolvedServicePoint.IsActive == false)
+        if (!DiagnosticServicePointResolver.IsOperational(
+                resolvedServicePoint,
+                dataset.RoomsById,
+                dataset.DepartmentsById,
+                staffAccess.Hospital.Id))
         {
-            throw new ConflictException("Điểm phục vụ cận lâm sàng hiện đang ngừng hoạt động.");
-        }
-
-        if (resolvedServicePoint.RoomId.HasValue &&
-            dataset.RoomsById.TryGetValue(resolvedServicePoint.RoomId.Value, out var spRoom) &&
-            !string.Equals(spRoom.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ConflictException("Phòng thực hiện cận lâm sàng hiện đang ngừng hoạt động.");
+            throw new ConflictException(
+                $"[{DiagnosticServicePointResolver.NoActiveCompatiblePointCode}] Điểm phục vụ hoặc phòng thực hiện cận lâm sàng hiện đang ngừng hoạt động hoặc cấu hình không hợp lệ.");
         }
 
         var bucket = dataset.ServicePointBuckets
@@ -342,6 +340,18 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
 
         if (candidateDto is null)
         {
+            var expiredBlockedExists = bucket.Entries
+                .Where(e => e.Status is "READY" or "WAITING")
+                .Where(e => normalizedCategory is null || string.Equals(e.Category, normalizedCategory, StringComparison.OrdinalIgnoreCase))
+                .Any(e => e.IneligibleReason != null &&
+                          e.IneligibleReason.Contains("DIAGNOSTIC_ORDER_EXPIRED_DOCTOR_APPROVAL_REQUIRED", StringComparison.Ordinal));
+
+            if (expiredBlockedExists)
+            {
+                throw new ConflictException(
+                    MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.ExpiredOrderDoctorApprovalRequiredMessage);
+            }
+
             var unpaidBlockedExists = bucket.Entries
                 .Where(e => e.Status is "READY" or "WAITING")
                 .Where(e => normalizedCategory is null || string.Equals(e.Category, normalizedCategory, StringComparison.OrdinalIgnoreCase))
@@ -944,17 +954,51 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
             }
         }
 
+        var departmentsById = await _db.Departments
+            .AsNoTracking()
+            .Where(d => d.HospitalId == staffAccess.Hospital.Id)
+            .ToDictionaryAsync(d => d.Id, ct);
+
+        long? preOrderServiceIdForLock = null;
         if (targetStatus is "READY" or "CALLED" or "IN_PROGRESS")
         {
-            if (resolvedSp?.IsActive == false)
+            if (targetCandidate.OrderId.HasValue)
             {
-                throw new ConflictException("Điểm phục vụ cận lâm sàng hiện đang ngừng hoạt động.");
-            }
+                var preOrder = await _db.DiagnosticOrders
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(o => o.Id == targetCandidate.OrderId.Value, ct);
+                if (preOrder is not null)
+                {
+                    preOrderServiceIdForLock = preOrder.ServiceId;
+                    var preService = preOrder.ServiceId.HasValue
+                        ? await _db.Services.AsNoTracking().FirstOrDefaultAsync(s => s.Id == preOrder.ServiceId.Value, ct)
+                        : null;
+                    var preQe = targetCandidate.QueueEntryId > 0
+                        ? await _db.QueueEntries.AsNoTracking().FirstOrDefaultAsync(q => q.Id == targetCandidate.QueueEntryId, ct)
+                        : null;
 
-            if (resolvedRoom is not null &&
-                !string.Equals(resolvedRoom.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase))
+                    effectiveSpId = DiagnosticServicePointResolver.ResolveForExecutionOrThrow(
+                        preOrder,
+                        preService,
+                        overrideServicePointId,
+                        hospitalServicePoints,
+                        roomsById,
+                        preQe is not null ? [preQe] : null,
+                        staffAccess.Hospital.Id,
+                        departmentsById,
+                        overrideRoomId);
+                    resolvedSp = hospitalServicePoints.First(sp => sp.Id == effectiveSpId.Value);
+                    roomsById.TryGetValue(resolvedSp.RoomId!.Value, out resolvedRoom);
+                }
+            }
+            else if (!DiagnosticServicePointResolver.IsOperational(
+                         resolvedSp,
+                         roomsById,
+                         departmentsById,
+                         staffAccess.Hospital.Id))
             {
-                throw new ConflictException("Phòng thực hiện cận lâm sàng hiện đang ngừng hoạt động.");
+                throw new ConflictException(
+                    $"[{DiagnosticServicePointResolver.NoActiveCompatiblePointCode}] Điểm phục vụ hoặc phòng thực hiện cận lâm sàng hiện đang ngừng hoạt động hoặc cấu hình không hợp lệ.");
             }
         }
 
@@ -1011,11 +1055,19 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
             await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
                 _db,
                 targetCandidate.VisitId > 0 ? new[] { targetCandidate.VisitId } : Array.Empty<long>(),
-                effectiveSpId.HasValue ? new[] { effectiveSpId.Value } : Array.Empty<long>(),
+                targetStatus is "READY" or "CALLED" or "IN_PROGRESS"
+                    ? hospitalServicePoints.Select(sp => sp.Id).Concat(effectiveSpId.HasValue ? new[] { effectiveSpId.Value } : Array.Empty<long>())
+                    : (effectiveSpId.HasValue ? new[] { effectiveSpId.Value } : Array.Empty<long>()),
                 targetCandidate.QueueEntryId > 0 ? new[] { targetCandidate.QueueEntryId } : Array.Empty<long>(),
                 targetCandidate.OrderId.HasValue ? new[] { targetCandidate.OrderId.Value } : Array.Empty<long>(),
                 includeChargeAndPaymentLocks: targetStatus == "CANCELLED" && cancelLinkedOrder,
-                ct);
+                ct,
+                extraServiceIds: targetStatus is "READY" or "CALLED" or "IN_PROGRESS" && preOrderServiceIdForLock.HasValue
+                    ? new[] { preOrderServiceIdForLock.Value }
+                    : null,
+                extraRoomIds: targetStatus is "READY" or "CALLED" or "IN_PROGRESS"
+                    ? roomsById.Keys
+                    : null);
 
             DiagnosticOrder? trackedOrder = null;
             if (targetCandidate.OrderId.HasValue)
@@ -1091,6 +1143,70 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
             {
                 throw new ConflictException(
                     "Dữ liệu hàng đợi cận lâm sàng đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
+            }
+
+            if (targetStatus is "READY" or "CALLED" or "IN_PROGRESS")
+            {
+                var postLockDepartmentsById = (await _db.Departments.AsNoTracking()
+                    .Where(d => d.HospitalId == staffAccess.Hospital.Id)
+                    .ToListAsync(ct))
+                    .ToDictionary(d => d.Id);
+                var postLockRoomsById = (await _db.HospitalRooms.AsNoTracking()
+                    .Where(r => r.HospitalId == staffAccess.Hospital.Id)
+                    .ToListAsync(ct))
+                    .ToDictionary(r => r.Id);
+                var postLockHospitalServicePoints = await TryLoadHospitalDiagnosticServicePointsAsync(staffAccess.Hospital.Id, ct);
+
+                if (trackedOrder is not null)
+                {
+                    var postLockPolicy = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(
+                        _db,
+                        staffAccess.Hospital.Id,
+                        nowUtc,
+                        ct);
+                    if (MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsOrderExpiredForExecution(
+                            trackedOrder,
+                            postLockPolicy.DiagnosticOrderValidityDays,
+                            nowLocal))
+                    {
+                        throw new ConflictException(
+                            MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.ExpiredOrderDoctorApprovalRequiredMessage);
+                    }
+
+                    var postLockService = trackedOrder.ServiceId.HasValue
+                        ? await _db.Services.AsNoTracking().FirstOrDefaultAsync(s => s.Id == trackedOrder.ServiceId.Value, ct)
+                        : null;
+
+                    var postLockSpId = DiagnosticServicePointResolver.ResolveForExecutionOrThrow(
+                        trackedOrder,
+                        postLockService,
+                        overrideServicePointId,
+                        postLockHospitalServicePoints,
+                        postLockRoomsById,
+                        [trackedQueueEntry],
+                        staffAccess.Hospital.Id,
+                        postLockDepartmentsById,
+                        overrideRoomId);
+
+                    effectiveSpId = postLockSpId;
+                    trackedQueueEntry.ServicePointId ??= postLockSpId;
+                    trackedQueueEntry.CurrentServicePointId = postLockSpId;
+                }
+                else
+                {
+                    var postLockSp = effectiveSpId.HasValue
+                        ? postLockHospitalServicePoints.FirstOrDefault(sp => sp.Id == effectiveSpId.Value)
+                        : null;
+                    if (!DiagnosticServicePointResolver.IsOperational(
+                            postLockSp,
+                            postLockRoomsById,
+                            postLockDepartmentsById,
+                            staffAccess.Hospital.Id))
+                    {
+                        throw new ConflictException(
+                            $"[{DiagnosticServicePointResolver.NoActiveCompatiblePointCode}] Điểm phục vụ hoặc phòng thực hiện cận lâm sàng hiện đang ngừng hoạt động hoặc cấu hình không hợp lệ.");
+                    }
+                }
             }
 
             if (targetStatus is "CALLED" or "IN_PROGRESS")
@@ -1853,6 +1969,12 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
             paymentGatesByOrderId[hospOrder.Id] = await _settlementReader.CheckDiagnosticOrderEligibilityAsync(hospOrder.Id, ct);
         }
 
+        var crossDayPolicy = await MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.LoadAsync(
+            _db,
+            staffAccess.Hospital.Id,
+            _timeProvider.GetUtcNow().UtcDateTime,
+            ct);
+
         // Build unsorted item DTOs
         var preliminaryItems = new List<DiagnosticQueueEntryItemDto>(rawCandidates.Count);
         foreach (var candidate in rawCandidates)
@@ -1879,7 +2001,9 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                 doctorsById,
                 staffById,
                 resultsByOrderId,
-                paymentGate);
+                paymentGate,
+                crossDayPolicy.DiagnosticOrderValidityDays,
+                nowLocal);
 
             if (explicitDate.HasValue)
             {
@@ -1939,7 +2063,9 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
         IReadOnlyDictionary<long, Doctor> doctorsById,
         IReadOnlyDictionary<long, Staff> staffById,
         IReadOnlyDictionary<long, DiagnosticResult> resultsByOrderId,
-        VisitChargeGateResult? paymentGate = null)
+        VisitChargeGateResult? paymentGate = null,
+        int diagnosticOrderValidityDays = 7,
+        DateTime? nowLocal = null)
     {
         var visitId = qe?.VisitId ?? order?.VisitId ?? 0;
         visitsById.TryGetValue(visitId, out var visit);
@@ -2113,6 +2239,26 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
 
             allowedTargetStatuses = allowedTargetStatuses
                 .Where(t => t is not ("CALLED" or "IN_PROGRESS" or "COMPLETED"))
+                .ToList();
+        }
+
+        var effectiveNowLocal = nowLocal ?? todayLocal.ToDateTime(TimeOnly.MinValue);
+        if (order is not null &&
+            MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.IsOrderExpiredForExecution(
+                order,
+                diagnosticOrderValidityDays,
+                effectiveNowLocal) &&
+            !IsTerminalVisitStatus(visitStatus))
+        {
+            isEligible = false;
+            ineligibleReason = MedFlow.Application.Services.Policies.CrossDayVisitPolicyReader.ExpiredOrderDoctorApprovalRequiredMessage;
+            if (string.IsNullOrWhiteSpace(effectiveBlockedReason))
+            {
+                effectiveBlockedReason = "DIAGNOSTIC_ORDER_EXPIRED_DOCTOR_APPROVAL_REQUIRED";
+            }
+
+            allowedTargetStatuses = allowedTargetStatuses
+                .Where(t => t is not ("READY" or "CALLED" or "IN_PROGRESS" or "COMPLETED"))
                 .ToList();
         }
 
@@ -3796,24 +3942,7 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
     private static QueueServicePoint? ResolveDiagnosticServicePointForService(
         long serviceId,
         IReadOnlyList<QueueServicePoint> hospitalDiagPoints)
-    {
-        var specific = hospitalDiagPoints
-            .Where(sp => sp.ServiceId == serviceId)
-            .OrderBy(sp => sp.IsActive == false ? 1 : 0)
-            .ThenBy(sp => sp.Id)
-            .FirstOrDefault();
-
-        if (specific is not null)
-        {
-            return specific;
-        }
-
-        return hospitalDiagPoints
-            .Where(sp => sp.IsActive != false)
-            .OrderBy(sp => sp.ServiceId.HasValue ? 1 : 0)
-            .ThenBy(sp => sp.Id)
-            .FirstOrDefault();
-    }
+        => DiagnosticServicePointResolver.TryResolveCompatibleForCatalog(serviceId, null, hospitalDiagPoints);
 
     private static string ResolveDiagnosticCategory(
         Service service,

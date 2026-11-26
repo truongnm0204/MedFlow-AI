@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 
 import { completeVisitSchema } from '../schemas/consultation-workspace.schema';
 import type {
+  ApproveOverdueReturnResultsRequest,
   CompleteVisitRequest,
   ConsultationClinicalContextDto,
   ConsultationVisitSummaryDto,
@@ -39,6 +40,11 @@ export interface ConsultationCompleteVisitPanelProps {
   onSubmitCompleteVisit?: (
     payload: CompleteVisitRequest,
   ) => Promise<boolean | void> | boolean | void;
+  onApproveOverdueResults?: (
+    payload: ApproveOverdueReturnResultsRequest,
+  ) => Promise<boolean | void> | boolean | void;
+  isApprovingOverdueResults?: boolean;
+  onRefreshWorkspace?: () => Promise<unknown> | void;
   onClearSubmitError?: () => void;
 }
 
@@ -56,6 +62,9 @@ export function ConsultationCompleteVisitPanel({
   isFormOpen: controlledIsFormOpen,
   onToggleForm,
   onSubmitCompleteVisit,
+  onApproveOverdueResults,
+  isApprovingOverdueResults = false,
+  onRefreshWorkspace,
   onClearSubmitError,
 }: ConsultationCompleteVisitPanelProps) {
   const isFinalized =
@@ -94,7 +103,25 @@ export function ConsultationCompleteVisitPanel({
   const [completionNoteInput, setCompletionNoteInput] = useState('');
   const [confirmNoPrescriptionInput, setConfirmNoPrescriptionInput] = useState(false);
   const [closeUndecidedOptionalInput, setCloseUndecidedOptionalInput] = useState(false);
+  const [overdueApprovalReason, setOverdueApprovalReason] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [snapshotVisitKey, setSnapshotVisitKey] = useState(visit.visitCode);
+  const [capturedResultSnapshot, setCapturedResultSnapshot] = useState<string | null>(
+    () => visit.currentResultSnapshot ?? null,
+  );
+
+  if (snapshotVisitKey !== visit.visitCode) {
+    setSnapshotVisitKey(visit.visitCode);
+    setCapturedResultSnapshot(visit.currentResultSnapshot ?? null);
+  } else if (capturedResultSnapshot === null && visit.currentResultSnapshot) {
+    setCapturedResultSnapshot(visit.currentResultSnapshot);
+  } else if (
+    visit.isOverdueReturnApproved &&
+    visit.currentResultSnapshot &&
+    capturedResultSnapshot !== visit.currentResultSnapshot
+  ) {
+    setCapturedResultSnapshot(visit.currentResultSnapshot);
+  }
 
   if (syncKey !== lastSyncKey) {
     setLastSyncKey(syncKey);
@@ -233,12 +260,30 @@ export function ConsultationCompleteVisitPanel({
     },
   ];
 
+  const isReturnOverdue = Boolean(visit.isReturnOverdue);
+  const isSnapshotStale = Boolean(
+    isReturnOverdue &&
+    !visit.isOverdueReturnApproved &&
+    capturedResultSnapshot &&
+    visit.currentResultSnapshot &&
+    capturedResultSnapshot !== visit.currentResultSnapshot,
+  );
+  const hasSnapshotForApproval = Boolean(
+    capturedResultSnapshot && /^[0-9a-fA-F]{64}$/.test(capturedResultSnapshot),
+  );
+  const isOverdueReturnApproved =
+    !isReturnOverdue ||
+    Boolean(visit.isOverdueReturnApproved) ||
+    (!isSnapshotStale && hasSnapshotForApproval && overdueApprovalReason.trim().length >= 3);
+
   const allChecklistReady =
     isSessionInProgress &&
     hasPrimaryDiagnosis &&
     hasNoPendingDiagnostics &&
     hasClinicalConclusion &&
-    isPrescriptionValid;
+    isPrescriptionValid &&
+    isOverdueReturnApproved &&
+    !isSnapshotStale;
 
   const handleResetDraft = () => {
     clearErrors();
@@ -274,6 +319,14 @@ export function ConsultationCompleteVisitPanel({
       notes: completionNoteInput.trim() || null,
       confirmNoPrescription: confirmNoPrescriptionInput,
       closeUndecidedOptionalOrders: closeUndecidedOptionalInput || null,
+      overdueReturnApprovalNote:
+        isReturnOverdue && !visit.isOverdueReturnApproved && overdueApprovalReason.trim()
+          ? overdueApprovalReason.trim()
+          : null,
+      expectedResultSnapshot:
+        isReturnOverdue && !visit.isOverdueReturnApproved && overdueApprovalReason.trim()
+          ? capturedResultSnapshot
+          : null,
       expectedStateVersion: expectedStateVersion ?? null,
       expectedRevisionNo: effectiveRevisionNo,
     };
@@ -307,6 +360,25 @@ export function ConsultationCompleteVisitPanel({
     if (!isPrescriptionValid) {
       setValidationError(
         'Đơn thuốc nháp hiện chưa có thuốc kê đơn. Vui lòng bổ sung thuốc hoặc hủy đơn nháp trước khi hoàn tất.',
+      );
+      return;
+    }
+
+    if (isSnapshotStale) {
+      setValidationError(
+        'Kết quả cận lâm sàng vừa thay đổi. Vui lòng xem lại kết quả mới trước khi xác nhận',
+      );
+      return;
+    }
+
+    if (
+      isReturnOverdue &&
+      !visit.isOverdueReturnApproved &&
+      overdueApprovalReason.trim() &&
+      !hasSnapshotForApproval
+    ) {
+      setValidationError(
+        'Chưa tải được mã đối chiếu kết quả cận lâm sàng hiện hành. Vui lòng làm mới không gian khám và xem lại kết quả.',
       );
       return;
     }
@@ -416,6 +488,149 @@ export function ConsultationCompleteVisitPanel({
                 ? 'Tài khoản chưa được cấp quyền ghi nhận hồ sơ bệnh án (MEDICAL_RECORD_WRITE).'
                 : disabledReason}
             </span>
+          </div>
+        )}
+
+        {!isFinalized && isReturnOverdue && (
+          <div
+            className={`rounded-xl border p-3.5 space-y-2.5 text-xs ${
+              visit.isOverdueReturnApproved
+                ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900'
+                : 'border-amber-200 bg-amber-50/70 text-amber-900'
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-bold text-navy flex items-center gap-1.5">
+                <ShieldAlert className="h-4 w-4 text-amber-700" aria-hidden="true" />
+                <span>Xác nhận giá trị kết quả quá hạn (Khám kết luận quá thời hạn)</span>
+              </div>
+              <Badge tone={visit.isOverdueReturnApproved ? 'emerald' : 'amber'}>
+                {visit.isOverdueReturnApproved ? 'Đã xác nhận chuyên môn' : 'Chờ bác sĩ xác nhận'}
+              </Badge>
+            </div>
+
+            {visit.isOverdueReturnApproved ? (
+              <p className="text-[11px] text-sub">
+                Đã xác nhận sử dụng bộ kết quả cận lâm sàng hiện hành
+                {visit.overdueReturnApprovalNote ? `: "${visit.overdueReturnApprovalNote}"` : '.'}
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <p>
+                  Lượt khám kết luận đã quá thời hạn quy định. Bác sĩ phụ trách cần xác nhận giá trị
+                  chuyên môn của các kết quả cận lâm sàng hiện tại trước khi xác nhận chẩn đoán, kê
+                  đơn phát hành hoặc hoàn tất lượt khám.
+                </p>
+                {isSnapshotStale && (
+                  <div
+                    role="alert"
+                    className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-rose-900 flex flex-wrap items-center justify-between gap-2"
+                  >
+                    <span className="font-semibold">
+                      Kết quả cận lâm sàng vừa thay đổi. Vui lòng xem lại kết quả mới trước khi xác
+                      nhận
+                    </span>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        clearErrors();
+                        setCapturedResultSnapshot(visit.currentResultSnapshot ?? null);
+                      }}
+                    >
+                      <span>Tôi đã xem kết quả mới</span>
+                    </Button>
+                  </div>
+                )}
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    aria-label="Nhận định chuyên môn xác nhận giá trị kết quả quá hạn"
+                    value={overdueApprovalReason}
+                    onChange={(e) => {
+                      clearErrors();
+                      setOverdueApprovalReason(e.target.value);
+                    }}
+                    placeholder="Nhập nhận định chuyên môn xác nhận sử dụng kết quả quá hạn..."
+                    className="flex-1 rounded-lg border border-border bg-white px-3 py-1.5 text-xs text-ink focus:border-primary focus:outline-none"
+                  />
+                  {onApproveOverdueResults && hasWritePermission ? (
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      loading={isApprovingOverdueResults}
+                      disabled={
+                        isApprovingOverdueResults || isSnapshotStale || !hasSnapshotForApproval
+                      }
+                      onClick={async () => {
+                        const trimmed = overdueApprovalReason.trim();
+                        if (trimmed.length < 3) {
+                          setValidationError(
+                            'Vui lòng nhập nhận định chuyên môn xác nhận kết quả quá hạn (tối thiểu 3 ký tự).',
+                          );
+                          return;
+                        }
+                        if (isSnapshotStale) {
+                          setValidationError(
+                            'Kết quả cận lâm sàng vừa thay đổi. Vui lòng xem lại kết quả mới trước khi xác nhận',
+                          );
+                          return;
+                        }
+                        if (!capturedResultSnapshot || !hasSnapshotForApproval) {
+                          setValidationError(
+                            'Chưa tải được mã đối chiếu kết quả cận lâm sàng hiện hành. Vui lòng làm mới không gian khám.',
+                          );
+                          return;
+                        }
+                        try {
+                          await onApproveOverdueResults({
+                            reason: trimmed,
+                            expectedResultSnapshot: capturedResultSnapshot,
+                            expectedStateVersion: expectedStateVersion ?? null,
+                          });
+                        } catch (err) {
+                          const rawMsg = err instanceof Error ? err.message : String(err ?? '');
+                          if (rawMsg.includes('OVERDUE_RESULT_SNAPSHOT_MISMATCH')) {
+                            await onRefreshWorkspace?.();
+                            setValidationError(
+                              'Kết quả đã thay đổi. Vui lòng xem lại trước khi xác nhận',
+                            );
+                            return;
+                          }
+                          throw err;
+                        }
+                      }}
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Xác nhận giá trị kết quả quá hạn</span>
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {(validationError || submitError) && !isActionable && (
+          <div role="alert">
+            <Alert tone="error">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{validationError ?? submitError}</span>
+              </div>
+            </Alert>
+          </div>
+        )}
+        {(validationError || submitError) && isActionable && !isFormOpen && (
+          <div role="alert">
+            <Alert tone="error">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{validationError ?? submitError}</span>
+              </div>
+            </Alert>
           </div>
         )}
 

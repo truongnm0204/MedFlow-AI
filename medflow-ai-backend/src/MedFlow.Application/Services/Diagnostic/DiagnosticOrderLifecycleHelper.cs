@@ -118,9 +118,50 @@ internal static class DiagnosticOrderLifecycleHelper
         IEnumerable<long>? extraQueueEntryIds,
         IEnumerable<long>? extraDiagnosticOrderIds,
         bool includeChargeAndPaymentLocks,
-        CancellationToken ct)
+        CancellationToken ct,
+        IEnumerable<long>? extraServiceIds = null,
+        IEnumerable<long>? extraRoomIds = null)
     {
         var anyRelationalLockAcquired = false;
+
+        // Level 04: services (ADR-0059 lock order, before visits 09)
+        if (extraServiceIds is not null)
+        {
+            var sortedServiceIds = new SortedSet<long>();
+            foreach (var sid in extraServiceIds)
+            {
+                if (sid > 0)
+                {
+                    sortedServiceIds.Add(sid);
+                }
+            }
+
+            foreach (var sid in sortedServiceIds)
+            {
+                if (await db.TryLockServiceForUpdateAsync(sid, ct))
+                {
+                    anyRelationalLockAcquired = true;
+                }
+            }
+        }
+
+        // Level 06: hospital_rooms (ADR-0059 lock order, before visits 09)
+        if (extraRoomIds is not null)
+        {
+            var sortedRoomIds = new SortedSet<long>();
+            foreach (var rid in extraRoomIds)
+            {
+                if (rid > 0)
+                {
+                    sortedRoomIds.Add(rid);
+                }
+            }
+
+            if (sortedRoomIds.Count > 0 && await db.TryLockRoomsForUpdateAsync(sortedRoomIds.ToArray(), ct))
+            {
+                anyRelationalLockAcquired = true;
+            }
+        }
 
         var sortedVisitIds = new SortedSet<long>();
         if (visitIds is not null)
@@ -1038,7 +1079,14 @@ internal static class DiagnosticOrderLifecycleHelper
 
         if (!isReady)
         {
-            visit.ReadyForReturnAt = null;
+            var policyNowUtc = nowUtcOverride ?? MedFlow.Application.Common.Time.HospitalClock.ConvertHospitalLocalToUtc(nowLocal);
+            var crossDayPolicy = await CrossDayVisitPolicyReader.LoadAsync(db, hospitalId, policyNowUtc, ct);
+            if (!CrossDayVisitPolicyReader.IsReturnConsultationOverdue(visit, crossDayPolicy.ReturnConsultationWindowDays, nowLocal))
+            {
+                visit.ReadyForReturnAt = null;
+            }
+
+            visit.OverdueReturnResultSnapshot = null;
 
             if (visitStatus == "RETURN_CONSULTATION")
             {

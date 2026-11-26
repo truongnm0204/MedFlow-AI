@@ -344,9 +344,51 @@ describe('PatientPaymentDetailPage', () => {
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith('/patients/visits/VIS-1/payments/qr', {
         visitChargeId: 102,
+        idempotencyKey: expect.stringMatching(/^qr-/),
       }),
     );
     expect(await screen.findByRole('img', { name: 'Mã VietQR MF99' })).toBeInTheDocument();
+  });
+
+  it('không hiển thị ảnh QR khi phản hồi ở trạng thái PAID/EXPIRED/CANCELLED và tạo idempotencyKey mới khi tạo lại', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: charges() } as never);
+    const post = vi
+      .spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({
+        data: qrResponse({
+          paymentId: 51,
+          paymentCode: 'MF51',
+          status: 'EXPIRED',
+          qrPayload: '',
+        }),
+      } as never)
+      .mockResolvedValueOnce({
+        data: qrResponse({
+          paymentId: 52,
+          paymentCode: 'MF52',
+          status: 'PAID',
+          issueKind: 'ALREADY_PAID',
+          qrPayload: '',
+        }),
+      } as never);
+
+    renderWithProviders(<PatientPaymentDetailPage />, '/payments/VIS-1');
+
+    await user.click(await screen.findByRole('button', { name: 'Tạo mã VietQR' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('img', { name: /Mã VietQR/ })).not.toBeInTheDocument();
+
+    const firstBody = post.mock.calls[0]?.[1] as { idempotencyKey?: string };
+    expect(firstBody?.idempotencyKey).toMatch(/^qr-/);
+
+    await user.click(await screen.getByRole('button', { name: 'Tạo mã VietQR mới' }));
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('img', { name: /Mã VietQR/ })).not.toBeInTheDocument();
+
+    const secondBody = post.mock.calls[1]?.[1] as { idempotencyKey?: string };
+    expect(secondBody?.idempotencyKey).toMatch(/^qr-/);
+    expect(secondBody?.idempotencyKey).not.toBe(firstBody?.idempotencyKey);
   });
 
   it('tự động khôi phục mã VietQR đang PENDING khi tải lại trang', async () => {

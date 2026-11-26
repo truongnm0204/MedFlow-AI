@@ -22,6 +22,7 @@ namespace MedFlow.Application.Services.Visits;
 public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleService
 {
     public const string VisitResumedAuditAction = "VISIT_RESUMED";
+    public const string VisitClinicalReviewCoordinatedAuditAction = "VISIT_CLINICAL_REVIEW_COORDINATED";
     public const string VisitDeferredAuditAction = "VISIT_DEFERRED";
     public const string VisitDoctorAssignedAuditAction = "VISIT_DOCTOR_ASSIGNED";
 
@@ -152,6 +153,7 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                                  selectionStatus == DiagnosticSelectionStatuses.Accepted &&
                                  orderStatus is "ORDERED" or "CONFIRMED" &&
                                  isSettled &&
+                                 !isExpired &&
                                  !hasActiveTodayDiagQueue;
 
             orderDtos.Add(new VisitResumeDiagnosticOrderItemDto(
@@ -165,7 +167,9 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                 DeferredUntilDate: order.DeferredUntilDate,
                 ValidityExpiresAt: validityExpiresAt,
                 IsExpiredForReview: isExpired,
-                CanResumeToday: canResumeToday));
+                CanResumeToday: canResumeToday,
+                ValidityExtendedUntil: order.ValidityExtendedUntil,
+                RevalidationNote: order.RevalidationNote));
         }
 
         if (CrossDayVisitPolicyReader.IsReturnConsultationOverdue(visit, policy.ReturnConsultationWindowDays, nowLocal))
@@ -173,8 +177,15 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
             overdueReasons.Add(CrossDayVisitPolicyKeys.OverdueReasonReturnConsultation);
         }
 
+        var isOverdueReturnApproved = visit.AssignedDoctorId.HasValue &&
+            await MedFlow.Application.Services.Consultation.OverdueReturnSnapshotHelper.IsApprovedForCurrentSnapshotAsync(
+                _db,
+                visit,
+                visit.AssignedDoctorId.Value,
+                ct);
+
         var (assignedDoctorName, isAssignedDoctorActive) = await ResolveAssignedDoctorInfoAsync(visit.AssignedDoctorId, ct);
-        var chargesSummary = await BuildChargesSummaryAsync(visit.Id, ct);
+        var chargesSummary = await BuildChargesSummaryAsync(visit, ct);
         var activeTodayQueues = await BuildActiveQueueBriefsAsync(visitQueues, todayLocal, ct);
 
         return new VisitResumeContextResponseDto(
@@ -196,7 +207,8 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
             ChargesSummary: chargesSummary,
             DiagnosticOrders: orderDtos,
             ActiveTodayQueues: activeTodayQueues,
-            IsAssignedDoctorActive: isAssignedDoctorActive);
+            IsAssignedDoctorActive: isAssignedDoctorActive,
+            IsOverdueReturnApproved: isOverdueReturnApproved);
     }
 
     public async Task<ResumeCrossDayVisitResponseDto> ResumeVisitAsync(
@@ -212,6 +224,23 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
         if (normalizedTarget is not ("DIAGNOSTIC" or "RETURN_CONSULTATION"))
         {
             throw new ValidationException("Mục tiêu tiếp tục lượt khám (Target) phải là 'DIAGNOSTIC' hoặc 'RETURN_CONSULTATION'.");
+        }
+
+        var normalizedCoordinationPurpose = string.IsNullOrWhiteSpace(request.CoordinationPurpose)
+            ? (normalizedTarget == "RETURN_CONSULTATION" ? QueueCoordinationPurposes.ResultConclusion : null)
+            : request.CoordinationPurpose.Trim().ToUpperInvariant();
+
+        if (normalizedCoordinationPurpose is not null && !QueueCoordinationPurposes.IsValid(normalizedCoordinationPurpose))
+        {
+            throw new ValidationException(
+                "Mục đích điều phối khám lại (CoordinationPurpose) chỉ chấp nhận 'RESULT_CONCLUSION' hoặc 'CLINICAL_REVIEW'.");
+        }
+
+        if (normalizedTarget == "DIAGNOSTIC" &&
+            normalizedCoordinationPurpose == QueueCoordinationPurposes.ClinicalReview)
+        {
+            throw new ValidationException(
+                "CoordinationPurpose = 'CLINICAL_REVIEW' chỉ áp dụng khi điều phối Target = 'RETURN_CONSULTATION'.");
         }
 
         string? normalizedIdempotencyKey = null;
@@ -650,6 +679,23 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                 roomIdsToLock.Add(r.Id);
             }
 
+            var preOrderServiceIds = await _db.DiagnosticOrders
+                .AsNoTracking()
+                .Where(o => o.VisitId == visitId && o.ServiceId.HasValue)
+                .Select(o => o.ServiceId!.Value)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToListAsync(ct);
+
+            // Level 04: services (ADR-0059 order, before doctors 05 and rooms 06)
+            foreach (var sid in preOrderServiceIds)
+            {
+                if (sid > 0)
+                {
+                    await _db.TryLockServiceForUpdateAsync(sid, ct);
+                }
+            }
+
             // Level 05: doctors
             if (doctorIdsToLock.Count > 0)
             {
@@ -673,7 +719,8 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                 includeChargeAndPaymentLocks: false,
                 ct: ct);
 
-            if (_db is DbContext efContext)
+            if (_db is DbContext efContext &&
+                !string.Equals(efContext.Database.ProviderName, "Microsoft.EntityFrameworkCore.InMemory", StringComparison.Ordinal))
             {
                 efContext.ChangeTracker.Clear();
             }
@@ -689,6 +736,7 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                     $"[VISIT_NOT_RESUMABLE] Lượt khám '{visitCode}' đã ở trạng thái kết thúc '{visitStatus}', không thể tiếp tục (Resume).");
             }
 
+            var effectiveHospitalId = visitHospitalId ?? actor.Doctor?.HospitalId ?? actor.Staff?.HospitalId ?? 0;
             var policy = await CrossDayVisitPolicyReader.LoadAsync(_db, visitHospitalId, nowUtc, ct);
             if (!policy.AllowCrossDayVisit &&
                 visit.CheckedInAt.HasValue &&
@@ -710,6 +758,42 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                 .OrderBy(o => o.Id)
                 .ToListAsync(ct);
 
+            var orderServiceIds = visitOrders
+                .Where(o => o.ServiceId.HasValue)
+                .Select(o => o.ServiceId!.Value)
+                .Distinct()
+                .ToList();
+            var servicesById = orderServiceIds.Count == 0
+                ? new Dictionary<long, Service>()
+                : (await _db.Services
+                    .AsNoTracking()
+                    .Where(s => orderServiceIds.Contains(s.Id))
+                    .ToListAsync(ct))
+                    .ToDictionary(s => s.Id);
+
+            // Reload rooms, departments, and service points post-lock so concurrent Admin deactivations are strictly enforced
+            hospitalRooms = await _db.HospitalRooms
+                .AsNoTracking()
+                .Where(r => r.HospitalId == effectiveHospitalId)
+                .OrderBy(r => r.Id)
+                .ToListAsync(ct);
+            var roomsById = hospitalRooms.ToDictionary(r => r.Id);
+
+            var departmentsById = (await _db.Departments
+                .AsNoTracking()
+                .Where(d => d.HospitalId == effectiveHospitalId)
+                .ToListAsync(ct))
+                .ToDictionary(d => d.Id);
+
+            hospitalServicePoints = await _db.QueueServicePoints
+                .AsNoTracking()
+                .Where(sp => sp.HospitalId == effectiveHospitalId)
+                .OrderBy(sp => sp.Id)
+                .ToListAsync(ct);
+            var normalizedCoordinationPurpose = string.IsNullOrWhiteSpace(request.CoordinationPurpose)
+                ? (normalizedTarget == "RETURN_CONSULTATION" ? QueueCoordinationPurposes.ResultConclusion : null)
+                : request.CoordinationPurpose.Trim().ToUpperInvariant();
+
             // Close any stale prior-day (QueueDate < todayLocal) non-IN_PROGRESS open queue entries -> DEFERRED / LEFT
             var closedPriorDayCount = 0;
             foreach (var staleQueue in visitQueues.Where(q =>
@@ -718,7 +802,13 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                          !q.CompletedAt.HasValue))
             {
                 var qStatus = AppointmentBookingRules.NormalizeStatusKey(staleQueue.Status);
-                if (qStatus is "IN_PROGRESS" or "IN_CONSULTATION" or "SERVING" or "COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED" or "NO_SHOW")
+                var qType = AppointmentBookingRules.NormalizeStatusKey(staleQueue.QueueType);
+                if (qStatus is "COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED" or "NO_SHOW")
+                {
+                    continue;
+                }
+
+                if (qType == "DIAGNOSTIC" && qStatus is "IN_PROGRESS" or "IN_CONSULTATION" or "SERVING")
                 {
                     continue;
                 }
@@ -808,18 +898,25 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                         nowLocal);
                     if (isExpired)
                     {
-                        if (request.ConfirmOverdueOverride != true)
-                        {
-                            throw new ConflictException(
-                                $"[DIAGNOSTIC_ORDER_EXPIRED_REVIEW_REQUIRED] Phiếu chỉ định cận lâm sàng '{orderCode}' đã quá thời hạn hiệu lực {policy.DiagnosticOrderValidityDays} ngày kể từ ngày chỉ định. Cần bác sĩ xem xét hoặc xác nhận gia hạn hợp lệ (ConfirmOverdueOverride).");
-                        }
-
-                        if (string.IsNullOrWhiteSpace(normalizedNotes))
-                        {
-                            throw new ValidationException(
-                                "Vui lòng nhập ghi chú lý do xác nhận gia hạn/tiếp tục chỉ định quá hạn (Notes).");
-                        }
+                        throw new ConflictException(
+                            $"[DIAGNOSTIC_ORDER_EXPIRED_DOCTOR_APPROVAL_REQUIRED] Phiếu chỉ định cận lâm sàng '{orderCode}' đã quá thời hạn hiệu lực ({policy.DiagnosticOrderValidityDays} ngày). Lễ tân không được phép tự gia hạn chuyên môn; vui lòng điều phối bệnh nhân gặp bác sĩ đánh giá lại (CLINICAL_REVIEW).");
                     }
+
+                    Service? orderService = null;
+                    if (order.ServiceId.HasValue)
+                    {
+                        servicesById.TryGetValue(order.ServiceId.Value, out orderService);
+                    }
+
+                    var targetSpId = DiagnosticServicePointResolver.ResolveForExecutionOrThrow(
+                        order,
+                        orderService,
+                        request.TargetServicePointId,
+                        hospitalServicePoints,
+                        roomsById,
+                        visitQueues,
+                        effectiveHospitalId,
+                        departmentsById);
 
                     var scopedKey = normalizedIdempotencyKey is not null
                         ? BuildScopedQueueIdempotencyKey(normalizedIdempotencyKey, $"D{order.Id}")
@@ -839,11 +936,14 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                     {
                         var existingQStatus = AppointmentBookingRules.NormalizeStatusKey(existingTodayDiag.Status);
                         var existingPresence = AppointmentBookingRules.NormalizeStatusKey(existingTodayDiag.PresenceStatus);
+                        var spChanged = (existingTodayDiag.CurrentServicePointId ?? existingTodayDiag.ServicePointId) != targetSpId;
 
-                        if (existingQStatus == "DEFERRED" || existingPresence != "PRESENT")
+                        if (existingQStatus == "DEFERRED" || existingPresence != "PRESENT" || spChanged)
                         {
                             existingTodayDiag.Status = "WAITING";
                             existingTodayDiag.PresenceStatus = "PRESENT";
+                            existingTodayDiag.ServicePointId ??= targetSpId;
+                            existingTodayDiag.CurrentServicePointId = targetSpId;
                             existingTodayDiag.CalledAt = null;
                             existingTodayDiag.CompletedAt = null;
                             existingTodayDiag.BlockedReason = null;
@@ -860,22 +960,14 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                     }
 
                     isIdempotentReplay = false;
-                    var targetSpId = ResolveDiagnosticServicePointIdForResume(
-                        order,
-                        request.TargetServicePointId,
-                        visitQueues,
-                        hospitalServicePoints);
-
-                    var spCacheKey = targetSpId ?? 0L;
+                    var spCacheKey = targetSpId;
                     if (!nextNumberCacheBySpKey.TryGetValue(spCacheKey, out var currentMax))
                     {
                         var dbMax = await _db.QueueEntries
                             .AsNoTracking()
                             .Where(q =>
                                 q.QueueDate == todayLocal &&
-                                (targetSpId.HasValue
-                                    ? (q.ServicePointId == targetSpId.Value || q.CurrentServicePointId == targetSpId.Value)
-                                    : (q.ServicePointId == null && q.CurrentServicePointId == null)))
+                                (q.ServicePointId == targetSpId || q.CurrentServicePointId == targetSpId))
                             .MaxAsync(q => (int?)q.QueueNumber, ct);
                         currentMax = dbMax ?? 0;
                     }
@@ -933,33 +1025,32 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
             else
             {
                 // Target == "RETURN_CONSULTATION"
-                var isReady = await DiagnosticOrderLifecycleHelper.EvaluateVisitReturnReadinessAsync(
-                    _db,
-                    visit.Id,
-                    ct: ct);
+                var effectivePurpose = normalizedCoordinationPurpose ?? QueueCoordinationPurposes.ResultConclusion;
 
-                if (!isReady)
+                if (effectivePurpose == QueueCoordinationPurposes.ClinicalReview)
                 {
-                    throw new ConflictException(
-                        "[RETURN_CONSULTATION_NOT_READY] Lượt khám chưa có đầy đủ kết quả cận lâm sàng bắt buộc hoặc đang còn dịch vụ cận lâm sàng đang thực hiện/chờ kết quả.");
-                }
+                    var hasOrderNeedingReview = visitOrders.Any(o =>
+                        AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED" &&
+                        (CrossDayVisitPolicyReader.IsOrderExpiredForExecution(o, policy.DiagnosticOrderValidityDays, nowLocal) ||
+                         NormalizeSelectionStatus(o.SelectionStatus) == DiagnosticSelectionStatuses.ReviewRequired));
 
-                var isReturnOverdue = CrossDayVisitPolicyReader.IsReturnConsultationOverdue(
-                    visit,
-                    policy.ReturnConsultationWindowDays,
-                    nowLocal);
-                if (isReturnOverdue)
-                {
-                    if (request.ConfirmOverdueOverride != true)
+                    if (!hasOrderNeedingReview)
                     {
                         throw new ConflictException(
-                            $"[RETURN_CONSULTATION_OVERDUE_REVIEW_REQUIRED] Lượt khám kết luận đã quá thời hạn quy định ({policy.ReturnConsultationWindowDays} ngày kể từ khi có đủ kết quả). Vui lòng xác nhận xem xét/gia hạn lâm sàng (ConfirmOverdueOverride = true kèm ghi chú) trước khi tiếp tục.");
+                            "[CLINICAL_REVIEW_NOT_REQUIRED] Lượt khám hiện không có phiếu chỉ định cận lâm sàng quá hạn hoặc cần bác sĩ xem xét lại (REVIEW_REQUIRED).");
                     }
+                }
+                else
+                {
+                    var isReady = await DiagnosticOrderLifecycleHelper.EvaluateVisitReturnReadinessAsync(
+                        _db,
+                        visit.Id,
+                        ct: ct);
 
-                    if (string.IsNullOrWhiteSpace(normalizedNotes))
+                    if (!isReady)
                     {
-                        throw new ValidationException(
-                            "Vui lòng nhập ghi chú lý do xác nhận tiếp tục khám kết luận quá hạn (Notes).");
+                        throw new ConflictException(
+                            "[RETURN_CONSULTATION_NOT_READY] Lượt khám chưa có đầy đủ kết quả cận lâm sàng bắt buộc hoặc đang còn dịch vụ cận lâm sàng đang thực hiện/chờ kết quả.");
                     }
                 }
 
@@ -1036,11 +1127,17 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                             (!newDoctor.Staff?.DepartmentId.HasValue == true || r.DepartmentId == newDoctor.Staff?.DepartmentId))?.Id
                         ?? visit.ExaminationRoomId;
 
+                    if (previousDoctorId != newDoctor.Id)
+                    {
+                        visit.OverdueReturnResultSnapshot = null;
+                    }
+
                     visit.AssignedDoctorId = newDoctor.Id;
                     visit.ExaminationRoomId = newRoomId;
 
                     if (previousDoctorId != newDoctor.Id)
                     {
+                        visit.OverdueReturnResultSnapshot = null;
                         isIdempotentReplay = false;
                         _db.AuditLogs.Add(new AuditLog
                         {
@@ -1105,8 +1202,9 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                     referenceClinical,
                     hospitalServicePoints);
 
+                var scopedSuffix = effectivePurpose == QueueCoordinationPurposes.ClinicalReview ? "CREV" : "RET";
                 var scopedReturnKey = normalizedIdempotencyKey is not null
-                    ? BuildScopedQueueIdempotencyKey(normalizedIdempotencyKey, "RET")
+                    ? BuildScopedQueueIdempotencyKey(normalizedIdempotencyKey, scopedSuffix)
                     : null;
 
                 var existingTodayReturn = visitQueues
@@ -1117,13 +1215,23 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                     .OrderByDescending(q => q.Id)
                     .FirstOrDefault();
 
-                visit.ReadyForReturnAt ??= nowLocal;
+                if (effectivePurpose == QueueCoordinationPurposes.ResultConclusion)
+                {
+                    visit.ReadyForReturnAt ??= nowLocal;
+                }
 
                 if (existingTodayReturn is not null)
                 {
                     var existingStatus = AppointmentBookingRules.NormalizeStatusKey(existingTodayReturn.Status);
                     var existingPresence = AppointmentBookingRules.NormalizeStatusKey(existingTodayReturn.PresenceStatus);
                     var spChanged = targetSpId.HasValue && existingTodayReturn.CurrentServicePointId != targetSpId.Value;
+                    var purposeChanged = !string.Equals(existingTodayReturn.CoordinationPurpose, effectivePurpose, StringComparison.OrdinalIgnoreCase);
+
+                    if (purposeChanged)
+                    {
+                        existingTodayReturn.CoordinationPurpose = effectivePurpose;
+                        isIdempotentReplay = false;
+                    }
 
                     if (existingStatus is "CALLED" or "IN_PROGRESS" or "IN_CONSULTATION" or "SERVING")
                     {
@@ -1138,6 +1246,7 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                     {
                         existingTodayReturn.Status = "READY";
                         existingTodayReturn.PresenceStatus = "PRESENT";
+                        existingTodayReturn.CoordinationPurpose = effectivePurpose;
                         existingTodayReturn.CalledAt = null;
                         existingTodayReturn.CompletedAt = null;
                         existingTodayReturn.BlockedReason = null;
@@ -1182,6 +1291,7 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                         QueueDate = todayLocal,
                         QueueNumber = (maxToday ?? 0) + 1,
                         QueueType = ClinicalQueueRules.QueueTypeReturnConsultation,
+                        CoordinationPurpose = effectivePurpose,
                         Status = "READY",
                         ScheduledAt = null,
                         PresenceStatus = "PRESENT",
@@ -1212,6 +1322,21 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
             {
                 visit.LastResumedAt = nowLocal;
 
+                var auditPayload = JsonSerializer.Serialize(new
+                {
+                    visitId = visit.Id,
+                    visitCode,
+                    target = normalizedTarget,
+                    coordinationPurpose = normalizedCoordinationPurpose,
+                    visitStatus = visit.Status,
+                    presenceState = visit.PresenceState,
+                    lastPresentDate = visit.LastPresentDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    assignedDoctorId = visit.AssignedDoctorId,
+                    examinationRoomId = visit.ExaminationRoomId,
+                    closedPriorDayQueueCount = closedPriorDayCount,
+                    idempotencyKey = normalizedIdempotencyKey,
+                }, AuditJsonOptions);
+
                 _db.AuditLogs.Add(new AuditLog
                 {
                     ActorUserId = actor.UserId,
@@ -1220,22 +1345,26 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                     EntityType = "VISIT",
                     EntityId = visitCode,
                     Reason = normalizedNotes ?? $"Tiếp tục lượt khám qua ngày ({normalizedTarget}).",
-                    ChangeData = JsonSerializer.Serialize(new
-                    {
-                        visitId = visit.Id,
-                        visitCode,
-                        target = normalizedTarget,
-                        visitStatus = visit.Status,
-                        presenceState = visit.PresenceState,
-                        lastPresentDate = visit.LastPresentDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-                        assignedDoctorId = visit.AssignedDoctorId,
-                        examinationRoomId = visit.ExaminationRoomId,
-                        closedPriorDayQueueCount = closedPriorDayCount,
-                        idempotencyKey = normalizedIdempotencyKey,
-                    }, AuditJsonOptions),
+                    ChangeData = auditPayload,
                     IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
                     OccurredAt = nowUtc,
                 });
+
+                if (normalizedCoordinationPurpose == QueueCoordinationPurposes.ClinicalReview)
+                {
+                    _db.AuditLogs.Add(new AuditLog
+                    {
+                        ActorUserId = actor.UserId,
+                        HospitalId = visitHospitalId,
+                        Action = VisitClinicalReviewCoordinatedAuditAction,
+                        EntityType = "VISIT",
+                        EntityId = visitCode,
+                        Reason = normalizedNotes ?? "Điều phối bệnh nhân gặp bác sĩ đánh giá lại chỉ định cận lâm sàng (CLINICAL_REVIEW).",
+                        ChangeData = auditPayload,
+                        IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+                        OccurredAt = nowUtc,
+                    });
+                }
             }
 
             await _db.SaveChangesAsync(ct);
@@ -1275,7 +1404,8 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                 AssignedDoctorName: assignedDoctorName,
                 ExaminationRoomId: visit.ExaminationRoomId,
                 ResumedQueues: resumedBriefs,
-                ClosedPriorDayQueueCount: closedPriorDayCount);
+                ClosedPriorDayQueueCount: closedPriorDayCount,
+                CoordinationPurpose: normalizedCoordinationPurpose);
         }
         finally
         {
@@ -1506,97 +1636,20 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
         return ($"{title}{fullName}".Trim(), isActive);
     }
 
-    private async Task<VisitChargesBriefDto> BuildChargesSummaryAsync(long visitId, CancellationToken ct)
+    private async Task<VisitChargesBriefDto> BuildChargesSummaryAsync(Visit visit, CancellationToken ct)
     {
-        List<VisitCharge> charges;
         try
         {
-            charges = await _db.VisitCharges
-                .AsNoTracking()
-                .Where(vc => vc.VisitId == visitId)
-                .ToListAsync(ct);
+            var assessment = await VisitChargeAssessor.AssessAsync(_db, _timeProvider, visit, ct);
+            return new VisitChargesBriefDto(
+                PayableTotal: assessment.PayableTotal,
+                RecognizedPaidTotal: assessment.RecognizedPaidTotal,
+                AmountDue: assessment.AmountDue);
         }
         catch (NotSupportedException)
         {
             return new VisitChargesBriefDto(0m, 0m, 0m);
         }
-
-        var payments = await _db.Payments
-            .AsNoTracking()
-            .Where(p => p.VisitId == visitId)
-            .ToListAsync(ct);
-
-        List<PaymentAllocation> allocations = [];
-        try
-        {
-            allocations = await _db.PaymentAllocations
-                .AsNoTracking()
-                .Where(pa => pa.VisitId == visitId)
-                .ToListAsync(ct);
-        }
-        catch (NotSupportedException)
-        {
-            allocations = [];
-        }
-
-        var paidChargeIds = allocations
-            .Where(pa => AppointmentBookingRules.NormalizeStatusKey(pa.Status) == "PAID")
-            .Select(pa => pa.VisitChargeId)
-            .ToHashSet();
-
-        foreach (var p in payments)
-        {
-            if (AppointmentBookingRules.NormalizeStatusKey(p.Status) == "PAID" && p.VisitChargeId.HasValue)
-            {
-                paidChargeIds.Add(p.VisitChargeId.Value);
-            }
-        }
-
-        var hasLegacyVisitPaid = payments.Any(p =>
-            AppointmentBookingRules.NormalizeStatusKey(p.Status) == "PAID" &&
-            !p.VisitChargeId.HasValue &&
-            string.Equals(p.PaymentScope?.Trim(), "LEGACY_VISIT", StringComparison.OrdinalIgnoreCase));
-
-        decimal payableTotal = 0m;
-        decimal amountDue = 0m;
-
-        foreach (var vc in charges)
-        {
-            var status = NormalizeChargeStatus(vc.Status);
-            if (status is VisitChargeStatuses.Cancelled or VisitChargeStatuses.CancelledRefundPending)
-            {
-                continue;
-            }
-
-            if (string.Equals(vc.PaymentRequirement?.Trim(), "NONE", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var price = vc.UnitPrice ?? 0m;
-            if (price <= 0m)
-            {
-                continue;
-            }
-
-            payableTotal += price;
-            var isSettled = hasLegacyVisitPaid ||
-                            paidChargeIds.Contains(vc.Id) ||
-                            status == VisitChargeStatuses.PaidNotPerformed;
-            if (!isSettled)
-            {
-                amountDue += price;
-            }
-        }
-
-        var recognizedPaidTotal = payments
-            .Where(p => AppointmentBookingRules.NormalizeStatusKey(p.Status) == "PAID")
-            .Sum(p => p.Amount ?? 0m);
-
-        return new VisitChargesBriefDto(
-            PayableTotal: payableTotal,
-            RecognizedPaidTotal: recognizedPaidTotal,
-            AmountDue: amountDue);
     }
 
     private async Task<IReadOnlyList<VisitActiveQueueBriefDto>> BuildActiveQueueBriefsAsync(
@@ -1682,7 +1735,8 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                 PresenceStatus: AppointmentBookingRules.NormalizeStatusKey(q.PresenceStatus),
                 ServicePointId: effSpId,
                 ServicePointName: sp?.Name,
-                RoomCode: room?.RoomCode);
+                RoomCode: room?.RoomCode,
+                CoordinationPurpose: q.CoordinationPurpose);
         }).ToList();
     }
 

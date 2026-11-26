@@ -503,23 +503,12 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         var spId = trackedQueueEntry?.CurrentServicePointId ?? trackedQueueEntry?.ServicePointId;
         var resolvedSp = spId.HasValue && lookupBundle.ServicePointsById.TryGetValue(spId.Value, out var foundSp)
             ? foundSp
-            : ResolveDiagnosticServicePointForCatalog(service.Id, lookupBundle.HospitalDiagnosticServicePoints);
-        if (resolvedSp is not null && resolvedSp.IsActive == false)
-        {
-            throw new ConflictException(
-                $"Điểm phục vụ cận lâm sàng '{resolvedSp.Name}' hiện đang ngừng hoạt động.");
-        }
+            : null;
 
         var resolvedRoom = resolvedSp?.RoomId.HasValue == true &&
                            lookupBundle.RoomsById.TryGetValue(resolvedSp.RoomId.Value, out var foundRoom)
             ? foundRoom
             : null;
-        if (resolvedRoom is not null &&
-            !string.Equals(resolvedRoom.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ConflictException(
-                $"Phòng thực hiện cận lâm sàng '{resolvedRoom.RoomCode}' hiện đang bảo trì hoặc ngừng hoạt động.");
-        }
 
         var isExecutionStartedOrCompleted = IsOrderExecutionStartedOrCompleted(
             rawOrderStatus,
@@ -529,6 +518,19 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
 
         if (!isExecutionStartedOrCompleted)
         {
+            if (resolvedSp is not null && resolvedSp.IsActive == false)
+            {
+                throw new ConflictException(
+                    $"Điểm phục vụ cận lâm sàng '{resolvedSp.Name}' hiện đang ngừng hoạt động.");
+            }
+
+            if (resolvedRoom is not null &&
+                !string.Equals(resolvedRoom.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ConflictException(
+                    $"Phòng thực hiện cận lâm sàng '{resolvedRoom.RoomCode}' hiện đang bảo trì hoặc ngừng hoạt động.");
+            }
+
             if (rawOrderStatus == "ORDERED")
             {
                 throw new ConflictException(
@@ -736,6 +738,9 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
                     trackedQueueEntry.StateVersion = finalStateVersion;
                 }
             }
+
+            // Invalidate any prior overdue return consultation result snapshot whenever a diagnostic result version is entered/updated/verified
+            visit.OverdueReturnResultSnapshot = null;
 
             actionCode = isTwoPersonVerifyStep
                 ? DiagnosticResultVerifiedAction
@@ -1385,9 +1390,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         var spId = trackedQueueEntry?.CurrentServicePointId ?? trackedQueueEntry?.ServicePointId;
         var resolvedSp = spId.HasValue && lookupBundle.ServicePointsById.TryGetValue(spId.Value, out var foundSp)
             ? foundSp
-            : (service is not null
-                ? ResolveDiagnosticServicePointForCatalog(service.Id, lookupBundle.HospitalDiagnosticServicePoints)
-                : null);
+            : null;
         var resolvedRoom = resolvedSp?.RoomId.HasValue == true &&
                            lookupBundle.RoomsById.TryGetValue(resolvedSp.RoomId.Value, out var foundRoom)
             ? foundRoom
@@ -2024,11 +2027,11 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         {
             disabledReason = $"Khoa thực hiện dịch vụ '{service.Name}' hiện đang ngừng hoạt động.";
         }
-        else if (!isServicePointActive)
+        else if (!isExecutionStartedOrCompleted && !isServicePointActive)
         {
             disabledReason = $"Điểm phục vụ cận lâm sàng cho dịch vụ '{service.Name}' hiện đang ngừng hoạt động.";
         }
-        else if (!isRoomActive)
+        else if (!isExecutionStartedOrCompleted && !isRoomActive)
         {
             disabledReason = $"Phòng thực hiện cận lâm sàng '{room?.RoomCode}' cho dịch vụ '{service.Name}' hiện đang bảo trì hoặc ngừng hoạt động.";
         }
@@ -2153,16 +2156,6 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
         if (!isDepartmentActive)
         {
             return $"Khoa thực hiện dịch vụ '{service.Name}' hiện đang ngừng hoạt động.";
-        }
-
-        if (!isServicePointActive)
-        {
-            return $"Điểm phục vụ cận lâm sàng cho dịch vụ '{service.Name}' hiện đang ngừng hoạt động.";
-        }
-
-        if (!isRoomActive)
-        {
-            return $"Phòng thực hiện cận lâm sàng '{room?.RoomCode}' cho dịch vụ '{service.Name}' hiện đang bảo trì hoặc ngừng hoạt động.";
         }
 
         if (!hasResultWritePermission)
@@ -4415,24 +4408,7 @@ public sealed class DiagnosticResultEntryService : IDiagnosticResultEntryService
     private static QueueServicePoint? ResolveDiagnosticServicePointForCatalog(
         long serviceId,
         IReadOnlyList<QueueServicePoint> hospitalDiagPoints)
-    {
-        var serviceSpecific = hospitalDiagPoints
-            .Where(sp => sp.ServiceId == serviceId)
-            .OrderBy(sp => sp.IsActive == false ? 1 : 0)
-            .ThenBy(sp => sp.Id)
-            .FirstOrDefault();
-
-        if (serviceSpecific is not null)
-        {
-            return serviceSpecific;
-        }
-
-        return hospitalDiagPoints
-            .Where(sp => sp.IsActive != false)
-            .OrderBy(sp => sp.ServiceId.HasValue ? 1 : 0)
-            .ThenBy(sp => sp.Id)
-            .FirstOrDefault();
-    }
+        => DiagnosticServicePointResolver.TryResolveCompatibleForCatalog(serviceId, null, hospitalDiagPoints);
 
     private static string ResolveDiagnosticCategory(
         Service service,

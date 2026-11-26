@@ -11,4 +11,6 @@ public sealed record CompleteVisitRequest(
     bool? ConfirmNoPrescription = null,
     int? ExpectedStateVersion = null,
     int? ExpectedRevisionNo = null,
-    bool? CloseUndecidedOptionalOrders = null);
+    bool? CloseUndecidedOptionalOrders = null,
+    string? OverdueReturnApprovalNote = null,
+    string? ExpectedResultSnapshot = null);

@@ -432,8 +432,13 @@ public sealed class VisitRoomTransferService : IVisitRoomTransferService
             ct);
 
         var normalizedVisitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
+        var previousDoctorIdBeforeTransfer = visit.AssignedDoctorId;
         visit.ExaminationRoomId = targetRoom.Id;
         visit.AssignedDoctorId = effectiveDoctor?.Id;
+        if (previousDoctorIdBeforeTransfer != visit.AssignedDoctorId)
+        {
+            visit.OverdueReturnResultSnapshot = null;
+        }
 
         if (string.IsNullOrWhiteSpace(visit.Status) ||
             string.Equals(normalizedVisitStatus, "CALLED", StringComparison.OrdinalIgnoreCase))

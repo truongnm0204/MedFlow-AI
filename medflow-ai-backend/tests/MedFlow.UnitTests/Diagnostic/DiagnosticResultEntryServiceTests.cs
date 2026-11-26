@@ -1497,13 +1497,14 @@ public sealed class DiagnosticResultEntryServiceTests : IDisposable
         await Assert.ThrowsAsync<ConflictException>(() =>
             _service.EnterDiagnosticResultAsync(7, "DIA-202610-0004", validRequest));
 
-        // Maintenance room guard
+        // DR-16 (ADR-0061 Stage E1): Once execution has already started (IN_PROGRESS), placing the room
+        // into MAINTENANCE must NOT trap or block UC43 result entry for the already-collected specimen.
         order4.ServiceId = 12;
         var qe13 = await _dbContext.QueueEntries.FirstAsync(q => q.Id == 13);
         qe13.CurrentServicePointId = 14; // ServicePoint 14 is in Room 103 (MAINTENANCE)
         await _dbContext.SaveChangesAsync();
-        await Assert.ThrowsAsync<ConflictException>(() =>
-            _service.EnterDiagnosticResultAsync(7, "DIA-202610-0004", validRequest));
+        var dr16Res = await _service.EnterDiagnosticResultAsync(7, "DIA-202610-0004", validRequest);
+        Assert.Equal("DIA-202610-0004", dr16Res.OrderCode);
     }
 
     [Fact]
