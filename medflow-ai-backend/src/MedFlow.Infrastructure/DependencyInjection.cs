@@ -59,6 +59,9 @@ public static class DependencyInjection
         services.AddSingleton<BackgroundJobs.RollingExaminationSlotGenerator>();
         services.AddHostedService(sp => sp.GetRequiredService<BackgroundJobs.RollingExaminationSlotGenerator>());
 
+        services.AddSingleton<BackgroundJobs.PaymentEnrollmentIntentRecoveryProcessor>();
+        services.AddHostedService(sp => sp.GetRequiredService<BackgroundJobs.PaymentEnrollmentIntentRecoveryProcessor>());
+
         return services;
     }
 }

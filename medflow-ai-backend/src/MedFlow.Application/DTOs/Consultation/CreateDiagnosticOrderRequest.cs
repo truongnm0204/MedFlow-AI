@@ -165,3 +165,7 @@ public sealed record ApproveOverdueReturnResultsRequest(
 public sealed record CompleteClinicalReviewRequest(
     int? ExpectedStateVersion = null,
     string? ClinicalNote = null);
+
+public sealed record HandoffToDiagnosticRequest(
+    int? ExpectedStateVersion = null,
+    string? ClinicalNote = null);

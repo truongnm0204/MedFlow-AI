@@ -144,7 +144,7 @@ public sealed class ConfirmMedicineDispensingServiceTests : IDisposable
             new Hospital { Id = 2, Name = "Bệnh viện Ngoại vụ", IsActive = true }
         );
 
-        _db.Departments.Add(new Department { Id = 1, HospitalId = 1, Name = "Khoa Dược" });
+        _db.Departments.Add(new Department { Id = 1, HospitalId = 1, DepartmentCode = "PHA", Name = "Khoa Dược", IsActive = true });
         _db.HospitalRooms.Add(new HospitalRoom { Id = 1, HospitalId = 1, DepartmentId = 1, RoomCode = "PHARM-01", Name = "Quầy phát thuốc 01" });
 
         _db.Roles.AddRange(
@@ -158,7 +158,7 @@ public sealed class ConfirmMedicineDispensingServiceTests : IDisposable
         // Staff 10: Pharmacist in Hospital 1
         _db.Users.Add(new User { Id = 10, Email = "pharmacist@medflow.test", AccountStatus = AccountStatus.ACTIVE });
         _db.UserRoles.Add(new UserRole { UserId = 10, RoleId = 1 });
-        _db.Staff.Add(new Staff { Id = 10, UserId = 10, HospitalId = 1, FullName = "Đỗ Thị Lan Anh", Status = "ACTIVE" });
+        _db.Staff.Add(new Staff { Id = 10, UserId = 10, HospitalId = 1, DepartmentId = 1, FullName = "Đỗ Thị Lan Anh", Status = "ACTIVE" });
 
         // Staff 11: Inactive user
         _db.Users.Add(new User { Id = 11, Email = "inactive@medflow.test", AccountStatus = AccountStatus.INACTIVE });

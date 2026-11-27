@@ -88,6 +88,7 @@ public static class DependencyInjection
         services.AddScoped<IConfirmMedicineDispensingService, ConfirmMedicineDispensingService>();
         services.AddScoped<IVisitRoomTransferService, VisitRoomTransferService>();
         services.AddScoped<IVisitTicketService, VisitTicketService>();
+        services.AddScoped<IJourneySlipService, JourneySlipService>();
         services.AddScoped<IVisitRoomAssignmentService, VisitRoomAssignmentService>();
         services.AddScoped<IVisitDoctorAssignmentService, VisitDoctorAssignmentService>();
         services.AddScoped<IExaminationQueueService, ExaminationQueueService>();
@@ -99,6 +100,10 @@ public static class DependencyInjection
         services.AddScoped<ICheckInScheduledPatientService, CheckInScheduledPatientService>();
         services.AddScoped<ICreateWalkInVisitService, CreateWalkInVisitService>();
         services.AddScoped<IVisitCrossDayLifecycleService, VisitCrossDayLifecycleService>();
+        services.AddScoped<IClinicalSessionRecoveryService, ClinicalSessionRecoveryService>();
+        services.AddScoped<IReturnCoordinationService, ReturnCoordinationService>();
+        services.AddScoped<IVisitQueueEnrollmentService, VisitQueueEnrollmentService>();
+        services.AddScoped<IPaymentEnrollmentIntentProcessor, PaymentEnrollmentIntentProcessor>();
         services.AddScoped<IVisitChargeSettlementReader, VisitChargeSettlementReader>();
         services.AddScoped<IVisitChargesService, VisitChargesService>();
         services.AddScoped<IGenerateQrPaymentService, GenerateQrPaymentService>();

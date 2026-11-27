@@ -1000,21 +1000,19 @@ public sealed class DiagnosticOrderReviewServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ConfirmDiagnosticOrderAsync_OrderWithoutQueueEntry_AllocatesNewDiagnosticQueueEntry()
+    public async Task ConfirmDiagnosticOrderAsync_OrderWithoutQueueEntry_ConfirmsWithoutMintingTicket()
     {
+        // Stage E2 (QE-03 / ADR-0061): UC39 confirm sets Status=CONFIRMED but mints NO diagnostic QueueEntry —
+        // the WAITING ticket is allocated later by a guarded enrollment path (payment intent / reception), not on confirm.
         var response = await _service.ConfirmDiagnosticOrderAsync(
             actorUserId: 7,
             orderIdOrCode: "16",
             request: new ConfirmDiagnosticOrderRequest(
-                ConfirmationNote: "Xác nhận và cấp số hàng đợi CLS mới"));
+                ConfirmationNote: "Xác nhận chỉ định CLS (không tự cấp số hàng đợi)"));
 
         Assert.Equal("CONFIRMED", response.Order.Status);
         Assert.Equal("DIA-202610-0016", response.Order.OrderCode);
-        Assert.NotNull(response.Order.QueueEntryId);
-        Assert.Equal("WAITING", response.Order.QueueStatus);
-        Assert.StartsWith("C", response.Order.TicketNo);
-        Assert.Equal(501, response.Order.ServicePointId);
-        Assert.Equal("DIA-201", response.Order.RoomCode);
+        Assert.Null(response.Order.QueueEntryId);
     }
 
     [Fact]

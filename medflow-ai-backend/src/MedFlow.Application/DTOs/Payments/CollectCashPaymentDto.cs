@@ -1,10 +1,14 @@
+using MedFlow.Application.DTOs.Visits;
+
 namespace MedFlow.Application.DTOs.Payments;
 
 public sealed record CollectCashPaymentRequestDto(
     IReadOnlyList<long>? VisitChargeIds = null,
     long? VisitChargeId = null,
     string? IdempotencyKey = null,
-    string? Notes = null);
+    string? Notes = null,
+    long? EnrollDiagnosticOrderId = null,
+    string? EnrollDiagnosticOrderCode = null);
 
 public sealed record CollectCashPaymentResponseDto(
     long VisitId,
@@ -20,4 +24,8 @@ public sealed record CollectCashPaymentResponseDto(
     string IdempotencyKey,
     DateTime PaidAt,
     bool IsIdempotentReplay,
-    IReadOnlyList<PaymentAllocationItemDto> Allocations);
+    IReadOnlyList<PaymentAllocationItemDto> Allocations,
+    string EnrollmentStatus = "NOT_REQUESTED",
+    string? EnrollmentOutcomeCode = null,
+    string? EnrollmentOutcomeMessage = null,
+    VisitQueueEnrollmentTicketDto? EnrolledQueueEntry = null);

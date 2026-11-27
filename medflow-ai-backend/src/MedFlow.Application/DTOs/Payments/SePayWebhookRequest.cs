@@ -16,4 +16,9 @@ public sealed class SePayWebhookRequest
     public string? ReferenceCode { get; set; }
 }
 
-public sealed record SePayWebhookResult(bool Processed, string Outcome);
+public sealed record SePayWebhookResult(
+    bool Processed,
+    string Outcome,
+    string? EnrollmentStatus = null,
+    string? EnrollmentOutcomeCode = null,
+    long? EnrolledQueueEntryId = null);

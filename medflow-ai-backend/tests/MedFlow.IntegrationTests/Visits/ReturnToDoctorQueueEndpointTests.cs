@@ -248,14 +248,37 @@ public sealed class ReturnToDoctorQueueEndpointTests : AuthTestBase
             Db.QueueEntries.AddRange(initialExamEntry, waitingNormalEntry, openDiagnosticEntry);
             await Db.SaveChangesAsync();
 
-            // 1. Create RETURN_CONSULTATION entry while open DIAGNOSTIC entry exists -> WAITING + NOT_ELIGIBLE (AWAITING_RESULTS)
+            // 1. Stage E2 / Option-3 strict single-active: while the DIAGNOSTIC entry is still an active
+            // serving ticket (IN_PROGRESS), a RETURN_CONSULTATION ticket cannot be minted for the same
+            // patient -> 409 Conflict (one active serving queue per patient per hospital).
+            using (var createWhileOpenReq = AuthedPost(
+                $"/api/v1/reception/queue-entries/q-{initialExamEntry.Id:D3}/return-to-doctor",
+                new CreateReturnToDoctorQueueEntryRequest(
+                    ServicePointId: $"sp-{newSp.Id}",
+                    ConfirmPresent: true,
+                    Reason: "Thử tạo lượt khám lại khi cận lâm sàng chưa hoàn tất",
+                    Notes: "Cận lâm sàng đang thực hiện",
+                    ExpectedStateVersion: 2)))
+            {
+                var createWhileOpenRes = await Client.SendAsync(createWhileOpenReq);
+                Assert.Equal(HttpStatusCode.Conflict, createWhileOpenRes.StatusCode);
+            }
+
+            // 2. Complete the open DIAGNOSTIC entry (UC42 done; releases the single-active ticket).
+            await Db.QueueEntries
+                .Where(q => q.Id == openDiagnosticEntry.Id)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(q => q.Status, "COMPLETED")
+                    .SetProperty(q => q.CompletedAt, baseTime.AddMinutes(-2)));
+
+            // 3. Now the RETURN_CONSULTATION ticket is created cleanly -> READY + ELIGIBLE.
             using var createReq = AuthedPost(
                 $"/api/v1/reception/queue-entries/q-{initialExamEntry.Id:D3}/return-to-doctor",
                 new CreateReturnToDoctorQueueEntryRequest(
                     ServicePointId: $"sp-{newSp.Id}",
                     ConfirmPresent: true,
-                    Reason: "Bệnh nhân quay lại phòng khám chờ kết quả xét nghiệm",
-                    Notes: "Đã lấy mẫu xét nghiệm",
+                    Reason: "Đã có đủ kết quả xét nghiệm bắt buộc, tạo lượt khám lại",
+                    Notes: "Đủ điều kiện gọi vào phòng khám",
                     ExpectedStateVersion: 2));
 
             var createRes = await Client.SendAsync(createReq);
@@ -265,61 +288,14 @@ public sealed class ReturnToDoctorQueueEndpointTests : AuthTestBase
             Assert.NotNull(createdBody);
             Assert.Equal("CREATED", createdBody!.ActionOutcome);
             Assert.Equal("RETURN_CONSULTATION", createdBody.QueueType);
-            Assert.Equal("WAITING", createdBody.CurrentStatus);
+            Assert.Equal("READY", createdBody.CurrentStatus);
             Assert.Equal(3, createdBody.QueueNumber);
-            Assert.False(createdBody.IsEligible);
-            Assert.Equal("NOT_ELIGIBLE", createdBody.QueueGroup);
-            Assert.Equal("AWAITING_RESULTS", createdBody.IneligibleReason);
-            Assert.Equal(1, createdBody.OpenDiagnosticCount);
-            Assert.Equal(1, createdBody.StateVersion);
+            Assert.True(createdBody.IsEligible);
+            Assert.Equal("ELIGIBLE", createdBody.QueueGroup);
+            Assert.Null(createdBody.IneligibleReason);
+            Assert.Equal(0, createdBody.OpenDiagnosticCount);
 
-            // 2. Attempting to activate while DIAGNOSTIC entry is still open -> 409 Conflict
-            using var prematureActivateReq = AuthedPost(
-                $"/api/v1/reception/queue-entries/{createdBody.QueueEntryId}/return-to-doctor",
-                new CreateReturnToDoctorQueueEntryRequest(
-                    ServicePointId: $"sp-{newSp.Id}",
-                    ConfirmPresent: true,
-                    Reason: "Thử kích hoạt khi cận lâm sàng chưa hoàn tất",
-                    ExpectedStateVersion: 1));
-
-            var prematureRes = await Client.SendAsync(prematureActivateReq);
-            Assert.Equal(HttpStatusCode.Conflict, prematureRes.StatusCode);
-
-            // 3. Complete the open DIAGNOSTIC entry
-            await Db.QueueEntries
-                .Where(q => q.Id == openDiagnosticEntry.Id)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(q => q.Status, "COMPLETED")
-                    .SetProperty(q => q.CompletedAt, baseTime.AddMinutes(-2)));
-
-            // 4. Activate the existing RETURN_CONSULTATION entry -> ACTIVATED + READY + ELIGIBLE (ServingOrder = 1 ahead of NORMAL)
-            using var activateReq = AuthedPost(
-                $"/api/v1/reception/queue-entries/{createdBody.QueueEntryId}/return-to-doctor",
-                new CreateReturnToDoctorQueueEntryRequest(
-                    ServicePointId: $"sp-{newSp.Id}",
-                    ConfirmPresent: true,
-                    Reason: "Đã có đủ kết quả xét nghiệm bắt buộc, kích hoạt khám lại",
-                    Notes: "Đủ điều kiện gọi vào phòng khám",
-                    ExpectedStateVersion: 1));
-
-            var activateRes = await Client.SendAsync(activateReq);
-            Assert.Equal(HttpStatusCode.OK, activateRes.StatusCode);
-
-            var activatedBody = await activateRes.Content.ReadFromJsonAsync<CreateReturnToDoctorQueueEntryResponseDto>();
-            Assert.NotNull(activatedBody);
-            Assert.Equal("ACTIVATED", activatedBody!.ActionOutcome);
-            Assert.Equal(createdBody.QueueEntryId, activatedBody.QueueEntryId);
-            Assert.Equal(3, activatedBody.QueueNumber);
-            Assert.Equal("READY", activatedBody.CurrentStatus);
-            Assert.True(activatedBody.AllDiagnosticResultsReady);
-            Assert.Equal(0, activatedBody.OpenDiagnosticCount);
-            Assert.True(activatedBody.IsEligible);
-            Assert.Equal("ELIGIBLE", activatedBody.QueueGroup);
-            Assert.Null(activatedBody.IneligibleReason);
-            Assert.Equal(1, activatedBody.ServingOrder);
-            Assert.Equal(2, activatedBody.StateVersion);
-
-            // 5. Call-next selects the activated RETURN_CONSULTATION entry ahead of the waiting NORMAL entry
+            // 4. Call-next selects the RETURN_CONSULTATION entry ahead of the waiting NORMAL entry.
             using var callNextReq = AuthedPost(
                 $"/api/v1/queue/service-points/sp-{newSp.Id}/call-next",
                 new CallNextPatientRequest(Notes: "Gọi bệnh nhân khám lại đọc kết quả CLS"));
@@ -331,15 +307,15 @@ public sealed class ReturnToDoctorQueueEndpointTests : AuthTestBase
             Assert.NotNull(callNextBody);
             Assert.Equal("CALLED", callNextBody!.Outcome);
             Assert.Equal("RETURN_CONSULTATION", callNextBody.SelectionReason);
-            Assert.Equal(activatedBody.QueueEntryId, callNextBody.CalledEntry!.Id);
+            Assert.Equal(createdBody.QueueEntryId, callNextBody.CalledEntry!.Id);
 
-            // Verify QUEUE_RETURN_TO_DOCTOR audit logs were persisted
+            // Verify QUEUE_RETURN_TO_DOCTOR audit log was persisted for the created ticket.
             var returnAudits = await Db.AuditLogs
                 .AsNoTracking()
                 .Where(a => a.Action == ExaminationQueueService.ReturnToDoctorAction &&
                             a.EntityType == QueueStatusService.QueueEntryEntityType)
                 .ToListAsync();
-            Assert.True(returnAudits.Count >= 2);
+            Assert.True(returnAudits.Count >= 1);
         }
         finally
         {

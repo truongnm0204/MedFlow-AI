@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text.Json;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Application.Services.Policies;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +24,22 @@ public sealed partial class ExaminationQueueService
         if (actorUserId <= 0)
         {
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        // RCX-08 / §8.1: SYSTEM_ADMIN is forbidden on every RETURN entrypoint, even though the queue
+        // controller admits the role for other queue-management actions. Return coordination is Reception-only
+        // (or the policy-gated HospitalAdmin exception in the canonical core).
+        var actorRoleIds = await _db.UserRoles
+            .AsNoTracking()
+            .Where(ur => ur.UserId == actorUserId)
+            .Select(ur => ur.RoleId)
+            .ToListAsync(ct);
+        var isSystemAdmin = await _db.Roles
+            .AsNoTracking()
+            .AnyAsync(r => actorRoleIds.Contains(r.Id) && r.Code == RoleNames.SystemAdmin, ct);
+        if (isSystemAdmin)
+        {
+            throw new ForbiddenException(VisitQueueEnrollmentService.ReturnReceptionRequiredMessage);
         }
 
         if (request is null)
@@ -46,6 +64,34 @@ public sealed partial class ExaminationQueueService
         var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
         var (hospital, ownerDoctorId) = await ResolveCallNextActorAsync(actorUserId, nowUtc, ct);
 
+        // Stage E2 / RC-01..RC-16: RETURN_CONSULTATION coordination is a Reception workflow.
+        // ResolveCallNextActorAsync also admits DOCTOR (ownerDoctorId != null) for the
+        // queue-management path — a doctor may NOT mint a return-consultation ticket,
+        // that must go through centralized Reception coordination (ReturnCoordinationService).
+        if (ownerDoctorId.HasValue)
+        {
+            throw new ForbiddenException(
+                VisitQueueEnrollmentService.ReturnReceptionRequiredMessage);
+        }
+
+        // F02 consolidation: production path delegates to the canonical ReturnCoordinationService
+        // through a response-contract adapter. The legacy implementation below is retained only as a
+        // fallback for in-memory unit-test constructions where no core service is injected.
+        if (_returnCoordination is not null)
+        {
+            return await CreateReturnToDoctorViaCoreAsync(
+                actorUserId,
+                idOrCode,
+                request,
+                normalizedServicePointId,
+                hospital,
+                reason,
+                notes,
+                nowUtc,
+                ipAddress,
+                ct);
+        }
+
         await using var tx = await _db.BeginTransactionAsync(ct);
 
         var (preVisit, preExistingReturn, preExistingExam) = await ResolveVisitAndQueueEntriesForReturnAsync(
@@ -53,6 +99,14 @@ public sealed partial class ExaminationQueueService
             code,
             idOrCode,
             ct);
+
+        // Stage E2 / E-BR10 / QE-07..08: acquire patient lock (level 02) BEFORE the visit
+        // lock (level 09), then enforce the single-active-serving-queue invariant so this
+        // legacy writer can never mint a second active ticket for the patient.
+        if (preVisit.PatientId is > 0)
+        {
+            await _db.TryLockPatientForUpdateAsync(preVisit.PatientId.Value, ct);
+        }
 
         await _db.TryLockVisitForUpdateAsync(preVisit.Id, ct);
 
@@ -165,6 +219,24 @@ public sealed partial class ExaminationQueueService
         var allDiagnosticResultsReady = openDiagnosticCount == 0 && request.DiagnosticResultsReady != false;
         var finalResultRequired = targetBucket.Policy.FinalResultRequired;
         var isAwaitingMandatoryResults = finalResultRequired && !allDiagnosticResultsReady;
+
+        // §8.2: explicit ConfirmPresent only. When the hospital policy requires presence and the client
+        // did not confirm it (and the patient is not already durably present today), fail 409 instead of
+        // minting a NOT_ARRIVED ticket.
+        var returnPolicy = await CrossDayVisitPolicyReader.LoadAsync(_db, hospital.Id, nowUtc, ct);
+        if (!request.ConfirmPresent && returnPolicy.RequirePresenceForReturnQueue)
+        {
+            var visitQueuesForPresence = await _db.QueueEntries.AsNoTracking()
+                .Where(q => q.VisitId == visit.Id)
+                .ToListAsync(ct);
+            var presentToday = VisitPresenceEvaluator.IsPresentToday(
+                visit, visitQueuesForPresence, today, board.NowLocal, returnPolicy.PresenceTtlMinutes);
+            if (!presentToday)
+            {
+                throw new ConflictException(VisitQueueEnrollmentService.PatientNotPresentMessage);
+            }
+        }
+
         var presenceStatus = request.ConfirmPresent ? "PRESENT" : "NOT_ARRIVED";
         var targetStatus = request.ConfirmPresent && !isAwaitingMandatoryResults ? "READY" : "WAITING";
 
@@ -305,6 +377,15 @@ public sealed partial class ExaminationQueueService
             var nextQueueNumber = (existingMaxNumber is > 0 ? existingMaxNumber.Value : 0) + 1;
             var inheritedPriority = ClinicalQueueRules.NormalizeStoredPriority(existingExamEntry?.ManualPriority);
 
+            // Stage E2 / QE-07..08: enforce one active serving queue per patient per hospital
+            // before minting the new RETURN_CONSULTATION ticket (post patient+visit locks).
+            await PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+                _db,
+                visit.PatientId,
+                hospital.Id,
+                today,
+                excludeQueueEntryId: existingReturnEntry?.Id ?? existingExamEntry?.Id,
+                ct: ct);
             var createdEntry = new QueueEntry
             {
                 VisitId = visit.Id,
@@ -438,6 +519,202 @@ public sealed partial class ExaminationQueueService
             Notes: notes,
             PreviousStateVersion: prevVersion,
             StateVersion: nextStateVersion,
+            UpdatedAtUtc: afterBoard.NowUtc,
+            UpdatedEntry: after.Entry.Dto);
+    }
+
+
+    private async Task<CreateReturnToDoctorQueueEntryResponseDto> CreateReturnToDoctorViaCoreAsync(
+        long actorUserId,
+        string idOrCode,
+        CreateReturnToDoctorQueueEntryRequest request,
+        string? normalizedServicePointId,
+        Hospital hospital,
+        string reason,
+        string? notes,
+        DateTime nowUtc,
+        string? ipAddress,
+        CancellationToken ct)
+    {
+        var (numericId, code) = QueueEntryRequestParsing.ParseIdentifier(idOrCode);
+        var (preVisit, preExistingReturn, preExistingExam) = await ResolveVisitAndQueueEntriesForReturnAsync(
+            numericId, code, idOrCode, ct);
+
+        if (IsTerminalVisit(preVisit))
+        {
+            throw new ConflictException("Không thể thao tác trên lượt khám đã hoàn tất, đã hủy hoặc vắng mặt (NO_SHOW).");
+        }
+
+        var referenceEntry = preExistingReturn ?? preExistingExam;
+        if (await DoesVisitOrEntryBelongToOtherHospitalAsync(preVisit, referenceEntry, hospital.Id, ct))
+        {
+            throw new ForbiddenException("Bạn không có quyền thao tác trên lượt khám của cơ sở y tế khác.");
+        }
+
+        var today = DateOnly.FromDateTime(AppointmentBookingRules.GetVietnamNow(_timeProvider));
+        var board = await BuildQueueBoardForHospitalAsync(hospital, today, ct);
+        var before = LocateBoardEntryForVisit(board, preVisit, referenceEntry);
+        QueueBoardBucket targetBucket;
+        QueueBoardEntry? beforeEntry = null;
+        if (before is not null)
+        {
+            (targetBucket, beforeEntry) = before.Value;
+        }
+        else
+        {
+            var refSpId = referenceEntry?.CurrentServicePointId ?? referenceEntry?.ServicePointId;
+            targetBucket = board.Buckets.FirstOrDefault(b =>
+                               normalizedServicePointId is not null && MatchesServicePointFilter(b.Bucket, normalizedServicePointId))
+                           ?? board.Buckets.FirstOrDefault(b =>
+                               preVisit.ExaminationRoomId.HasValue &&
+                               preVisit.AssignedDoctorId.HasValue &&
+                               b.Bucket.RoomId == preVisit.ExaminationRoomId.Value &&
+                               b.Bucket.DoctorId == preVisit.AssignedDoctorId.Value)
+                           ?? board.Buckets.FirstOrDefault(b =>
+                               preVisit.ExaminationRoomId.HasValue && b.Bucket.RoomId == preVisit.ExaminationRoomId.Value)
+                           ?? board.Buckets.FirstOrDefault(b =>
+                               preVisit.AssignedDoctorId.HasValue && b.Bucket.DoctorId == preVisit.AssignedDoctorId.Value)
+                           ?? board.Buckets.FirstOrDefault(b =>
+                               refSpId.HasValue && b.Bucket.RawServicePointId == refSpId.Value)
+                           ?? throw new NotFoundException("Không tìm thấy điểm phục vụ / phòng khám cho lượt khám lại hôm nay.");
+        }
+
+        if (normalizedServicePointId is not null && !MatchesServicePointFilter(targetBucket.Bucket, normalizedServicePointId))
+        {
+            if (board.Buckets.Any(b => MatchesServicePointFilter(b.Bucket, normalizedServicePointId)))
+            {
+                throw new ConflictException("Lượt khám không thuộc điểm phục vụ / phòng khám đã chọn.");
+            }
+
+            throw new NotFoundException("Không tìm thấy điểm phục vụ / phòng khám.");
+        }
+
+        int? prevVersion = referenceEntry is not null
+            ? (referenceEntry.StateVersion is > 0 ? referenceEntry.StateVersion.Value : 1)
+            : null;
+        if (request.ExpectedStateVersion.HasValue &&
+            prevVersion.HasValue &&
+            request.ExpectedStateVersion.Value != prevVersion.Value)
+        {
+            throw new ConflictException(
+                "Dữ liệu hàng đợi đã thay đổi bởi thao tác khác (state_version mismatch). Vui lòng tải lại hàng đợi.");
+        }
+
+        var previousQueueEntryId = referenceEntry is not null ? $"q-{referenceEntry.Id:D3}" : null;
+        var previousStatus = beforeEntry?.Dto.Status ?? (referenceEntry is not null ? NormalizeEntryStatus(referenceEntry, preVisit) : null);
+        var previousServingOrder = beforeEntry?.Dto.ServingOrder;
+
+        if (preExistingReturn is not null)
+        {
+            var existingStatus = NormalizeEntryStatus(preExistingReturn, preVisit);
+            var existingPresence = NormalizePresenceStatus(preExistingReturn, preVisit);
+            if (existingStatus is "CALLED" or "IN_PROGRESS")
+            {
+                throw new ConflictException("Lượt khám lại đang được gọi hoặc đang khám, không thể tạo hoặc kích hoạt lại.");
+            }
+            if (existingStatus == "COMPLETED")
+            {
+                throw new ConflictException("Lượt khám lại đã hoàn tất, không thể kích hoạt lại.");
+            }
+            if (existingStatus == "SKIPPED")
+            {
+                throw new ConflictException("Lượt khám lại đang ở trạng thái Qua lượt (SKIPPED). Vui lòng sử dụng chức năng Khôi phục lượt khám (restore-turn).");
+            }
+            if (existingStatus == "READY" && existingPresence == "PRESENT")
+            {
+                throw new ConflictException("Lượt khám lại đọc kết quả cận lâm sàng đã ở trạng thái Sẵn sàng (READY) trong hàng đợi.");
+            }
+        }
+
+        var openDiagnosticCount = await CountPendingDiagnosticItemsAsync(preVisit.Id, ct);
+        var allDiagnosticResultsReady = openDiagnosticCount == 0 && request.DiagnosticResultsReady != false;
+        var finalResultRequired = targetBucket.Policy.FinalResultRequired;
+
+        var doctorId = targetBucket.Bucket.DoctorId
+                       ?? preVisit.AssignedDoctorId
+                       ?? throw new ConflictException(ReturnCoordinationService.NoEligibleDoctorMessage);
+        var roomId = targetBucket.Bucket.RoomId ?? preVisit.ExaminationRoomId;
+        var servicePointId = targetBucket.Bucket.RawServicePointId
+                             ?? preExistingReturn?.CurrentServicePointId
+                             ?? preExistingExam?.CurrentServicePointId
+                             ?? preExistingReturn?.ServicePointId
+                             ?? preExistingExam?.ServicePointId;
+        if (roomId is not > 0 || servicePointId is not > 0)
+        {
+            throw new ConflictException("[RETURN_SERVICE_POINT_REQUIRED] Không xác định được phòng khám / điểm phục vụ cho lượt khám kết luận.");
+        }
+
+        var reassignmentReason = preVisit.AssignedDoctorId != doctorId
+            ? reason ?? notes ?? "Điều phối khám kết luận sang bác sĩ đủ điều kiện."
+            : null;
+
+        var enrollment = await _returnCoordination!.EnrollReturnConsultationAsync(
+            actorUserId,
+            preVisit.VisitCode ?? preVisit.Id.ToString(CultureInfo.InvariantCulture),
+            new CreateReturnEnrollmentRequestDto(
+                DoctorId: doctorId,
+                RoomId: roomId,
+                ServicePointId: servicePointId,
+                Purpose: QueueCoordinationPurposes.ResultConclusion,
+                ReassignmentReason: reassignmentReason,
+                Notes: notes,
+                IdempotencyKey: null,
+                ConfirmPresent: request.ConfirmPresent),
+            ipAddress,
+            ct,
+            legacyAuditAction: ReturnToDoctorAction,
+            legacyAuditReason: reason,
+            legacyReadinessOverride: openDiagnosticCount == 0 && request.DiagnosticResultsReady != false,
+            legacySourceQueueEntryId: preExistingReturn is null ? preExistingExam?.Id : null);
+
+        if (enrollment.VisitId != preVisit.Id)
+        {
+            throw new ConflictException("[RETURN_VISIT_MISMATCH] Kết quả điều phối không khớp lượt khám.");
+        }
+
+        var afterBoard = await BuildQueueBoardForHospitalAsync(hospital, today, ct);
+        var after = FindBoardEntry(afterBoard, enrollment.Ticket.QueueEntryId)
+                    ?? throw new ConflictException("Không thể tải lại hàng đợi sau khi tạo hoặc kích hoạt lượt khám lại.");
+        var resolvedQueueGroup = after.Entry.Dto.QueueGroup
+                                 ?? ResolveQueueGroup(after.Entry.Dto.Status, after.Entry.Evaluation.IsEligible);
+        var actionOutcome = preExistingReturn is not null
+            ? (after.Entry.Dto.Status == "READY" ? "ACTIVATED" : "UPDATED")
+            : "CREATED";
+
+        return new CreateReturnToDoctorQueueEntryResponseDto(
+            QueueEntryId: after.Entry.Dto.Id,
+            TicketNo: after.Entry.Dto.TicketNo,
+            QueueNumber: after.Entry.Dto.QueueNumber,
+            VisitId: preVisit.Id,
+            VisitCode: after.Entry.Dto.VisitCode,
+            PatientCode: after.Entry.Dto.PatientCode,
+            PatientName: after.Entry.Dto.PatientName,
+            ServicePointId: after.Bucket.Bucket.ServicePointId,
+            RoomCode: after.Entry.Dto.RoomCode,
+            RoomName: after.Entry.Dto.RoomName,
+            ActionOutcome: actionOutcome,
+            PreviousQueueEntryId: previousQueueEntryId,
+            PreviousStatus: previousStatus,
+            CurrentStatus: after.Entry.Dto.Status,
+            QueueType: after.Entry.Dto.QueueType,
+            Priority: after.Entry.Dto.Priority,
+            PresenceStatus: after.Entry.Dto.PresenceStatus,
+            ArrivalClass: after.Entry.Dto.ArrivalClass,
+            FinalResultRequired: finalResultRequired,
+            AllDiagnosticResultsReady: allDiagnosticResultsReady,
+            OpenDiagnosticCount: openDiagnosticCount,
+            IsEligible: after.Entry.Evaluation.IsEligible,
+            QueueGroup: resolvedQueueGroup,
+            IneligibleReason: after.Entry.Evaluation.IneligibleReason,
+            CanSafeBackfill: after.Entry.Evaluation.CanSafeBackfill,
+            IsAppointmentProtected: after.Entry.Evaluation.IsAppointmentProtected,
+            HoldReason: after.Entry.Evaluation.HoldReason,
+            PreviousServingOrder: previousServingOrder,
+            ServingOrder: after.Entry.Dto.ServingOrder,
+            Reason: reason,
+            Notes: notes,
+            PreviousStateVersion: prevVersion,
+            StateVersion: enrollment.Ticket.StateVersion,
             UpdatedAtUtc: afterBoard.NowUtc,
             UpdatedEntry: after.Entry.Dto);
     }

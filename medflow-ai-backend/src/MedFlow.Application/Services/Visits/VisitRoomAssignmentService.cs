@@ -322,6 +322,13 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
         await using var tx = await _db.BeginTransactionAsync(ct);
 
         // ADR-0059 strict lock order: doctors (05) -> hospital_rooms (06) -> visits (09) -> queue_service_points / unrouted advisory (10) -> queue_entries (11)
+        // Stage E2 / E-BR10 / QE-07..08: patient lock (level 02) FIRST in canonical order —
+        // every queue-creating writer serializes on the patient row before doctor/room/visit.
+        if (visit.PatientId is > 0)
+        {
+            await _db.TryLockPatientForUpdateAsync(visit.PatientId.Value, ct);
+        }
+
         await _db.TryLockDoctorsForUpdateAsync([assignedDoctor.Id], ct);
         await _db.TryLockRoomsForUpdateAsync(roomIdsToLock, ct);
         await _db.TryLockVisitForUpdateAsync(visit.Id, ct);
@@ -345,6 +352,15 @@ public sealed class VisitRoomAssignmentService : IVisitRoomAssignmentService
             dbCtx.ChangeTracker.Clear();
         }
 
+        // Stage E2 / QE-07..08: enforce one active serving queue per patient per hospital
+        // post-lock, before UpsertExaminationQueueEntryAsync may mint a new EXAMINATION ticket.
+        await PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+            _db,
+            visit.PatientId,
+            effectiveHospitalId,
+            today,
+            excludeQueueEntryId: preExistingEntry?.Id,
+            ct: ct);
         visit = await LoadVisitAsync((visit.Id, null), asNoTracking: false, ct)
             ?? throw new NotFoundException("Visit", visitIdOrCode.Trim());
         normalizedVisitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);

@@ -31,6 +31,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Configuration;
 
 namespace MedFlow.IntegrationTests.EndToEnd;
 
@@ -105,6 +106,16 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
     {
         _app = baseFactory.WithWebHostBuilder(builder =>
         {
+            // Same virtual-clock rationale as Phase07FullOutpatientPayBeforeServiceE2ETests: JWTs are
+            // minted against MutableTimeProvider, so CloseOnAuthenticationExpiration (real system clock)
+            // would see pre-expired tokens and abort hub connections nondeterministically. Production
+            // default stays enabled; the override is scoped to this suite's factory instance only.
+            builder.ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Realtime:CloseOnAuthenticationExpiration"] = "false",
+                }));
+
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<TimeProvider>();
@@ -573,7 +584,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                 go.SetResult();
 
                 var errs = await Task.WhenAll(tSingle, tGrouped);
-                AssertZeroDeadlockOrUnhandledServerFailure(errs);
+                AssertZeroDeadlockOrUnhandledServerFailure(errs, "3.1 QR-single-vs-grouped");
 
                 await using var checkScope = _app.Services.CreateAsyncScope();
                 var checkDb = checkScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
@@ -652,7 +663,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                 go.SetResult();
 
                 var errs = await Task.WhenAll(tCash, tWh);
-                AssertZeroDeadlockOrUnhandledServerFailure(errs);
+                AssertZeroDeadlockOrUnhandledServerFailure(errs, "3.2 cash-vs-webhook");
 
                 await using var checkScope = _app.Services.CreateAsyncScope();
                 var checkDb = checkScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
@@ -715,7 +726,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
 
                 var decErr = await tDecline;
                 var startErr = await tStart;
-                AssertZeroDeadlockOrUnhandledServerFailure([decErr, startErr]);
+                AssertZeroDeadlockOrUnhandledServerFailure([decErr, startErr], "3.3 decline-vs-start");
                 Assert.True((decErr is null) ^ (startErr is null));
 
                 await using var checkScope = _app.Services.CreateAsyncScope();
@@ -798,7 +809,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
 
                 var deferErr = await tDefer;
                 var startErr = await tStart;
-                AssertZeroDeadlockOrUnhandledServerFailure([deferErr, startErr]);
+                AssertZeroDeadlockOrUnhandledServerFailure([deferErr, startErr], "3.4 defer-vs-start");
                 Assert.True((deferErr is null) ^ (startErr is null));
                 if (startErr is null)
                 {
@@ -841,7 +852,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                         await resumeSvc.ResumeVisitAsync(
                             fx.ReceptionUserId,
                             visit.VisitCode!,
-                            new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+                            new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
                         return (Exception?)null;
                     }
                     catch (Exception ex)
@@ -880,7 +891,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
 
                 var resumeErr = await tResume;
                 var uc43Err = await tUc43;
-                AssertZeroDeadlockOrUnhandledServerFailure([resumeErr, uc43Err]);
+                AssertZeroDeadlockOrUnhandledServerFailure([resumeErr, uc43Err], "3.5 resume-return-vs-finalize");
                 Assert.Null(uc43Err);
 
                 if (resumeErr is not null)
@@ -888,7 +899,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                     Assert.IsType<ConflictException>(resumeErr);
                     await using var followUp = _app.Services.CreateAsyncScope();
                     var resumeSvc = followUp.ServiceProvider.GetRequiredService<IVisitCrossDayLifecycleService>();
-                    await resumeSvc.ResumeVisitAsync(fx.ReceptionUserId, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+                    await resumeSvc.ResumeVisitAsync(fx.ReceptionUserId, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
                 }
 
                 await using var checkScope = _app.Services.CreateAsyncScope();
@@ -1115,26 +1126,13 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                     StartedAt = nowLocal.AddMinutes(-5),
                     StateVersion = 2,
                 };
-                var q2 = new QueueEntry
-                {
-                    VisitId = busyVisit.Id,
-                    ServicePointId = fx.DiagServicePoint2Id,
-                    CurrentServicePointId = fx.DiagServicePoint2Id,
-                    QueueDate = today,
-                    QueueNumber = 1,
-                    QueueType = "DIAGNOSTIC",
-                    Status = "CALLED",
-                    PresenceStatus = "PRESENT",
-                    ArrivedAt = nowLocal.AddMinutes(-10),
-                    ReadyAt = nowLocal.AddMinutes(-9),
-                    CalledAt = nowLocal.AddMinutes(-4),
-                    StateVersion = 2,
-                };
-                db.QueueEntries.AddRange(q1, q2);
+                // Stage E2 (QE-03 + single-active per visit): order 2 (PAID & CONFIRMED) holds NO active queue —
+                // only order 1's IN_PROGRESS DIAGNOSTIC ticket exists on this visit. Starting order 2 must
+                // fail closed (no second active post-exam ticket per visit, no second active serving queue).
+                db.QueueEntries.Add(q1);
                 await db.SaveChangesAsync();
 
                 ord1.QueueEntryId = q1.Id;
-                ord2.QueueEntryId = q2.Id;
 
                 var c1 = VisitCharge.CreateDiagnostic(busyVisit.Id, ord1.Id, fx.DiagServiceId, 100_000m, nowLocal.AddMinutes(-15));
                 var c2 = VisitCharge.CreateDiagnostic(busyVisit.Id, ord2.Id, fx.Diag2ServiceId, 120_000m, nowLocal.AddMinutes(-15));
@@ -1337,7 +1335,9 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
             Assert.Empty(_spyPublisher.QueueEvents);
             Assert.Empty(_spyPublisher.PaymentEvents);
 
-            // 4) 409 PATIENT_BUSY_AT_ANOTHER_POINT simultaneous diagnostic start
+            // 4) Failing-closed simultaneous diagnostic start: order 2 (CONFIRMED, no ticket) cannot start
+            // while order 1 holds the patient's single active serving ticket (E2: ACTIVE_QUEUE_ALREADY_EXISTS;
+            // legacy busy-point check may report PATIENT_BUSY_AT_ANOTHER_POINT — both denote the same conflict).
             await using (var s4 = _app.Services.CreateAsyncScope())
             {
                 var execSvc = s4.ServiceProvider.GetRequiredService<IDiagnosticServiceExecutionService>();
@@ -1346,7 +1346,10 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                         fx.DiagStaffUserId,
                         busyOrder2Code,
                         new UpdateDiagnosticServiceStatusRequest(TargetStatus: "IN_PROGRESS")));
-                Assert.Contains("PATIENT_BUSY_AT_ANOTHER_POINT", busyEx.Message, StringComparison.Ordinal);
+                Assert.True(
+                    busyEx.Message.Contains("PATIENT_BUSY_AT_ANOTHER_POINT", StringComparison.Ordinal) ||
+                    busyEx.Message.Contains("ACTIVE_QUEUE_ALREADY_EXISTS", StringComparison.Ordinal),
+                    busyEx.Message);
             }
             Assert.Empty(_spyPublisher.QueueEvents);
             Assert.Empty(_spyPublisher.PaymentEvents);
@@ -1423,7 +1426,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
     // Invariant Assertions & Isolated Self-Cleaning Fixture Helpers
     // =========================================================================
 
-    private static void AssertZeroDeadlockOrUnhandledServerFailure(IEnumerable<Exception?> exceptions)
+    private static void AssertZeroDeadlockOrUnhandledServerFailure(IEnumerable<Exception?> exceptions, string? context = null)
     {
         foreach (var ex in exceptions)
         {
@@ -1433,10 +1436,12 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
             }
 
             var sqlState = PostgresConcurrencyException.TryGetSqlState(ex);
-            Assert.NotEqual("40P01", sqlState);
+            Assert.True(
+                sqlState != "40P01",
+                $"PostgreSQL 40P01 deadlock detected in [{context ?? "unknown"}] : {ex.Message}");
             Assert.True(
                 ex is ConflictException or ForbiddenException,
-                $"Unexpected non-domain exception {ex.GetType().Name} (SqlState={sqlState ?? "none"}): {ex.Message}");
+                $"Unexpected non-domain exception {ex.GetType().Name} (SqlState={sqlState ?? "none"}) in [{context ?? "unknown"}]: {ex.Message}");
         }
     }
 
@@ -2098,6 +2103,19 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                         (n.PatientId.HasValue && fx.CreatedPatientIds.Contains(n.PatientId.Value)))
             .ExecuteDeleteAsync();
 
+        // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit + fk_queue_entries_prescription_visit
+        // are ON DELETE RESTRICT. Clear diagnostic_orders.queue_entry_id + queue_fairness_states
+        // .last_started_queue_entry_id back-pointers before deleting queue_entries.
+        var spIds = new[] { fx.ExamServicePoint1Id, fx.ExamServicePoint2Id, fx.DiagServicePointId, fx.DiagServicePoint2Id };
+        await db.DiagnosticOrders
+            .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
+        await db.QueueFairnessStates.Where(f => spIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
+        await db.QueueEntries
+            .Where(q => (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
+                        (q.AppointmentId.HasValue && apptIds.Contains(q.AppointmentId.Value)) ||
+                        (q.ServicePointId.HasValue && spIds.Contains(q.ServicePointId.Value)))
+            .ExecuteDeleteAsync();
         var orderIds = await db.DiagnosticOrders.AsNoTracking()
             .Where(o => o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
             .Select(o => o.Id)
@@ -2164,8 +2182,6 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
             await db.Payments.Where(p => paymentIds.Contains(p.Id)).ExecuteDeleteAsync();
         }
 
-        var spIds = new[] { fx.ExamServicePoint1Id, fx.ExamServicePoint2Id, fx.DiagServicePointId, fx.DiagServicePoint2Id };
-        await db.QueueFairnessStates.Where(f => spIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
 
         if (visitIds.Count > 0 || apptIds.Count > 0)
         {

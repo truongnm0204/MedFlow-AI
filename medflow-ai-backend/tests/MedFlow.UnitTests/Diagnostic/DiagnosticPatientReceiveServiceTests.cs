@@ -1090,6 +1090,14 @@ public sealed class DiagnosticPatientReceiveServiceTests : IDisposable
     [Fact]
     public async Task ReceiveDiagnosticPatientAsync_ConfirmedOrderWithoutQueueEntry_AllocatesReadyDiagnosticQueueEntry()
     {
+        // Fixture fix (ADR-0061 strict single-active-queue invariant): close the patient's
+        // existing active diagnostic queue entry (q-013 on visit 11) so receiving order 16
+        // can legitimately mint the one active READY ticket for patient 2.
+        var priorEntry13 = await _dbContext.QueueEntries.FindAsync(13L);
+        priorEntry13!.Status = "COMPLETED";
+        priorEntry13.CompletedAt = new DateTime(2026, 10, 20, 8, 55, 0);
+        await _dbContext.SaveChangesAsync();
+
         var response = await _service.ReceiveDiagnosticPatientAsync(
             actorUserId: 7,
             orderIdOrCode: "16",
@@ -1113,16 +1121,20 @@ public sealed class DiagnosticPatientReceiveServiceTests : IDisposable
     [Fact]
     public async Task ReceiveDiagnosticPatientsBatchAsync_ReceivesMultipleConfirmedOrdersInOneTransaction()
     {
+        // Fixture fix (ADR-0061 strict single-active-queue invariant): a same-visit batch can no
+        // longer mint two simultaneous active tickets for one patient, so the batch targets two
+        // CONFIRMED waiting orders of two different patients (order 12 -> visit 10/patient 1,
+        // order 13 -> visit 11/patient 2). Both already hold active WAITING queue entries, so
+        // receive only transitions them to READY inside one transaction.
         var batchByVisit = await _service.ReceiveDiagnosticPatientsBatchAsync(
             actorUserId: 7,
             request: new ReceiveDiagnosticPatientsBatchRequest(
-                VisitCode: "VIS-202610-0011",
+                OrderIds: new long[] { 12, 13 },
                 IsPatientPresent: true,
                 IsIdentityVerified: true,
-                ReceptionNote: "Tiếp nhận hàng loạt các chỉ định đã xác nhận của lượt khám VIS-202610-0011"),
+                ReceptionNote: "Tiếp nhận hàng loạt các chỉ định đã xác nhận trong một giao dịch"),
             ipAddress: "192.168.1.55");
 
-        // Visit 11 has two CONFIRMED waiting orders: 13 and 16 (Order 15 is CANCELLED)
         Assert.Equal(2, batchByVisit.ReceivedCount);
         Assert.Equal(2, batchByVisit.ReceivedOrders.Count);
         Assert.All(batchByVisit.ReceivedOrders, o =>

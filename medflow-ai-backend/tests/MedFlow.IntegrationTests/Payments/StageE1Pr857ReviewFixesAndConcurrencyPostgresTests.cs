@@ -204,53 +204,38 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
             Assert.Equal(PaymentAllocationStatuses.Paid, (await Db.PaymentAllocations.AsNoTracking().SingleAsync(a => a.PaymentId == labPaymentId)).Status);
             Assert.Equal(1, await Db.VisitCharges.AsNoTracking().CountAsync(c => c.DiagnosticOrderId == labOrderId));
 
-            // DR-02 + DR-11: Resume without explicit SP routes Lab order to sharedLabSp and Imaging order to ImagingSpId
-            var resumedBoth = await PostResumeAsync(
+            // DR-02 + DR-11: Stage E2 single-active — resuming two orders at once would mint two active
+            // serving tickets for one patient (forbidden). Resume the Lab order first (no explicit SP) so it
+            // reroutes to the same-department sharedLabSp; the Imaging order is enrolled sequentially later.
+            var resumedLab = await PostResumeAsync(
                 fx,
                 visit.VisitCode!,
                 new ResumeCrossDayVisitRequestDto(
                     Target: "DIAGNOSTIC",
-                    DiagnosticOrderIds: [labOrderId, imgOrderId]));
-            Assert.Equal(2, resumedBoth.ResumedQueues.Count);
-            Assert.Contains(resumedBoth.ResumedQueues, q => q.ServicePointId == sharedLabSp.Id);
-            Assert.Contains(resumedBoth.ResumedQueues, q => q.ServicePointId == fx.ImagingSpId);
+                    DiagnosticOrderId: labOrderId));
+            var resumedLabQueue = Assert.Single(resumedLab.ResumedQueues);
+            Assert.Equal(sharedLabSp.Id, resumedLabQueue.ServicePointId);
 
-            // Confirm both orders at UC39 so we can test DR-13 (Batch UC40 atomic rollback)
+            // Confirm both orders at UC39 — Stage E2 (QE-15..16) UC39 is dept-scoped, so confirm each with
+            // its department technician (Lab → lab staff, Imaging → imaging staff).
             await using (var uc39Scope = _app.Services.CreateAsyncScope())
             {
                 var reviewSvc = uc39Scope.ServiceProvider.GetRequiredService<IDiagnosticOrderReviewService>();
-                await reviewSvc.ConfirmDiagnosticOrdersBatchAsync(
+                await reviewSvc.ConfirmDiagnosticOrderAsync(
                     fx.DiagStaff1UserId,
-                    new ConfirmDiagnosticOrdersBatchRequest(
-                        OrderIds: [labOrderId, imgOrderId],
-                        IsEligibilityVerified: true));
+                    labOrderCode,
+                    new ConfirmDiagnosticOrderRequest(IsEligibilityVerified: true));
+                await reviewSvc.ConfirmDiagnosticOrderAsync(
+                    fx.DiagImgUserId,
+                    imgOrderCode,
+                    new ConfirmDiagnosticOrderRequest(IsEligibilityVerified: true));
             }
 
-            // DR-13: Put ImagingRoom into MAINTENANCE -> Batch Receive [labOrderId, imgOrderId] MUST fail 409 atomically
-            //        without moving labOrderId's queue entry to READY!
-            await Db.HospitalRooms.Where(r => r.Id == fx.ImagingRoomId)
-                .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, "MAINTENANCE"));
-
+            // DR-02: the resumed Lab order sits WAITING at the same-department sharedLabSp. (Stage E2
+            // single-active: the Imaging order cannot be routed concurrently while Lab holds the active
+            // ticket — it is resumed sequentially after the Lab order completes; see the end of this test.)
             Db.ChangeTracker.Clear();
             var labQeIdBeforeBatch = (await Db.DiagnosticOrders.AsNoTracking().SingleAsync(o => o.Id == labOrderId)).QueueEntryId!.Value;
-            var labQeStatusBeforeBatch = (await Db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == labQeIdBeforeBatch)).Status;
-            Assert.Equal("WAITING", labQeStatusBeforeBatch);
-
-            await using (var uc40BatchScope = _app.Services.CreateAsyncScope())
-            {
-                var receiveSvc = uc40BatchScope.ServiceProvider.GetRequiredService<IDiagnosticPatientReceiveService>();
-                var batchEx = await Assert.ThrowsAsync<ConflictException>(() =>
-                    receiveSvc.ReceiveDiagnosticPatientsBatchAsync(
-                        fx.DiagStaff1UserId,
-                        new ReceiveDiagnosticPatientsBatchRequest(
-                            OrderIds: [labOrderId, imgOrderId],
-                            IsPatientPresent: true,
-                            IsIdentityVerified: true,
-                            IsPreparationVerified: true)));
-                Assert.Contains("NO_ACTIVE_COMPATIBLE_DIAGNOSTIC_POINT", batchEx.Message, StringComparison.Ordinal);
-            }
-
-            Db.ChangeTracker.Clear();
             Assert.Equal("WAITING", (await Db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == labQeIdBeforeBatch)).Status);
 
             // Restore ImagingRoom, receive & start labOrder (IN_PROGRESS), THEN put LabRoom into MAINTENANCE + sharedLabSp IsActive = false
@@ -308,6 +293,29 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
                         CorrectionReason: "Đính chính chỉ số HGB sau đối chiếu máy."));
                 Assert.Equal(2, amended.VersionNo);
             }
+
+            // DR-13 + DR-11 (sequential E2): the Lab order is completed, so no active serving ticket remains.
+            // ImagingRoom in MAINTENANCE -> resuming the Imaging order fails closed (NO_ACTIVE_COMPATIBLE);
+            // restore ImagingRoom -> resuming routes the Imaging order to its ImagingSpId.
+            await Db.HospitalRooms.Where(r => r.Id == fx.ImagingRoomId)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, "MAINTENANCE"));
+
+            var imgMaintenanceRes = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/reception/visits/{visit.VisitCode}/resume",
+                new ResumeCrossDayVisitRequestDto(Target: "DIAGNOSTIC", DiagnosticOrderId: imgOrderId),
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            Assert.Equal(HttpStatusCode.Conflict, imgMaintenanceRes.StatusCode);
+            Assert.Contains("NO_ACTIVE_COMPATIBLE_DIAGNOSTIC_POINT", await imgMaintenanceRes.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+            await Db.HospitalRooms.Where(r => r.Id == fx.ImagingRoomId)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, "ACTIVE"));
+            var resumedImg = await PostResumeAsync(
+                fx,
+                visit.VisitCode!,
+                new ResumeCrossDayVisitRequestDto(Target: "DIAGNOSTIC", DiagnosticOrderId: imgOrderId));
+            var resumedImgQueue = Assert.Single(resumedImg.ResumedQueues);
+            Assert.Equal(fx.ImagingSpId, resumedImgQueue.ServicePointId);
 
             // Cleanup extra test service points before fixture teardown
             await Db.QueueEntries.Where(q => q.ServicePointId == sharedLabSp.Id || q.CurrentServicePointId == sharedLabSp.Id)
@@ -571,6 +579,7 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
                 visit.VisitCode!,
                 new ResumeCrossDayVisitRequestDto(
                     Target: "RETURN_CONSULTATION",
+                    ConfirmPresent: true,
                     CoordinationPurpose: QueueCoordinationPurposes.ClinicalReview,
                     Notes: "Điều phối CLINICAL_REVIEW kiểm thử RV-T01..20"));
             var reviewQueueId = reviewResume.ResumedQueues[0].QueueEntryId;
@@ -768,16 +777,21 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
             var chargeCountBeforeCls = await Db.VisitCharges.AsNoTracking().CountAsync(c => c.VisitId == visit.Id);
             var paymentCountBeforeCls = await Db.Payments.AsNoTracking().CountAsync(p => p.VisitId == visit.Id);
 
+            // RV-T20: Resume & execute revalidated paid orders without re-charging! Stage E2 single-active:
+            // resume & execute SEQUENTIALLY (one active serving ticket per patient at a time).
             await PostResumeAsync(
                 fx,
                 visit.VisitCode!,
-                new ResumeCrossDayVisitRequestDto(
-                    Target: "DIAGNOSTIC",
-                    DiagnosticOrderIds: [labOrderId, imgOrderId]));
+                new ResumeCrossDayVisitRequestDto(Target: "DIAGNOSTIC", DiagnosticOrderId: labOrderId));
             await ExecuteDiagnosticOrderThroughUc42Async(fx, labOrderCode);
-            await ExecuteDiagnosticOrderThroughUc42Async(fx, imgOrderCode);
             await FinalizeDiagnosticResultAsync(fx.DiagStaff1UserId, labOrderCode, "CTM bình thường.", "Bình thường.");
-            await FinalizeDiagnosticResultAsync(fx.DiagStaff1UserId, imgOrderCode, "Siêu âm bình thường.", "Bình thường.");
+
+            await PostResumeAsync(
+                fx,
+                visit.VisitCode!,
+                new ResumeCrossDayVisitRequestDto(Target: "DIAGNOSTIC", DiagnosticOrderId: imgOrderId));
+            await ExecuteDiagnosticOrderThroughUc42Async(fx, imgOrderCode);
+            await FinalizeDiagnosticResultAsync(fx.DiagImgUserId, imgOrderCode, "Siêu âm bình thường.", "Bình thường.");
 
             Assert.Equal(chargeCountBeforeCls, await Db.VisitCharges.AsNoTracking().CountAsync(c => c.VisitId == visit.Id));
             Assert.Equal(paymentCountBeforeCls, await Db.Payments.AsNoTracking().CountAsync(p => p.VisitId == visit.Id));
@@ -806,6 +820,7 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
                 visit.VisitCode!,
                 new ResumeCrossDayVisitRequestDto(
                     Target: "RETURN_CONSULTATION",
+                    ConfirmPresent: true,
                     CoordinationPurpose: QueueCoordinationPurposes.ClinicalReview));
             await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/queue/service-points/{fx.ExamSp1Id}/call-next",
@@ -873,7 +888,7 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
             // Advance 10 days to D+10 (2026-11-20 > 7-day return_consultation_window_days)
             _clock.SetVietnamLocalTime(new DateTime(2026, 11, 20, 9, 0, 0, DateTimeKind.Unspecified));
 
-            await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+            await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
             await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/queue/service-points/{fx.ExamSp1Id}/call-next",
                 new { notes = "Gọi vào khám kết luận quá hạn SN-01..14" },
@@ -1017,13 +1032,25 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
 
             _clock.SetVietnamLocalTime(new DateTime(2026, 11, 20, 9, 15, 0, DateTimeKind.Unspecified));
             await ExecuteDiagnosticOrderThroughUc42Async(fx, newImgOrderCode);
-            await FinalizeDiagnosticResultAsync(fx.DiagStaff1UserId, newImgOrderCode, "Hai thận kích thước bình thường.", "Siêu âm thận bình thường.");
+            await FinalizeDiagnosticResultAsync(fx.DiagImgUserId, newImgOrderCode, "Hai thận kích thước bình thường.", "Siêu âm thận bình thường.");
 
             Db.ChangeTracker.Clear();
             var visitAfterNewMandatoryDone = await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id);
             Assert.Equal(originalReadyForReturnAt, visitAfterNewMandatoryDone.ReadyForReturnAt);
 
             // Call next & reopen return consultation on D+10 -> STILL IsReturnOverdue == true!
+            // Stage E2 (QE-10): finalize holds the visit in AWAITING_RESULTS; Reception must coordinate the
+            // (overdue) RETURN_CONSULTATION ticket before the doctor can be called back in.
+            var sn14EnrollRes = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/reception/visits/{visit.VisitCode}/return-enrollment",
+                new CreateReturnEnrollmentRequestDto(
+                    Purpose: QueueCoordinationPurposes.ResultConclusion,
+                    IdempotencyKey: $"sn14-return-{visit.Id}"),
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            var sn14EnrollBody = await sn14EnrollRes.Content.ReadAsStringAsync();
+            Assert.True(sn14EnrollRes.StatusCode == HttpStatusCode.OK, sn14EnrollBody);
+
             await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/queue/service-points/{fx.ExamSp1Id}/call-next",
                 new { notes = "Gọi lại khám kết luận sau siêu âm bổ sung SN-14" },
@@ -1100,6 +1127,7 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
                 visit.VisitCode!,
                 new ResumeCrossDayVisitRequestDto(
                     Target: "RETURN_CONSULTATION",
+                    ConfirmPresent: true,
                     CoordinationPurpose: QueueCoordinationPurposes.ClinicalReview));
             await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/queue/service-points/{fx.ExamSp1Id}/call-next",
@@ -1317,7 +1345,7 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
 
             // Advance 10 days to D+10 (2026-11-20 -> overdue return consultation)
             _clock.SetVietnamLocalTime(new DateTime(2026, 11, 20, 9, 0, 0, DateTimeKind.Unspecified));
-            await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+            await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
             await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/queue/service-points/{fx.ExamSp1Id}/call-next",
                 new { notes = "Gọi vào khám CR-E1-05..08" },
@@ -1724,28 +1752,38 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
 
     private async Task ExecuteDiagnosticOrderThroughUc42Async(Pr857Fixture fx, string orderCode)
     {
+        // Stage E2 (QE-15..16): confirm/receive/execute are dept-scoped fail-closed. Resolve the
+        // executing CLS staff by the order's service department (imaging vs lab) so imaging orders are
+        // executed by an imaging-department technician.
+        Db.ChangeTracker.Clear();
+        var orderServiceId = await Db.DiagnosticOrders.AsNoTracking()
+            .Where(o => o.OrderCode == orderCode)
+            .Select(o => o.ServiceId)
+            .SingleAsync();
+        var staffUserId = orderServiceId == fx.ImagingServiceId ? fx.DiagImgUserId : fx.DiagStaff1UserId;
+
         await using var scope = _app.Services.CreateAsyncScope();
         var reviewSvc = scope.ServiceProvider.GetRequiredService<IDiagnosticOrderReviewService>();
         await reviewSvc.ConfirmDiagnosticOrderAsync(
-            fx.DiagStaff1UserId,
+            staffUserId,
             orderCode,
             new ConfirmDiagnosticOrderRequest(IsEligibilityVerified: true));
 
         var receiveSvc = scope.ServiceProvider.GetRequiredService<IDiagnosticPatientReceiveService>();
         await receiveSvc.ReceiveDiagnosticPatientAsync(
-            fx.DiagStaff1UserId,
+            staffUserId,
             orderCode,
             new ReceiveDiagnosticPatientRequest(IsPatientPresent: true, IsIdentityVerified: true, IsPreparationVerified: true));
 
         var execSvc = scope.ServiceProvider.GetRequiredService<IDiagnosticServiceExecutionService>();
         var started = await execSvc.StartServiceExecutionAsync(
-            fx.DiagStaff1UserId,
+            staffUserId,
             orderCode,
             new UpdateDiagnosticServiceStatusRequest(TargetStatus: "IN_PROGRESS"));
         Assert.Equal("IN_PROGRESS", started.Order.Status);
 
         var completed = await execSvc.CompleteServiceExecutionAsync(
-            fx.DiagStaff1UserId,
+            staffUserId,
             orderCode,
             new UpdateDiagnosticServiceStatusRequest(TargetStatus: "COMPLETED"));
         Assert.Equal("COMPLETED", completed.Order.Status);
@@ -2002,9 +2040,10 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
         var doc2User = new User { Email = $"d2-857-{suffix}@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var diag1User = new User { Email = $"dg1-857-{suffix}@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var diag2User = new User { Email = $"dg2-857-{suffix}@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        var diagImgUser = new User { Email = $"dgim-857-{suffix}@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var rec1User = new User { Email = $"rc1-857-{suffix}@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var patUser = new User { Email = $"pt1-857-{suffix}@medflow.test", AccountStatus = AccountStatus.ACTIVE };
-        Db.Users.AddRange(doc1User, doc2User, diag1User, diag2User, rec1User, patUser);
+        Db.Users.AddRange(doc1User, doc2User, diag1User, diag2User, diagImgUser, rec1User, patUser);
         await Db.SaveChangesAsync();
 
         Db.UserRoles.AddRange(
@@ -2012,6 +2051,7 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
             new UserRole { UserId = doc2User.Id, RoleId = docRole.Id },
             new UserRole { UserId = diag1User.Id, RoleId = diagRole.Id },
             new UserRole { UserId = diag2User.Id, RoleId = diagRole.Id },
+            new UserRole { UserId = diagImgUser.Id, RoleId = diagRole.Id },
             new UserRole { UserId = rec1User.Id, RoleId = recRole.Id },
             new UserRole { UserId = patUser.Id, RoleId = patRole.Id });
 
@@ -2019,8 +2059,9 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
         var doc2Staff = new Staff { UserId = doc2User.Id, HospitalId = hospital.Id, DepartmentId = examDept.Id, StaffCode = $"SD2857{suffix}", FullName = "BS. Hai PR857", Status = "ACTIVE" };
         var diag1Staff = new Staff { UserId = diag1User.Id, HospitalId = hospital.Id, DepartmentId = labDept.Id, StaffCode = $"SG1857{suffix}", FullName = "KTV. Một PR857", Status = "ACTIVE" };
         var diag2Staff = new Staff { UserId = diag2User.Id, HospitalId = hospital.Id, DepartmentId = labDept.Id, StaffCode = $"SG2857{suffix}", FullName = "KTV. Hai PR857", Status = "ACTIVE" };
+        var diagImgStaff = new Staff { UserId = diagImgUser.Id, HospitalId = hospital.Id, DepartmentId = imgDept.Id, StaffCode = $"SGIM857{suffix}", FullName = "KTV. CĐHA PR857", Status = "ACTIVE" };
         var rec1Staff = new Staff { UserId = rec1User.Id, HospitalId = hospital.Id, DepartmentId = examDept.Id, StaffCode = $"SRC857{suffix}", FullName = "TN. Tiếp Đón PR857", Status = "ACTIVE" };
-        Db.Staff.AddRange(doc1Staff, doc2Staff, diag1Staff, diag2Staff, rec1Staff);
+        Db.Staff.AddRange(doc1Staff, doc2Staff, diag1Staff, diag2Staff, diagImgStaff, rec1Staff);
         await Db.SaveChangesAsync();
 
         var doc1 = new Doctor { StaffId = doc1Staff.Id, HospitalId = hospital.Id, SpecialtyId = specialtyId, DoctorCode = $"DC1857{suffix}", ProfessionalTitle = "BS.CKI", IsActive = true };
@@ -2114,12 +2155,14 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
             Diag1StaffId: diag1Staff.Id,
             DiagStaff2UserId: diag2User.Id,
             Diag2StaffId: diag2Staff.Id,
+            DiagImgUserId: diagImgUser.Id,
+            DiagImgStaffId: diagImgStaff.Id,
             Reception1UserId: rec1User.Id,
             Reception1StaffId: rec1Staff.Id,
             PatientUserId: patUser.Id,
             PatientId: patient.Id,
-            AllUserIds: [doc1User.Id, doc2User.Id, diag1User.Id, diag2User.Id, rec1User.Id, patUser.Id],
-            AllStaffIds: [doc1Staff.Id, doc2Staff.Id, diag1Staff.Id, diag2Staff.Id, rec1Staff.Id],
+            AllUserIds: [doc1User.Id, doc2User.Id, diag1User.Id, diag2User.Id, diagImgUser.Id, rec1User.Id, patUser.Id],
+            AllStaffIds: [doc1Staff.Id, doc2Staff.Id, diag1Staff.Id, diag2Staff.Id, diagImgStaff.Id, rec1Staff.Id],
             Icd10Code: icdCode,
             CreatedIcd10Id: createdIcdId);
     }
@@ -2171,6 +2214,14 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
             (n.VisitId.HasValue && visitIds.Contains(n.VisitId.Value)) ||
             n.PatientId == fx.PatientId).ExecuteDeleteAsync();
 
+        // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit + fk_queue_entries_prescription_visit
+        // are ON DELETE RESTRICT. Clear diagnostic_orders.queue_entry_id + queue_fairness_states
+        // .last_started_queue_entry_id back-pointers before deleting queue_entries.
+        await Db.DiagnosticOrders
+            .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
+        await Db.QueueFairnessStates.Where(f => fx.AllSpIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
+        await Db.QueueEntries.Where(q => q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)).ExecuteDeleteAsync();
         if (visitIds.Count > 0)
         {
             var rxIds = await Db.Prescriptions
@@ -2322,6 +2373,8 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
         long Diag1StaffId,
         long DiagStaff2UserId,
         long Diag2StaffId,
+        long DiagImgUserId,
+        long DiagImgStaffId,
         long Reception1UserId,
         long Reception1StaffId,
         long PatientUserId,

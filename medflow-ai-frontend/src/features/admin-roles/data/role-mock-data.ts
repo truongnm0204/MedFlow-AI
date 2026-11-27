@@ -28,6 +28,11 @@ export const SYSTEM_PERMISSIONS: Record<string, RolePermissionItem> = {
     name: 'Xem hồ sơ bệnh nhân',
     module: 'Hồ sơ & Tiếp đón',
   },
+  PATIENT_IDENTITY_VERIFY: {
+    code: 'PATIENT_IDENTITY_VERIFY',
+    name: 'Xác minh định danh hồ sơ bệnh nhân',
+    module: 'Hồ sơ & Tiếp đón',
+  },
   APPOINTMENT_BOOK: {
     code: 'APPOINTMENT_BOOK',
     name: 'Đặt lịch khám',
@@ -47,6 +52,21 @@ export const SYSTEM_PERMISSIONS: Record<string, RolePermissionItem> = {
     code: 'QUEUE_MANAGE',
     name: 'Quản lý hàng đợi khám',
     module: 'Hàng đợi',
+  },
+  QUEUE_ENROLL: {
+    code: 'QUEUE_ENROLL',
+    name: 'Đăng ký & điều phối lấy số hàng đợi',
+    module: 'Hàng đợi',
+  },
+  CLINICAL_SESSION_RECOVERY_GRANT: {
+    code: 'CLINICAL_SESSION_RECOVERY_GRANT',
+    name: 'Cấp/thu hồi uỷ quyền phục hồi một phiên khám',
+    module: 'Khôi phục phiên khám',
+  },
+  CLINICAL_SESSION_RECOVER: {
+    code: 'CLINICAL_SESSION_RECOVER',
+    name: 'Xác nhận phiên khám bị gián đoạn & giải phóng vé',
+    module: 'Khôi phục phiên khám',
   },
   MEDICAL_RECORD_WRITE: {
     code: 'MEDICAL_RECORD_WRITE',
@@ -91,6 +111,11 @@ export const SYSTEM_PERMISSIONS: Record<string, RolePermissionItem> = {
   PAYMENT_VIEW: {
     code: 'PAYMENT_VIEW',
     name: 'Tra cứu viện phí & thanh toán',
+    module: 'Viện phí',
+  },
+  PAYMENT_COLLECT: {
+    code: 'PAYMENT_COLLECT',
+    name: 'Thu tiền mặt tại quầy tiếp nhận',
     module: 'Viện phí',
   },
 };

@@ -4,6 +4,7 @@ using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Consultation;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.DTOs.Payments;
+using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Payments;
 using MedFlow.Domain.Constants;
@@ -132,6 +133,13 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
                 Assert.Null(callNextUnpaid.CalledEntry);
             }
 
+            // Stage E2 (QE-23 / PE-06): the clinical session must be handed off before CLS execution.
+            await using (var handoffScope = Factory.Services.CreateAsyncScope())
+            {
+                var handoffConsultSvc = handoffScope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
+                await handoffConsultSvc.HandoffToDiagnosticAsync(fx.Doctor1UserId, visit.VisitCode!);
+            }
+
             // 1E. Pay Order #1 ONLY -> Order #1 completes UC42 sample collection (PERFORMED_AWAITING_RESULT)
             await PayDiagnosticChargeAsync(visit.Id, diagCharges[0].Id, 120_000m);
 
@@ -174,42 +182,13 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
                 Assert.Equal("PERFORMED_AWAITING_RESULT", wsOrder1.ResultStatus);
                 Assert.False(wsOrder1.IsResultFinalized);
 
-                // ALLOW: draft clinical exam
-                await consultSvc.RecordClinicalExaminationAsync(
-                    fx.Doctor1UserId,
-                    visit.VisitCode!,
-                    new RecordClinicalExaminationRequest(ClinicalFindings: "Khám bụng mềm khi đang chờ KQ máu"));
-
-                // ALLOW: PROVISIONAL diagnosis
-                var provDx = await consultSvc.RecordDiagnosisAsync(
-                    fx.Doctor1UserId,
-                    visit.VisitCode!,
-                    new RecordDiagnosisRequest(
-                        PrimaryIcd10Code: fx.Icd10Code,
-                        ClinicalConclusion: "Chẩn đoán sơ bộ chờ CLS",
-                        IsConfirmed: false));
-                Assert.Equal("DIAGNOSIS_RECORDED", provDx.ActionOutcome);
-
-                // ALLOW: DRAFT prescription
-                var draftRx = await consultSvc.CreatePrescriptionAsync(
-                    fx.Doctor1UserId,
-                    visit.VisitCode!,
-                    new CreatePrescriptionRequest(
-                        Status: "DRAFT",
-                        IssueImmediately: false,
-                        FulfillmentChoice: "HOSPITAL_PHARMACY",
-                        Items:
-                        [
-                            new CreatePrescriptionItemRequest(
-                                MedicineId: fx.MedicineId,
-                                PrescribedQuantity: 10m,
-                                SingleDoseQuantity: 1m,
-                                SingleDoseUnit: "viên",
-                                Frequency: "2 lần/ngày",
-                                DurationDays: 5,
-                                Instructions: "Uống sau ăn"),
-                        ]));
-                Assert.Equal("DRAFT", draftRx.ClinicalContext.PrescriptionSummary.LatestPrescriptionStatus);
+                // Stage E2 (QE-23 / PE-06): after handoff the visit is AWAITING_RESULTS and the clinical
+                // session is closed — draft clinical writes are gated by the closed session. Order #2 is
+                // still outstanding, so the visit is NOT yet return-ready.
+                Db.ChangeTracker.Clear();
+                var visitAfterHandoff = await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id);
+                Assert.Equal("AWAITING_RESULTS", visitAfterHandoff.Status);
+                Assert.Null(visitAfterHandoff.ReadyForReturnAt);
 
                 // BLOCK (409): CONFIRMED diagnosis, ISSUED prescription, CompleteVisit
                 await Assert.ThrowsAsync<ConflictException>(() =>
@@ -390,7 +369,8 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
 
                 Assert.Equal("CANCELLED_REFUND_PENDING", cancelPaidRes.ActionOutcome);
                 Assert.Equal(VisitChargeStatuses.CancelledRefundPending, cancelPaidRes.ChargeStatus);
-                Assert.True(cancelPaidRes.TransitionedToReturnConsultation);
+                // Stage E2 (QE-10): cancelling a paid order no longer auto-mints a RETURN_CONSULTATION ticket.
+                Assert.False(cancelPaidRes.TransitionedToReturnConsultation);
             }
 
             Db.ChangeTracker.Clear();
@@ -403,13 +383,16 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
             Assert.Equal(240_000m, immutablePaid.Amount);
 
             var reloadedVisitB = await Db.Visits.AsNoTracking().FirstAsync(v => v.Id == visitB.Id);
-            Assert.Equal("RETURN_CONSULTATION", reloadedVisitB.Status);
+            // Stage E2 (QE-10): the visit is queued-ready (ReadyForReturnAt) but held in AWAITING_RESULTS.
+            Assert.Equal("AWAITING_RESULTS", reloadedVisitB.Status);
+            Assert.NotNull(reloadedVisitB.ReadyForReturnAt);
 
+            // QE-10: no auto RETURN_CONSULTATION ticket; Reception issues the single ticket later
+            // (covered by StageC CdT07). Here assert the visit is ticket-less after the cancel.
             var openReturnQueues = await Db.QueueEntries.AsNoTracking()
                 .Where(q => q.VisitId == visitB.Id && q.QueueType == "RETURN_CONSULTATION" && q.Status != "CANCELLED" && q.Status != "COMPLETED")
                 .ToListAsync();
-            Assert.Single(openReturnQueues);
-            Assert.Equal("READY", openReturnQueues[0].Status);
+            Assert.Empty(openReturnQueues);
         }
         finally
         {
@@ -714,6 +697,16 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
                         PrimaryIcd10Code: fx.Icd10Code,
                         ClinicalConclusion: "Chẩn đoán ban đầu trước khi chỉ định CLS"));
 
+                // Stage E2 (QE-23 / PE-06): the clinical session is handed off before CLS execution, after
+                // which clinical writes are gated. Record the progression note now while still IN_PROGRESS.
+                await consultSvc.RecordClinicalExaminationAsync(
+                    fx.Doctor1UserId,
+                    visit.VisitCode!,
+                    new RecordClinicalExaminationRequest(
+                        ClinicalFindings: "Khám ban đầu: họng xung huyết nhẹ, phổi trong.",
+                        ClinicalProgressionNote: "Diễn biến tốt trong khi chờ kết quả siêu âm.",
+                        TreatmentPlan: "Tiếp tục phác đồ ngoại trú 7 ngày."));
+
                 var created = await consultSvc.CreateDiagnosticOrderAsync(
                     fx.Doctor1UserId,
                     visit.VisitCode!,
@@ -727,6 +720,13 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
             Db.ChangeTracker.Clear();
             var charge1 = await Db.VisitCharges.AsNoTracking().SingleAsync(c => c.DiagnosticOrderId == order1Id);
             await PayDiagnosticChargeAsync(visit.Id, charge1.Id, 240_000m);
+
+            // Stage E2 (QE-23 / PE-06): hand off the clinical session before CLS execution.
+            await using (var handoffScope = Factory.Services.CreateAsyncScope())
+            {
+                var handoffConsultSvc = handoffScope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
+                await handoffConsultSvc.HandoffToDiagnosticAsync(fx.Doctor1UserId, visit.VisitCode!);
+            }
 
             await using (var scope = Factory.Services.CreateAsyncScope())
             {
@@ -747,7 +747,9 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
                     new UpdateDiagnosticServiceStatusRequest(TargetStatus: "COMPLETED"));
             }
 
-            // Fire dual-connection Consultation clinical update vs Diagnostic result finalization simultaneously
+            // Fire dual-connection Consultation workspace read vs Diagnostic result finalization simultaneously
+            // (Stage E2: the clinical session is closed post-handoff, so the concurrent consultation operation is
+            // a read; the test still verifies zero deadlock and intact sequential EMR revisions).
             using var ready = new SemaphoreSlim(0, 2);
             var releaseGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -757,12 +759,7 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
                 var consultSvc = scope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
                 ready.Release();
                 await releaseGate.Task;
-                return await consultSvc.RecordClinicalExaminationAsync(
-                    fx.Doctor1UserId,
-                    visit.VisitCode!,
-                    new RecordClinicalExaminationRequest(
-                        ClinicalProgressionNote: "Diễn biến tốt trong khi chờ kết quả siêu âm.",
-                        TreatmentPlan: "Tiếp tục phác đồ ngoại trú 7 ngày."));
+                return await consultSvc.GetWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
             });
 
             var diagnosticTask = Task.Run(async () =>
@@ -790,6 +787,32 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
             var diagOutcome = await diagnosticTask;
             Assert.NotNull(docOutcome);
             Assert.True(diagOutcome.IsFinalized);
+
+            // Stage E2 (QE-10): after finalize the visit sits in AWAITING_RESULTS. Reception coordinates the
+            // return consultation, calls the patient, and the doctor reopens the workspace to review + conclude.
+            await using (var enrollScope = Factory.Services.CreateAsyncScope())
+            {
+                var returnCoord = enrollScope.ServiceProvider.GetRequiredService<IReturnCoordinationService>();
+                await returnCoord.EnrollReturnConsultationAsync(
+                    fx.Reception1UserId,
+                    visit.VisitCode!,
+                    new CreateReturnEnrollmentRequestDto(
+                        Purpose: QueueCoordinationPurposes.ResultConclusion,
+                        IdempotencyKey: $"p06-s5-return-{visit.VisitCode}"));
+            }
+            await using (var callScope = Factory.Services.CreateAsyncScope())
+            {
+                var queueSvc = callScope.ServiceProvider.GetRequiredService<IExaminationQueueService>();
+                await queueSvc.CallNextPatientAsync(
+                    fx.Reception1UserId,
+                    fx.ExamServicePoint1Id.ToString(),
+                    new CallNextPatientRequest(Notes: "Gọi bệnh nhân khám kết luận"));
+            }
+            await using (var reopenScope = Factory.Services.CreateAsyncScope())
+            {
+                var reopenSvc = reopenScope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
+                await reopenSvc.OpenWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
+            }
 
             // Re-confirm diagnosis & complete visit with dedicated EMR instructions
             await using (var scope = Factory.Services.CreateAsyncScope())
@@ -931,7 +954,9 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
         long MedicineId,
         long PolicyId,
         string Icd10Code,
-        long? CreatedIcd10Id);
+        long? CreatedIcd10Id,
+        long Reception1UserId,
+        long Reception1StaffId);
 
     private async Task<IsolatedPhase06Fixture> CreateIsolatedFixtureAsync()
     {
@@ -941,9 +966,11 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
         var docRole = await Db.Roles.AsNoTracking().FirstAsync(r => r.Code == RoleNames.Doctor);
         var diagRole = await Db.Roles.AsNoTracking().FirstAsync(r => r.Code == RoleNames.DiagnosticStaff);
         var patRole = await Db.Roles.AsNoTracking().FirstAsync(r => r.Code == RoleNames.Patient);
+        var recRole = await Db.Roles.AsNoTracking().FirstAsync(r => r.Code == RoleNames.Reception);
 
         await EnsureRolePermissionsAsync(docRole.Id, ["MEDICAL_RECORD_WRITE", "DIAGNOSTIC_ORDER", "PRESCRIPTION_WRITE", "DIAGNOSTIC_RESULT_READ", "QUEUE_MANAGE"]);
         await EnsureRolePermissionsAsync(diagRole.Id, ["QUEUE_MANAGE", "DIAGNOSTIC_RESULT_READ", "DIAGNOSTIC_RESULT_WRITE"]);
+        await EnsureRolePermissionsAsync(recRole.Id, ["QUEUE_MANAGE", "QUEUE_ENROLL", "VISIT_ASSIGN", "PATIENT_CHECKIN", "PAYMENT_VIEW", "PAYMENT_COLLECT"]);
 
         var existingIcd = await Db.Icd10Codes.AsNoTracking()
             .FirstOrDefaultAsync(c => c.IsSelectable == true && c.NotPrimaryDx != true && c.NodeType == "LEAF");
@@ -1127,7 +1154,8 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
         var diag2User = new User { Email = $"dg2-p06-{suffix}@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var patUser = new User { Email = $"pt1-p06-{suffix}@medflow.test", AccountStatus = AccountStatus.ACTIVE };
         var otherPatUser = new User { Email = $"pt2-p06-{suffix}@medflow.test", AccountStatus = AccountStatus.ACTIVE };
-        Db.Users.AddRange(doc1User, doc2User, diag1User, diag2User, patUser, otherPatUser);
+        var rec1User = new User { Email = $"rc1-p06-{suffix}@medflow.test", AccountStatus = AccountStatus.ACTIVE };
+        Db.Users.AddRange(doc1User, doc2User, diag1User, diag2User, patUser, otherPatUser, rec1User);
         await Db.SaveChangesAsync();
 
         Db.UserRoles.AddRange(
@@ -1136,7 +1164,8 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
             new UserRole { UserId = diag1User.Id, RoleId = diagRole.Id },
             new UserRole { UserId = diag2User.Id, RoleId = diagRole.Id },
             new UserRole { UserId = patUser.Id, RoleId = patRole.Id },
-            new UserRole { UserId = otherPatUser.Id, RoleId = patRole.Id });
+            new UserRole { UserId = otherPatUser.Id, RoleId = patRole.Id },
+            new UserRole { UserId = rec1User.Id, RoleId = recRole.Id });
 
         var doc1Staff = new Staff
         {
@@ -1174,7 +1203,16 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
             FullName = "BS.CKII. Phạm Thẩm Định",
             Status = "ACTIVE",
         };
-        Db.Staff.AddRange(doc1Staff, doc2Staff, diag1Staff, diag2Staff);
+        var rec1Staff = new Staff
+        {
+            UserId = rec1User.Id,
+            HospitalId = hospital.Id,
+            DepartmentId = dept.Id,
+            StaffCode = $"SR1{suffix}",
+            FullName = "NV. Tiếp Đón P06",
+            Status = "ACTIVE",
+        };
+        Db.Staff.AddRange(doc1Staff, doc2Staff, diag1Staff, diag2Staff, rec1Staff);
         await Db.SaveChangesAsync();
 
         var doctor1 = new Doctor
@@ -1315,7 +1353,9 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
             MedicineId: medicine.Id,
             PolicyId: policy.Id,
             Icd10Code: icdCode,
-            CreatedIcd10Id: createdIcdId);
+            CreatedIcd10Id: createdIcdId,
+            Reception1UserId: rec1User.Id,
+            Reception1StaffId: rec1Staff.Id);
     }
 
     private async Task EnsureRolePermissionsAsync(long roleId, IReadOnlyList<string> permissionCodes)
@@ -1433,6 +1473,27 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
             .Select(v => v.Id)
             .ToListAsync();
 
+        // fk_notifications_visit_id: notifications (e.g. VISIT_RETURN_READY) reference visits — clear them
+        // before visits are deleted below.
+        await Db.Notifications
+            .Where(n => (n.VisitId.HasValue && visitIds.Contains(n.VisitId.Value)) ||
+                        n.PatientId == fx.PatientId ||
+                        n.PatientId == fx.OtherPatientId)
+            .ExecuteDeleteAsync();
+
+        // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit + fk_queue_entries_prescription_visit
+        // are ON DELETE RESTRICT. Clear diagnostic_orders.queue_entry_id + queue_fairness_states
+        // .last_started_queue_entry_id back-pointers before deleting queue_entries.
+        var spIds = new[] { fx.ExamServicePoint1Id, fx.ExamServicePoint2Id, fx.LabServicePointId, fx.ImagingServicePointId };
+        await Db.DiagnosticOrders
+            .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
+        Db.QueueFairnessStates.RemoveRange(
+            await Db.QueueFairnessStates.Where(f => spIds.Contains(f.ServicePointId)).ToListAsync());
+        await Db.SaveChangesAsync();
+        Db.QueueEntries.RemoveRange(
+            await Db.QueueEntries.Where(q => q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)).ToListAsync());
+        await Db.SaveChangesAsync();
         var orderIds = await Db.DiagnosticOrders
             .Where(o => o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
             .Select(o => o.Id)
@@ -1514,18 +1575,9 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
             Db.DiagnosticOrders.RemoveRange(
                 await Db.DiagnosticOrders.Where(o => orderIds.Contains(o.Id)).ToListAsync());
             await Db.SaveChangesAsync();
-
-            Db.QueueEntries.RemoveRange(
-                await Db.QueueEntries.Where(q => q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)).ToListAsync());
-            await Db.SaveChangesAsync();
         }
 
-        var spIds = new[] { fx.ExamServicePoint1Id, fx.ExamServicePoint2Id, fx.LabServicePointId, fx.ImagingServicePointId };
-        Db.QueueFairnessStates.RemoveRange(
-            await Db.QueueFairnessStates.Where(f => spIds.Contains(f.ServicePointId)).ToListAsync());
-        await Db.SaveChangesAsync();
-
-        var userIds = new[] { fx.Doctor1UserId, fx.Doctor2UserId, fx.DiagStaff1UserId, fx.DiagStaff2UserId, fx.PatientUserId, fx.OtherPatientUserId };
+        var userIds = new[] { fx.Doctor1UserId, fx.Doctor2UserId, fx.DiagStaff1UserId, fx.DiagStaff2UserId, fx.PatientUserId, fx.OtherPatientUserId, fx.Reception1UserId };
         Db.AuditLogs.RemoveRange(
             await Db.AuditLogs.Where(a => a.HospitalId == fx.HospitalId || (a.ActorUserId.HasValue && userIds.Contains(a.ActorUserId.Value))).ToListAsync());
         await Db.SaveChangesAsync();
@@ -1559,7 +1611,7 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
         Db.Doctors.RemoveRange(await Db.Doctors.Where(d => docIds.Contains(d.Id)).ToListAsync());
         await Db.SaveChangesAsync();
 
-        var staffIds = new[] { fx.Doctor1StaffId, fx.Doctor2StaffId, fx.DiagStaff1Id, fx.DiagStaff2Id };
+        var staffIds = new[] { fx.Doctor1StaffId, fx.Doctor2StaffId, fx.DiagStaff1Id, fx.DiagStaff2Id, fx.Reception1StaffId };
         Db.Staff.RemoveRange(await Db.Staff.Where(s => staffIds.Contains(s.Id)).ToListAsync());
         await Db.SaveChangesAsync();
 

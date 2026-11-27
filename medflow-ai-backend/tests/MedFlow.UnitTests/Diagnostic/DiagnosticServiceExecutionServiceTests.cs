@@ -244,7 +244,10 @@ public sealed class DiagnosticServiceExecutionServiceTests : IDisposable
 
         db.Patients.AddRange(
             new Patient { Id = 1, UserId = 23, PatientCode = "PAT-0001", FullName = "Nguyễn Văn An", DateOfBirth = new DateOnly(1948, 5, 10), Gender = "MALE", Phone = "0912345678", BloodType = "O+", Status = "ACTIVE" },
-            new Patient { Id = 2, PatientCode = "PAT-0002", FullName = "Trần Thị Bích", DateOfBirth = new DateOnly(1992, 8, 20), Gender = "FEMALE", Phone = "0987654321", BloodType = "A+", Status = "ACTIVE" });
+            new Patient { Id = 2, PatientCode = "PAT-0002", FullName = "Trần Thị Bích", DateOfBirth = new DateOnly(1992, 8, 20), Gender = "FEMALE", Phone = "0987654321", BloodType = "A+", Status = "ACTIVE" },
+            // Patient 3 has no prior queue entries anywhere -> safe for mint-path tests under the
+            // strict single-active-queue invariant (ADR-0061).
+            new Patient { Id = 3, PatientCode = "PAT-0003", FullName = "Lê Hoàng Cường", DateOfBirth = new DateOnly(1950, 2, 15), Gender = "MALE", Phone = "0905112233", BloodType = "B+", Status = "ACTIVE" });
 
         db.Visits.AddRange(
             new Visit { Id = 10, VisitCode = "VIS-202610-0010", PatientId = 1, AssignedDoctorId = 1, ExaminationRoomId = 104, ReasonForVisit = "Đau ngực", Status = "AWAITING_RESULTS", CheckedInAt = new DateTime(2026, 10, 20, 8, 0, 0) },
@@ -252,7 +255,10 @@ public sealed class DiagnosticServiceExecutionServiceTests : IDisposable
             new Visit { Id = 12, VisitCode = "VIS-202610-0012", PatientId = 1, AssignedDoctorId = 1, ExaminationRoomId = 104, ReasonForVisit = "Đã xong", Status = "COMPLETED", CheckedInAt = new DateTime(2026, 10, 15, 8, 0, 0), CompletedAt = new DateTime(2026, 10, 15, 11, 0, 0) },
             new Visit { Id = 13, VisitCode = "VIS-202610-0013", PatientId = 2, AssignedDoctorId = 1, ExaminationRoomId = 104, ReasonForVisit = "Khám hủy", Status = "CANCELLED", CheckedInAt = new DateTime(2026, 10, 16, 8, 0, 0) },
             new Visit { Id = 20, VisitCode = "VIS-202610-0020", PatientId = 2, AssignedDoctorId = 1, ExaminationRoomId = 201, ReasonForVisit = "Khám cơ sở 2", Status = "AWAITING_RESULTS", CheckedInAt = new DateTime(2026, 10, 20, 8, 30, 0) },
-            new Visit { Id = 30, VisitCode = "VIS-202610-0030", PatientId = 2, AssignedDoctorId = 1, ExaminationRoomId = 104, ReasonForVisit = "Khám batch CLS", Status = "IN_PROGRESS", CheckedInAt = new DateTime(2026, 10, 20, 8, 10, 0) });
+            new Visit { Id = 30, VisitCode = "VIS-202610-0030", PatientId = 2, AssignedDoctorId = 1, ExaminationRoomId = 104, ReasonForVisit = "Khám batch CLS", Status = "IN_PROGRESS", CheckedInAt = new DateTime(2026, 10, 20, 8, 10, 0) },
+            // Visit 14: clean visit for patient 3 (no other active queues) -> order 18 can mint
+            // a queue entry on execution start without tripping the single-active guard.
+            new Visit { Id = 14, VisitCode = "VIS-202610-0014", PatientId = 3, AssignedDoctorId = 1, ExaminationRoomId = 104, ReasonForVisit = "Chụp bổ sung theo chỉ định", Status = "IN_PROGRESS", CheckedInAt = new DateTime(2026, 10, 20, 8, 45, 0) });
 
         db.MedicalRecords.Add(new MedicalRecord { Id = 100, VisitId = 11, Status = "DRAFT" });
         db.MedicalRecordRevisions.Add(new MedicalRecordRevision
@@ -294,7 +300,12 @@ public sealed class DiagnosticServiceExecutionServiceTests : IDisposable
             // qe 18: COMPLETED terminal
             new QueueEntry { Id = 18, VisitId = 12, ServicePointId = 501, CurrentServicePointId = 501, QueueDate = new DateOnly(2026, 10, 15), QueueNumber = 1, QueueType = "DIAGNOSTIC", Status = "COMPLETED", PresenceStatus = "PRESENT", StartedAt = new DateTime(2026, 10, 15, 9, 30, 0), CompletedAt = new DateTime(2026, 10, 15, 10, 0, 0), StateVersion = 3 },
             // qe 20: hospital 2 entry
-            new QueueEntry { Id = 20, VisitId = 20, ServicePointId = 601, CurrentServicePointId = 601, QueueDate = new DateOnly(2026, 10, 20), QueueNumber = 1, QueueType = "DIAGNOSTIC", Status = "READY", PresenceStatus = "PRESENT", StateVersion = 1 });
+            new QueueEntry { Id = 20, VisitId = 20, ServicePointId = 601, CurrentServicePointId = 601, QueueDate = new DateOnly(2026, 10, 20), QueueNumber = 1, QueueType = "DIAGNOSTIC", Status = "READY", PresenceStatus = "PRESENT", StateVersion = 1 },
+            // qe 30,31: READY entries for batch-start orders on visit 30. Both are already active,
+            // so CONFIRMED -> IN_PROGRESS transitions never re-mint and stay consistent with the
+            // strict single-active-queue invariant (guard only fires on mint/reactivate).
+            new QueueEntry { Id = 30, VisitId = 30, ServicePointId = 502, CurrentServicePointId = 502, QueueDate = new DateOnly(2026, 10, 20), QueueNumber = 7, QueueType = "DIAGNOSTIC", Status = "READY", PresenceStatus = "PRESENT", ArrivedAt = new DateTime(2026, 10, 20, 8, 25, 0), ReadyAt = new DateTime(2026, 10, 20, 8, 25, 0), ArrivalClass = "WALK_IN", ManualPriority = "NORMAL", StateVersion = 1 },
+            new QueueEntry { Id = 31, VisitId = 30, ServicePointId = 502, CurrentServicePointId = 502, QueueDate = new DateOnly(2026, 10, 20), QueueNumber = 8, QueueType = "DIAGNOSTIC", Status = "READY", PresenceStatus = "PRESENT", ArrivedAt = new DateTime(2026, 10, 20, 8, 27, 0), ReadyAt = new DateTime(2026, 10, 20, 8, 27, 0), ArrivalClass = "WALK_IN", ManualPriority = "NORMAL", StateVersion = 1 });
 
         db.DiagnosticOrders.AddRange(
             // 11: ORDERED -> rejected
@@ -312,7 +323,7 @@ public sealed class DiagnosticServiceExecutionServiceTests : IDisposable
             // 17: CANCELLED terminal
             new DiagnosticOrder { Id = 17, OrderCode = "DIA-202610-0017", VisitId = 11, OrderingDoctorId = 1, ServiceId = 6, QueueEntryId = null, Instruction = "Đã hủy", Priority = "NORMAL", Status = "CANCELLED", OrderedAt = new DateTime(2026, 10, 20, 8, 42, 0) },
             // 18: CONFIRMED no queue entry -> start creates one (visit 10, SP501 busy w/ visit11? same-visit rule applies; order18 visit10 & qe17 visit11 -> still conflicts? move to SP502)
-            new DiagnosticOrder { Id = 18, OrderCode = "DIA-202610-0018", VisitId = 10, OrderingDoctorId = 1, ServiceId = 6, QueueEntryId = null, Instruction = "Chụp bổ sung", Priority = "NORMAL", Status = "CONFIRMED", ConfirmedByStaffId = 7, ConfirmedAt = new DateTime(2026, 10, 20, 8, 51, 0), OrderedAt = new DateTime(2026, 10, 20, 8, 50, 0) },
+            new DiagnosticOrder { Id = 18, OrderCode = "DIA-202610-0018", VisitId = 14, OrderingDoctorId = 1, ServiceId = 6, QueueEntryId = null, Instruction = "Chụp bổ sung", Priority = "NORMAL", Status = "CONFIRMED", ConfirmedByStaffId = 7, ConfirmedAt = new DateTime(2026, 10, 20, 8, 51, 0), OrderedAt = new DateTime(2026, 10, 20, 8, 50, 0) },
             // 19: CONFIRMED order on CANCELLED visit -> terminal visit rejected
             new DiagnosticOrder { Id = 19, OrderCode = "DIA-202610-0019", VisitId = 13, OrderingDoctorId = 1, ServiceId = 5, QueueEntryId = null, Instruction = "XN visit hủy", Priority = "NORMAL", Status = "CONFIRMED", ConfirmedByStaffId = 7, ConfirmedAt = new DateTime(2026, 10, 20, 8, 55, 0), OrderedAt = new DateTime(2026, 10, 20, 8, 54, 0) },
             // 20: hospital 2 (cross-hospital)
@@ -320,8 +331,8 @@ public sealed class DiagnosticServiceExecutionServiceTests : IDisposable
             // 21: CONFIRMED finalized result -> rejected (FINALIZED result)
             new DiagnosticOrder { Id = 21, OrderCode = "DIA-202610-0021", VisitId = 10, OrderingDoctorId = 1, ServiceId = 5, QueueEntryId = null, Instruction = "XN finalized", Priority = "NORMAL", Status = "CONFIRMED", ConfirmedByStaffId = 7, ConfirmedAt = new DateTime(2026, 10, 20, 8, 58, 0), OrderedAt = new DateTime(2026, 10, 20, 8, 57, 0) },
             // 30,31: CONFIRMED orders in clean visit 30 for batch start
-            new DiagnosticOrder { Id = 30, OrderCode = "DIA-202610-0030", VisitId = 30, OrderingDoctorId = 1, ServiceId = 6, QueueEntryId = null, Instruction = "XQ batch 1", Priority = "NORMAL", Status = "CONFIRMED", ConfirmedByStaffId = 7, ConfirmedAt = new DateTime(2026, 10, 20, 8, 20, 0), OrderedAt = new DateTime(2026, 10, 20, 8, 15, 0) },
-            new DiagnosticOrder { Id = 31, OrderCode = "DIA-202610-0031", VisitId = 30, OrderingDoctorId = 1, ServiceId = 6, QueueEntryId = null, Instruction = "XQ batch 2", Priority = "NORMAL", Status = "CONFIRMED", ConfirmedByStaffId = 7, ConfirmedAt = new DateTime(2026, 10, 20, 8, 22, 0), OrderedAt = new DateTime(2026, 10, 20, 8, 18, 0) });
+            new DiagnosticOrder { Id = 30, OrderCode = "DIA-202610-0030", VisitId = 30, OrderingDoctorId = 1, ServiceId = 6, QueueEntryId = 30, Instruction = "XQ batch 1", Priority = "NORMAL", Status = "CONFIRMED", ConfirmedByStaffId = 7, ConfirmedAt = new DateTime(2026, 10, 20, 8, 20, 0), OrderedAt = new DateTime(2026, 10, 20, 8, 15, 0) },
+            new DiagnosticOrder { Id = 31, OrderCode = "DIA-202610-0031", VisitId = 30, OrderingDoctorId = 1, ServiceId = 6, QueueEntryId = 31, Instruction = "XQ batch 2", Priority = "NORMAL", Status = "CONFIRMED", ConfirmedByStaffId = 7, ConfirmedAt = new DateTime(2026, 10, 20, 8, 22, 0), OrderedAt = new DateTime(2026, 10, 20, 8, 18, 0) });
 
         db.DiagnosticResults.Add(new DiagnosticResult
         {
@@ -749,17 +760,20 @@ public sealed class DiagnosticServiceExecutionServiceTests : IDisposable
     [Fact]
     public async Task BatchUpdate_MultipleOrdersSameVisit_Succeeds()
     {
+        // Fixture fix (ADR-0061 strict single-active-queue invariant): both target orders already
+        // hold active READY queue entries on visit 30, so batch start transitions them to
+        // IN_PROGRESS without minting a second active ticket for the same patient.
         var response = await _service.UpdateServiceExecutionStatusBatchAsync(
             7,
             new UpdateDiagnosticServiceStatusBatchRequest(
-                OrderCodes: new[] { "DIA-202610-0012", "DIA-202610-0018" },
+                OrderCodes: new[] { "DIA-202610-0030", "DIA-202610-0031" },
                 TargetStatus: "IN_PROGRESS"));
 
         Assert.Equal(2, response.UpdatedCount);
-        var o12 = await _dbContext.DiagnosticOrders.FindAsync(12L);
-        var o18 = await _dbContext.DiagnosticOrders.FindAsync(18L);
-        Assert.Equal("IN_PROGRESS", o12!.Status);
-        Assert.Equal("IN_PROGRESS", o18!.Status);
+        var o30 = await _dbContext.DiagnosticOrders.FindAsync(30L);
+        var o31 = await _dbContext.DiagnosticOrders.FindAsync(31L);
+        Assert.Equal("IN_PROGRESS", o30!.Status);
+        Assert.Equal("IN_PROGRESS", o31!.Status);
     }
 
     [Fact]

@@ -64,7 +64,8 @@ public sealed record ResumeCrossDayVisitRequestDto(
     bool? ConfirmOverdueOverride = null,
     string? IdempotencyKey = null,
     string? Notes = null,
-    string? CoordinationPurpose = null);
+    string? CoordinationPurpose = null,
+    bool? ConfirmPresent = null);
 
 public sealed record ResumeCrossDayVisitResponseDto(
     long VisitId,

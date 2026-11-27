@@ -6,7 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from '@/shared/lib/axios';
 
 import { fetchRoleByIdApi, fetchRoleListApi } from '../api/role.api';
-import { getMockRolesCatalog, resetMockRolesCatalog } from '../data/role-mock-data';
+import {
+  getMockRolesCatalog,
+  resetMockRolesCatalog,
+  SYSTEM_PERMISSION_LIST,
+} from '../data/role-mock-data';
 import { RoleListPage } from '../pages/role-list-page';
 import type { RoleListResponseDto } from '../types/role.types';
 
@@ -44,7 +48,7 @@ describe('RoleListPage (SCR-ADM-ROLE-01)', () => {
     expect(screen.getByText('QUYỀN HẠT NHÂN')).toBeInTheDocument();
     expect(screen.getByText('10')).toBeInTheDocument();
     expect(screen.getByText('09')).toBeInTheDocument();
-    expect(screen.getByText('14')).toBeInTheDocument();
+    expect(screen.getByText(String(SYSTEM_PERMISSION_LIST.length))).toBeInTheDocument();
 
     for (const column of [
       'MÃ VAI TRÒ',

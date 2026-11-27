@@ -316,6 +316,13 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
         var lookupBundle = await LoadOrderLookupBundleAsync(visitOrders, hospitalId, nowLocal, ct);
         EnsureOrderHospitalOwnership(preOrder, hospitalId, lookupBundle);
 
+        var preCancelService = preOrder.ServiceId.HasValue && lookupBundle.ServicesById.TryGetValue(preOrder.ServiceId.Value, out var foundPreCancelSvc)
+            ? foundPreCancelSvc
+            : null;
+        DiagnosticDepartmentScopeGuard.EnsureStaffInDepartmentScopeOrThrow(
+            staffAccess.Staff,
+            preCancelService?.DepartmentId);
+
         if (preOrder.QueueEntryId.HasValue && request?.ExpectedStateVersion.HasValue == true)
         {
             var preQe = await _db.QueueEntries.AsNoTracking().FirstOrDefaultAsync(q => q.Id == preOrder.QueueEntryId.Value, ct);
@@ -357,6 +364,17 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
         DiagnosticOrder reloadOrder;
         Visit? reloadVisit;
 
+        // P0 lock-order fix: resolve the visit's patient (no-lock read) so level 02 patient is locked BEFORE
+        // level 09 visit. Cancellation can enqueue a VISIT_RETURN_READY notification (patient_id FK -> implicit
+        // KEY SHARE on the patient); acquiring that after the visit lock inverts the global order against
+        // execution-start (patient -> visit) and deadlocks (Postgres 40P01).
+        long? preCancelPatientId = preOrder.VisitId.HasValue
+            ? await _db.Visits.AsNoTracking()
+                .Where(v => v.Id == preOrder.VisitId.Value)
+                .Select(v => v.PatientId)
+                .FirstOrDefaultAsync(ct)
+            : null;
+
         try
         {
             await DiagnosticOrderLifecycleHelper.AcquireVisitAndDiagnosticLocksAsync(
@@ -366,10 +384,21 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
             preOrder.QueueEntryId.HasValue ? new[] { preOrder.QueueEntryId.Value } : Array.Empty<long>(),
             new[] { preOrder.Id },
             includeChargeAndPaymentLocks: true,
-            ct);
+            ct,
+            extraPatientIds: preCancelPatientId is > 0 ? new[] { preCancelPatientId.Value } : null);
 
             reloadOrder = await _db.DiagnosticOrders.FirstOrDefaultAsync(o => o.Id == preOrder.Id, ct)
                 ?? throw new NotFoundException("DiagnosticOrder", preOrder.Id);
+            var reloadCancelService = reloadOrder.ServiceId.HasValue
+                ? await _db.Services.AsNoTracking().FirstOrDefaultAsync(s => s.Id == reloadOrder.ServiceId.Value, ct) ?? preCancelService
+                : preCancelService;
+            await DiagnosticDepartmentScopeGuard.ReloadLiveStaffAndEnsureDepartmentScopeAsync(
+                _db,
+                actorUserId,
+                staffAccess.Staff,
+                reloadCancelService?.DepartmentId,
+                roomDepartmentId: null,
+                ct);
             reloadVisit = reloadOrder.VisitId.HasValue
                 ? await _db.Visits.FirstOrDefaultAsync(v => v.Id == reloadOrder.VisitId.Value, ct)
                 : null;
@@ -612,6 +641,13 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
 
                 var resolvedSp = postLockHospitalServicePoints.First(sp => sp.Id == postLockSpId);
                 postLockRoomsById.TryGetValue(resolvedSp.RoomId!.Value, out var resolvedRoom);
+                await DiagnosticDepartmentScopeGuard.ReloadLiveStaffAndEnsureDepartmentScopeAsync(
+                    _db,
+                    actorUserId,
+                    staffAccess.Staff,
+                    service.DepartmentId,
+                    resolvedRoom?.DepartmentId,
+                    ct);
                 lookupBundle.ServicesById[service.Id] = service;
                 lookupBundle.ServicePointsById[resolvedSp.Id] = resolvedSp;
                 if (resolvedRoom is not null)
@@ -672,47 +708,13 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
 
                 if (linkedQueueEntry is null)
                 {
-                    var diagSpId = resolvedSp?.Id;
-                    var maxQueueNumber = await _db.QueueEntries
-                        .AsNoTracking()
-                        .Where(q =>
-                            q.QueueDate == referenceDate &&
-                            (diagSpId.HasValue
-                                ? (q.ServicePointId == diagSpId.Value || q.CurrentServicePointId == diagSpId.Value)
-                                : (q.QueueType != null && q.QueueType.ToUpper() == "DIAGNOSTIC")))
-                        .MaxAsync(q => (int?)q.QueueNumber, ct);
-
-                    var nextQueueNumber = (maxQueueNumber ?? 0) + 1;
-                    presenceStatus = validated.PatientPresent == false ? "NOT_ARRIVED" : "PRESENT";
-                    queueStatus = "WAITING";
+                    // Stage E2 (E-BR08): Confirming a DiagnosticOrder verifies clinical/routing eligibility ONLY;
+                    // it NEVER auto-creates a QueueEntry. Queue tickets are minted exclusively upon enrollment.
                     finalStateVersion = 1;
-
-                    linkedQueueEntry = new QueueEntry
-                    {
-                        VisitId = visit.Id,
-                        AppointmentId = null,
-                        ServicePointId = diagSpId,
-                        CurrentServicePointId = diagSpId,
-                        QueueDate = referenceDate,
-                        QueueNumber = nextQueueNumber,
-                        QueueType = "DIAGNOSTIC",
-                        Status = queueStatus,
-                        ScheduledAt = null,
-                        PresenceStatus = presenceStatus,
-                        ArrivedAt = nowLocal,
-                        ReadyAt = nowLocal,
-                        ArrivalClass = "WALK_IN",
-                        ManualPriority = "NORMAL",
-                        StateVersion = finalStateVersion,
-                    };
-
-                    _db.QueueEntries.Add(linkedQueueEntry);
-                    await SaveChangesWithConcurrencyGuardAsync(ct);
-
-                    order.QueueEntryId = linkedQueueEntry.Id;
-                    lookupBundle.QueueEntriesById[linkedQueueEntry.Id] = linkedQueueEntry;
-                    queueNumber = nextQueueNumber;
-                    ticketNo = $"C{nextQueueNumber:D3}";
+                    queueNumber = null;
+                    ticketNo = null;
+                    queueStatus = "NOT_ENROLLED";
+                    presenceStatus = validated.PatientPresent == false ? "NOT_ARRIVED" : "PRESENT";
                 }
                 else
                 {
@@ -804,7 +806,7 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
                     confirmedByStaffCode = staffAccess.Staff.StaffCode,
                     confirmedByStaffName = staffAccess.Profile.FullName,
                     confirmedAt = nowLocal,
-                    queueEntryId = linkedQueueEntry.Id,
+                    queueEntryId = linkedQueueEntry?.Id,
                     ticketNo,
                     queueNumber,
                     queueStatus,
@@ -1122,6 +1124,10 @@ public sealed class DiagnosticOrderReviewService : IDiagnosticOrderReviewService
 
         resolvedSp = lookupBundle.HospitalDiagnosticServicePoints.First(sp => sp.Id == targetSpId);
         lookupBundle.RoomsById.TryGetValue(resolvedSp.RoomId!.Value, out resolvedRoom);
+        DiagnosticDepartmentScopeGuard.EnsureStaffInDepartmentScopeOrThrow(
+            staffAccess.Staff,
+            service.DepartmentId,
+            resolvedRoom?.DepartmentId);
 
         var category = ResolveDiagnosticCategory(service, lookupBundle.SpecialtiesById);
 

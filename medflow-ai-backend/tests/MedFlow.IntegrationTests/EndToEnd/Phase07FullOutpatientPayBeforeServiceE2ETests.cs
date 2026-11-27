@@ -30,6 +30,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Configuration;
 
 namespace MedFlow.IntegrationTests.EndToEnd;
 
@@ -78,6 +79,20 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
     {
         _app = baseFactory.WithWebHostBuilder(builder =>
         {
+            // This suite mints JWTs against the injected virtual clock (MutableVietnamClock), so the
+            // tokens are already expired on the REAL system clock. CloseOnAuthenticationExpiration
+            // evaluates the `exp` claim against the real clock and would abort the WebSocket
+            // nondeterministically right after connect (E2E01 root cause — PR #859, see
+            // plans/reports/pr859-e2e01-round2.md). The security feature stays enabled by default
+            // in production, where JWTs are minted against the real clock and never pre-expired;
+            // the virtual clock is a test-only artifact, so disabling the feature is scoped to
+            // this suite's factory instance only.
+            builder.ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Realtime:CloseOnAuthenticationExpiration"] = "false",
+                }));
+
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<TimeProvider>();
@@ -394,6 +409,16 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                 Assert.Equal(HttpStatusCode.Conflict, confirmStillUnpaidUs.StatusCode);
             }
 
+            // Stage E2 (QE-23 / PE-06): the clinical session must be handed off before CLS execution.
+            using (var handoffResp = await SendJsonAsync(
+                HttpMethod.Post,
+                $"/api/v1/doctor/consultation/{visitCode}/handoff-to-diagnostic",
+                new HandoffToDiagnosticRequest(),
+                doctorToken))
+            {
+                Assert.Equal(HttpStatusCode.OK, handoffResp.StatusCode);
+            }
+
             await ExecuteUc40ToUc42Async(bloodOrderCode, fx.LabServicePointId, visitCode, fx.PatientId, labStaff1Token);
 
             using (var wsGet = await SendJsonAsync(HttpMethod.Get, $"/api/v1/doctor/consultation/{visitCode}", null, doctorToken))
@@ -414,7 +439,8 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                     IsConfirmed: false),
                 doctorToken))
             {
-                Assert.Equal(HttpStatusCode.OK, provAllowedResp.StatusCode);
+                // Stage E2 (QE-23): after handoff the visit is AWAITING_RESULTS and clinical writes are gated.
+                Assert.Equal(HttpStatusCode.Conflict, provAllowedResp.StatusCode);
             }
 
             using (var draftRxAllowedResp = await SendJsonAsync(
@@ -437,7 +463,8 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                     ]),
                 doctorToken))
             {
-                Assert.Equal(HttpStatusCode.OK, draftRxAllowedResp.StatusCode);
+                // Stage E2 (QE-23): clinical writes (incl. draft Rx) are gated post-handoff (AWAITING_RESULTS).
+                Assert.Equal(HttpStatusCode.Conflict, draftRxAllowedResp.StatusCode);
             }
 
             using (var blockedConfirmedDx = await SendJsonAsync(
@@ -482,17 +509,10 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                 Assert.Equal(HttpStatusCode.Conflict, blockedComplete.StatusCode);
             }
 
-            // Release examination room into AWAITING_RESULTS
-            using (var awaitResultsResp = await SendJsonAsync(
-                HttpMethod.Post,
-                $"/api/v1/visits/{visitCode}/return-to-doctor",
-                new CreateReturnToDoctorQueueEntryRequest(
-                    ConfirmPresent: true,
-                    Reason: "Chuyển bệnh nhân ra chờ kết quả xét nghiệm máu và siêu âm"),
-                doctorToken))
-            {
-                Assert.Equal(HttpStatusCode.OK, awaitResultsResp.StatusCode);
-            }
+            // Stage E2 (QE-10): the handoff above already released the exam room into AWAITING_RESULTS, and the
+            // legacy doctor-initiated return-to-doctor ticket mint is Forbidden (Reception-only). Assert the state.
+            Db.ChangeTracker.Clear();
+            Assert.Equal("AWAITING_RESULTS", (await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id)).Status);
 
             // STEP 7 & 8: Pay Ultrasound (150k) + parallel UC40..UC42
             await IssueSingleQrAndSettleAsync(visitCode, ultrasoundCharge.Id, 150_000m, patientToken, $"FT-E2E01-US-{fx.Suffix}");
@@ -585,17 +605,38 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
 
             Db.ChangeTracker.Clear();
             var visitReturn = await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id);
-            Assert.Equal("RETURN_CONSULTATION", visitReturn.Status);
+            // Stage E2 (QE-10): finalizing the last order stamps ReadyForReturnAt and holds AWAITING_RESULTS;
+            // it does NOT auto-mint a RETURN_CONSULTATION ticket. Reception coordinates the single READY ticket.
+            Assert.Equal("AWAITING_RESULTS", visitReturn.Status);
             Assert.NotNull(visitReturn.ReadyForReturnAt);
-
-            var activeReturnQueues = await Db.QueueEntries.AsNoTracking()
+            Assert.Empty(await Db.QueueEntries.AsNoTracking()
                 .Where(q =>
                     q.VisitId == visit.Id &&
                     q.QueueType == "RETURN_CONSULTATION" &&
                     q.Status != "CANCELLED" &&
                     q.Status != "COMPLETED")
-                .ToListAsync();
-            var singleReturnQueue = Assert.Single(activeReturnQueues);
+                .ToListAsync());
+
+            using (var enrollReturnResp = await SendJsonAsync(
+                HttpMethod.Post,
+                $"/api/v1/reception/visits/{visitCode}/return-enrollment",
+                new CreateReturnEnrollmentRequestDto(
+                    Purpose: QueueCoordinationPurposes.ResultConclusion,
+                    IdempotencyKey: $"e2e01-return-{visitCode}"),
+                receptionToken))
+            {
+                Assert.True(enrollReturnResp.StatusCode == HttpStatusCode.OK, await enrollReturnResp.Content.ReadAsStringAsync());
+            }
+
+            Db.ChangeTracker.Clear();
+            Assert.Equal("RETURN_CONSULTATION", (await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == visit.Id)).Status);
+            var singleReturnQueue = Assert.Single(await Db.QueueEntries.AsNoTracking()
+                .Where(q =>
+                    q.VisitId == visit.Id &&
+                    q.QueueType == "RETURN_CONSULTATION" &&
+                    q.Status != "CANCELLED" &&
+                    q.Status != "COMPLETED")
+                .ToListAsync());
             Assert.Equal("READY", singleReturnQueue.Status);
 
             // STEP 10: Reopen, record all 7 MedicalRecordRevision fields without overwriting ClinicalFindings,
@@ -1083,6 +1124,19 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
             // Finalize Free Mandatory BP -> RETURN_CONSULTATION -> EXTERNAL_PHARMACY Rx + CompleteVisit
             await FinalizeSinglePersonResultAsync(freeBpOrder.OrderCode, "Huyết áp nghỉ 122/78 mmHg.", "Huyết áp ổn định.", diag1Token);
 
+            // Stage E2 (QE-10): all mandatory results finalized → visit AWAITING_RESULTS; Reception coordinates
+            // the RETURN_CONSULTATION ticket before the doctor is called back in to issue the Rx & complete.
+            using (var enrollResp = await SendJsonAsync(
+                HttpMethod.Post,
+                $"/api/v1/reception/visits/{visitCode}/return-enrollment",
+                new CreateReturnEnrollmentRequestDto(
+                    Purpose: QueueCoordinationPurposes.ResultConclusion,
+                    IdempotencyKey: $"e2e02-return-{visitCode}"),
+                receptionToken))
+            {
+                Assert.True(enrollResp.StatusCode == HttpStatusCode.OK, await enrollResp.Content.ReadAsStringAsync());
+            }
+
             using (await SendJsonAsync(HttpMethod.Post, $"/api/v1/queue/service-points/sp-{fx.ExamServicePoint1Id}/call-next", new CallNextPatientRequest(), receptionToken)) { }
             using (await SendJsonAsync(HttpMethod.Post, $"/api/v1/doctor/consultation/{visitCode}/open", new { }, doctorToken)) { }
             using (await SendJsonAsync(
@@ -1370,6 +1424,13 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
             Assert.Equal(4, await Db.PaymentAllocations.AsNoTracking().CountAsync(pa => pa.VisitId == visit.Id && pa.Status == PaymentAllocationStatuses.Paid));
 
             // Execute all 3 CLS & CompleteVisit
+            // Stage E2 (strict single-active per patient): visit2 is a second same-patient visit used only for
+            // cash/idempotency checks; its own active exam queue would block CLS execution on `visit`. Close it.
+            await Db.QueueEntries
+                .Where(q => q.VisitId == visit2.Id && q.CompletedAt == null)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(q => q.Status, "COMPLETED")
+                    .SetProperty(q => q.CompletedAt, HospitalClock.GetNow(_clock)));
             await ConfirmAndExecuteUc40ToUc42Async(ord1.OrderCode, fx.LabServicePointId, visitCode, fx.PatientId, diag1Token);
             await ConfirmAndExecuteUc40ToUc42Async(ord2.OrderCode, fx.ImagingServicePointId, visitCode, fx.PatientId, diag1Token);
             await ConfirmAndExecuteUc40ToUc42Async(ord3.OrderCode, fx.ImagingServicePointId, visitCode, fx.PatientId, diag1Token);
@@ -1484,22 +1545,16 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
 
             using (var cB = await SendJsonAsync(HttpMethod.Post, $"/api/v1/diagnostic/orders/{orderB.OrderCode}/confirm", new ConfirmDiagnosticOrderRequest(IsEligibilityVerified: true, ServicePointId: fx.ImagingServicePointId), diag1Token))
                 Assert.Equal(HttpStatusCode.OK, cB.StatusCode);
-            using (var rB = await SendJsonAsync(HttpMethod.Post, $"/api/v1/diagnostic/orders/{orderB.OrderCode}/receive", new ReceiveDiagnosticPatientRequest(), diag1Token))
-                Assert.Equal(HttpStatusCode.OK, rB.StatusCode);
-            using (var callB = await SendJsonAsync(HttpMethod.Post, $"/api/v1/diagnostic/queue/service-points/{fx.ImagingServicePointId}/call-next", new CallNextDiagnosticPatientRequest(), diag1Token))
-                Assert.Equal(HttpStatusCode.OK, callB.StatusCode);
 
-            using (var busyStartB = await SendJsonAsync(
-                HttpMethod.Post,
-                $"/api/v1/diagnostic/orders/{orderB.OrderCode}/start",
-                new UpdateDiagnosticServiceStatusRequest(TargetStatus: "IN_PROGRESS", ExpectedVisitCode: visitCode, ExpectedPatientId: fx.PatientId),
-                diag1Token))
+            // Stage E2 (single-active): receiving B while A is an active serving ticket -> 409 ACTIVE_QUEUE
+            // (one active serving queue per patient). This replaces the legacy PATIENT_BUSY_AT_ANOTHER_POINT.
+            using (var rB = await SendJsonAsync(HttpMethod.Post, $"/api/v1/diagnostic/orders/{orderB.OrderCode}/receive", new ReceiveDiagnosticPatientRequest(), diag1Token))
             {
-                Assert.Equal(HttpStatusCode.Conflict, busyStartB.StatusCode);
-                Assert.Contains("PATIENT_BUSY_AT_ANOTHER_POINT", await busyStartB.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+                Assert.Equal(HttpStatusCode.Conflict, rB.StatusCode);
+                Assert.Contains("ACTIVE_QUEUE_ALREADY_EXISTS", await rB.Content.ReadAsStringAsync(), StringComparison.Ordinal);
             }
 
-            // Finish UC42 for A (PERFORMED_AWAITING_RESULT, awaiting UC43) -> B now starts & completes UC42 cleanly!
+            // Finish UC42 for A (PERFORMED_AWAITING_RESULT, awaiting UC43) -> single-active released.
             using (var compA = await SendJsonAsync(
                 HttpMethod.Post,
                 $"/api/v1/diagnostic/orders/{orderA.OrderCode}/complete",
@@ -1508,6 +1563,12 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
             {
                 Assert.Equal(HttpStatusCode.OK, compA.StatusCode);
             }
+
+            // B now receives, is called, started and completed UC42 cleanly.
+            using (var rBClean = await SendJsonAsync(HttpMethod.Post, $"/api/v1/diagnostic/orders/{orderB.OrderCode}/receive", new ReceiveDiagnosticPatientRequest(), diag1Token))
+                Assert.Equal(HttpStatusCode.OK, rBClean.StatusCode);
+            using (var callB = await SendJsonAsync(HttpMethod.Post, $"/api/v1/diagnostic/queue/service-points/{fx.ImagingServicePointId}/call-next", new CallNextDiagnosticPatientRequest(), diag1Token))
+                Assert.Equal(HttpStatusCode.OK, callB.StatusCode);
 
             using (var startBClean = await SendJsonAsync(
                 HttpMethod.Post,
@@ -1771,7 +1832,7 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
             using (var resumeReturnResp = await SendJsonAsync(
                 HttpMethod.Post,
                 $"/api/v1/reception/visits/{visitCode}/resume",
-                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", IdempotencyKey: $"res-e05-rc-{fx.Suffix}"),
+                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", IdempotencyKey: $"res-e05-rc-{fx.Suffix}", ConfirmPresent: true),
                 receptionTokenD2))
             {
                 Assert.Equal(HttpStatusCode.OK, resumeReturnResp.StatusCode);
@@ -1784,7 +1845,7 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                 Assert.Equal("READY", rcQueue.Status);
             }
 
-            await CallReopenConfirmDxAndCompleteNoRxAsync(visitCode, fx.ExamServicePoint1Id, fx.Icd10Code, receptionTokenD2, doctorTokenD2);
+            await CallReopenConfirmDxAndCompleteNoRxAsync(visitCode, fx.ExamServicePoint1Id, fx.Icd10Code, receptionTokenD2, doctorTokenD2, coordinateReturn: false);
 
             Db.ChangeTracker.Clear();
             Assert.Equal(1, await Db.Visits.AsNoTracking().CountAsync(v => v.PatientId == fx.PatientId));
@@ -2030,6 +2091,7 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                 $"/api/v1/reception/visits/{oldVisitCode}/resume",
                 new ResumeCrossDayVisitRequestDto(
                     Target: "RETURN_CONSULTATION",
+                    ConfirmPresent: true,
                     ReassignDoctorId: fx.Doctor2Id,
                     Notes: "BS 1 nghỉ phép ngày D+1, chuyển BS 2 khám kết luận"),
                 receptionTokenD1))
@@ -2058,7 +2120,7 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
             }
 
             // Doctor 2 calls, opens, confirms diagnosis & completes Visit (FINALIZED EMR)
-            await CallReopenConfirmDxAndCompleteNoRxAsync(oldVisitCode, fx.ExamServicePoint2Id, fx.Icd10Code, receptionTokenD1, doctor2TokenD1);
+            await CallReopenConfirmDxAndCompleteNoRxAsync(oldVisitCode, fx.ExamServicePoint2Id, fx.Icd10Code, receptionTokenD1, doctor2TokenD1, coordinateReturn: false);
 
             Db.ChangeTracker.Clear();
             var oldEmr = await Db.MedicalRecords.AsNoTracking().SingleAsync(mr => mr.VisitId == oldVisit.Id);
@@ -2434,8 +2496,24 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
         long examServicePointId,
         string icd10Code,
         string receptionToken,
-        string doctorToken)
+        string doctorToken,
+        bool coordinateReturn = true)
     {
+        // Stage E2 (QE-10): UC43 finalize holds the visit in AWAITING_RESULTS; Reception must coordinate the
+        // RETURN_CONSULTATION ticket before the doctor can be called back in and reopen the workspace.
+        // Cross-day/reassignment flows that already created a RETURN_CONSULTATION ticket pass coordinateReturn: false.
+        if (coordinateReturn)
+        {
+            using var enrollResp = await SendJsonAsync(
+                HttpMethod.Post,
+                $"/api/v1/reception/visits/{visitCode}/return-enrollment",
+                new CreateReturnEnrollmentRequestDto(
+                    Purpose: QueueCoordinationPurposes.ResultConclusion,
+                    IdempotencyKey: $"e2e-return-{visitCode}"),
+                receptionToken);
+            Assert.True(enrollResp.StatusCode == HttpStatusCode.OK, await enrollResp.Content.ReadAsStringAsync());
+        }
+
         using (var callResp = await SendJsonAsync(
             HttpMethod.Post,
             $"/api/v1/queue/service-points/sp-{examServicePointId}/call-next",
@@ -3234,21 +3312,29 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
             fx.ImagingServicePointId,
             fx.FunctionalServicePointId,
         };
+        // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit ON DELETE RESTRICT, and
+        // fk_diagnostic_orders_queue_entry_id / fk_queue_fairness_states_last_started_queue_entry_id back-
+        // reference queue_entries. Clear those pointers, then fairness, then queue_entries BEFORE the
+        // diagnostic_orders / prescriptions they bind are deleted below.
+        await Db.DiagnosticOrders
+            .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
         await Db.QueueFairnessStates.Where(f => spIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
 
         if (visitIds.Count > 0 || apptIds.Count > 0)
         {
             await Db.VisitCharges.Where(c => c.VisitId.HasValue && visitIds.Contains(c.VisitId.Value)).ExecuteDeleteAsync();
-            if (orderIds.Count > 0)
-            {
-                await Db.DiagnosticOrders.Where(o => orderIds.Contains(o.Id)).ExecuteDeleteAsync();
-            }
 
             await Db.QueueEntries
                 .Where(q => (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
                             (q.AppointmentId.HasValue && apptIds.Contains(q.AppointmentId.Value)) ||
                             (q.ServicePointId.HasValue && spIds.Contains(q.ServicePointId.Value)))
                 .ExecuteDeleteAsync();
+
+            if (orderIds.Count > 0)
+            {
+                await Db.DiagnosticOrders.Where(o => orderIds.Contains(o.Id)).ExecuteDeleteAsync();
+            }
         }
 
         await Db.AuditLogs

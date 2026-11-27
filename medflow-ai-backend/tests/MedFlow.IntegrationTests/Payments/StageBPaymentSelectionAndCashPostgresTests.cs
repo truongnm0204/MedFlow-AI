@@ -6,6 +6,7 @@ using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Consultation;
 using MedFlow.Application.DTOs.Diagnostic;
 using MedFlow.Application.DTOs.Payments;
+using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Payments;
 using MedFlow.Domain.Constants;
@@ -1093,8 +1094,10 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             Assert.Equal("CANCELLED", skipDto.OrderStatus);
             Assert.Equal(DiagnosticSelectionStatuses.SkippedAfterPaid, skipDto.SelectionStatus);
             Assert.Equal(VisitChargeStatuses.PaidNotPerformed, skipDto.ChargeStatus);
-            Assert.True(skipDto.TransitionedToReturnConsultation);
-            Assert.Equal("RETURN_CONSULTATION", skipDto.VisitStatus);
+            // Stage E2 (QE-10): resolving the last outstanding order stamps ReadyForReturnAt and holds the
+            // visit in AWAITING_RESULTS; it does not auto-create a RETURN_CONSULTATION ticket.
+            Assert.False(skipDto.TransitionedToReturnConsultation);
+            Assert.Equal("AWAITING_RESULTS", skipDto.VisitStatus);
 
             Db.ChangeTracker.Clear();
             var paymentAfterSkip = await Db.Payments.AsNoTracking().SingleAsync(p => p.Id == cashDto.PaymentId);
@@ -1105,6 +1108,18 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             Assert.True(await Db.AuditLogs.AnyAsync(a =>
                 (a.EntityId == optPaidOrderId.ToString() || a.EntityId == skipDto.OrderCode) &&
                 a.Action == "PAID_DIAGNOSTIC_ORDER_SKIPPED_BY_PATIENT"));
+
+            // Stage E2 (QE-10): after all orders resolve the visit sits in AWAITING_RESULTS; Reception
+            // must coordinate the return consultation (→ RETURN_CONSULTATION) before the doctor concludes.
+            var enrollReturnRes = await Client.SendAsync(AuthedPostJson(
+                $"/api/v1/reception/visits/{visit.VisitCode}/return-enrollment",
+                new CreateReturnEnrollmentRequestDto(
+                    Purpose: QueueCoordinationPurposes.ResultConclusion,
+                    IdempotencyKey: $"p1516-return-{visit.VisitCode}"),
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            var enrollReturnBody = await enrollReturnRes.Content.ReadAsStringAsync();
+            Assert.True(enrollReturnRes.StatusCode == HttpStatusCode.OK, enrollReturnBody);
 
             // Unblocks CompleteVisitAsync cleanly!
             await CompleteVisitWithConfirmedDiagnosisAsync(fx, visit.VisitCode!);
@@ -2402,6 +2417,13 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             .Select(v => v.Id)
             .ToListAsync();
 
+        // fk_notifications_visit_id: notifications (e.g. VISIT_RETURN_READY) reference visits — clear them
+        // before visits are deleted below.
+        await Db.Notifications.Where(n =>
+            (n.VisitId.HasValue && visitIds.Contains(n.VisitId.Value)) ||
+            n.PatientId == fx.PatientId ||
+            n.PatientId == fx.OtherPatientId).ExecuteDeleteAsync();
+
         var orderIds = await Db.DiagnosticOrders
             .Where(o => o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
             .Select(o => o.Id)
@@ -2428,6 +2450,15 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             await Db.MedicalRecords.Where(mr => emrIds.Contains(mr.Id)).ExecuteDeleteAsync();
         }
 
+        // Stage E2 (migration 027): fk_queue_entries_diagnostic_order_visit + fk_queue_entries_prescription_visit
+        // are ON DELETE RESTRICT. Before deleting queue_entries we must (1) clear diagnostic_orders.queue_entry_id
+        // (fk_diagnostic_orders_queue_entry_id) and (2) clear queue_fairness_states.last_started_queue_entry_id
+        // (fk_queue_fairness_states_last_started_queue_entry_id) — both back-reference queue_entries.
+        await Db.DiagnosticOrders
+            .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
+        await Db.QueueFairnessStates.Where(f => fx.AllSpIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
+        await Db.QueueEntries.Where(q => q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)).ExecuteDeleteAsync();
         if (visitIds.Count > 0)
         {
             await Db.VisitDiagnoses.Where(d => d.VisitId.HasValue && visitIds.Contains(d.VisitId.Value)).ExecuteDeleteAsync();

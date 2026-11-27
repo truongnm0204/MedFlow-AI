@@ -8,7 +8,12 @@ import { useAuthStore } from '@/features/auth/store/auth.store';
 import { canAccessRoute } from '@/features/auth/utils/rbac';
 
 import * as rolePermissionsApi from '../api/role-permissions.api';
-import { createMockRole, getMockRolesCatalog, resetMockRolesCatalog } from '../data/role-mock-data';
+import {
+  createMockRole,
+  getMockRolesCatalog,
+  resetMockRolesCatalog,
+  SYSTEM_PERMISSION_LIST,
+} from '../data/role-mock-data';
 import { RoleListPage } from '../pages/role-list-page';
 
 function makeAxiosError(status: number, detail: string): AxiosError {
@@ -87,7 +92,9 @@ describe('Create Role UI (M2-073 / Issue #235 / UC58)', () => {
     );
     fireEvent.click(within(dialog).getByLabelText('Quyền PATIENT_CHECKIN - Tiếp nhận & Check-in'));
 
-    expect(within(dialog).getByText('Đã chọn: 2 / 14 quyền')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(`Đã chọn: 2 / ${SYSTEM_PERMISSION_LIST.length} quyền`),
+    ).toBeInTheDocument();
 
     fireEvent.change(within(dialog).getByLabelText('Ghi chú kiểm toán tạo vai trò'), {
       target: { value: 'Khởi tạo vai trò điều phối viên M2' },

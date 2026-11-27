@@ -1591,7 +1591,7 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
     // -------------------------------------------------------------------------
 
     [Fact]
-    public async Task CreateDiagnosticOrder_SingleOrderByServiceId_CreatesOrderAndQueueEntryAndUpdatesSummaryAndAudit()
+    public async Task CreateDiagnosticOrder_SingleOrderByServiceId_CreatesOrderAndUpdatesSummaryAndAudit()
     {
         var opened = await _service.OpenWorkspaceAsync(3, "VIS-202610-0011");
         Assert.Equal("IN_PROGRESS", opened.WorkspaceState);
@@ -1628,16 +1628,17 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         Assert.Equal("ORDERED", createdDto.Status);
         Assert.True(createdDto.RequiredForConclusion);
         Assert.Equal("Nhịn ăn sáng trước khi lấy mẫu máu", createdDto.Instruction);
-        Assert.Equal(1, createdDto.QueueNumber);
-        Assert.Equal("C001", createdDto.TicketNo);
-        Assert.Equal("WAITING", createdDto.QueueStatus);
+        // QE-03: order create mints NO diagnostic QueueEntry; ticket is minted later by payment-intent/reception enrollment
+        Assert.Null(createdDto.QueueNumber);
+        Assert.Null(createdDto.TicketNo);
+        Assert.Null(createdDto.QueueStatus);
         Assert.Equal(5, createdDto.ServicePointId);
         Assert.Equal("RM-205", createdDto.RoomCode);
         Assert.False(createdDto.IsResultFinalized);
 
         var summary = result.ClinicalContext.DiagnosticSummary;
-        Assert.Equal(1, summary.TotalQueueEntries);
-        Assert.Equal(1, summary.OpenQueueEntries);
+        Assert.Equal(0, summary.TotalQueueEntries);
+        Assert.Equal(0, summary.OpenQueueEntries);
         Assert.Equal(0, summary.CompletedQueueEntries);
         Assert.False(summary.AllMandatoryResultsReady);
 
@@ -1655,12 +1656,8 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         Assert.Equal("ORDERED", dbOrder.Status);
         Assert.True(dbOrder.RequiredForConclusion);
 
-        var dbDiagQueue = await _db.QueueEntries.SingleAsync(q => q.Id == dbOrder.QueueEntryId);
-        Assert.Equal("DIAGNOSTIC", dbDiagQueue.QueueType);
-        Assert.Equal("WAITING", dbDiagQueue.Status);
-        Assert.Equal("NORMAL", dbDiagQueue.ManualPriority);
-        Assert.Equal(1, dbDiagQueue.QueueNumber);
-        Assert.Equal(5, dbDiagQueue.ServicePointId);
+        Assert.Null(dbOrder.QueueEntryId);
+        Assert.False(await _db.QueueEntries.AnyAsync(q => q.QueueType == "DIAGNOSTIC" && q.VisitId == 11));
 
         var audit = await _db.AuditLogs.SingleAsync(a => a.Action == "DIAGNOSTIC_ORDER_CREATED");
         Assert.Equal("DIAGNOSTIC_ORDER", audit.EntityType);
@@ -1709,8 +1706,10 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         Assert.NotNull(clinicalQueue.CompletedAt);
         Assert.Equal(4, clinicalQueue.StateVersion);
 
-        Assert.Equal(2, result.ClinicalContext.DiagnosticSummary.TotalQueueEntries);
-        Assert.Equal(2, result.ClinicalContext.DiagnosticSummary.OpenQueueEntries);
+        // QE-03: no DIAGNOSTIC QueueEntry rows are minted at order create; summary counts stay 0
+        Assert.Equal(0, result.ClinicalContext.DiagnosticSummary.TotalQueueEntries);
+        Assert.Equal(0, result.ClinicalContext.DiagnosticSummary.OpenQueueEntries);
+        Assert.False(await _db.QueueEntries.AnyAsync(q => q.QueueType == "DIAGNOSTIC" && q.VisitId == 11));
         Assert.False(result.ClinicalContext.DiagnosticSummary.AllMandatoryResultsReady);
     }
 
@@ -1728,8 +1727,9 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
                 Priority: "ROUTINE",
                 RequiredForConclusion: false));
 
-        Assert.Equal(1, result.ClinicalContext.DiagnosticSummary.TotalQueueEntries);
-        Assert.Equal(1, result.ClinicalContext.DiagnosticSummary.OpenQueueEntries);
+        // QE-03: no DIAGNOSTIC QueueEntry minted; non-mandatory pending order keeps AllMandatoryResultsReady true
+        Assert.Equal(0, result.ClinicalContext.DiagnosticSummary.TotalQueueEntries);
+        Assert.Equal(0, result.ClinicalContext.DiagnosticSummary.OpenQueueEntries);
         Assert.True(result.ClinicalContext.DiagnosticSummary.AllMandatoryResultsReady);
         Assert.True(result.AllowedActions.Single(a => a.Id == "record-diagnosis").Enabled);
         Assert.True(result.AllowedActions.Single(a => a.Id == "create-prescription").Enabled);
@@ -2647,7 +2647,7 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
                 PrimaryIcd10Code: "K29.5",
                 ClinicalConclusion: "Viêm dạ dày mạn tính"));
 
-        // Create a non-mandatory diagnostic order (status = ORDERED, queue = WAITING)
+        // Create a non-mandatory diagnostic order (status = ORDERED; QE-03: no QueueEntry minted)
         await _service.CreateDiagnosticOrderAsync(
             3,
             "VIS-202610-0011",
@@ -2660,12 +2660,10 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         await Assert.ThrowsAsync<ConflictException>(
             () => _service.CompleteVisitAsync(3, "VIS-202610-0011"));
 
-        // UC42 COMPLETED without a finalized DiagnosticResult (PERFORMED_AWAITING_RESULT) still rejects CompleteVisit (BUG-P6-01)
+        // Order performed (COMPLETED) without a finalized DiagnosticResult (PERFORMED_AWAITING_RESULT) still rejects CompleteVisit (BUG-P6-01)
         var diagOrder = await _db.DiagnosticOrders.SingleAsync(o => o.VisitId == 11);
+        Assert.Null(diagOrder.QueueEntryId);
         diagOrder.Status = "COMPLETED";
-        var diagQueue = await _db.QueueEntries.SingleAsync(q => q.Id == diagOrder.QueueEntryId);
-        diagQueue.Status = "COMPLETED";
-        diagQueue.CompletedAt = new DateTime(2026, 10, 22, 9, 5, 0);
         await _db.SaveChangesAsync();
 
         await Assert.ThrowsAsync<ConflictException>(
@@ -2863,10 +2861,7 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         cbcOrder.ConfirmedByStaffId = 10;
         cbcOrder.ConfirmedAt = new DateTime(2026, 10, 22, 8, 52, 0);
 
-        var cbcQueue = await _db.QueueEntries.SingleAsync(q => q.Id == cbcOrder.QueueEntryId);
-        cbcQueue.Status = "COMPLETED";
-        cbcQueue.CompletedAt = new DateTime(2026, 10, 22, 9, 0, 0);
-
+        // QE-03: no diagnostic QueueEntry exists; order COMPLETED + FINALIZED result marks the step done
         var cbcResult = new DiagnosticResult
         {
             Id = 501,
@@ -2993,10 +2988,8 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
                 RequiredForConclusion: true));
 
         var order = await _db.DiagnosticOrders.SingleAsync(o => o.VisitId == 11);
+        Assert.Null(order.QueueEntryId); // QE-03: order create minted no ticket
         order.Status = "COMPLETED";
-        var diagQueue = await _db.QueueEntries.SingleAsync(q => q.Id == order.QueueEntryId);
-        diagQueue.Status = "COMPLETED";
-        diagQueue.CompletedAt = new DateTime(2026, 10, 22, 8, 58, 0);
 
         _db.DiagnosticResults.Add(new DiagnosticResult
         {
@@ -3325,9 +3318,7 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         // Simulate CLS staff finalizing the initial diagnostic result
         var dbInitialOrder = await _db.DiagnosticOrders.SingleAsync(o => o.Id == initialOrder.OrderId);
         dbInitialOrder.Status = "COMPLETED";
-        var dbInitialQueue = await _db.QueueEntries.SingleAsync(q => q.Id == dbInitialOrder.QueueEntryId);
-        dbInitialQueue.Status = "COMPLETED";
-        dbInitialQueue.CompletedAt = new DateTime(2026, 10, 22, 9, 0, 0);
+        // QE-03: initial order minted no diagnostic QueueEntry; nothing else to close
 
         var diagResult = new DiagnosticResult
         {
@@ -3405,9 +3396,10 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
             createdAdditional.AdditionalOrderReason);
 
         var summaryAfter = additionalResponse.ClinicalContext.DiagnosticSummary;
-        Assert.Equal(2, summaryAfter.TotalQueueEntries);
-        Assert.Equal(1, summaryAfter.OpenQueueEntries);
-        Assert.Equal(1, summaryAfter.CompletedQueueEntries);
+        // QE-03: no DIAGNOSTIC QueueEntry rows exist for either order
+        Assert.Equal(0, summaryAfter.TotalQueueEntries);
+        Assert.Equal(0, summaryAfter.OpenQueueEntries);
+        Assert.Equal(0, summaryAfter.CompletedQueueEntries);
         Assert.False(summaryAfter.AllMandatoryResultsReady);
 
         Assert.True(additionalResponse.AllowedActions.Single(a => a.Id == "create-additional-diagnostic-order").Enabled);

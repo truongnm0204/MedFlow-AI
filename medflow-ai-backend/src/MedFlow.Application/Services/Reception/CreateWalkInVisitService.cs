@@ -405,6 +405,13 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             request.AllowNewEpisodeWhileVisitOpen,
             ct);
 
+        await PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+            _db,
+            patient.Id,
+            effectiveHospitalId,
+            today,
+            ct: ct);
+
         var lockedSameDayAppointments = await _db.Appointments
             .AsNoTracking()
             .Include(a => a.Slot)
@@ -466,6 +473,7 @@ public sealed class CreateWalkInVisitService : ICreateWalkInVisitService
             CheckedInAt = nowLocal,
             LastPresentDate = today,
             PresenceState = VisitPresenceStates.Present,
+            PresenceSessionNo = 1,
         };
 
         _db.Visits.Add(visit);

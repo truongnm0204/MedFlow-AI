@@ -467,8 +467,10 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
                 plans.Select(p => p.Order.Id),
                 includeChargeAndPaymentLocks: targetStatus == "CANCELLED",
                 ct,
-                extraServiceIds: requiresActiveRoutingGate ? plans.Select(p => p.Service.Id) : null,
-                extraRoomIds: requiresActiveRoutingGate ? lookupBundle.RoomsById.Keys : null);
+                extraServiceIds: plans.Select(p => p.Service.Id),
+                extraRoomIds: requiresActiveRoutingGate ? lookupBundle.RoomsById.Keys : null,
+                extraPatientIds: plans.Where(p => p.Visit.PatientId.HasValue && p.LinkedQueueEntry is null && targetStatus != "CANCELLED")
+                    .Select(p => p.Visit.PatientId!.Value));
 
             Dictionary<long, Service>? postLockServicesById = null;
             Dictionary<long, Department>? postLockDepartmentsById = null;
@@ -546,6 +548,13 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
                 }
 
                 lookupBundle.VisitsById[visit.Id] = visit;
+                await DiagnosticDepartmentScopeGuard.ReloadLiveStaffAndEnsureDepartmentScopeAsync(
+                    _db,
+                    actorUserId,
+                    staffAccess.Staff,
+                    plan.Service.DepartmentId,
+                    plan.Room?.DepartmentId,
+                    ct);
                 if (patient is not null)
                 {
                     lookupBundle.PatientsById[patient.Id] = patient;
@@ -702,7 +711,7 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
                             PresenceStatus = "LEFT",
                             ArrivedAt = null,
                             ArrivalClass = "WALK_IN",
-                            ManualPriority = NormalizePriority(order.Priority),
+                            ManualPriority = ClinicalQueueRules.NormalizeStoredPriority(order.Priority),
                             StateVersion = newStateVersion,
                             CompletedAt = nowLocal,
                             BlockedReason = validated.Reason,
@@ -731,6 +740,41 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
                     if (linkedQueueEntry is null)
                     {
                         var diagSpId = plan.ServicePoint?.Id;
+                        var newQueueStatus = ResolveQueueStatusForTarget(targetStatus, requestedQueueStatus);
+                        var isStartOrComplete = targetStatus is "IN_PROGRESS" or "COMPLETED";
+
+                        if (newQueueStatus is "WAITING" or "READY" or "CALLED" or "IN_PROGRESS")
+                        {
+                            var activeClinicalSessionExists = await _db.QueueEntries
+                                .AsNoTracking()
+                                .AnyAsync(
+                                    q => q.VisitId == visit.Id &&
+                                         q.CompletedAt == null &&
+                                         q.QueueType != null &&
+                                         (q.QueueType.ToUpper() == "EXAMINATION" || q.QueueType.ToUpper() == "RETURN_CONSULTATION") &&
+                                         q.Status != null &&
+                                         (q.Status.ToUpper() == "WAITING" ||
+                                          q.Status.ToUpper() == "READY" ||
+                                          q.Status.ToUpper() == "CALLED" ||
+                                          q.Status.ToUpper() == "IN_PROGRESS" ||
+                                          q.Status.ToUpper() == "IN_CONSULTATION" ||
+                                          q.Status.ToUpper() == "SERVING"),
+                                    ct);
+                            if (activeClinicalSessionExists)
+                            {
+                                throw new ConflictException(
+                                    "[CLINICAL_HANDOFF_REQUIRED] Phiên khám lâm sàng của bệnh nhân vẫn đang mở. Bác sĩ cần kết thúc hoặc bàn giao phiên khám trước khi tạo lượt thực hiện cận lâm sàng.");
+                            }
+
+                            await MedFlow.Application.Services.Visits.PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
+                                _db,
+                                visit.PatientId,
+                                hospitalId,
+                                referenceDate,
+                                excludeQueueEntryId: null,
+                                ct: ct);
+                        }
+
                         var maxQueueNumber = await _db.QueueEntries
                             .AsNoTracking()
                             .Where(q =>
@@ -741,13 +785,12 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
                             .MaxAsync(q => (int?)q.QueueNumber, ct);
 
                         var nextQueueNumber = (maxQueueNumber ?? 0) + 1;
-                        var newQueueStatus = ResolveQueueStatusForTarget(targetStatus, requestedQueueStatus);
-                        var isStartOrComplete = targetStatus is "IN_PROGRESS" or "COMPLETED";
 
                         linkedQueueEntry = new QueueEntry
                         {
                             VisitId = visit.Id,
                             AppointmentId = null,
+                            DiagnosticOrderId = order.Id,
                             ServicePointId = diagSpId,
                             CurrentServicePointId = diagSpId,
                             QueueDate = referenceDate,
@@ -758,7 +801,7 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
                             PresenceStatus = isStartOrComplete ? "PRESENT" : "NOT_ARRIVED",
                             ArrivedAt = isStartOrComplete ? nowLocal : null,
                             ArrivalClass = "WALK_IN",
-                            ManualPriority = NormalizePriority(order.Priority),
+                            ManualPriority = ClinicalQueueRules.NormalizeStoredPriority(order.Priority),
                             StateVersion = newStateVersion,
                             ReadyAt = isStartOrComplete ? nowLocal : null,
                             CalledAt = isStartOrComplete ? nowLocal : null,
@@ -774,6 +817,7 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
                     }
                     else
                     {
+                        linkedQueueEntry.DiagnosticOrderId ??= order.Id;
                         var isStartOrComplete = targetStatus is "IN_PROGRESS" or "COMPLETED";
 
                         if (plan.ServicePoint is not null)
@@ -1416,6 +1460,10 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
         }
 
         // Service-point busy guard for CONFIRMED -> IN_PROGRESS: another visit's active entry on same SP/date blocks.
+        DiagnosticDepartmentScopeGuard.EnsureStaffInDepartmentScopeOrThrow(
+            staffAccess.Staff,
+            service.DepartmentId,
+            resolvedRoom?.DepartmentId);
         if (targetStatus == "IN_PROGRESS" && currentOrderStatus == "CONFIRMED" && resolvedSp is not null)
         {
             var spId = resolvedSp.Id;

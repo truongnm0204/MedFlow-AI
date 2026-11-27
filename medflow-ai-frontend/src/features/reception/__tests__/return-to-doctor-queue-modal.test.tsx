@@ -273,6 +273,18 @@ describe('ReturnToDoctorQueueModal & API helpers (UC28 - Issue #99)', () => {
       screen.getByText('Tiếp nhận bệnh nhân quay lại đọc kết quả CLS (RETURN_CONSULTATION)'),
     ).toBeInTheDocument();
     expect(screen.getByText('Ưu tiên: Bình thường')).toBeInTheDocument();
+    // F-01: presence is never default-confirmed — the preview starts WAITING until the
+    // receptionist explicitly attests the patient is present.
+    expect(screen.getByTestId('return-to-doctor-outcome-preview')).toHaveTextContent(
+      'Trạng thái sau lưu: Đang chờ (WAITING) • Chưa đủ điều kiện gọi (Chờ KQ CLS / Chưa có mặt)',
+    );
+
+    // Explicit presence attestation flips the live preview to READY.
+    fireEvent.click(
+      screen.getByLabelText(
+        'Tôi xác nhận bệnh nhân đã có mặt trực tiếp tại khu vực phòng khám (presenceStatus = PRESENT)',
+      ),
+    );
     expect(screen.getByTestId('return-to-doctor-outcome-preview')).toHaveTextContent(
       'Trạng thái sau lưu: Sẵn sàng (READY) • Đủ điều kiện xếp thứ tự gọi khám',
     );

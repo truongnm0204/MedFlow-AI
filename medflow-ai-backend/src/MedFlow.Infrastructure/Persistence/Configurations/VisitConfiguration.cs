@@ -55,6 +55,11 @@ public class VisitConfiguration : IEntityTypeConfiguration<Visit>
             .HasDefaultValue("PRESENT")
             .IsRequired();
 
+        builder.Property(v => v.PresenceSessionNo)
+            .HasColumnName("presence_session_no")
+            .HasDefaultValue(1)
+            .IsRequired();
+
         builder.Property(v => v.LastResumedAt)
             .HasColumnName("last_resumed_at")
             .HasColumnType("timestamp without time zone");
