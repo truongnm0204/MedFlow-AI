@@ -61,7 +61,7 @@ export function ReturnToDoctorQueueModal({
     mode,
     servicePointId: servicePoint.servicePointId,
     diagnosticResultsReady: !isActivateMode,
-    confirmPresent: !isActivateMode,
+    confirmPresent: false,
     reason: '',
     notes: '',
   }));
