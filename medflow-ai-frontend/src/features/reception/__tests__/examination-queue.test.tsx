@@ -1513,9 +1513,16 @@ describe('ExaminationQueuePage (UC28 - Issue #87 & #89)', () => {
       expect(submitCreateBtn).not.toBeDisabled();
     });
 
-    // Uncheck diagnosticResultsReady (awaiting CLS results), choose preset reason, submit
+    // Uncheck diagnosticResultsReady (awaiting CLS results), explicitly attest presence,
+    // choose preset reason, submit. F-01: presence is never default-confirmed, so the
+    // receptionist must tick the box for the payload to carry confirmPresent:true.
     fireEvent.click(
       screen.getByLabelText('Đã có đầy đủ kết quả cận lâm sàng bắt buộc (final_result_required)'),
+    );
+    fireEvent.click(
+      screen.getByLabelText(
+        'Tôi xác nhận bệnh nhân đã có mặt trực tiếp tại khu vực phòng khám (presenceStatus = PRESENT)',
+      ),
     );
     fireEvent.click(
       screen.getByRole('button', {
