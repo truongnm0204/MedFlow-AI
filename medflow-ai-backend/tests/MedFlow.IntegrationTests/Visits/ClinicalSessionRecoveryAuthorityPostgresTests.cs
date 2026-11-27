@@ -1475,6 +1475,136 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
         }
     }
 
+    [Fact]
+    public async Task CommitB_Race_ConfirmVsCompleteVisit_NoRecoveryOfTerminalVisit()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCXT");
+        try
+        {
+            long requestId;
+            using (var seedScope = Factory.Services.CreateScope())
+            {
+                var seedDb = seedScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var seedSvc = NewService(seedDb);
+                var request = await seedSvc.RequestRecoveryAsync(
+                    fx.ReceptionUserId, fx.Visit1Code,
+                    new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, "Seed for confirm/complete race."));
+                requestId = request.RequestId;
+                await seedSvc.GrantAsync(
+                    fx.DoctorAUserId, requestId,
+                    new GrantClinicalSessionRecoveryRequestDto(fx.DoctorBId, 4, "Seed grant for confirm/complete race."));
+            }
+
+            using var lockScope = Factory.Services.CreateScope();
+            var lockDb = lockScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+            await using var lockTx = await lockDb.Database.BeginTransactionAsync();
+            await lockDb.Visits.Where(v => v.Id == fx.Visit1Id).ExecuteUpdateAsync(s => s
+                .SetProperty(v => v.Status, "COMPLETED")
+                .SetProperty(v => v.CompletedAt, _clock.GetHospitalNow()));
+
+            using var started = new SemaphoreSlim(0, 1);
+            var confirmTask = Task.Run(async () =>
+            {
+                using var scope = Factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var svc = NewService(db);
+                started.Release();
+                try
+                {
+                    await svc.ConfirmAsync(
+                        fx.DoctorBUserId, requestId,
+                        new ConfirmClinicalSessionRecoveryRequestDto(4, true, "Confirm after visit completed."));
+                    return "CONFIRM";
+                }
+                catch (ConflictException)
+                {
+                    return "CONFLICT";
+                }
+            });
+            await started.WaitAsync(TimeSpan.FromSeconds(10));
+            await lockTx.CommitAsync();
+            var outcome = await confirmTask;
+            await lockTx.DisposeAsync().AsTask();
+
+            Assert.Equal("CONFLICT", outcome);
+            Db.ChangeTracker.Clear();
+            var row = await Db.ClinicalSessionRecoveryRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
+            Assert.Equal(ClinicalSessionRecoveryStatuses.Granted, row.Status);
+            var queue = await Db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == fx.Queue1Id);
+            Assert.Equal("IN_PROGRESS", queue.Status);
+            Assert.Null(queue.CompletedAt);
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    [Fact]
+    public async Task CommitB_Race_ConfirmVsReassignment_GrantNotUsableAfterAssignmentChange()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCXA");
+        try
+        {
+            long requestId;
+            using (var seedScope = Factory.Services.CreateScope())
+            {
+                var seedDb = seedScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var seedSvc = NewService(seedDb);
+                var request = await seedSvc.RequestRecoveryAsync(
+                    fx.ReceptionUserId, fx.Visit1Code,
+                    new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, "Seed for confirm/reassign race."));
+                requestId = request.RequestId;
+                await seedSvc.GrantAsync(
+                    fx.DoctorAUserId, requestId,
+                    new GrantClinicalSessionRecoveryRequestDto(fx.DoctorBId, 4, "Seed grant for confirm/reassign race."));
+            }
+
+            using var lockScope = Factory.Services.CreateScope();
+            var lockDb = lockScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+            await using var lockTx = await lockDb.Database.BeginTransactionAsync();
+            await lockDb.Visits.Where(v => v.Id == fx.Visit1Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(v => v.AssignedDoctorId, fx.DoctorCId));
+
+            using var started = new SemaphoreSlim(0, 1);
+            var confirmTask = Task.Run(async () =>
+            {
+                using var scope = Factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var svc = NewService(db);
+                started.Release();
+                try
+                {
+                    await svc.ConfirmAsync(
+                        fx.DoctorBUserId, requestId,
+                        new ConfirmClinicalSessionRecoveryRequestDto(4, true, "Confirm after reassignment."));
+                    return "CONFIRM";
+                }
+                catch (ConflictException)
+                {
+                    return "CONFLICT";
+                }
+            });
+            await started.WaitAsync(TimeSpan.FromSeconds(10));
+            await lockTx.CommitAsync();
+            var outcome = await confirmTask;
+            await lockTx.DisposeAsync().AsTask();
+
+            Assert.Equal("CONFLICT", outcome);
+            Db.ChangeTracker.Clear();
+            var row = await Db.ClinicalSessionRecoveryRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
+            Assert.Equal(ClinicalSessionRecoveryStatuses.Granted, row.Status);
+            var queue = await Db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == fx.Queue1Id);
+            Assert.Equal("IN_PROGRESS", queue.Status);
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
     private sealed class RecordingRealtimePublisher : IRealtimeNotificationPublisher
     {
         public List<QueueChangedNotification> QueueChanged { get; } = [];
