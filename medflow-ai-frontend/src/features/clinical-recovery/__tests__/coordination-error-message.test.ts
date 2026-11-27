@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   COORDINATION_ERROR_MESSAGES,
+  COORDINATION_FORBIDDEN_MESSAGE,
+  COORDINATION_NOT_FOUND_MESSAGE,
   extractProblemCode,
   getCoordinationErrorMessage,
 } from '../lib/coordination-error-message';
@@ -62,6 +64,30 @@ describe('getCoordinationErrorMessage', () => {
 
     expect(getCoordinationErrorMessage(error)).toBe(
       '[SOMETHING_NEW] Bác sĩ chưa được phân công cho lượt khám này.',
+    );
+  });
+
+  it('treats every 404 as not visible without echoing the server sentence', () => {
+    const error = makeAxiosError(404, {
+      detail: 'Lượt khám này thuộc bệnh viện khác.',
+    });
+
+    expect(getCoordinationErrorMessage(error)).toBe(COORDINATION_NOT_FOUND_MESSAGE);
+  });
+
+  it('reports a 403 as missing permission, never as a missing resource', () => {
+    const error = makeAxiosError(403, { detail: 'Thiếu quyền điều phối lượt khám.' });
+
+    expect(getCoordinationErrorMessage(error)).toBe(COORDINATION_FORBIDDEN_MESSAGE);
+  });
+
+  it('prefers a specific coordination code over the generic 403 sentence', () => {
+    const error = makeAxiosError(403, {
+      detail: '[QUEUE_ENROLL_REQUIRED] Tài khoản nhân sự chưa được cấp quyền.',
+    });
+
+    expect(getCoordinationErrorMessage(error)).toBe(
+      COORDINATION_ERROR_MESSAGES.QUEUE_ENROLL_REQUIRED,
     );
   });
 

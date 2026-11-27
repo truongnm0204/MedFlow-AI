@@ -22,6 +22,16 @@ export const COORDINATION_ERROR_MESSAGES = {
 
 export type CoordinationErrorCode = keyof typeof COORDINATION_ERROR_MESSAGES;
 
+/**
+ * D6: 404 means the actor cannot see the resource (missing, other hospital, out of scope) — the UI
+ * must treat all three the same and never echo a server sentence that hints which one it was.
+ */
+export const COORDINATION_NOT_FOUND_MESSAGE = 'Không tìm thấy lượt khám hoặc phiên khám phù hợp.';
+
+/** D6: 403 means the resource is visible but the actor lacks the permission for this action. */
+export const COORDINATION_FORBIDDEN_MESSAGE =
+  'Bạn không đủ quyền thực hiện thao tác này trên lượt khám.';
+
 /** Extract the stable error code from an Axios error, or `null` when the response carries none. */
 export function extractProblemCode(error: unknown): string | null {
   if (!(error instanceof AxiosError)) return null;
@@ -51,10 +61,13 @@ export function extractProblemCode(error: unknown): string | null {
  * handling (server text, 429 handling, network errors).
  */
 export function getCoordinationErrorMessage(error: unknown, fallback?: string): string {
-  const code = extractProblemCode(error);
-  if (code) {
-    const mapped = (COORDINATION_ERROR_MESSAGES as Record<string, string>)[code];
+  if (error instanceof AxiosError) {
+    const code = extractProblemCode(error);
+    const mapped = code ? (COORDINATION_ERROR_MESSAGES as Record<string, string>)[code] : undefined;
     if (mapped) return mapped;
+
+    if (error.response?.status === 404) return COORDINATION_NOT_FOUND_MESSAGE;
+    if (error.response?.status === 403) return COORDINATION_FORBIDDEN_MESSAGE;
   }
   return getErrorMessage(error, fallback);
 }
