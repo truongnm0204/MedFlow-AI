@@ -6,6 +6,7 @@ import {
   CalendarClock,
   ListOrdered,
   RefreshCw,
+  RotateCcw,
   ShieldAlert,
   QrCode,
   Stethoscope,
@@ -22,6 +23,7 @@ import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader } from '@/shared/ui/card';
 import { Spinner } from '@/shared/ui/spinner';
 import { Modal } from '@/shared/ui/modal';
+import { ClinicalRecoveryModal } from '@/features/clinical-recovery/components/clinical-recovery-modal';
 import { JourneySlipViewer } from '@/features/patient/components/journey-slip';
 
 import { ApplyClinicalPriorityModal } from '../components/apply-clinical-priority-modal';
@@ -110,6 +112,7 @@ export function ExaminationQueuePage() {
   const [cashTarget, setCashTarget] = useState<ReceptionCashCollectionTarget | null>(null);
   const [isCrossDayResumeOpen, setIsCrossDayResumeOpen] = useState(false);
   const [isReturnCoordinationOpen, setIsReturnCoordinationOpen] = useState(false);
+  const [isClinicalRecoveryOpen, setIsClinicalRecoveryOpen] = useState(false);
   const [isJourneySlipOpen, setIsJourneySlipOpen] = useState(false);
   const defaultQueueDate = useMemo(() => getHospitalTodayIso(), []);
 
@@ -643,6 +646,12 @@ export function ExaminationQueuePage() {
               </Button>
             )}
             {(canManageQueue || canCheckIn) && (
+              <Button variant="secondary" size="sm" onClick={() => setIsClinicalRecoveryOpen(true)}>
+                <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Phục hồi phiên khám</span>
+              </Button>
+            )}
+            {(canManageQueue || canCheckIn) && (
               <Button variant="primary" size="sm" onClick={() => setIsCrossDayResumeOpen(true)}>
                 <CalendarClock className="w-3.5 h-3.5" aria-hidden="true" />
                 <span>Tiếp tục lượt khám (Qua ngày)</span>
@@ -1065,6 +1074,17 @@ export function ExaminationQueuePage() {
               setUpdateNotice(
                 `Đã cấp số khám kết luận ${res.ticket.queueNumber} cho ${res.visitCode} — BS ${res.assignedDoctorName}.`,
               );
+            }}
+          />
+        )}
+
+        {isClinicalRecoveryOpen && (
+          <ClinicalRecoveryModal
+            open
+            onClose={() => setIsClinicalRecoveryOpen(false)}
+            onApplied={(message) => {
+              void refetch();
+              setUpdateNotice(message);
             }}
           />
         )}

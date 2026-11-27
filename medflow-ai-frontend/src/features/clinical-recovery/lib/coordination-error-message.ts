@@ -60,11 +60,14 @@ export function extractProblemCode(error: unknown): string | null {
  * compliance-relevant outcome. Everything else falls back to the shared ProblemDetails
  * handling (server text, 429 handling, network errors).
  */
+function isCoordinationErrorCode(code: string): code is CoordinationErrorCode {
+  return code in COORDINATION_ERROR_MESSAGES;
+}
+
 export function getCoordinationErrorMessage(error: unknown, fallback?: string): string {
   if (error instanceof AxiosError) {
     const code = extractProblemCode(error);
-    const mapped = code ? (COORDINATION_ERROR_MESSAGES as Record<string, string>)[code] : undefined;
-    if (mapped) return mapped;
+    if (code && isCoordinationErrorCode(code)) return COORDINATION_ERROR_MESSAGES[code];
 
     if (error.response?.status === 404) return COORDINATION_NOT_FOUND_MESSAGE;
     if (error.response?.status === 403) return COORDINATION_FORBIDDEN_MESSAGE;
