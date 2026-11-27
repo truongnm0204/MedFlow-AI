@@ -17,6 +17,11 @@ export const SYSTEM_PERMISSION_CODES = [
   'PATIENT_CHECKIN',
   'VISIT_ASSIGN',
   'QUEUE_MANAGE',
+  'QUEUE_ENROLL',
+  // Stage E2 recovery authority: cấp qua luồng SystemAdmin (decision D1), không seed vào
+  // ROLE_DEFAULT_PERMISSIONS — doctor chỉ có quyền này khi được gán tường minh.
+  'CLINICAL_SESSION_RECOVERY_GRANT',
+  'CLINICAL_SESSION_RECOVER',
   'MEDICAL_RECORD_WRITE',
   'DIAGNOSTIC_ORDER',
   'DIAGNOSTIC_RESULT_WRITE',

@@ -2,7 +2,10 @@ import { AlertTriangle, CheckCircle2, Search, Star, Stethoscope, UserCheck } fro
 import { type FormEvent, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { getErrorMessage } from '@/shared/lib/get-error-message';
+import {
+  extractProblemCode,
+  getCoordinationErrorMessage,
+} from '@/features/clinical-recovery/lib/coordination-error-message';
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -23,6 +26,12 @@ export interface ReturnCoordinationModalProps {
   initialVisitCode?: string | null;
   onClose: () => void;
   onEnrolled?: (result: ReturnEnrollmentResponseDto) => void;
+  /**
+   * Fired when enrollment is blocked by 409 `CLINICAL_HANDOFF_REQUIRED`: the prior clinical
+   * session was never released, so the actor must resolve a clinical-session-recovery request
+   * before coordination. The parent hands off to the recovery modal for the same visit.
+   */
+  onRecoveryRequired?: (visitCode: string) => void;
 }
 
 const PRESENCE_BADGE: Record<string, { label: string; tone: 'emerald' | 'amber' | 'slate' }> = {
@@ -53,6 +62,7 @@ export function ReturnCoordinationModal({
   initialVisitCode,
   onClose,
   onEnrolled,
+  onRecoveryRequired,
 }: ReturnCoordinationModalProps) {
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState(initialVisitCode?.trim() ?? '');
@@ -61,6 +71,7 @@ export function ReturnCoordinationModal({
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>('');
   const [reassignmentReason, setReassignmentReason] = useState('');
   const [notes, setNotes] = useState('');
+  const [confirmPresent, setConfirmPresent] = useState(false);
   const [localValidationError, setLocalValidationError] = useState<string | null>(null);
 
   const idempotencyKeyRef = useRef<string | null>(null);
@@ -105,6 +116,7 @@ export function ReturnCoordinationModal({
         reassignmentReason: needsReassignmentReason ? reassignmentReason.trim() || null : null,
         notes: notes.trim() || null,
         idempotencyKey: idempotencyKeyRef.current,
+        confirmPresent,
       }),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ['return-coordination-context'] });
@@ -136,10 +148,14 @@ export function ReturnCoordinationModal({
     enrollMutation.mutate();
   }
 
+  const enrollErrorCode = enrollMutation.isError ? extractProblemCode(enrollMutation.error) : null;
+  const isHandoffBlocked = enrollErrorCode === 'CLINICAL_HANDOFF_REQUIRED';
+  const isPatientNotPresent = enrollErrorCode === 'PATIENT_NOT_PRESENT';
+
   const apiError = enrollMutation.isError
-    ? getErrorMessage(enrollMutation.error)
+    ? getCoordinationErrorMessage(enrollMutation.error)
     : contextQuery.isError
-      ? getErrorMessage(contextQuery.error)
+      ? getCoordinationErrorMessage(contextQuery.error)
       : null;
 
   const presence = ctx ? (PRESENCE_BADGE[ctx.presenceState] ?? PRESENCE_BADGE.LEFT) : null;
@@ -177,7 +193,29 @@ export function ReturnCoordinationModal({
           </div>
         )}
 
-        {apiError && <Alert tone="error">{apiError}</Alert>}
+        {apiError && (
+          <Alert tone="error">
+            <p>{apiError}</p>
+            {isPatientNotPresent && (
+              <p className="mt-1">
+                Bệnh nhân chưa được xác nhận có mặt. Đánh dấu “Xác nhận bệnh nhân có mặt tại quầy”
+                bên dưới rồi thao tác lại — không bỏ qua bước này khi bệnh nhân chưa đến.
+              </p>
+            )}
+            {isHandoffBlocked && onRecoveryRequired && (
+              <div className="mt-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onRecoveryRequired(ctx?.visitCode ?? activeVisitKey)}
+                >
+                  Mở phục hồi phiên khám
+                </Button>
+              </div>
+            )}
+          </Alert>
+        )}
         {localValidationError && <Alert tone="error">{localValidationError}</Alert>}
 
         {ctx && (
@@ -334,6 +372,26 @@ export function ReturnCoordinationModal({
                   className="w-full rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-ink"
                   placeholder="Ghi chú cho lễ tân/bác sĩ (tùy chọn)"
                 />
+              </div>
+
+              {/* §8.2: presence is explicit — never default-confirmed, no legacy NOT_ARRIVED fallback. */}
+              <div className="rounded-lg border border-border bg-canvas px-3 py-2">
+                <label className="flex items-start gap-2 text-sm text-ink">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={confirmPresent}
+                    onChange={(e) => setConfirmPresent(e.target.checked)}
+                  />
+                  <span>
+                    <span className="font-medium">Xác nhận bệnh nhân có mặt tại quầy.</span>{' '}
+                    <span className="text-sub">
+                      Chỉ đánh dấu khi bệnh nhân thực sự đang ở quầy. Nếu chính sách bệnh viện yêu
+                      cầu xác nhận có mặt và bệnh nhân chưa đến, thao tác cấp số sẽ bị từ chối (409
+                      PATIENT_NOT_PRESENT) thay vì cấp một số “chưa đến”.
+                    </span>
+                  </span>
+                </label>
               </div>
 
               <div className="flex justify-end gap-2 border-t border-border pt-4">

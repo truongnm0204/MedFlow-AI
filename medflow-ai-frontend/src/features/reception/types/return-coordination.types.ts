@@ -74,6 +74,7 @@ export interface CreateReturnEnrollmentRequestDto {
   reassignmentReason?: string | null;
   notes?: string | null;
   idempotencyKey?: string | null;
+  confirmPresent?: boolean | null;
 }
 
 export interface ReturnEnrollmentResponseDto {

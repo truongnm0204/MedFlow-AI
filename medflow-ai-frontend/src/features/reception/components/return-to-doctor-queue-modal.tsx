@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import axios from 'axios';
 import { AlertCircle, FileCheck2, Stethoscope, X } from 'lucide-react';
 
+import { getCoordinationErrorMessage } from '@/features/clinical-recovery/lib/coordination-error-message';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
@@ -123,7 +124,7 @@ export function ReturnToDoctorQueueModal({
       onApplied(response);
     } catch (error) {
       setApiError(
-        getErrorMessage(
+        getCoordinationErrorMessage(
           error,
           isActivateMode
             ? 'Không thể kích hoạt lượt khám lại đọc kết quả CLS.'

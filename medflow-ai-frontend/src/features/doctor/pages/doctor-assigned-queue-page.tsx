@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useLogout } from '@/features/auth/hooks/use-auth';
+import { ClinicalRecoveryModal } from '@/features/clinical-recovery/components/clinical-recovery-modal';
 import { useAuthStore } from '@/features/auth/store/auth.store';
 import { getErrorMessage } from '@/shared/lib/get-error-message';
 import { Alert } from '@/shared/ui/alert';
@@ -47,6 +48,7 @@ export function DoctorAssignedQueuePage() {
   const [callingServicePointId, setCallingServicePointId] = useState<string | null>(null);
   const [callNextResult, setCallNextResult] = useState<DoctorCallNextResponseDto | null>(null);
   const [callNextError, setCallNextError] = useState<string | null>(null);
+  const [isClinicalRecoveryOpen, setIsClinicalRecoveryOpen] = useState(false);
   const [entryOverridesByServicePoint, setEntryOverridesByServicePoint] = useState<
     Record<string, DoctorAssignedQueueEntryDto[]>
   >({});
@@ -251,6 +253,13 @@ export function DoctorAssignedQueuePage() {
             />
             <button
               type="button"
+              onClick={() => setIsClinicalRecoveryOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-semibold text-navy transition-colors hover:bg-canvas"
+            >
+              <span>Phục hồi phiên khám</span>
+            </button>
+            <button
+              type="button"
               onClick={() => void refetch()}
               disabled={isPending}
               aria-label="Làm mới hàng đợi"
@@ -416,6 +425,9 @@ export function DoctorAssignedQueuePage() {
                 </div>
               </>
             )
+          )}
+          {isClinicalRecoveryOpen && (
+            <ClinicalRecoveryModal open onClose={() => setIsClinicalRecoveryOpen(false)} />
           )}
         </main>
       </div>
