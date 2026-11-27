@@ -2,7 +2,7 @@ import { AlertTriangle, CheckCircle2, Search, Star, Stethoscope, UserCheck } fro
 import { type FormEvent, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { getErrorMessage } from '@/shared/lib/get-error-message';
+import { getCoordinationErrorMessage } from '@/features/clinical-recovery/lib/coordination-error-message';
 import { Alert } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -137,9 +137,9 @@ export function ReturnCoordinationModal({
   }
 
   const apiError = enrollMutation.isError
-    ? getErrorMessage(enrollMutation.error)
+    ? getCoordinationErrorMessage(enrollMutation.error)
     : contextQuery.isError
-      ? getErrorMessage(contextQuery.error)
+      ? getCoordinationErrorMessage(contextQuery.error)
       : null;
 
   const presence = ctx ? (PRESENCE_BADGE[ctx.presenceState] ?? PRESENCE_BADGE.LEFT) : null;
