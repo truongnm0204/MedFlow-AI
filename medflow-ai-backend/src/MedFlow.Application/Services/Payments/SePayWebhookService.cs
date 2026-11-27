@@ -13,6 +13,7 @@ using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 
 namespace MedFlow.Application.Services.Payments;
 
@@ -47,13 +48,15 @@ public sealed class SePayWebhookService : ISePayWebhookService
     private readonly TimeProvider _timeProvider;
     private readonly IRealtimeNotificationPublisher _realtimePublisher;
     private readonly IPaymentEnrollmentIntentProcessor _intentProcessor;
+    private readonly ILogger<SePayWebhookService>? _logger;
 
     public SePayWebhookService(
         IApplicationDbContext db,
         IPaymentGatewayEventStore store,
         TimeProvider? timeProvider = null,
         IRealtimeNotificationPublisher? realtimePublisher = null,
-        IPaymentEnrollmentIntentProcessor? intentProcessor = null)
+        IPaymentEnrollmentIntentProcessor? intentProcessor = null,
+        ILogger<SePayWebhookService>? logger = null)
     {
         _db = db;
         _store = store;
@@ -61,6 +64,7 @@ public sealed class SePayWebhookService : ISePayWebhookService
         _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
         _intentProcessor = intentProcessor
             ?? new PaymentEnrollmentIntentProcessor(db, _timeProvider, realtimePublisher: _realtimePublisher);
+        _logger = logger;
     }
 
     public async Task<SePayWebhookResult> HandleAsync(
@@ -590,6 +594,27 @@ public sealed class SePayWebhookService : ISePayWebhookService
             }
         }
 
+        // ADR-0059 Principle #6: SignalR published strictly AFTER tx.CommitAsync(ct) succeeds.
+        // Hardening (PR #859): publish BEFORE post-commit enrollment processing so the payment
+        // notification is never delayed by the heavier enrollment work. This is an ordering
+        // hardening per the E2E01 investigation recommendation — NOT the E2E01 fix. The actual
+        // E2E01 root cause was test infrastructure (CloseOnAuthenticationExpiration x virtual
+        // TimeProvider); that fix lives in the test configuration — see the commit message.
+        // Enrollment does not depend on the publish, and postCommitEnrollment is still returned
+        // in the final response unchanged.
+        if (shouldPublishPaymentChanged && notifyVisitId is long committedVisitId)
+        {
+            await _realtimePublisher.TryPublishVisitPaymentChangedSafeAsync(
+                new VisitPaymentChangedNotification(committedVisitId),
+                ct,
+                _logger);
+
+            foreach (var queueNotification in queueNotifications)
+            {
+                await _realtimePublisher.TryPublishQueueChangedSafeAsync(queueNotification, ct, _logger);
+            }
+        }
+
         PaymentEnrollmentResultDto? postCommitEnrollment = null;
         if (settledPaymentIdForEnrollment is long settledId)
         {
@@ -601,19 +626,6 @@ public sealed class SePayWebhookService : ISePayWebhookService
             {
                 // QE-13 / E-BR28: Post-commit enrollment failure MUST NEVER roll back or fail the committed PAID webhook!
                 postCommitEnrollment = null;
-            }
-        }
-
-        // ADR-0059 Principle #6: SignalR published strictly AFTER tx.CommitAsync(ct) succeeds
-        if (shouldPublishPaymentChanged && notifyVisitId is long committedVisitId)
-        {
-            await _realtimePublisher.TryPublishVisitPaymentChangedSafeAsync(
-                new VisitPaymentChangedNotification(committedVisitId),
-                ct);
-
-            foreach (var queueNotification in queueNotifications)
-            {
-                await _realtimePublisher.TryPublishQueueChangedSafeAsync(queueNotification, ct);
             }
         }
 

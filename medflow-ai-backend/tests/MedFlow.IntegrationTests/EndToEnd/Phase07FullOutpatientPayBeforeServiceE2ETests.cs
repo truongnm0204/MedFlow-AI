@@ -30,6 +30,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Configuration;
 
 namespace MedFlow.IntegrationTests.EndToEnd;
 
@@ -78,6 +79,20 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
     {
         _app = baseFactory.WithWebHostBuilder(builder =>
         {
+            // This suite mints JWTs against the injected virtual clock (MutableVietnamClock), so the
+            // tokens are already expired on the REAL system clock. CloseOnAuthenticationExpiration
+            // evaluates the `exp` claim against the real clock and would abort the WebSocket
+            // nondeterministically right after connect (E2E01 root cause — PR #859, see
+            // plans/reports/pr859-e2e01-round2.md). The security feature stays enabled by default
+            // in production, where JWTs are minted against the real clock and never pre-expired;
+            // the virtual clock is a test-only artifact, so disabling the feature is scoped to
+            // this suite's factory instance only.
+            builder.ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Realtime:CloseOnAuthenticationExpiration"] = "false",
+                }));
+
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<TimeProvider>();

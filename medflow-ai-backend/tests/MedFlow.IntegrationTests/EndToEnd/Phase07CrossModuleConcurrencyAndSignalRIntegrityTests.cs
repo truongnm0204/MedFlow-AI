@@ -31,6 +31,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Configuration;
 
 namespace MedFlow.IntegrationTests.EndToEnd;
 
@@ -105,6 +106,16 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
     {
         _app = baseFactory.WithWebHostBuilder(builder =>
         {
+            // Same virtual-clock rationale as Phase07FullOutpatientPayBeforeServiceE2ETests: JWTs are
+            // minted against MutableTimeProvider, so CloseOnAuthenticationExpiration (real system clock)
+            // would see pre-expired tokens and abort hub connections nondeterministically. Production
+            // default stays enabled; the override is scoped to this suite's factory instance only.
+            builder.ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Realtime:CloseOnAuthenticationExpiration"] = "false",
+                }));
+
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<TimeProvider>();

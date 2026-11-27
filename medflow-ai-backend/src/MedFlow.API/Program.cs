@@ -352,11 +352,20 @@ if (!app.Environment.IsEnvironment("Test") ||
 }
 
 app.MapControllers();
+
+// Realtime:CloseOnAuthenticationExpiration — operational knob, default true (production security
+// feature: server closes the WebSocket when the client JWT expires). Must stay enabled in
+// production. Integration tests that inject a virtual TimeProvider set it to false because
+// their JWTs are minted against the virtual clock while this ASP.NET Core feature checks the
+// `exp` claim against the REAL system clock — a pre-expired test token would abort the
+// connection nondeterministically (E2E01 root cause, see plans/reports/pr859-e2e01-round2.md).
+var closeOnAuthenticationExpiration =
+    app.Configuration.GetValue<bool>("Realtime:CloseOnAuthenticationExpiration", true);
 app.MapHub<ClinicalRealtimeHub>(
         "/hubs/clinical",
         options =>
         {
-            options.CloseOnAuthenticationExpiration = true;
+            options.CloseOnAuthenticationExpiration = closeOnAuthenticationExpiration;
         })
     .RequireAuthorization();
 
