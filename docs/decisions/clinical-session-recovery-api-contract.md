@@ -31,6 +31,14 @@ permission, active staff/doctor, hospital scope, clinical scope, assignment and 
   non-REQUESTED request → 409.
 
 
+## Reason fields (D7 revise)
+
+Detail (`ClinicalSessionRecoveryRequestDto`), list (`ClinicalSessionRecoveryListItemDto`) and confirm response
+include the lifecycle reasons: `requestReason`, `grantReason`, `recoveryReason`, `revocationReason`,
+`rejectionReason`, `cancellationReason`, plus `recoveryReason` on confirm. They are returned **only** to actors
+that passed visibility/scope; error `ProblemDetails` never contains them, and SignalR payloads remain IDs/status
+only.
+
 ## Error boundary (decision D6 — no existence oracle)
 
 - **404 + uniform `ProblemDetails`** (`[CLINICAL_SESSION_RECOVERY_NOT_FOUND]`): resource does not exist,

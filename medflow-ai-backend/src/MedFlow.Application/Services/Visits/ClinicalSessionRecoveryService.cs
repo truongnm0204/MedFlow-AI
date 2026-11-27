@@ -830,7 +830,8 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
                 QueueStateVersion: queue.StateVersion ?? previousQueueVersion + 1,
                 VisitStatus: Normalize(visit.Status),
                 RecoveredAt: recovery.RecoveredAt ?? nowUtc,
-                IsIdempotentReplay: false);
+                IsIdempotentReplay: false,
+                RecoveryReason: recovery.RecoveryReason);
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -889,7 +890,8 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
             QueueStateVersion: recovered.ExpectedQueueStateVersion + 1,
             VisitStatus: Normalize(visit.Status),
             RecoveredAt: recovered.RecoveredAt ?? recovered.UpdatedAt,
-            IsIdempotentReplay: true);
+            IsIdempotentReplay: true,
+            RecoveryReason: recovered.RecoveryReason);
     }
 
     // =====================================================================================
@@ -919,7 +921,6 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
             .AsNoTracking()
             .Where(r => r.HospitalId == hospitalId.Value)
             .OrderByDescending(r => r.Id)
-            .Take(200)
             .ToListAsync(ct);
         if (requests.Count == 0)
         {
@@ -965,6 +966,8 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
             requests = scoped;
         }
 
+        requests = requests.Take(200).ToList();
+
         return requests.Select(r => new ClinicalSessionRecoveryListItemDto(
                 RequestId: r.Id,
                 Status: Normalize(r.Status),
@@ -978,7 +981,13 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
                 RequestedAt: r.RequestedAt,
                 GrantedAt: r.GrantedAt,
                 ExpiresAt: r.ExpiresAt,
-                RecoveredAt: r.RecoveredAt))
+                RecoveredAt: r.RecoveredAt,
+                RequestReason: r.RequestReason,
+                GrantReason: r.GrantReason,
+                RecoveryReason: r.RecoveryReason,
+                RevocationReason: r.RevocationReason,
+                RejectionReason: r.RejectionReason,
+                CancellationReason: r.CancellationReason))
             .ToList();
     }
 
@@ -1003,9 +1012,8 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
 
         var doctors = await _db.Doctors.AsNoTracking()
             .Include(d => d.Staff)
-            .Where(d =>
-                d.IsActive &&
-                (d.HospitalId == hospitalId || (d.Staff != null && d.Staff.HospitalId == hospitalId)))
+            // N-02: Doctor.HospitalId is the authoritative hospital binding for clinical authority.
+            .Where(d => d.IsActive && d.HospitalId == hospitalId)
             .OrderBy(d => d.DoctorCode)
             .ThenBy(d => d.Id)
             .ToListAsync(ct);
@@ -1399,8 +1407,8 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
             return null;
         }
 
-        var effectiveHospitalId = doctor.HospitalId ?? staff.HospitalId;
-        if (!effectiveHospitalId.HasValue || effectiveHospitalId.Value != hospitalId)
+        // N-02: Doctor.HospitalId is authoritative (no Staff.HospitalId fallback for clinical authority).
+        if (!doctor.HospitalId.HasValue || doctor.HospitalId.Value != hospitalId)
         {
             return null;
         }
@@ -1653,7 +1661,13 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
             RevokedAt: request.RevokedAt,
             RejectedAt: request.RejectedAt,
             CancelledAt: request.CancelledAt,
-            ExpiredAt: request.ExpiredAt);
+            ExpiredAt: request.ExpiredAt,
+            RequestReason: request.RequestReason,
+            GrantReason: request.GrantReason,
+            RecoveryReason: request.RecoveryReason,
+            RevocationReason: request.RevocationReason,
+            RejectionReason: request.RejectionReason,
+            CancellationReason: request.CancellationReason);
 
     // =====================================================================================
     // Locking / transactions / audit / realtime

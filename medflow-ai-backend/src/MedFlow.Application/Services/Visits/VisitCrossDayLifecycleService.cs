@@ -299,6 +299,15 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
 
         EnsureReceptionResumePermission(actor, visitHospitalId);
 
+        // §8.1: changing the assigned doctor requires VISIT_ASSIGN (canonical RETURN path enforces this
+        // inside ReturnCoordinationService; the DIAGNOSTIC resume branch must enforce it here).
+        if (request.ReassignDoctorId is > 0 &&
+            !actor.PermissionCodes.Contains(PermissionCodes.VisitAssign))
+        {
+            throw new ForbiddenException(
+                "Tài khoản chưa được cấp quyền VISIT_ASSIGN để đổi bác sĩ phụ trách lượt khám.");
+        }
+
         try
         {
             return await ExecuteResumeCoreAsync(
@@ -704,7 +713,7 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                 ReassignmentReason: reassignmentReason,
                 Notes: notes,
                 IdempotencyKey: idempotencyKey,
-                ConfirmPresent: true),
+                ConfirmPresent: request.ConfirmPresent),
             ipAddress,
             ct);
 
@@ -1838,11 +1847,10 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
             throw new ForbiddenException("Nhân sự không có quyền tiếp tục lượt khám thuộc cơ sở y tế khác.");
         }
 
-        var hasRequiredPerm = actor.PermissionCodes.Contains(PermissionCodes.PatientCheckin) ||
-                              actor.PermissionCodes.Contains(PermissionCodes.QueueManage);
-        if (!hasRequiredPerm)
+        // §8.1 canonical coordination permission (legacy PATIENT_CHECKIN/QUEUE_MANAGE removed).
+        if (!actor.PermissionCodes.Contains(PermissionCodes.QueueEnroll))
         {
-            throw new ForbiddenException("Tài khoản chưa được cấp quyền PATIENT_CHECKIN hoặc QUEUE_MANAGE để tiếp tục lượt khám.");
+            throw new ForbiddenException("Tài khoản chưa được cấp quyền QUEUE_ENROLL để tiếp tục lượt khám.");
         }
     }
 

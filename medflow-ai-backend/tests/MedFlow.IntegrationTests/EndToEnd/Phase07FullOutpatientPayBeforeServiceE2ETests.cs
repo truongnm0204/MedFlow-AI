@@ -1817,7 +1817,7 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
             using (var resumeReturnResp = await SendJsonAsync(
                 HttpMethod.Post,
                 $"/api/v1/reception/visits/{visitCode}/resume",
-                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", IdempotencyKey: $"res-e05-rc-{fx.Suffix}"),
+                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", IdempotencyKey: $"res-e05-rc-{fx.Suffix}", ConfirmPresent: true),
                 receptionTokenD2))
             {
                 Assert.Equal(HttpStatusCode.OK, resumeReturnResp.StatusCode);
@@ -2076,6 +2076,7 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                 $"/api/v1/reception/visits/{oldVisitCode}/resume",
                 new ResumeCrossDayVisitRequestDto(
                     Target: "RETURN_CONSULTATION",
+                    ConfirmPresent: true,
                     ReassignDoctorId: fx.Doctor2Id,
                     Notes: "BS 1 nghỉ phép ngày D+1, chuyển BS 2 khám kết luận"),
                 receptionTokenD1))

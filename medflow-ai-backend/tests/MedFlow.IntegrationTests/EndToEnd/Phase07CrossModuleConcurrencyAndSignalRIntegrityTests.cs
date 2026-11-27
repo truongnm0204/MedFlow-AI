@@ -841,7 +841,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                         await resumeSvc.ResumeVisitAsync(
                             fx.ReceptionUserId,
                             visit.VisitCode!,
-                            new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+                            new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
                         return (Exception?)null;
                     }
                     catch (Exception ex)
@@ -888,7 +888,7 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                     Assert.IsType<ConflictException>(resumeErr);
                     await using var followUp = _app.Services.CreateAsyncScope();
                     var resumeSvc = followUp.ServiceProvider.GetRequiredService<IVisitCrossDayLifecycleService>();
-                    await resumeSvc.ResumeVisitAsync(fx.ReceptionUserId, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+                    await resumeSvc.ResumeVisitAsync(fx.ReceptionUserId, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
                 }
 
                 await using var checkScope = _app.Services.CreateAsyncScope();

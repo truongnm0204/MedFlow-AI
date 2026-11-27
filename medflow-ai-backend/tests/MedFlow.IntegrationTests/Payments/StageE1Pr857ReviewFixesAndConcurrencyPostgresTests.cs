@@ -579,6 +579,7 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
                 visit.VisitCode!,
                 new ResumeCrossDayVisitRequestDto(
                     Target: "RETURN_CONSULTATION",
+                    ConfirmPresent: true,
                     CoordinationPurpose: QueueCoordinationPurposes.ClinicalReview,
                     Notes: "Điều phối CLINICAL_REVIEW kiểm thử RV-T01..20"));
             var reviewQueueId = reviewResume.ResumedQueues[0].QueueEntryId;
@@ -819,6 +820,7 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
                 visit.VisitCode!,
                 new ResumeCrossDayVisitRequestDto(
                     Target: "RETURN_CONSULTATION",
+                    ConfirmPresent: true,
                     CoordinationPurpose: QueueCoordinationPurposes.ClinicalReview));
             await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/queue/service-points/{fx.ExamSp1Id}/call-next",
@@ -886,7 +888,7 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
             // Advance 10 days to D+10 (2026-11-20 > 7-day return_consultation_window_days)
             _clock.SetVietnamLocalTime(new DateTime(2026, 11, 20, 9, 0, 0, DateTimeKind.Unspecified));
 
-            await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+            await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
             await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/queue/service-points/{fx.ExamSp1Id}/call-next",
                 new { notes = "Gọi vào khám kết luận quá hạn SN-01..14" },
@@ -1125,6 +1127,7 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
                 visit.VisitCode!,
                 new ResumeCrossDayVisitRequestDto(
                     Target: "RETURN_CONSULTATION",
+                    ConfirmPresent: true,
                     CoordinationPurpose: QueueCoordinationPurposes.ClinicalReview));
             await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/queue/service-points/{fx.ExamSp1Id}/call-next",
@@ -1342,7 +1345,7 @@ public sealed class StageE1Pr857ReviewFixesAndConcurrencyPostgresTests : IClassF
 
             // Advance 10 days to D+10 (2026-11-20 -> overdue return consultation)
             _clock.SetVietnamLocalTime(new DateTime(2026, 11, 20, 9, 0, 0, DateTimeKind.Unspecified));
-            await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+            await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
             await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/queue/service-points/{fx.ExamSp1Id}/call-next",
                 new { notes = "Gọi vào khám CR-E1-05..08" },

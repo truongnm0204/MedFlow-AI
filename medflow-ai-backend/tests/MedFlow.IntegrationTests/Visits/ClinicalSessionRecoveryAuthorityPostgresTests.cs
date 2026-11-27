@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using MedFlow.Application.Common.Time;
 using MedFlow.Application.DTOs.Realtime;
 using MedFlow.Application.DTOs.Visits;
@@ -833,6 +834,71 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
     }
 
     // =====================================================================================
+    // D7 revise: reasons visible to scoped actors, never in errors/SignalR
+    // =====================================================================================
+
+    [Fact]
+    public async Task D7_ReasonsVisibleToScopedActors_NotInErrorsOrSignalR()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("D7R");
+        try
+        {
+            using var scope = Factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+            var publisher = new RecordingRealtimePublisher();
+            var svc = new ClinicalSessionRecoveryService(db, publisher, _clock);
+
+            const string requestReason = "reason-request-7f3a";
+            const string grantReason = "reason-grant-7f3b";
+            const string recoveryReason = "reason-recovery-7f3c";
+
+            var request = await svc.RequestRecoveryAsync(
+                fx.ReceptionUserId, fx.Visit1Code,
+                new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, requestReason));
+            Assert.Equal(requestReason, request.RequestReason);
+
+            var receptionList = await svc.ListRequestsAsync(fx.ReceptionUserId);
+            Assert.Contains(receptionList, r => r.RequestId == request.RequestId && r.RequestReason == requestReason);
+
+            var granted = await svc.GrantAsync(
+                fx.DoctorAUserId, request.RequestId,
+                new GrantClinicalSessionRecoveryRequestDto(fx.DoctorBId, 4, grantReason));
+            Assert.Equal(requestReason, granted.RequestReason);
+            Assert.Equal(grantReason, granted.GrantReason);
+
+            var confirmed = await svc.ConfirmAsync(
+                fx.DoctorBUserId, request.RequestId,
+                new ConfirmClinicalSessionRecoveryRequestDto(4, true, recoveryReason));
+            Assert.Equal(recoveryReason, confirmed.RecoveryReason);
+
+            var doctorList = await svc.ListRequestsAsync(fx.DoctorBUserId);
+            Assert.Contains(doctorList, r =>
+                r.RequestId == request.RequestId &&
+                r.RequestReason == requestReason &&
+                r.GrantReason == grantReason &&
+                r.RecoveryReason == recoveryReason);
+
+            // SignalR payload carries IDs/status only — no reason text.
+            var wire = JsonSerializer.Serialize(publisher.QueueChanged);
+            Assert.DoesNotContain(requestReason, wire, StringComparison.Ordinal);
+            Assert.DoesNotContain(grantReason, wire, StringComparison.Ordinal);
+            Assert.DoesNotContain(recoveryReason, wire, StringComparison.Ordinal);
+
+            // Out-of-scope actor: uniform 404, no reason in the error payload.
+            var notFound = await Assert.ThrowsAsync<NotFoundException>(() =>
+                svc.GetContextAsync(fx.DoctorDUserId, fx.Visit1Code));
+            Assert.DoesNotContain(requestReason, notFound.Message, StringComparison.Ordinal);
+            var otherHospitalList = await svc.ListRequestsAsync(fx.DoctorDUserId);
+            Assert.DoesNotContain(otherHospitalList, r => r.RequestId == request.RequestId);
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    // =====================================================================================
     // F-02 (security): SYSTEM_ADMIN has no return-context bypass
     // =====================================================================================
 
@@ -1248,7 +1314,7 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
                 {
                     await svc.ResumeVisitAsync(
                         fx.ReceptionUserId, fx.Visit1Code,
-                        new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+                        new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
                     return "RESUME";
                 }
                 catch (ConflictException)
@@ -1417,7 +1483,7 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
 
                 var ex = await Assert.ThrowsAsync<ConflictException>(() => service.ResumeVisitAsync(
                     fx.ReceptionUserId, visitCode,
-                    new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION")));
+                    new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true)));
                 Assert.True(
                     expectedCodes.Any(code => ex.Message.Contains(code, StringComparison.Ordinal)),
                     $"Expected one of [{string.Join(", ", expectedCodes)}] but got: {ex.Message}");
@@ -1431,7 +1497,7 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
             // RCX-08: SYSTEM_ADMIN cannot resume or defer through this service.
             await Assert.ThrowsAsync<ForbiddenException>(() => service.ResumeVisitAsync(
                 fx.SystemAdminUserId, fx.Visit1Code,
-                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION")));
+                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true)));
             await Assert.ThrowsAsync<ForbiddenException>(() => service.DeferVisitOrOrdersAsync(
                 fx.SystemAdminUserId, fx.Visit1Code,
                 new DeferVisitOrOrdersRequestDto("SYSTEM_ADMIN thử hoãn lượt khám.")));

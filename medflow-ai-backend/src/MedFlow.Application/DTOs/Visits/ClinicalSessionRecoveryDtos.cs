@@ -54,7 +54,13 @@ public sealed record ClinicalSessionRecoveryRequestDto(
     DateTime? RevokedAt,
     DateTime? RejectedAt,
     DateTime? CancelledAt,
-    DateTime? ExpiredAt);
+    DateTime? ExpiredAt,
+    string? RequestReason = null,
+    string? GrantReason = null,
+    string? RecoveryReason = null,
+    string? RevocationReason = null,
+    string? RejectionReason = null,
+    string? CancellationReason = null);
 
 public sealed record ClinicalSessionRecoveryCapabilitiesDto(
     bool CanRequest,
@@ -87,11 +93,12 @@ public sealed record ClinicalSessionRecoveryConfirmResponseDto(
     int QueueStateVersion,
     string VisitStatus,
     DateTime RecoveredAt,
-    bool IsIdempotentReplay);
+    bool IsIdempotentReplay,
+    string? RecoveryReason = null);
 
 /// <summary>
 /// Scoped list projection for GET /api/v1/clinical-session-recovery-requests.
-/// Minimal data only: no free-text reasons, no EMR content.
+/// Reasons are included for actors that passed visibility/scope (D7 revise); never in errors/SignalR.
 /// </summary>
 public sealed record ClinicalSessionRecoveryListItemDto(
     long RequestId,
@@ -106,7 +113,13 @@ public sealed record ClinicalSessionRecoveryListItemDto(
     DateTime RequestedAt,
     DateTime? GrantedAt,
     DateTime? ExpiresAt,
-    DateTime? RecoveredAt);
+    DateTime? RecoveredAt,
+    string? RequestReason = null,
+    string? GrantReason = null,
+    string? RecoveryReason = null,
+    string? RevocationReason = null,
+    string? RejectionReason = null,
+    string? CancellationReason = null);
 
 /// <summary>Candidate doctor for POST grant — minimal identity/department/specialty for selection.</summary>
 public sealed record ClinicalSessionRecoveryEligibleRecipientDto(

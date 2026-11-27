@@ -422,7 +422,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             // Reception resumes RETURN_CONSULTATION on D+1, calls next, and Doctor completes Visit -> EMR FINALIZED
             var resumeRes = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/reception/visits/{visit.VisitCode}/resume",
-                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"),
+                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true),
                 fx.Reception1UserId,
                 RoleNames.Reception));
             Assert.Equal(HttpStatusCode.OK, resumeRes.StatusCode);
@@ -535,7 +535,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
 
             var resumeRes = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/reception/visits/{visit.VisitCode}/resume",
-                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"),
+                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true),
                 fx.Reception1UserId,
                 RoleNames.Reception));
             Assert.Equal(HttpStatusCode.OK, resumeRes.StatusCode);
@@ -692,12 +692,15 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
 
             var rc1 = await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(
                 Target: "RETURN_CONSULTATION",
+                ConfirmPresent: true,
                 IdempotencyKey: "idem-cd08-rc-1"));
             var rc2 = await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(
                 Target: "RETURN_CONSULTATION",
+                ConfirmPresent: true,
                 IdempotencyKey: "idem-cd08-rc-1"));
             var rc3 = await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(
                 Target: "RETURN_CONSULTATION",
+                ConfirmPresent: true,
                 IdempotencyKey: "idem-cd08-rc-different"));
 
             Assert.False(rc1.IsIdempotentReplay);
@@ -757,7 +760,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             // Resume without ReassignDoctorId -> 409 Conflict
             var noReassignRes = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/reception/visits/{visit.VisitCode}/resume",
-                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"),
+                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true),
                 fx.Reception1UserId,
                 RoleNames.Reception));
             Assert.Equal(HttpStatusCode.Conflict, noReassignRes.StatusCode);
@@ -767,6 +770,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                 $"/api/v1/reception/visits/{visit.VisitCode}/resume",
                 new ResumeCrossDayVisitRequestDto(
                     Target: "RETURN_CONSULTATION",
+                    ConfirmPresent: true,
                     ReassignDoctorId: fx.Doctor2Id,
                     Notes: "BS. Một nghỉ phép ngày 12/11, chuyển BS. Hai cùng chuyên khoa đọc kết quả"),
                 fx.Reception1UserId,
@@ -1034,6 +1038,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             // Reception coordinates same-visit CLINICAL_REVIEW (zero extra examination charge)
             var clinicalReviewResume = await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(
                 Target: "RETURN_CONSULTATION",
+                ConfirmPresent: true,
                 CoordinationPurpose: QueueCoordinationPurposes.ClinicalReview,
                 Notes: "Điều phối gặp bác sĩ đánh giá lại chỉ định quá hạn"));
             Assert.Single(clinicalReviewResume.ResumedQueues);
@@ -1107,6 +1112,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             // Reception coordinates RESULT_CONCLUSION without clinical override; Doctor must approve overdue snapshot before conclusion
             await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(
                 Target: "RETURN_CONSULTATION",
+                ConfirmPresent: true,
                 Notes: "Tiếp nhận khám kết luận quá hạn để bác sĩ xác nhận giá trị lâm sàng"));
 
             var callOverdueReturnRes = await _client.SendAsync(AuthedPostJson(
@@ -1238,7 +1244,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                 StringComparison.Ordinal);
 
             // Complete Visit 1 via Resume on D+1
-            await PostResumeAsync(fx, visit1.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+            await PostResumeAsync(fx, visit1.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
             await CallNextAndCompleteVisitAsync(fx, visit1.VisitCode!, fx.ExamSp1Id, fx.Doctor1UserId);
 
             Db.ChangeTracker.Clear();
@@ -1556,7 +1562,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             await FinalizeDiagnosticResultAsync(fx.DiagStaff1UserId, clsBCode, "Kết quả CLS B bình thường.", "Bình thường.");
 
             // Resume Visit 1 (cross-day resumed visit on D+1) and complete it on D+1
-            await PostResumeAsync(fx, visit1.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+            await PostResumeAsync(fx, visit1.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
             await CallNextAndCompleteVisitAsync(fx, visit1.VisitCode!, fx.ExamSp1Id, fx.Doctor1UserId);
 
             // Create a brand-new Visit 2 for OtherPatient on D+1 that enters AWAITING_DIAGNOSTIC / AWAITING_RESULTS
@@ -2011,7 +2017,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                     return await svc.ResumeVisitAsync(
                         fx.Reception1UserId,
                         visit.VisitCode!,
-                        new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", IdempotencyKey: null));
+                        new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", IdempotencyKey: null, ConfirmPresent: true));
                 };
 
                 var t1 = Task.Run(runUnkeyed);
@@ -2081,7 +2087,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                     await svc.ResumeVisitAsync(
                         fx.Reception1UserId,
                         visit.VisitCode!,
-                        new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+                        new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
                     return (Exception?)null;
                 }
                 catch (Exception ex)
@@ -2118,7 +2124,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             if (resumeErr is not null)
             {
                 Assert.IsType<ConflictException>(resumeErr);
-                await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+                await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
             }
 
             Db.ChangeTracker.Clear();
@@ -2264,6 +2270,7 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                     visit.VisitCode!,
                     new ResumeCrossDayVisitRequestDto(
                         Target: "RETURN_CONSULTATION",
+                        ConfirmPresent: true,
                         ReassignDoctorId: fx.Doctor2Id,
                         Notes: "Chuyển BS. Hai tiếp nhận khám kết luận"));
             });
@@ -2523,6 +2530,12 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
         string visitCode,
         ResumeCrossDayVisitRequestDto request)
     {
+        if (string.Equals(request.Target, "RETURN_CONSULTATION", StringComparison.OrdinalIgnoreCase)
+            && request.ConfirmPresent is null)
+        {
+            request = request with { ConfirmPresent = true };
+        }
+
         var res = await _client.SendAsync(AuthedPostJson(
             $"/api/v1/reception/visits/{visitCode}/resume",
             request,

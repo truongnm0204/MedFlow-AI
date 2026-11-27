@@ -687,6 +687,7 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
             // 3) Reception coordinates CLINICAL_REVIEW (zero extra examination charge!)
             var reviewResume = await PostResumeAsync(fx, visit.VisitCode!, new ResumeCrossDayVisitRequestDto(
                 Target: "RETURN_CONSULTATION",
+                ConfirmPresent: true,
                 CoordinationPurpose: QueueCoordinationPurposes.ClinicalReview,
                 Notes: "Điều phối gặp bác sĩ đánh giá lại chỉ định quá hạn"));
             Assert.Single(reviewResume.ResumedQueues);
@@ -838,7 +839,7 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
             var returnResume = await PostResumeAsync(
                 fx,
                 visit.VisitCode!,
-                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+                new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
             Assert.Single(returnResume.ResumedQueues);
 
             var callRes = await _client.SendAsync(AuthedPostJson(
@@ -1121,6 +1122,7 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
                 visit.VisitCode!,
                 new ResumeCrossDayVisitRequestDto(
                     Target: "RETURN_CONSULTATION",
+                    ConfirmPresent: true,
                     ReassignDoctorId: fx.Doctor2Id,
                     TargetServicePointId: fx.ExamSp2Id,
                     Notes: "BS Một nghỉ phép, điều phối sang BS Hai khám kết luận"));
@@ -1580,6 +1582,12 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
         string visitCode,
         ResumeCrossDayVisitRequestDto request)
     {
+        if (string.Equals(request.Target, "RETURN_CONSULTATION", StringComparison.OrdinalIgnoreCase)
+            && request.ConfirmPresent is null)
+        {
+            request = request with { ConfirmPresent = true };
+        }
+
         var res = await _client.SendAsync(AuthedPostJson(
             $"/api/v1/reception/visits/{visitCode}/resume",
             request,
@@ -1697,7 +1705,7 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
         var currentVisit = await Db.Visits.AsNoTracking().SingleAsync(v => v.VisitCode == visitCode);
         if (string.Equals(currentVisit.Status, "AWAITING_RESULTS", StringComparison.OrdinalIgnoreCase))
         {
-            await PostResumeAsync(fx, visitCode, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+            await PostResumeAsync(fx, visitCode, new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION", ConfirmPresent: true));
             currentVisit = await Db.Visits.AsNoTracking().SingleAsync(v => v.VisitCode == visitCode);
         }
 
