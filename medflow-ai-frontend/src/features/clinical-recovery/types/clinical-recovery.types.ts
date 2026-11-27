@@ -54,10 +54,20 @@ export interface ClinicalRecoveryQueueDto {
 }
 
 /**
- * Deliberately carries no reason text: reasons live in `audit_logs` only and never travel through
- * API or SignalR payloads (decision D7).
+ * Lifecycle reasons are returned to actors that passed visibility/scope (D7 revise).
+ * They never travel through SignalR payloads or application log bodies; the UI must
+ * still warn actors not to put patient identifiers in the reason text.
  */
-export interface ClinicalRecoveryRequestDto {
+export interface ClinicalRecoveryReasonFields {
+  requestReason?: string | null;
+  grantReason?: string | null;
+  recoveryReason?: string | null;
+  revocationReason?: string | null;
+  rejectionReason?: string | null;
+  cancellationReason?: string | null;
+}
+
+export interface ClinicalRecoveryRequestDto extends ClinicalRecoveryReasonFields {
   requestId: number;
   status: ClinicalRecoveryStatus;
   hospitalId: number;
@@ -113,6 +123,36 @@ export interface ClinicalRecoveryConfirmResponseDto {
   visitStatus: string;
   recoveredAt: string;
   isIdempotentReplay: boolean;
+}
+/**
+ * Scoped list projection for `GET /api/v1/clinical-session-recovery-requests` (Commit B).
+ * Reasons are included for actors that passed visibility/scope.
+ */
+export interface ClinicalRecoveryListItemDto extends ClinicalRecoveryReasonFields {
+  requestId: number;
+  status: ClinicalRecoveryStatus;
+  hospitalId: number;
+  visitId: number;
+  visitCode: string;
+  queueEntryId: number;
+  originalDoctorId: number | null;
+  authorizedDoctorId: number | null;
+  expectedQueueStateVersion: number;
+  requestedAt: string;
+  grantedAt: string | null;
+  expiresAt: string | null;
+  recoveredAt: string | null;
+}
+
+/** Candidate doctor for `POST grant` — minimal identity/department/specialty for selection. */
+export interface ClinicalRecoveryEligibleRecipientDto {
+  doctorId: number;
+  doctorCode: string;
+  doctorName: string;
+  departmentId: number | null;
+  departmentName: string | null;
+  specialtyId: number | null;
+  specialtyName: string | null;
 }
 
 export interface CreateClinicalRecoveryRequestPayload {

@@ -113,6 +113,7 @@ export function ExaminationQueuePage() {
   const [isCrossDayResumeOpen, setIsCrossDayResumeOpen] = useState(false);
   const [isReturnCoordinationOpen, setIsReturnCoordinationOpen] = useState(false);
   const [isClinicalRecoveryOpen, setIsClinicalRecoveryOpen] = useState(false);
+  const [recoveryVisitCode, setRecoveryVisitCode] = useState<string | null>(null);
   const [isJourneySlipOpen, setIsJourneySlipOpen] = useState(false);
   const defaultQueueDate = useMemo(() => getHospitalTodayIso(), []);
 
@@ -1068,6 +1069,11 @@ export function ExaminationQueuePage() {
           <ReturnCoordinationModal
             open
             onClose={() => setIsReturnCoordinationOpen(false)}
+            onRecoveryRequired={(visitCode) => {
+              setIsReturnCoordinationOpen(false);
+              setRecoveryVisitCode(visitCode);
+              setIsClinicalRecoveryOpen(true);
+            }}
             onEnrolled={(res) => {
               void refetch();
               setIsReturnCoordinationOpen(false);
@@ -1081,6 +1087,7 @@ export function ExaminationQueuePage() {
         {isClinicalRecoveryOpen && (
           <ClinicalRecoveryModal
             open
+            initialVisitCode={recoveryVisitCode}
             onClose={() => setIsClinicalRecoveryOpen(false)}
             onApplied={(message) => {
               void refetch();

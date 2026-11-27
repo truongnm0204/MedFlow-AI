@@ -9,6 +9,8 @@ import {
   confirmClinicalRecoveryApi,
   createClinicalRecoveryRequestApi,
   fetchClinicalRecoveryContextApi,
+  fetchClinicalRecoveryEligibleRecipientsApi,
+  fetchClinicalRecoveryListApi,
   grantClinicalRecoveryApi,
   rejectClinicalRecoveryApi,
   revokeClinicalRecoveryApi,
@@ -26,6 +28,15 @@ describe('clinical recovery API paths', () => {
     expect(api.get).toHaveBeenCalledWith('/visits/VISIT%201/clinical-session-recovery-context');
   });
 
+  it('lists scoped requests and eligible recipients (Commit B endpoints)', async () => {
+    await fetchClinicalRecoveryListApi();
+    await fetchClinicalRecoveryEligibleRecipientsApi(101);
+
+    expect(api.get.mock.calls.map((call) => call[0])).toStrictEqual([
+      '/clinical-session-recovery-requests',
+      '/clinical-session-recovery-requests/101/eligible-recipients',
+    ]);
+  });
   it('creates a request under the visit route', async () => {
     const payload = { queueEntryId: 801, expectedStateVersion: 8, reason: 'Gián đoạn.' };
 

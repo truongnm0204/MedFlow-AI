@@ -4,6 +4,8 @@ import type {
   ClinicalRecoveryConfirmResponseDto,
   ClinicalRecoveryContextDto,
   ClinicalRecoveryDecisionPayload,
+  ClinicalRecoveryEligibleRecipientDto,
+  ClinicalRecoveryListItemDto,
   ClinicalRecoveryRequestDto,
   ConfirmClinicalRecoveryRequestPayload,
   CreateClinicalRecoveryRequestPayload,
@@ -15,6 +17,24 @@ const visitRecoveryPath = (visitIdOrCode: string) =>
 
 const requestRecoveryPath = (requestId: number) =>
   `/clinical-session-recovery-requests/${requestId}`;
+
+/** GET /api/v1/clinical-session-recovery-requests — PM-approved scoped list (Commit B). */
+export async function fetchClinicalRecoveryListApi(): Promise<ClinicalRecoveryListItemDto[]> {
+  const { data } = await apiClient.get<ClinicalRecoveryListItemDto[]>(
+    '/clinical-session-recovery-requests',
+  );
+  return data;
+}
+
+/** GET /api/v1/clinical-session-recovery-requests/{id}/eligible-recipients (Commit B). */
+export async function fetchClinicalRecoveryEligibleRecipientsApi(
+  requestId: number,
+): Promise<ClinicalRecoveryEligibleRecipientDto[]> {
+  const { data } = await apiClient.get<ClinicalRecoveryEligibleRecipientDto[]>(
+    `${requestRecoveryPath(requestId)}/eligible-recipients`,
+  );
+  return data;
+}
 
 /** GET /api/v1/visits/{idOrCode}/clinical-session-recovery-context */
 export async function fetchClinicalRecoveryContextApi(

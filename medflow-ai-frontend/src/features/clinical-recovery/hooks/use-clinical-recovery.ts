@@ -5,6 +5,8 @@ import {
   confirmClinicalRecoveryApi,
   createClinicalRecoveryRequestApi,
   fetchClinicalRecoveryContextApi,
+  fetchClinicalRecoveryEligibleRecipientsApi,
+  fetchClinicalRecoveryListApi,
   grantClinicalRecoveryApi,
   rejectClinicalRecoveryApi,
   revokeClinicalRecoveryApi,
@@ -19,6 +21,10 @@ import type {
 const recoveryQueryKey = (visitIdOrCode: string) =>
   ['clinical-recovery', visitIdOrCode.trim()] as const;
 
+const RECOVERY_LIST_KEY = ['clinical-recovery-list'] as const;
+const eligibleRecipientsKey = (requestId: number) =>
+  ['clinical-recovery-eligible-recipients', requestId] as const;
+
 export function useClinicalRecoveryContext(visitIdOrCode: string) {
   const trimmed = visitIdOrCode.trim();
   return useQuery({
@@ -29,14 +35,36 @@ export function useClinicalRecoveryContext(visitIdOrCode: string) {
   });
 }
 
+/** Scoped recovery request list (Doctor grant/confirm scope, Reception hospital scope). */
+export function useClinicalRecoveryList(enabled: boolean) {
+  return useQuery({
+    queryKey: RECOVERY_LIST_KEY,
+    queryFn: fetchClinicalRecoveryListApi,
+    enabled,
+    retry: false,
+  });
+}
+
+/** Eligible recipients for granting one request — active doctors with RECOVER + clinical scope. */
+export function useClinicalRecoveryEligibleRecipients(requestId: number | null) {
+  return useQuery({
+    queryKey: eligibleRecipientsKey(requestId ?? 0),
+    queryFn: () => fetchClinicalRecoveryEligibleRecipientsApi(requestId ?? 0),
+    enabled: requestId != null && requestId > 0,
+    retry: false,
+  });
+}
+
 /**
  * Mutations for one visit's recovery context. Every mutation invalidates the context so capability
  * flags and request states are re-read from the server instead of being patched locally.
  */
 export function useClinicalRecoveryActions(visitIdOrCode: string) {
   const queryClient = useQueryClient();
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: recoveryQueryKey(visitIdOrCode) });
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: recoveryQueryKey(visitIdOrCode) });
+    void queryClient.invalidateQueries({ queryKey: RECOVERY_LIST_KEY });
+  };
 
   const request = useMutation({
     mutationFn: (payload: CreateClinicalRecoveryRequestPayload) =>

@@ -9,6 +9,12 @@ import { Input } from '@/shared/ui/input';
 import { Modal } from '@/shared/ui/modal';
 import { Spinner } from '@/shared/ui/spinner';
 
+import {
+  useClinicalRecoveryActions,
+  useClinicalRecoveryContext,
+  useClinicalRecoveryEligibleRecipients,
+  useClinicalRecoveryList,
+} from '../hooks/use-clinical-recovery';
 import { getCoordinationErrorMessage } from '../lib/coordination-error-message';
 import {
   confirmRecoverySchema,
@@ -16,15 +22,12 @@ import {
   grantRecoverySchema,
   recoveryDecisionSchema,
 } from '../schemas/clinical-recovery.schema';
-import {
-  useClinicalRecoveryActions,
-  useClinicalRecoveryContext,
-} from '../hooks/use-clinical-recovery';
 import type {
+  ClinicalRecoveryDecisionPayload,
+  ClinicalRecoveryReasonFields,
+  ConfirmClinicalRecoveryRequestPayload,
   CreateClinicalRecoveryRequestPayload,
   GrantClinicalRecoveryRequestPayload,
-  ConfirmClinicalRecoveryRequestPayload,
-  ClinicalRecoveryDecisionPayload,
 } from '../types/clinical-recovery.types';
 import { ClinicalRecoveryStatusBadge } from './clinical-recovery-status-badge';
 
@@ -53,6 +56,15 @@ interface ActionTarget {
   expectedStateVersion?: number;
 }
 
+const REASON_LABELS: Array<{ key: keyof ClinicalRecoveryReasonFields; label: string }> = [
+  { key: 'requestReason', label: 'Lý do yêu cầu' },
+  { key: 'grantReason', label: 'Lý do cấp uỷ quyền' },
+  { key: 'recoveryReason', label: 'Lý do phục hồi' },
+  { key: 'revocationReason', label: 'Lý do thu hồi' },
+  { key: 'rejectionReason', label: 'Lý do từ chối' },
+  { key: 'cancellationReason', label: 'Lý do rút yêu cầu' },
+];
+
 function newIdempotencyKey(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID().slice(0, 48);
@@ -66,6 +78,25 @@ function formatDateTime(value: string | null): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString('vi-VN');
 }
 
+/** PHI warning repeated verbatim next to every free-text reason field. */
+const PHI_WARNING =
+  'Không nhập thông tin nhận diện bệnh nhân (họ tên, mã bệnh nhân, SĐT, địa chỉ). Lý do được người khác đọc để đánh giá độc lập và lưu trong nhật ký kiểm toán.';
+
+function ReasonList({ reasons }: { reasons: ClinicalRecoveryReasonFields }) {
+  const entries = REASON_LABELS.filter(({ key }) => Boolean(reasons[key]?.trim()));
+  if (entries.length === 0) return null;
+  return (
+    <dl className="mt-2 space-y-1 border-t border-border pt-2">
+      {entries.map(({ key, label }) => (
+        <div key={key} className="grid grid-cols-[9rem_1fr] gap-2">
+          <dt className="text-[11px] font-semibold uppercase tracking-wide text-sub">{label}</dt>
+          <dd className="text-xs text-ink">{reasons[key]}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export function ClinicalRecoveryModal({
   open,
   initialVisitCode,
@@ -77,14 +108,19 @@ export function ClinicalRecoveryModal({
   const [target, setTarget] = useState<ActionTarget | null>(null);
   const [reason, setReason] = useState('');
   const [confirmInterrupted, setConfirmInterrupted] = useState(false);
-  const [authorizedDoctorId, setAuthorizedDoctorId] = useState('');
+  const [recipientDoctorId, setRecipientDoctorId] = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const contextQuery = useClinicalRecoveryContext(activeVisitCode);
+  const listQuery = useClinicalRecoveryList(open && !activeVisitCode);
   const actions = useClinicalRecoveryActions(activeVisitCode);
   const context = contextQuery.data;
+
+  const recipientsQuery = useClinicalRecoveryEligibleRecipients(
+    target?.action === 'GRANT' ? (target.requestId ?? null) : null,
+  );
 
   const pending =
     actions.request.isPending ||
@@ -113,7 +149,7 @@ export function ClinicalRecoveryModal({
       setTarget(null);
       setReason('');
       setConfirmInterrupted(false);
-      setAuthorizedDoctorId('');
+      setRecipientDoctorId('');
       setFormError(null);
       setNotice(null);
     }
@@ -128,13 +164,22 @@ export function ClinicalRecoveryModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialVisitCode]);
 
+  const loadVisitContext = (visitCode: string) => {
+    const trimmed = visitCode.trim();
+    if (!trimmed) return;
+    setVisitCodeInput(trimmed);
+    setActiveVisitCode(trimmed);
+    setTarget(null);
+    setNotice(null);
+  };
+
   const startAction = (next: ActionTarget) => {
     setTarget(next);
     setReason('');
     setFormError(null);
     setNotice(null);
     setConfirmInterrupted(false);
-    setAuthorizedDoctorId('');
+    setRecipientDoctorId('');
     setIdempotencyKey(next.action === 'CONFIRM' ? newIdempotencyKey() : '');
   };
 
@@ -164,7 +209,7 @@ export function ClinicalRecoveryModal({
 
       if (target.action === 'GRANT') {
         const payload: GrantClinicalRecoveryRequestPayload = {
-          authorizedDoctorId: Number(authorizedDoctorId),
+          authorizedDoctorId: Number(recipientDoctorId),
           expectedStateVersion: target.expectedStateVersion ?? 0,
           reason,
         };
@@ -221,6 +266,12 @@ export function ClinicalRecoveryModal({
     ? getCoordinationErrorMessage(contextQuery.error, 'Không tải được ngữ cảnh phục hồi.')
     : null;
 
+  const listError = listQuery.isError
+    ? getCoordinationErrorMessage(listQuery.error, 'Không tải được danh sách yêu cầu phục hồi.')
+    : null;
+
+  const requestsInScope = listQuery.data ?? [];
+
   return (
     <Modal open={open} onClose={onClose} maxWidth="max-w-4xl">
       <div className="flex items-start justify-between gap-4 border-b border-border pb-4">
@@ -236,6 +287,51 @@ export function ClinicalRecoveryModal({
         </div>
       </div>
 
+      {/* Scoped list as the entry point — picking a row loads the visit context. */}
+      {!activeVisitCode && (
+        <section className="mt-4">
+          <h3 className="mb-2 text-sm font-semibold text-ink">
+            Yêu cầu phục hồi trong phạm vi của bạn
+          </h3>
+          {listQuery.isFetching && (
+            <div className="flex items-center gap-2 text-xs text-sub">
+              <Spinner /> Đang tải danh sách yêu cầu…
+            </div>
+          )}
+          {listError && <Alert tone="error">{listError}</Alert>}
+          {!listQuery.isFetching && !listError && requestsInScope.length === 0 && (
+            <p className="text-xs text-sub">
+              Không có yêu cầu phục hồi nào trong phạm vi của bạn. Nhập mã lượt khám bên dưới để tạo
+              yêu cầu mới cho một vé bị gián đoạn.
+            </p>
+          )}
+          {requestsInScope.length > 0 && (
+            <ul className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-border">
+              {requestsInScope.map((item) => (
+                <li key={item.requestId}>
+                  <button
+                    type="button"
+                    onClick={() => loadVisitContext(item.visitCode)}
+                    className="flex w-full flex-wrap items-center justify-between gap-3 px-3 py-2 text-left text-xs transition-colors hover:bg-canvas"
+                  >
+                    <span className="flex flex-wrap items-center gap-3">
+                      <span className="font-semibold text-ink">#{item.requestId}</span>
+                      <ClinicalRecoveryStatusBadge status={item.status} />
+                      <span className="text-sub">{item.visitCode}</span>
+                      <span className="text-sub">Tạo lúc {formatDateTime(item.requestedAt)}</span>
+                      {item.expiresAt && (
+                        <span className="text-sub">Hết hạn {formatDateTime(item.expiresAt)}</span>
+                      )}
+                    </span>
+                    <span className="text-[11px] font-semibold text-primary">Mở lượt khám</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
       <div className="mt-4 flex items-end gap-3">
         <Input
           label="Mã lượt khám"
@@ -246,15 +342,24 @@ export function ClinicalRecoveryModal({
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => {
-            setActiveVisitCode(visitCodeInput.trim());
-            setTarget(null);
-            setNotice(null);
-          }}
+          onClick={() => loadVisitContext(visitCodeInput)}
           disabled={visitCodeInput.trim().length === 0}
         >
           Tải ngữ cảnh
         </Button>
+        {activeVisitCode && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setActiveVisitCode('');
+              setTarget(null);
+              setNotice(null);
+            }}
+          >
+            Quay lại danh sách
+          </Button>
+        )}
       </div>
 
       {contextQuery.isFetching && (
@@ -453,6 +558,7 @@ export function ClinicalRecoveryModal({
                           </div>
                         )}
                       </div>
+                      <ReasonList reasons={request} />
                     </li>
                   );
                 })}
@@ -473,13 +579,47 @@ export function ClinicalRecoveryModal({
               </h3>
 
               {target.action === 'GRANT' && (
-                <Input
-                  label="Mã bác sĩ nhận uỷ quyền"
-                  inputMode="numeric"
-                  placeholder="VD: 25"
-                  value={authorizedDoctorId}
-                  onChange={(event) => setAuthorizedDoctorId(event.target.value)}
-                />
+                <div>
+                  <label
+                    htmlFor="recovery-recipient"
+                    className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-700"
+                  >
+                    Bác sĩ nhận uỷ quyền
+                  </label>
+                  {recipientsQuery.isFetching ? (
+                    <div className="flex items-center gap-2 text-xs text-sub">
+                      <Spinner /> Đang tải danh sách bác sĩ đủ điều kiện…
+                    </div>
+                  ) : recipientsQuery.isError ? (
+                    <Alert tone="error">
+                      {getCoordinationErrorMessage(
+                        recipientsQuery.error,
+                        'Không tải được danh sách bác sĩ đủ điều kiện.',
+                      )}
+                    </Alert>
+                  ) : (recipientsQuery.data ?? []).length === 0 ? (
+                    <Alert tone="warning">
+                      Không có bác sĩ nào đủ điều kiện (cùng bệnh viện, cùng chuyên khoa, có quyền
+                      phục hồi). Không thể cấp uỷ quyền cho yêu cầu này.
+                    </Alert>
+                  ) : (
+                    <select
+                      id="recovery-recipient"
+                      className="w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink focus:border-primary focus:outline-none"
+                      value={recipientDoctorId}
+                      onChange={(event) => setRecipientDoctorId(event.target.value)}
+                    >
+                      <option value="">— Chọn bác sĩ —</option>
+                      {(recipientsQuery.data ?? []).map((recipient) => (
+                        <option key={recipient.doctorId} value={recipient.doctorId}>
+                          {recipient.doctorName} ({recipient.doctorCode})
+                          {recipient.departmentName ? ` — ${recipient.departmentName}` : ''}
+                          {recipient.specialtyName ? ` · ${recipient.specialtyName}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
               )}
 
               {target.action === 'CONFIRM' && (
@@ -497,20 +637,19 @@ export function ClinicalRecoveryModal({
                 </label>
               )}
 
-              <label className="mt-3 block text-xs font-semibold uppercase tracking-wide text-slate-700">
-                Lý do
-                <textarea
-                  className="mt-2 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink focus:border-primary focus:outline-none"
-                  rows={3}
-                  value={reason}
-                  onChange={(event) => setReason(event.target.value)}
-                  placeholder="Nêu căn cứ nghiệp vụ. Không nhập thông tin nhận diện bệnh nhân."
-                />
-              </label>
-              <p className="mt-1 text-[11px] text-sub">
-                Lý do được lưu trong nhật ký kiểm toán; không xuất hiện trong log hay sự kiện
-                realtime.
-              </p>
+              <div className="mt-3">
+                <Alert tone="warning">{PHI_WARNING}</Alert>
+                <label className="mt-2 block text-xs font-semibold uppercase tracking-wide text-slate-700">
+                  Lý do
+                  <textarea
+                    className="mt-2 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink focus:border-primary focus:outline-none"
+                    rows={3}
+                    value={reason}
+                    onChange={(event) => setReason(event.target.value)}
+                    placeholder="Nêu căn cứ nghiệp vụ, 3–500 ký tự, không chứa ký tự < hoặc >."
+                  />
+                </label>
+              </div>
 
               {formError && (
                 <div className="mt-3">
@@ -523,7 +662,11 @@ export function ClinicalRecoveryModal({
                   variant="primary"
                   size="sm"
                   onClick={() => void handleSubmit()}
-                  disabled={pending}
+                  disabled={
+                    pending ||
+                    (target.action === 'GRANT' &&
+                      ((recipientsQuery.data ?? []).length === 0 || !recipientDoctorId))
+                  }
                 >
                   {pending ? (
                     <Spinner />
