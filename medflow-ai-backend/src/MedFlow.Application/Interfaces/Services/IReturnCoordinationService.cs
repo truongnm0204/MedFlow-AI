@@ -14,5 +14,9 @@ public interface IReturnCoordinationService
         string visitIdOrCode,
         CreateReturnEnrollmentRequestDto? request = null,
         string? ipAddress = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? legacyAuditAction = null,
+        string? legacyAuditReason = null,
+        bool legacyReadinessOverride = false,
+        long? legacySourceQueueEntryId = null);
 }

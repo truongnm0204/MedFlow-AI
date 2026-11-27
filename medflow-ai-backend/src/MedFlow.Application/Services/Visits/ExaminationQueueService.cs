@@ -61,6 +61,7 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
     private readonly TimeProvider _timeProvider;
     private readonly IRealtimeNotificationPublisher _realtimePublisher;
     private readonly IVisitChargeSettlementReader _settlementReader;
+    private readonly IReturnCoordinationService? _returnCoordination;
 
     public const string UnpaidExaminationFeeReason = "UNPAID_EXAMINATION_FEE";
 
@@ -68,12 +69,14 @@ public sealed partial class ExaminationQueueService : IExaminationQueueService
         IApplicationDbContext db,
         TimeProvider timeProvider,
         IRealtimeNotificationPublisher? realtimePublisher = null,
-        IVisitChargeSettlementReader? settlementReader = null)
+        IVisitChargeSettlementReader? settlementReader = null,
+        IReturnCoordinationService? returnCoordination = null)
     {
         _db = db;
         _timeProvider = timeProvider;
         _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
         _settlementReader = settlementReader ?? new MedFlow.Application.Services.Payments.VisitChargeSettlementReader(_db, _timeProvider);
+        _returnCoordination = returnCoordination;
     }
 
     private Task PublishExaminationQueueChangedAsync(

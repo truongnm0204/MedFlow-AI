@@ -227,7 +227,11 @@ public sealed class ReturnCoordinationService : IReturnCoordinationService
         string visitIdOrCode,
         CreateReturnEnrollmentRequestDto? request = null,
         string? ipAddress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? legacyAuditAction = null,
+        string? legacyAuditReason = null,
+        bool legacyReadinessOverride = false,
+        long? legacySourceQueueEntryId = null)
     {
         request ??= new CreateReturnEnrollmentRequestDto();
 
@@ -418,6 +422,32 @@ public sealed class ReturnCoordinationService : IReturnCoordinationService
 
                 PatientSingleActiveQueueGuard.CloseStalePriorDayQueuesOnVisit(visitQueues, todayLocal, nowLocal);
 
+                // Legacy return-to-doctor adapter: close its source EXAMINATION ticket inside this same
+                // transaction (COMPLETED, or DEFERRED when a prior-day ticket never started), mirroring the
+                // verified legacy behavior while keeping a single atomic core transaction.
+                if (legacySourceQueueEntryId is long sourceQueueId)
+                {
+                    var sourceQueue = visitQueues.FirstOrDefault(q => q.Id == sourceQueueId && q.VisitId == visit.Id);
+                    if (sourceQueue is not null && !sourceQueue.CompletedAt.HasValue)
+                    {
+                        var sourceStatus = AppointmentBookingRules.NormalizeStatusKey(sourceQueue.Status);
+                        if (sourceStatus is not ("COMPLETED" or "CANCELLED" or "DEFERRED"))
+                        {
+                            var isPriorDayUnstarted = sourceQueue.QueueDate.HasValue &&
+                                                      sourceQueue.QueueDate.Value < todayLocal &&
+                                                      !sourceQueue.StartedAt.HasValue;
+                            sourceQueue.Status = isPriorDayUnstarted ? "DEFERRED" : "COMPLETED";
+                            if (sourceQueue.Status == "DEFERRED")
+                            {
+                                sourceQueue.PresenceStatus = "LEFT";
+                                sourceQueue.CalledAt = null;
+                            }
+                            sourceQueue.CompletedAt ??= nowLocal;
+                            sourceQueue.StateVersion = (sourceQueue.StateVersion is > 0 ? sourceQueue.StateVersion.Value : 1) + 1;
+                        }
+                    }
+                }
+
                 var visitOrders = await _db.DiagnosticOrders
                     .Where(o => o.VisitId == visitId)
                     .OrderBy(o => o.Id)
@@ -475,7 +505,8 @@ public sealed class ReturnCoordinationService : IReturnCoordinationService
                 }
                 else
                 {
-                    var isReady = visit.ReadyForReturnAt.HasValue ||
+                    var isReady = legacyReadinessOverride ||
+                                  visit.ReadyForReturnAt.HasValue ||
                                   await DiagnosticOrderLifecycleHelper.EvaluateVisitReturnReadinessAsync(_db, visitId, ct: ct);
                     if (!isReady)
                     {
@@ -581,7 +612,7 @@ public sealed class ReturnCoordinationService : IReturnCoordinationService
                     visit.PatientId,
                     visitHospitalId,
                     todayLocal,
-                    excludeQueueEntryId: existingReturn?.Id,
+                    excludeQueueEntryId: existingReturn?.Id ?? legacySourceQueueEntryId,
                     ct: ct);
 
                 var candidates = await BuildDoctorCandidatesAsync(
@@ -814,6 +845,31 @@ public sealed class ReturnCoordinationService : IReturnCoordinationService
                             queueEntryId = ticket.Id,
                             coordinationPurpose = purpose,
                             assignedDoctorId = targetDoctor.Id,
+                        }, AuditJsonOptions),
+                        IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+                        OccurredAt = nowUtc,
+                    });
+                }
+
+                if (!string.IsNullOrWhiteSpace(legacyAuditAction))
+                {
+                    _db.AuditLogs.Add(new AuditLog
+                    {
+                        ActorUserId = actorUserId,
+                        HospitalId = visitHospitalId,
+                        Action = legacyAuditAction!,
+                        EntityType = QueueStatusService.QueueEntryEntityType,
+                        EntityId = ticket.Id.ToString(CultureInfo.InvariantCulture),
+                        Reason = legacyAuditReason,
+                        ChangeData = JsonSerializer.Serialize(new
+                        {
+                            queueEntryId = ticket.Id,
+                            visitId,
+                            visitCode,
+                            actionOutcome = isReplay ? "REUSED" : "CREATED",
+                            queueType = ClinicalQueueRules.QueueTypeReturnConsultation,
+                            coordinationPurpose = purpose,
+                            stateVersion = ticket.StateVersion,
                         }, AuditJsonOptions),
                         IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
                         OccurredAt = nowUtc,
@@ -1511,7 +1567,8 @@ public sealed class ReturnCoordinationService : IReturnCoordinationService
                 sp.IsActive != false &&
                 (sp.PointType == null ||
                  string.Equals(sp.PointType.Trim(), "EXAMINATION_ROOM", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(sp.PointType.Trim(), "EXAMINATION", StringComparison.OrdinalIgnoreCase)) &&
+                 string.Equals(sp.PointType.Trim(), "EXAMINATION", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(sp.PointType.Trim(), "DOCTOR", StringComparison.OrdinalIgnoreCase)) &&
                 (!sp.RoomId.HasValue ||
                  (roomsById.TryGetValue(sp.RoomId.Value, out var room) &&
                   string.Equals(room.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase))))

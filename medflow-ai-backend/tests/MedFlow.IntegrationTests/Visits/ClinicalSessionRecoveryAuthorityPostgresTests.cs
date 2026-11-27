@@ -1352,6 +1352,129 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
         }
     }
 
+    [Fact]
+    public async Task CommitB_PermissionRevocationAtMutationPoint_BlocksConfirm()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCXPR");
+        try
+        {
+            using var scope = Factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+            var svc = NewService(db);
+
+            var request = await svc.RequestRecoveryAsync(
+                fx.ReceptionUserId, fx.Visit1Code,
+                new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, "Seed for permission revocation."));
+            await svc.GrantAsync(
+                fx.DoctorAUserId, request.RequestId,
+                new GrantClinicalSessionRecoveryRequestDto(fx.DoctorBId, 4, "Grant before permission revocation."));
+
+            var recoverRoleId = await Db.UserRoles.AsNoTracking()
+                .Where(ur => ur.UserId == fx.DoctorBUserId)
+                .Join(Db.Roles.AsNoTracking(), ur => ur.RoleId, r => r.Id, (ur, r) => new { ur.RoleId, r.Code })
+                .Where(x => x.Code.StartsWith("CSRR"))
+                .Select(x => x.RoleId)
+                .SingleAsync();
+            await Db.UserRoles.Where(ur => ur.UserId == fx.DoctorBUserId && ur.RoleId == recoverRoleId)
+                .ExecuteDeleteAsync();
+            try
+            {
+                await Assert.ThrowsAsync<ForbiddenException>(() => svc.ConfirmAsync(
+                    fx.DoctorBUserId, request.RequestId,
+                    new ConfirmClinicalSessionRecoveryRequestDto(4, true, "Attempt after RECOVER revocation.")));
+            }
+            finally
+            {
+                Db.ChangeTracker.Clear();
+                Db.UserRoles.Add(new UserRole { UserId = fx.DoctorBUserId, RoleId = recoverRoleId });
+                await Db.SaveChangesAsync();
+            }
+
+            Db.ChangeTracker.Clear();
+            var queue = await Db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == fx.Queue1Id);
+            Assert.Equal("IN_PROGRESS", queue.Status);
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    [Fact]
+    public async Task CommitB_ExpireVsGrantAndConfirm_NoDuplicateLiveGrantOrConsume()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCXEX");
+        try
+        {
+            long requestId;
+            using (var seedScope = Factory.Services.CreateScope())
+            {
+                var seedDb = seedScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var seedSvc = NewService(seedDb);
+                var request = await seedSvc.RequestRecoveryAsync(
+                    fx.ReceptionUserId, fx.Visit1Code,
+                    new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, "Seed for expiry race."));
+                requestId = request.RequestId;
+                await seedSvc.GrantAsync(
+                    fx.DoctorAUserId, requestId,
+                    new GrantClinicalSessionRecoveryRequestDto(fx.DoctorBId, 4, "Grant for expiry race."));
+            }
+
+            _clock.SetVietnamLocalTime(new DateTime(2026, 11, 27, 12, 0, 0, DateTimeKind.Unspecified));
+
+            using var gate = new SemaphoreSlim(0, 2);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            async Task<string> Attempt(bool confirm)
+            {
+                using var scope = Factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var svc = NewService(db);
+                gate.Release();
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                try
+                {
+                    if (confirm)
+                    {
+                        await svc.ConfirmAsync(
+                            fx.DoctorBUserId, requestId,
+                            new ConfirmClinicalSessionRecoveryRequestDto(4, true, "Confirm after expiry."));
+                        return "CONFIRM";
+                    }
+
+                    await svc.GrantAsync(
+                        fx.DoctorAUserId, requestId,
+                        new GrantClinicalSessionRecoveryRequestDto(fx.DoctorCId, 4, "Re-grant after expiry."));
+                    return "GRANT";
+                }
+                catch (ConflictException)
+                {
+                    return "CONFLICT";
+                }
+            }
+
+            var t1 = Task.Run(() => Attempt(true));
+            var t2 = Task.Run(() => Attempt(false));
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            release.SetResult();
+            await Task.WhenAll(t1, t2);
+
+            Db.ChangeTracker.Clear();
+            var row = await Db.ClinicalSessionRecoveryRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
+            Assert.NotEqual(ClinicalSessionRecoveryStatuses.Recovered, row.Status);
+            Assert.Equal(0, await Db.ClinicalSessionRecoveryRequests.CountAsync(r =>
+                r.QueueEntryId == fx.Queue1Id && r.Status == ClinicalSessionRecoveryStatuses.Granted));
+            var queue = await Db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == fx.Queue1Id);
+            Assert.Equal("IN_PROGRESS", queue.Status);
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
     private sealed class RecordingRealtimePublisher : IRealtimeNotificationPublisher
     {
         public List<QueueChangedNotification> QueueChanged { get; } = [];
