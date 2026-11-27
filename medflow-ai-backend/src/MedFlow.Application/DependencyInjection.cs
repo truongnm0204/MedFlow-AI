@@ -100,6 +100,7 @@ public static class DependencyInjection
         services.AddScoped<ICheckInScheduledPatientService, CheckInScheduledPatientService>();
         services.AddScoped<ICreateWalkInVisitService, CreateWalkInVisitService>();
         services.AddScoped<IVisitCrossDayLifecycleService, VisitCrossDayLifecycleService>();
+        services.AddScoped<IClinicalSessionRecoveryService, ClinicalSessionRecoveryService>();
         services.AddScoped<IReturnCoordinationService, ReturnCoordinationService>();
         services.AddScoped<IVisitQueueEnrollmentService, VisitQueueEnrollmentService>();
         services.AddScoped<IPaymentEnrollmentIntentProcessor, PaymentEnrollmentIntentProcessor>();

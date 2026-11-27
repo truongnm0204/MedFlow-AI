@@ -195,8 +195,9 @@ public static class PatientSingleActiveQueueGuard
             }
 
             var status = AppointmentBookingRules.NormalizeStatusKey(q.Status);
-            if (status is "COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED" or "NO_SHOW" or "SKIPPED" or "RESERVED"
-                or "IN_PROGRESS" or "IN_CONSULTATION" or "SERVING")
+            // Allowlist only unstarted tickets. CALLED is intermediate and IN_PROGRESS / IN_CONSULTATION /
+            // SERVING are active execution: none may be auto-deferred because of QueueDate (decision doc §4.1).
+            if (status is not ("WAITING" or "READY"))
             {
                 continue;
             }

@@ -40,12 +40,14 @@ database/
 │   ├── 025_cross_day_visit_presence_and_resume_tracking.sql # ADR-0060 Stage C durable daily presence (visits.last_present_date/presence_state/last_resumed_at) & queue_entries.idempotency_key
 │   ├── 026_clinical_revalidation_overdue_approval_and_review_purpose.sql # ADR-0061 Stage E1 diagnostic_orders clinical revalidation, visits overdue return snapshot approval & queue_entries.coordination_purpose
 │   └── 027_queue_enrollment_intents_pharmacy_and_single_active_index.sql # ADR-0061 Stage E2 QUEUE_ENROLL, visits.presence_session_no, queue_entries target bindings + ux_queue_entries_one_active_post_exam_per_visit, pharmacy room/SP seed & payment_enrollment_intents (Level 16c)
+│   └── 028_clinical_session_recovery_authority.sql # PR #859 F01 Clinical Session Recovery authority: clinical_session_recovery_requests (Level 19), CLINICAL_SESSION_RECOVERY_GRANT/CLINICAL_SESSION_RECOVER catalog-only permissions, single unresolved request per QueueEntry
 ├── scripts/
 │   ├── preflight_023_audit.sql                    # read-only preflight audit for Migration 023
 │   ├── preflight_024_audit.sql                    # read-only preflight audit for Migration 024
 │   ├── preflight_025_audit.sql                    # read-only preflight audit for Migration 025
 │   ├── preflight_026_audit.sql                    # read-only preflight audit for Migration 026
-│   └── preflight_027_audit.sql                    # read-only preflight audit for Migration 027
+│   ├── preflight_027_audit.sql                    # read-only preflight audit for Migration 027
+│   └── preflight_028_audit.sql                    # read-only preflight audit for Migration 028
 └── README.md
 ```
 

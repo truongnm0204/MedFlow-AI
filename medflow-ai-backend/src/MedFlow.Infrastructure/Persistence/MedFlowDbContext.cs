@@ -31,6 +31,9 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
         Payments = 16,
         PaymentAllocations = 17,
         PaymentEnrollmentIntents = 18,
+        // Level 19: clinical_session_recovery_requests. FKs point to users/doctors/visits/queue_entries,
+        // so it is always locked after levels 01..11 (ADR-0059 extension, Commit A / PR #859).
+        ClinicalSessionRecoveryRequests = 19,
     }
 
     public MedFlowDbContext(DbContextOptions<MedFlowDbContext> options) : base(options) { }
@@ -83,6 +86,7 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<DiagnosticResult> DiagnosticResults => Set<DiagnosticResult>();
     public DbSet<DiagnosticResultVersion> DiagnosticResultVersions => Set<DiagnosticResultVersion>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<ClinicalSessionRecoveryRequest> ClinicalSessionRecoveryRequests => Set<ClinicalSessionRecoveryRequest>();
 
     public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => Database.BeginTransactionAsync(ct);
@@ -298,6 +302,15 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public Task<bool> TryLockPaymentEnrollmentIntentsForUpdateAsync(IReadOnlyCollection<long> intentIds, CancellationToken ct = default)
         => LockRowsForUpdateAsync(LockTargetTable.PaymentEnrollmentIntents, intentIds, ct);
 
+    // Level 19: clinical_session_recovery_requests (Commit A / PR #859)
+    public Task<bool> TryLockClinicalSessionRecoveryRequestForUpdateAsync(long requestId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.ClinicalSessionRecoveryRequests, [requestId], ct);
+
+    public Task<bool> TryLockClinicalSessionRecoveryRequestsForUpdateAsync(
+        IReadOnlyCollection<long> requestIds,
+        CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.ClinicalSessionRecoveryRequests, requestIds, ct);
+
     private async Task<bool> LockRowsForUpdateAsync(
         LockTargetTable table,
         IReadOnlyCollection<long> ids,
@@ -361,6 +374,8 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
                 $"SELECT id AS \"Value\" FROM payment_allocations WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
             LockTargetTable.PaymentEnrollmentIntents => await Database.SqlQuery<long>(
                 $"SELECT id AS \"Value\" FROM payment_enrollment_intents WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.ClinicalSessionRecoveryRequests => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM clinical_session_recovery_requests WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
             _ => throw new ArgumentOutOfRangeException(nameof(table), table, "Unsupported lock target table."),
         };
 

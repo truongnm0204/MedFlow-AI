@@ -807,7 +807,11 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                 ? (normalizedTarget == "RETURN_CONSULTATION" ? QueueCoordinationPurposes.ResultConclusion : null)
                 : request.CoordinationPurpose.Trim().ToUpperInvariant();
 
-            // Close any stale prior-day (QueueDate < todayLocal) non-IN_PROGRESS open queue entries -> DEFERRED / LEFT
+            // Prior-day rollover predicate (decision doc §4.1): ONLY unstarted tickets (WAITING / READY)
+            // may be deferred. Any active execution (IN_PROGRESS / IN_CONSULTATION / SERVING) is never
+            // auto-deferred regardless of QueueDate or queue type. Clinical serving sessions fail closed
+            // with CLINICAL_HANDOFF_REQUIRED until Clinical Session Recovery completes; CLS/Pharmacy
+            // execution is a domain conflict (never aborted through the clinical recovery authority).
             var closedPriorDayCount = 0;
             foreach (var staleQueue in visitQueues.Where(q =>
                          q.QueueDate.HasValue &&
@@ -816,12 +820,28 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
             {
                 var qStatus = AppointmentBookingRules.NormalizeStatusKey(staleQueue.Status);
                 var qType = AppointmentBookingRules.NormalizeStatusKey(staleQueue.QueueType);
-                if (qStatus is "COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED" or "NO_SHOW")
+                var effectiveType = string.IsNullOrEmpty(qType)
+                    ? ClinicalQueueRules.QueueTypeExamination
+                    : qType;
+
+                if (qStatus is "COMPLETED" or "DONE" or "CANCELLED" or "DEFERRED" or "NO_SHOW" or "SKIPPED" or "RESERVED")
                 {
                     continue;
                 }
 
-                if (qType == "DIAGNOSTIC" && qStatus is "IN_PROGRESS" or "IN_CONSULTATION" or "SERVING")
+                if (qStatus is "IN_PROGRESS" or "IN_CONSULTATION" or "SERVING")
+                {
+                    if (effectiveType is ClinicalQueueRules.QueueTypeExamination or ClinicalQueueRules.QueueTypeReturnConsultation)
+                    {
+                        throw new ConflictException(ClinicalSessionRecoveryConstants.ClinicalHandoffRequiredMessage);
+                    }
+
+                    throw new ConflictException(
+                        $"[CLINICAL_EXECUTION_IN_PROGRESS] Lượt {effectiveType} đang được thực hiện trực tiếp (IN_PROGRESS) từ ngày trước. Không tự động đóng phiên thực hiện; vui lòng hoàn tất thao tác chuyên môn hiện hành.");
+                }
+
+                // CALLED is an intermediate state: never assumed interrupted, never auto-deferred.
+                if (qStatus is not ("WAITING" or "READY"))
                 {
                     continue;
                 }
@@ -1237,36 +1257,24 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                     .OrderByDescending(q => q.Id)
                     .FirstOrDefault();
 
-                // Cross-day return (re)resume: a return ticket left open on a PRIOR day (e.g. an ongoing/overdue
-                // discussion carried overnight) must be rolled to DEFERRED before minting today's fresh ticket.
-                // Otherwise the single-active guard treats yesterday's still-open ticket as an active serving
-                // queue and rejects the new-day resume with ACTIVE_QUEUE_ALREADY_EXISTS (Stage E2 regression for
-                // cross-day return reassignment). Only applies when there is no same-day ticket to reuse.
+                // Cross-day RETURN handoff (decision doc §4.1 / §11): the canonical prior-day rollover
+                // loop above already deferred only unstarted (WAITING / READY) tickets and rejected
+                // active execution. This block is a defensive fail-closed guard for a prior-day RETURN
+                // ticket in an intermediate/active state (CALLED / IN_PROGRESS / IN_CONSULTATION / SERVING):
+                // never auto-defer it, never treat QueueDate as evidence that the session was interrupted.
                 if (existingTodayReturn is null)
                 {
-                    var stalePriorDayReturns = visitQueues
+                    var unclosedPriorDayReturns = visitQueues
                         .Where(q =>
                             q.QueueDate.HasValue && q.QueueDate.Value < todayLocal &&
+                            !q.CompletedAt.HasValue &&
                             ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation &&
-                            AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("CANCELLED" or "COMPLETED" or "DONE" or "NO_SHOW"))
+                            AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("CANCELLED" or "COMPLETED" or "DONE" or "NO_SHOW" or "DEFERRED" or "SKIPPED" or "RESERVED" or "WAITING" or "READY"))
                         .ToList();
 
-                    foreach (var staleReturn in stalePriorDayReturns)
+                    if (unclosedPriorDayReturns.Count > 0)
                     {
-                        staleReturn.Status = "DEFERRED";
-                        staleReturn.PresenceStatus = "LEFT";
-                        staleReturn.CalledAt = null;
-                        staleReturn.CompletedAt = nowLocal;
-                        staleReturn.BlockedReason = "Lượt khám kết luận của ngày trước được chuyển tiếp sang ngày mới.";
-                        staleReturn.StateVersion = (staleReturn.StateVersion is > 0 ? staleReturn.StateVersion.Value : 1) + 1;
-                        isIdempotentReplay = false;
-                    }
-
-                    if (stalePriorDayReturns.Count > 0)
-                    {
-                        // Flush the DEFERRED rollover so the subsequent single-active guard (which reads the DB,
-                        // not the change tracker) no longer sees the prior-day ticket as an active serving queue.
-                        await _db.SaveChangesAsync(ct);
+                        throw new ConflictException(ClinicalSessionRecoveryConstants.ClinicalHandoffRequiredMessage);
                     }
                 }
 
@@ -1954,10 +1962,7 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
         bool allowPatientRole,
         CancellationToken ct)
     {
-        if (actor.RoleCodes.Contains(RoleNames.SystemAdmin))
-        {
-            return;
-        }
+        // SYSTEM_ADMIN is deliberately NOT a bypass: clinical/administrative scope rules apply to every actor.
 
         if (actor.RoleCodes.Contains(RoleNames.Reception) ||
             actor.RoleCodes.Contains(RoleNames.HospitalAdmin) ||
@@ -2000,11 +2005,7 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
 
     private static void EnsureReceptionResumePermission(ActorContext actor, long? visitHospitalId)
     {
-        if (actor.RoleCodes.Contains(RoleNames.SystemAdmin))
-        {
-            return;
-        }
-
+        // No SYSTEM_ADMIN bypass (DevSecOps F4): admin role never substitutes for clinical/coordination authority.
         var isReceptionOrAdmin = actor.RoleCodes.Contains(RoleNames.Reception) ||
                                  actor.RoleCodes.Contains(RoleNames.HospitalAdmin);
         if (!isReceptionOrAdmin)
@@ -2034,11 +2035,7 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
 
     private static void EnsureDeferPermission(ActorContext actor, long? visitHospitalId)
     {
-        if (actor.RoleCodes.Contains(RoleNames.SystemAdmin))
-        {
-            return;
-        }
-
+        // No SYSTEM_ADMIN bypass (DevSecOps F4).
         var isAllowedStaffRole = actor.RoleCodes.Contains(RoleNames.Reception) ||
                                  actor.RoleCodes.Contains(RoleNames.DiagnosticStaff) ||
                                  actor.RoleCodes.Contains(RoleNames.Doctor) ||

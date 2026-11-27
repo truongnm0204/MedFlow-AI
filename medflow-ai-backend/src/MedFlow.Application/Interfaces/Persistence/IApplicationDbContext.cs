@@ -53,6 +53,7 @@ public interface IApplicationDbContext
     DbSet<DiagnosticResult> DiagnosticResults => throw new NotSupportedException("DiagnosticResults DbSet is not configured in this test context.");
     DbSet<DiagnosticResultVersion> DiagnosticResultVersions => throw new NotSupportedException("DiagnosticResultVersions DbSet is not configured in this test context.");
     DbSet<Notification> Notifications => throw new NotSupportedException("Notifications DbSet is not configured in this test context.");
+    DbSet<ClinicalSessionRecoveryRequest> ClinicalSessionRecoveryRequests => throw new NotSupportedException("ClinicalSessionRecoveryRequests DbSet is not configured in this test context.");
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);
@@ -157,5 +158,11 @@ public interface IApplicationDbContext
     Task<bool> TryLockPaymentEnrollmentIntentForUpdateAsync(long intentId, CancellationToken ct = default)
         => Task.FromResult(false);
     Task<bool> TryLockPaymentEnrollmentIntentsForUpdateAsync(IReadOnlyCollection<long> intentIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 19: clinical_session_recovery_requests (PR #859 / F01 Commit A)
+    Task<bool> TryLockClinicalSessionRecoveryRequestForUpdateAsync(long requestId, CancellationToken ct = default)
+        => Task.FromResult(false);
+    Task<bool> TryLockClinicalSessionRecoveryRequestsForUpdateAsync(IReadOnlyCollection<long> requestIds, CancellationToken ct = default)
         => Task.FromResult(false);
 }
