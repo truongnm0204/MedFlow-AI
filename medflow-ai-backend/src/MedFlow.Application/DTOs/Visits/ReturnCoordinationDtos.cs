@@ -56,7 +56,8 @@ public sealed record CreateReturnEnrollmentRequestDto(
     string? Purpose = null,
     string? ReassignmentReason = null,
     string? Notes = null,
-    string? IdempotencyKey = null);
+    string? IdempotencyKey = null,
+    bool? ConfirmPresent = null);
 
 public sealed record ReturnEnrollmentResponseDto(
     long VisitId,

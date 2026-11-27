@@ -43,17 +43,20 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
     private readonly IVisitChargeSettlementReader _settlementReader;
     private readonly IRealtimeNotificationPublisher _realtimePublisher;
     private readonly TimeProvider _timeProvider;
+    private readonly IReturnCoordinationService? _returnCoordination;
 
     public VisitCrossDayLifecycleService(
         IApplicationDbContext db,
         IVisitChargeSettlementReader settlementReader,
         IRealtimeNotificationPublisher? realtimePublisher = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IReturnCoordinationService? returnCoordination = null)
     {
         _db = db;
         _settlementReader = settlementReader;
         _realtimePublisher = realtimePublisher ?? new NullRealtimeNotificationPublisher();
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _returnCoordination = returnCoordination;
     }
 
     public async Task<VisitResumeContextResponseDto> GetResumeContextAsync(
@@ -266,6 +269,29 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
         var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
         var nowLocal = HospitalClock.GetNow(_timeProvider);
         var todayLocal = DateOnly.FromDateTime(nowLocal);
+
+        // F02 consolidation: legacy RETURN_CONSULTATION resume is an adapter over the canonical core
+        // (same RBAC/presence/active-session/readiness/eligibility/capacity/single-ticket/idempotency).
+        if (normalizedTarget == "RETURN_CONSULTATION")
+        {
+            if (_returnCoordination is null)
+            {
+                throw new InvalidOperationException(
+                    "RETURN_CONSULTATION resume requires IReturnCoordinationService (shared core).");
+            }
+
+            return await ResumeReturnConsultationViaCoreAsync(
+                actorUserId,
+                idOrCode,
+                request,
+                normalizedCoordinationPurpose,
+                normalizedIdempotencyKey,
+                normalizedNotes,
+                ipAddress,
+                nowLocal,
+                todayLocal,
+                ct);
+        }
 
         var actor = await LoadActiveActorAsync(actorUserId, nowUtc, ct);
         var preVisit = await ResolveVisitAsNoTrackingAsync(idOrCode, ct);
@@ -595,6 +621,119 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                 await tx.DisposeAsync();
             }
         }
+    }
+
+    private async Task<ResumeCrossDayVisitResponseDto> ResumeReturnConsultationViaCoreAsync(
+        long actorUserId,
+        string idOrCode,
+        ResumeCrossDayVisitRequestDto request,
+        string? coordinationPurpose,
+        string? idempotencyKey,
+        string? notes,
+        string? ipAddress,
+        DateTime nowLocal,
+        DateOnly todayLocal,
+        CancellationToken ct)
+    {
+        var preVisit = await ResolveVisitAsNoTrackingAsync(idOrCode, ct);
+        var visitCode = FormatVisitCode(preVisit, todayLocal);
+
+        var context = await _returnCoordination!.GetReturnCoordinationContextAsync(
+            actorUserId,
+            preVisit.VisitCode ?? idOrCode,
+            ct);
+
+        var doctorId = request.ReassignDoctorId
+                       ?? context.OriginalDoctor?.DoctorId
+                       ?? context.EligibleDoctors.FirstOrDefault()?.DoctorId;
+        if (doctorId is not > 0)
+        {
+            throw new ConflictException(ReturnCoordinationService.NoEligibleDoctorMessage);
+        }
+
+        var candidate = context.EligibleDoctors.FirstOrDefault(c => c.DoctorId == doctorId)
+                        ?? (context.OriginalDoctor?.DoctorId == doctorId ? context.OriginalDoctor : null);
+        var roomId = candidate?.RoomId ?? context.CurrentExaminationRoomId;
+        var servicePointId = request.TargetServicePointId
+                             ?? context.ActiveQueueEntry?.ServicePointId
+                             ?? candidate?.ServicePointId;
+
+        if (roomId is not > 0 || servicePointId is not > 0)
+        {
+            var existingQueueServicePoint = await _db.QueueEntries.AsNoTracking()
+                .Where(q => q.VisitId == preVisit.Id)
+                .OrderByDescending(q => q.Id)
+                .Select(q => q.CurrentServicePointId ?? q.ServicePointId)
+                .FirstOrDefaultAsync(ct);
+            roomId ??= preVisit.ExaminationRoomId;
+            servicePointId ??= existingQueueServicePoint;
+        }
+
+        if (roomId is not > 0 || servicePointId is not > 0)
+        {
+            throw new ConflictException(
+                "[RETURN_SERVICE_POINT_REQUIRED] Không xác định được phòng khám / điểm phục vụ cho lượt khám kết luận.");
+        }
+
+        var purpose = string.IsNullOrWhiteSpace(coordinationPurpose)
+            ? QueueCoordinationPurposes.ResultConclusion
+            : coordinationPurpose!.Trim().ToUpperInvariant();
+
+        var closedPriorDayCount = await _db.QueueEntries.AsNoTracking()
+            .CountAsync(q =>
+                q.VisitId == preVisit.Id &&
+                q.QueueDate.HasValue &&
+                q.QueueDate.Value < todayLocal &&
+                !q.CompletedAt.HasValue &&
+                (q.Status == "WAITING" || q.Status == "READY"), ct);
+
+        var reassignmentReason = request.ReassignDoctorId is > 0 &&
+                                 request.ReassignDoctorId != preVisit.AssignedDoctorId
+            ? notes ?? "Điều phối khám kết luận qua ngày sang bác sĩ đủ điều kiện."
+            : null;
+
+        // Legacy resume is an explicit presence-confirming Reception action by contract.
+        var enrollment = await _returnCoordination.EnrollReturnConsultationAsync(
+            actorUserId,
+            preVisit.VisitCode ?? idOrCode,
+            new CreateReturnEnrollmentRequestDto(
+                DoctorId: doctorId,
+                RoomId: roomId,
+                ServicePointId: servicePointId,
+                Purpose: purpose,
+                ReassignmentReason: reassignmentReason,
+                Notes: notes,
+                IdempotencyKey: idempotencyKey,
+                ConfirmPresent: true),
+            ipAddress,
+            ct);
+
+        if (enrollment.VisitId != preVisit.Id)
+        {
+            throw new ConflictException(
+                $"[RETURN_VISIT_MISMATCH] Lượt khám '{visitCode}' không khớp kết quả điều phối khám kết luận.");
+        }
+
+        var visit = await _db.Visits.AsNoTracking().FirstAsync(v => v.Id == enrollment.VisitId, ct);
+        var queue = await _db.QueueEntries.AsNoTracking().FirstAsync(q => q.Id == enrollment.Ticket.QueueEntryId, ct);
+        var briefs = await BuildActiveQueueBriefsAsync([queue], todayLocal, ct);
+
+        return new ResumeCrossDayVisitResponseDto(
+            VisitId: visit.Id,
+            VisitCode: FormatVisitCode(visit, todayLocal),
+            CheckedInAt: visit.CheckedInAt,
+            VisitStatus: AppointmentBookingRules.NormalizeStatusKey(visit.Status),
+            PresenceState: VisitPresenceEvaluator.NormalizePresenceState(visit.PresenceState),
+            LastPresentDate: visit.LastPresentDate ?? todayLocal,
+            LastResumedAt: visit.LastResumedAt ?? nowLocal,
+            Target: ClinicalQueueRules.QueueTypeReturnConsultation,
+            IsIdempotentReplay: enrollment.Ticket.IsIdempotentReplay,
+            AssignedDoctorId: enrollment.AssignedDoctorId,
+            AssignedDoctorName: enrollment.AssignedDoctorName,
+            ExaminationRoomId: visit.ExaminationRoomId,
+            ResumedQueues: briefs,
+            ClosedPriorDayQueueCount: closedPriorDayCount,
+            CoordinationPurpose: purpose);
     }
 
     private async Task<ResumeCrossDayVisitResponseDto> ExecuteResumeCoreAsync(
@@ -1064,332 +1203,6 @@ public sealed class VisitCrossDayLifecycleService : IVisitCrossDayLifecycleServi
                     visit.Status = "AWAITING_DIAGNOSTIC";
                 }
             }
-            else
-            {
-                // Target == "RETURN_CONSULTATION"
-                var effectivePurpose = normalizedCoordinationPurpose ?? QueueCoordinationPurposes.ResultConclusion;
-
-                if (effectivePurpose == QueueCoordinationPurposes.ClinicalReview)
-                {
-                    var hasOrderNeedingReview = visitOrders.Any(o =>
-                        AppointmentBookingRules.NormalizeStatusKey(o.Status) != "CANCELLED" &&
-                        (CrossDayVisitPolicyReader.IsOrderExpiredForExecution(o, policy.DiagnosticOrderValidityDays, nowLocal) ||
-                         NormalizeSelectionStatus(o.SelectionStatus) == DiagnosticSelectionStatuses.ReviewRequired));
-
-                    if (!hasOrderNeedingReview)
-                    {
-                        throw new ConflictException(
-                            "[CLINICAL_REVIEW_NOT_REQUIRED] Lượt khám hiện không có phiếu chỉ định cận lâm sàng quá hạn hoặc cần bác sĩ xem xét lại (REVIEW_REQUIRED).");
-                    }
-                }
-                else
-                {
-                    var isReady = await DiagnosticOrderLifecycleHelper.EvaluateVisitReturnReadinessAsync(
-                        _db,
-                        visit.Id,
-                        ct: ct);
-
-                    if (!isReady)
-                    {
-                        throw new ConflictException(
-                            "[RETURN_CONSULTATION_NOT_READY] Lượt khám chưa có đầy đủ kết quả cận lâm sàng bắt buộc hoặc đang còn dịch vụ cận lâm sàng đang thực hiện/chờ kết quả.");
-                    }
-                }
-
-                var previousDoctorId = visit.AssignedDoctorId;
-                var previousRoomId = visit.ExaminationRoomId;
-
-                if (request.ReassignDoctorId.HasValue)
-                {
-                    if (!policy.AllowDoctorReassignment)
-                    {
-                        throw new ConflictException(
-                            "[DOCTOR_REASSIGNMENT_DISABLED] Chính sách cơ sở y tế hiện không cho phép chuyển bác sĩ phụ trách khi tiếp tục lượt khám.");
-                    }
-
-                    var newDoctor = await _db.Doctors
-                        .Include(d => d.Staff)
-                        .AsNoTracking()
-                        .FirstOrDefaultAsync(d => d.Id == request.ReassignDoctorId.Value, ct)
-                        ?? throw new NotFoundException("Doctor", request.ReassignDoctorId.Value);
-
-                    var newDoctorHospitalId = newDoctor.HospitalId ?? newDoctor.Staff?.HospitalId;
-                    if (visitHospitalId.HasValue && newDoctorHospitalId != visitHospitalId.Value)
-                    {
-                        throw new ForbiddenException("Bác sĩ được chọn để phân công lại thuộc cơ sở y tế khác.");
-                    }
-
-                    if (!newDoctor.IsActive ||
-                        (newDoctor.Staff is not null &&
-                         !string.Equals(newDoctor.Staff.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        throw new ConflictException(
-                            "[REASSIGN_DOCTOR_INACTIVE] Bác sĩ được chọn để tiếp nhận khám kết luận hiện đang nghỉ trực hoặc ngừng hoạt động.");
-                    }
-
-                    // Verify authorization if visit is linked to a scheduled examination service
-                    if (visit.AppointmentId.HasValue)
-                    {
-                        var appt = await _db.Appointments.AsNoTracking()
-                            .FirstOrDefaultAsync(a => a.Id == visit.AppointmentId.Value, ct);
-                        var slot = appt?.SlotId.HasValue == true
-                            ? await _db.ExaminationSlots.AsNoTracking().FirstOrDefaultAsync(s => s.Id == appt.SlotId.Value, ct)
-                            : null;
-                        if (slot?.ServiceId.HasValue == true)
-                        {
-                            var anyAuthConfigured = await _db.DoctorServiceAuthorizations
-                                .AsNoTracking()
-                                .AnyAsync(dsa => dsa.ServiceId == slot.ServiceId.Value, ct);
-                            if (anyAuthConfigured)
-                            {
-                                var isAuthorized = await _db.DoctorServiceAuthorizations
-                                    .AsNoTracking()
-                                    .AnyAsync(dsa =>
-                                        dsa.DoctorId == newDoctor.Id &&
-                                        dsa.ServiceId == slot.ServiceId.Value &&
-                                        dsa.IsActive != false, ct);
-                                if (!isAuthorized)
-                                {
-                                    throw new ConflictException(
-                                        "[REASSIGN_DOCTOR_UNAUTHORIZED_SERVICE] Bác sĩ thay thế chưa được cấp quyền thực hiện dịch vụ khám chuyên khoa của lượt khám này.");
-                                }
-                            }
-                        }
-                    }
-
-                    var newDoctorSp = ResolveExaminationServicePointForDoctor(
-                        newDoctor.Id,
-                        request.TargetServicePointId,
-                        hospitalServicePoints,
-                        hospitalRooms);
-                    var newRoomId = newDoctorSp?.RoomId
-                        ?? hospitalRooms.FirstOrDefault(r =>
-                            string.Equals(r.RoomType?.Trim(), "EXAMINATION", StringComparison.OrdinalIgnoreCase) &&
-                            string.Equals(r.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase) &&
-                            (!newDoctor.Staff?.DepartmentId.HasValue == true || r.DepartmentId == newDoctor.Staff?.DepartmentId))?.Id
-                        ?? visit.ExaminationRoomId;
-
-                    if (previousDoctorId != newDoctor.Id)
-                    {
-                        visit.OverdueReturnResultSnapshot = null;
-                    }
-
-                    visit.AssignedDoctorId = newDoctor.Id;
-                    visit.ExaminationRoomId = newRoomId;
-
-                    if (previousDoctorId != newDoctor.Id)
-                    {
-                        visit.OverdueReturnResultSnapshot = null;
-                        isIdempotentReplay = false;
-                        _db.AuditLogs.Add(new AuditLog
-                        {
-                            ActorUserId = actor.UserId,
-                            HospitalId = visitHospitalId,
-                            Action = VisitDoctorAssignedAuditAction,
-                            EntityType = "VISIT",
-                            EntityId = visitCode,
-                            Reason = normalizedNotes ?? "Phân công lại bác sĩ khám kết luận cho lượt khám qua ngày (bác sĩ cũ vắng mặt/nghỉ trực).",
-                            ChangeData = JsonSerializer.Serialize(new
-                            {
-                                visitId = visit.Id,
-                                visitCode,
-                                previousDoctorId,
-                                assignedDoctorId = newDoctor.Id,
-                                previousRoomId,
-                                examinationRoomId = newRoomId,
-                            }, AuditJsonOptions),
-                            IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
-                            OccurredAt = nowUtc,
-                        });
-                    }
-                }
-
-                // Validate effective assigned doctor & examination room are active
-                if (visit.AssignedDoctorId.HasValue)
-                {
-                    var effectiveDoctor = await _db.Doctors
-                        .Include(d => d.Staff)
-                        .AsNoTracking()
-                        .FirstOrDefaultAsync(d => d.Id == visit.AssignedDoctorId.Value, ct);
-                    if (effectiveDoctor is null ||
-                        !effectiveDoctor.IsActive ||
-                        (effectiveDoctor.Staff is not null &&
-                         !string.Equals(effectiveDoctor.Staff.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        throw new ConflictException(
-                            "[ASSIGNED_DOCTOR_INACTIVE] Bác sĩ phụ trách ban đầu hiện đang nghỉ trực hoặc tạm ngừng hoạt động. Vui lòng chọn bác sĩ thay thế hợp lệ (ReassignDoctorId).");
-                    }
-                }
-
-                if (visit.ExaminationRoomId.HasValue)
-                {
-                    var effectiveRoom = hospitalRooms.FirstOrDefault(r => r.Id == visit.ExaminationRoomId.Value)
-                        ?? await _db.HospitalRooms.AsNoTracking().FirstOrDefaultAsync(r => r.Id == visit.ExaminationRoomId.Value, ct);
-                    if (effectiveRoom is not null &&
-                        !string.Equals(effectiveRoom.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new ConflictException(
-                            $"[EXAMINATION_ROOM_INACTIVE] Buồng khám '{effectiveRoom.RoomCode}' hiện đang bảo trì hoặc tạm ngừng hoạt động.");
-                    }
-                }
-
-                var referenceClinical = visitQueues
-                    .Where(q => ClinicalQueueRules.IsClinicalExaminationQueueType(q.QueueType))
-                    .OrderByDescending(q => q.Id)
-                    .FirstOrDefault(q => AppointmentBookingRules.NormalizeStatusKey(q.Status) != "CANCELLED");
-
-                var targetSpId = ResolveClinicalServicePointIdForResume(
-                    visit,
-                    request.TargetServicePointId,
-                    referenceClinical,
-                    hospitalServicePoints);
-
-                var scopedSuffix = effectivePurpose == QueueCoordinationPurposes.ClinicalReview ? "CREV" : "RET";
-                var scopedReturnKey = normalizedIdempotencyKey is not null
-                    ? BuildScopedQueueIdempotencyKey(normalizedIdempotencyKey, scopedSuffix)
-                    : null;
-
-                var existingTodayReturn = visitQueues
-                    .Where(q =>
-                        q.QueueDate == todayLocal &&
-                        ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation &&
-                        AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("CANCELLED" or "COMPLETED" or "DONE" or "NO_SHOW"))
-                    .OrderByDescending(q => q.Id)
-                    .FirstOrDefault();
-
-                // Cross-day RETURN handoff (decision doc §4.1 / §11): the canonical prior-day rollover
-                // loop above already deferred only unstarted (WAITING / READY) tickets and rejected
-                // active execution. This block is a defensive fail-closed guard for a prior-day RETURN
-                // ticket in an intermediate/active state (CALLED / IN_PROGRESS / IN_CONSULTATION / SERVING):
-                // never auto-defer it, never treat QueueDate as evidence that the session was interrupted.
-                if (existingTodayReturn is null)
-                {
-                    var unclosedPriorDayReturns = visitQueues
-                        .Where(q =>
-                            q.QueueDate.HasValue && q.QueueDate.Value < todayLocal &&
-                            !q.CompletedAt.HasValue &&
-                            ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation &&
-                            AppointmentBookingRules.NormalizeStatusKey(q.Status) is not ("CANCELLED" or "COMPLETED" or "DONE" or "NO_SHOW" or "DEFERRED" or "SKIPPED" or "RESERVED" or "WAITING" or "READY"))
-                        .ToList();
-
-                    if (unclosedPriorDayReturns.Count > 0)
-                    {
-                        throw new ConflictException(ClinicalSessionRecoveryConstants.ClinicalHandoffRequiredMessage);
-                    }
-                }
-
-                if (effectivePurpose == QueueCoordinationPurposes.ResultConclusion)
-                {
-                    visit.ReadyForReturnAt ??= nowLocal;
-                }
-
-                if (existingTodayReturn is not null)
-                {
-                    var existingStatus = AppointmentBookingRules.NormalizeStatusKey(existingTodayReturn.Status);
-                    var existingPresence = AppointmentBookingRules.NormalizeStatusKey(existingTodayReturn.PresenceStatus);
-                    var spChanged = targetSpId.HasValue && existingTodayReturn.CurrentServicePointId != targetSpId.Value;
-                    var purposeChanged = !string.Equals(existingTodayReturn.CoordinationPurpose, effectivePurpose, StringComparison.OrdinalIgnoreCase);
-
-                    if (purposeChanged)
-                    {
-                        existingTodayReturn.CoordinationPurpose = effectivePurpose;
-                        isIdempotentReplay = false;
-                    }
-
-                    if (existingStatus is "CALLED" or "IN_PROGRESS" or "IN_CONSULTATION" or "SERVING")
-                    {
-                        if (existingPresence != "PRESENT")
-                        {
-                            existingTodayReturn.PresenceStatus = "PRESENT";
-                            existingTodayReturn.StateVersion = (existingTodayReturn.StateVersion is > 0 ? existingTodayReturn.StateVersion.Value : 1) + 1;
-                            isIdempotentReplay = false;
-                        }
-                    }
-                    else if (existingStatus != "READY" || existingPresence != "PRESENT" || spChanged || existingTodayReturn.CompletedAt.HasValue)
-                    {
-                        existingTodayReturn.Status = "READY";
-                        existingTodayReturn.PresenceStatus = "PRESENT";
-                        existingTodayReturn.CoordinationPurpose = effectivePurpose;
-                        existingTodayReturn.CalledAt = null;
-                        existingTodayReturn.CompletedAt = null;
-                        existingTodayReturn.BlockedReason = null;
-                        existingTodayReturn.ArrivedAt ??= nowLocal;
-                        existingTodayReturn.ReadyAt = nowLocal;
-                        if (targetSpId.HasValue)
-                        {
-                            existingTodayReturn.ServicePointId ??= targetSpId.Value;
-                            existingTodayReturn.CurrentServicePointId = targetSpId.Value;
-                        }
-
-                        existingTodayReturn.StateVersion = (existingTodayReturn.StateVersion is > 0 ? existingTodayReturn.StateVersion.Value : 1) + 1;
-                        isIdempotentReplay = false;
-                    }
-
-                    if (visitStatus != "RETURN_CONSULTATION")
-                    {
-                        visit.Status = "RETURN_CONSULTATION";
-                        isIdempotentReplay = false;
-                    }
-
-                    resumedEntries.Add(existingTodayReturn);
-                }
-                else
-                {
-                    isIdempotentReplay = false;
-                    var maxToday = await _db.QueueEntries
-                        .AsNoTracking()
-                        .Where(q =>
-                            q.QueueDate == todayLocal &&
-                            (targetSpId.HasValue
-                                ? (q.ServicePointId == targetSpId.Value || q.CurrentServicePointId == targetSpId.Value)
-                                : (q.ServicePointId == null && q.CurrentServicePointId == null)))
-                        .MaxAsync(q => (int?)q.QueueNumber, ct);
-
-                    // Stage E2 / QE-07..08: enforce one active serving queue per patient per
-                    // hospital before minting the RETURN_CONSULTATION ticket.
-                    await PatientSingleActiveQueueGuard.EnsureNoOtherActiveServingQueueAsync(
-                        _db,
-                        visit.PatientId,
-                        effectiveHospitalId > 0 ? effectiveHospitalId : null,
-                        todayLocal,
-                        excludeQueueEntryId: existingTodayReturn?.Id,
-                        ct: ct);
-                    var newReturnQueue = new QueueEntry
-                    {
-                        VisitId = visit.Id,
-                        AppointmentId = null,
-                        ServicePointId = targetSpId,
-                        CurrentServicePointId = targetSpId,
-                        QueueDate = todayLocal,
-                        QueueNumber = (maxToday ?? 0) + 1,
-                        QueueType = ClinicalQueueRules.QueueTypeReturnConsultation,
-                        CoordinationPurpose = effectivePurpose,
-                        Status = "READY",
-                        ScheduledAt = null,
-                        PresenceStatus = "PRESENT",
-                        ArrivedAt = nowLocal,
-                        ReadyAt = nowLocal,
-                        ArrivalClass = "WALK_IN",
-                        ManualPriority = ClinicalQueueRules.NormalizeStoredPriority(referenceClinical?.ManualPriority),
-                        StateVersion = 1,
-                        IdempotencyKey = scopedReturnKey,
-                    };
-
-                    _db.QueueEntries.Add(newReturnQueue);
-                    visit.Status = "RETURN_CONSULTATION";
-                    resumedEntries.Add(newReturnQueue);
-                }
-
-                if (visitHospitalId.HasValue)
-                {
-                    notificationsToPublish.Add((
-                        HospitalId: visitHospitalId.Value,
-                        ServicePointId: targetSpId,
-                        RoomId: visit.ExaminationRoomId,
-                        AppointmentId: visit.AppointmentId));
-                }
-            }
-
             if (!isIdempotentReplay || !wasAlreadyPresentToday || closedPriorDayCount > 0)
             {
                 visit.LastResumedAt = nowLocal;

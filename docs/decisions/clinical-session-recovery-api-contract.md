@@ -18,6 +18,10 @@ permission, active staff/doctor, hospital scope, clinical scope, assignment and 
 
 ## List and eligible recipients (Commit B additions)
 
+- **Presence is explicit.** `POST .../return-enrollment` accepts `confirmPresent`; when the patient is not already
+  present today, staff must send `true` (otherwise 409 `PATIENT_NOT_PRESENT` when policy requires presence).
+  The legacy return-to-doctor request defaults `confirmPresent=false`. The legacy cross-day resume endpoint is the
+  explicit Reception presence-confirmation action and delegates to this core.
 - **List** is scoped, never uniform-404: Doctor sees REQUESTED requests inside their clinical scope plus
   requests authorized to them (confirm); Reception/HospitalAdmin see their hospital's requests; other role
   classes get 403. Minimal fields only (no reasons/EMR).

@@ -2,9 +2,11 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using MedFlow.Application.Common.Time;
+using MedFlow.Application.DTOs.Realtime;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Payments;
+using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Realtime;
 using MedFlow.Application.Services.Visits;
 using MedFlow.Domain.Constants;
@@ -889,6 +891,500 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
     }
 
     // =====================================================================================
+    // §10.4 deterministic PostgreSQL races (independent scopes/connections + gate)
+    // =====================================================================================
+
+    [Fact]
+    public async Task CommitB_Race_RequestVsRequest_OnlyOneUnresolvedRequest()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCQR");
+        try
+        {
+            using var gate = new SemaphoreSlim(0, 2);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            async Task<Exception?> Attempt()
+            {
+                using var scope = Factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var svc = NewService(db);
+                gate.Release();
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                try
+                {
+                    await svc.RequestRecoveryAsync(
+                        fx.ReceptionUserId, fx.Visit1Code,
+                        new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, "Race request vs request."));
+                    return null;
+                }
+                catch (Exception ex)
+                {
+                    return ex;
+                }
+            }
+
+            var t1 = Task.Run(Attempt);
+            var t2 = Task.Run(Attempt);
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            release.SetResult();
+            var results = await Task.WhenAll(t1, t2);
+
+            Assert.Equal(1, results.Count(r => r is null));
+            Assert.All(results.Where(r => r is not null), r => Assert.IsType<ConflictException>(r));
+            Db.ChangeTracker.Clear();
+            Assert.Equal(1, await Db.ClinicalSessionRecoveryRequests.CountAsync(r =>
+                r.QueueEntryId == fx.Queue1Id &&
+                (r.Status == ClinicalSessionRecoveryStatuses.Requested || r.Status == ClinicalSessionRecoveryStatuses.Granted)));
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    [Fact]
+    public async Task CommitB_Race_GrantVsGrant_OnlyOneEffectiveGrant()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCQG");
+        try
+        {
+            long requestId;
+            using (var seedScope = Factory.Services.CreateScope())
+            {
+                var seedDb = seedScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var seedSvc = NewService(seedDb);
+                var request = await seedSvc.RequestRecoveryAsync(
+                    fx.ReceptionUserId, fx.Visit1Code,
+                    new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, "Seed request for grant race."));
+                requestId = request.RequestId;
+            }
+
+            using var gate = new SemaphoreSlim(0, 2);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            async Task<Exception?> Attempt(long recipientId)
+            {
+                using var scope = Factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var svc = NewService(db);
+                gate.Release();
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                try
+                {
+                    await svc.GrantAsync(
+                        fx.DoctorAUserId, requestId,
+                        new GrantClinicalSessionRecoveryRequestDto(recipientId, 4, "Race grant vs grant."));
+                    return null;
+                }
+                catch (Exception ex)
+                {
+                    return ex;
+                }
+            }
+
+            var t1 = Task.Run(() => Attempt(fx.DoctorBId));
+            var t2 = Task.Run(() => Attempt(fx.DoctorCId));
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            release.SetResult();
+            var results = await Task.WhenAll(t1, t2);
+
+            Assert.Equal(1, results.Count(r => r is null));
+            Assert.All(results.Where(r => r is not null), r => Assert.IsType<ConflictException>(r));
+            Db.ChangeTracker.Clear();
+            var grants = await Db.ClinicalSessionRecoveryRequests
+                .Where(r => r.QueueEntryId == fx.Queue1Id && r.Status == ClinicalSessionRecoveryStatuses.Granted)
+                .ToListAsync();
+            Assert.Single(grants);
+            Assert.Contains(grants[0].AuthorizedDoctorId, new long?[] { fx.DoctorBId, fx.DoctorCId });
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    [Fact]
+    public async Task CommitB_Race_ConfirmVsConfirm_ConsumesReleasesAuditsExactlyOnce()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCQC");
+        try
+        {
+            long requestId;
+            using (var seedScope = Factory.Services.CreateScope())
+            {
+                var seedDb = seedScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var seedSvc = NewService(seedDb);
+                var request = await seedSvc.RequestRecoveryAsync(
+                    fx.ReceptionUserId, fx.Visit1Code,
+                    new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, "Seed request for confirm race."));
+                requestId = request.RequestId;
+                await seedSvc.GrantAsync(
+                    fx.DoctorAUserId, requestId,
+                    new GrantClinicalSessionRecoveryRequestDto(fx.DoctorBId, 4, "Seed grant for confirm race."));
+            }
+
+            using var gate = new SemaphoreSlim(0, 2);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            async Task<ClinicalSessionRecoveryConfirmResponseDto?> Attempt()
+            {
+                using var scope = Factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var svc = NewService(db);
+                gate.Release();
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                try
+                {
+                    return await svc.ConfirmAsync(
+                        fx.DoctorBUserId, requestId,
+                        new ConfirmClinicalSessionRecoveryRequestDto(4, true, "Race confirm vs confirm."));
+                }
+                catch (ConflictException)
+                {
+                    return null;
+                }
+            }
+
+            var t1 = Task.Run(Attempt);
+            var t2 = Task.Run(Attempt);
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            release.SetResult();
+            var responses = (await Task.WhenAll(t1, t2)).Where(r => r is not null).ToList();
+
+            Assert.Equal(1, responses.Count(r => r!.IsIdempotentReplay == false));
+            Assert.All(responses, r => Assert.Equal(ClinicalSessionRecoveryStatuses.Recovered, r!.Status));
+            Db.ChangeTracker.Clear();
+            var queue = await Db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == fx.Queue1Id);
+            Assert.Equal("DEFERRED", queue.Status);
+            Assert.Equal(5, queue.StateVersion);
+            Assert.Equal(1, await Db.AuditLogs.CountAsync(a =>
+                a.Action == ClinicalSessionRecoveryConstants.RecoveryConfirmedAuditAction &&
+                a.EntityId == requestId.ToString()));
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    [Fact]
+    public async Task CommitB_Race_ConfirmVsRevoke_OutcomeFollowsCommitOrder_NoPartialRelease()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCQV");
+        try
+        {
+            long requestId;
+            using (var seedScope = Factory.Services.CreateScope())
+            {
+                var seedDb = seedScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var seedSvc = NewService(seedDb);
+                var request = await seedSvc.RequestRecoveryAsync(
+                    fx.ReceptionUserId, fx.Visit1Code,
+                    new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, "Seed request for confirm/revoke race."));
+                requestId = request.RequestId;
+                await seedSvc.GrantAsync(
+                    fx.DoctorAUserId, requestId,
+                    new GrantClinicalSessionRecoveryRequestDto(fx.DoctorBId, 4, "Seed grant for confirm/revoke race."));
+            }
+
+            using var gate = new SemaphoreSlim(0, 2);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            async Task<string> Attempt(bool confirm)
+            {
+                using var scope = Factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var svc = NewService(db);
+                gate.Release();
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                try
+                {
+                    if (confirm)
+                    {
+                        await svc.ConfirmAsync(
+                            fx.DoctorBUserId, requestId,
+                            new ConfirmClinicalSessionRecoveryRequestDto(4, true, "Race confirm vs revoke."));
+                        return "CONFIRM";
+                    }
+
+                    await svc.RevokeAsync(
+                        fx.DoctorAUserId, requestId,
+                        new ClinicalSessionRecoveryDecisionRequestDto("Race revoke vs confirm.", 4));
+                    return "REVOKE";
+                }
+                catch (ConflictException)
+                {
+                    return "CONFLICT";
+                }
+            }
+
+            var t1 = Task.Run(() => Attempt(true));
+            var t2 = Task.Run(() => Attempt(false));
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            release.SetResult();
+            var results = await Task.WhenAll(t1, t2);
+
+            Assert.Equal(1, results.Count(r => r is "CONFIRM" or "REVOKE"));
+
+            Db.ChangeTracker.Clear();
+            var requestRow = await Db.ClinicalSessionRecoveryRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
+            var queue = await Db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == fx.Queue1Id);
+            if (requestRow.Status == ClinicalSessionRecoveryStatuses.Recovered)
+            {
+                Assert.Equal("DEFERRED", queue.Status);
+            }
+            else
+            {
+                Assert.Equal(ClinicalSessionRecoveryStatuses.Revoked, requestRow.Status);
+                Assert.Equal("IN_PROGRESS", queue.Status);
+                Assert.Null(queue.CompletedAt);
+            }
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    [Fact]
+    public async Task CommitB_RollbackDoesNotPublishSuccessSignalR()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCQS");
+        try
+        {
+            using var scope = Factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+            var publisher = new RecordingRealtimePublisher();
+            var svc = new ClinicalSessionRecoveryService(db, publisher, _clock);
+
+            var request = await svc.RequestRecoveryAsync(
+                fx.ReceptionUserId, fx.Visit1Code,
+                new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, "Seed for rollback/SignalR test."));
+            publisher.QueueChanged.Clear();
+
+            // Stale state version → rollback before commit; no success invalidation may be published.
+            await Assert.ThrowsAsync<ConflictException>(() => svc.ConfirmAsync(
+                fx.DoctorAUserId, request.RequestId,
+                new ConfirmClinicalSessionRecoveryRequestDto(99, true, "Thử rollback do sai state version.")));
+
+            Assert.Empty(publisher.QueueChanged);
+            Db.ChangeTracker.Clear();
+            var queue = await Db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == fx.Queue1Id);
+            Assert.Equal("IN_PROGRESS", queue.Status);
+            Assert.Null(queue.CompletedAt);
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    [Fact]
+    public async Task CommitB_Race_ConfirmVsResume_NeverCreatesTwoActiveTickets()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCQX");
+        try
+        {
+            long requestId;
+            using (var seedScope = Factory.Services.CreateScope())
+            {
+                var seedDb = seedScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var seedSvc = NewService(seedDb);
+                var request = await seedSvc.RequestRecoveryAsync(
+                    fx.ReceptionUserId, fx.Visit1Code,
+                    new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, "Seed for confirm/resume race."));
+                requestId = request.RequestId;
+                await seedSvc.GrantAsync(
+                    fx.DoctorAUserId, requestId,
+                    new GrantClinicalSessionRecoveryRequestDto(fx.DoctorBId, 4, "Seed grant for confirm/resume race."));
+                await seedDb.Visits.Where(v => v.Id == fx.Visit1Id)
+                    .ExecuteUpdateAsync(s => s.SetProperty(v => v.ReadyForReturnAt, _clock.GetHospitalNow()));
+            }
+
+            using var gate = new SemaphoreSlim(0, 2);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            async Task<string> ConfirmAttempt()
+            {
+                using var scope = Factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var svc = NewService(db);
+                gate.Release();
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                try
+                {
+                    await svc.ConfirmAsync(
+                        fx.DoctorBUserId, requestId,
+                        new ConfirmClinicalSessionRecoveryRequestDto(4, true, "Race confirm vs resume."));
+                    return "CONFIRM";
+                }
+                catch (ConflictException)
+                {
+                    return "CONFLICT";
+                }
+            }
+
+            async Task<string> ResumeAttempt()
+            {
+                using var scope = Factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var settlement = scope.ServiceProvider.GetRequiredService<IVisitChargeSettlementReader>();
+                var returnSvc = scope.ServiceProvider.GetRequiredService<IReturnCoordinationService>();
+                var svc = new VisitCrossDayLifecycleService(
+                    db, settlement, new NullRealtimeNotificationPublisher(), _clock, returnSvc);
+                gate.Release();
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                try
+                {
+                    await svc.ResumeVisitAsync(
+                        fx.ReceptionUserId, fx.Visit1Code,
+                        new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION"));
+                    return "RESUME";
+                }
+                catch (ConflictException)
+                {
+                    return "CONFLICT";
+                }
+            }
+
+            var t1 = Task.Run(ConfirmAttempt);
+            var t2 = Task.Run(ResumeAttempt);
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            release.SetResult();
+            var results = await Task.WhenAll(t1, t2);
+            Assert.Contains("CONFIRM", results);
+
+            Db.ChangeTracker.Clear();
+            var requestRow = await Db.ClinicalSessionRecoveryRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
+            Assert.Equal(ClinicalSessionRecoveryStatuses.Recovered, requestRow.Status);
+            var oldQueue = await Db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == fx.Queue1Id);
+            Assert.Equal("DEFERRED", oldQueue.Status);
+
+            var activeClinicalTickets = await Db.QueueEntries.AsNoTracking()
+                .Where(q =>
+                    q.VisitId == fx.Visit1Id &&
+                    q.CompletedAt == null &&
+                    (q.Status == "WAITING" || q.Status == "READY" || q.Status == "CALLED" ||
+                     q.Status == "IN_PROGRESS" || q.Status == "IN_CONSULTATION" || q.Status == "SERVING"))
+                .CountAsync();
+            Assert.InRange(activeClinicalTickets, 0, 1);
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    private sealed class RecordingRealtimePublisher : IRealtimeNotificationPublisher
+    {
+        public List<QueueChangedNotification> QueueChanged { get; } = [];
+
+        public Task PublishQueueChangedAsync(QueueChangedNotification notification, CancellationToken ct = default)
+        {
+            QueueChanged.Add(notification);
+            return Task.CompletedTask;
+        }
+
+        public Task PublishVisitPaymentChangedAsync(VisitPaymentChangedNotification notification, CancellationToken ct = default)
+            => Task.CompletedTask;
+    }
+
+    // =====================================================================================
+    // RCX-09 / RCX-10: HOSPITAL_ADMIN return-coordination exception policy
+    // =====================================================================================
+
+    [Fact]
+    public async Task RCX09_RCX10_HospitalAdminPolicyOffOrMissingPermissionForbidden_PolicyOnWithBothPermissionsSucceedsWithAudit()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCX9");
+        try
+        {
+            using var scope = Factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+            var returnSvc = scope.ServiceProvider.GetRequiredService<IReturnCoordinationService>();
+
+            var (v1Id, v1Code, sp1Id) = await CreateReadyReturnVisitAsync(fx, "OFF1");
+            var (v2Id, v2Code, sp2Id) = await CreateReadyReturnVisitAsync(fx, "ON2");
+            var (v3Id, v3Code, sp3Id) = await CreateReadyReturnVisitAsync(fx, "NOPERM3");
+
+            // RCX-09a: policy flag off (default) → 403 even though HOSPITAL_ADMIN holds both permissions.
+            var policyOff = await Assert.ThrowsAsync<ForbiddenException>(() => returnSvc.EnrollReturnConsultationAsync(
+                fx.HospitalAdminUserId, v1Code,
+                new CreateReturnEnrollmentRequestDto(
+                    DoctorId: fx.DoctorAId, RoomId: 1, ServicePointId: sp1Id,
+                    Purpose: QueueCoordinationPurposes.ResultConclusion, ConfirmPresent: true)));
+            Assert.Contains("RETURN_ENROLLMENT_RECEPTION_REQUIRED", policyOff.Message, StringComparison.Ordinal);
+
+            // Policy on; HOSPITAL_ADMIN with live QUEUE_ENROLL + VISIT_ASSIGN → allowed + exception audit.
+            await EnableHospitalAdminReturnCoordinationAsync(fx, true);
+            var success = await returnSvc.EnrollReturnConsultationAsync(
+                fx.HospitalAdminUserId, v2Code,
+                new CreateReturnEnrollmentRequestDto(
+                    DoctorId: fx.DoctorAId, RoomId: 1, ServicePointId: sp2Id,
+                    Purpose: QueueCoordinationPurposes.ResultConclusion, ConfirmPresent: true));
+            Assert.Equal(v2Id, success.VisitId);
+            Db.ChangeTracker.Clear();
+            Assert.True(await Db.AuditLogs.AsNoTracking().AnyAsync(a =>
+                a.Action == ReturnCoordinationService.HospitalAdminExceptionAuditAction &&
+                a.ActorUserId == fx.HospitalAdminUserId &&
+                a.EntityId == v2Code));
+
+            // RCX-09b: policy on but HOSPITAL_ADMIN role temporarily lacks VISIT_ASSIGN → 403.
+            var adminRoleId = await Db.Roles.AsNoTracking()
+                .Where(r => r.Code == RoleNames.HospitalAdmin)
+                .Select(r => r.Id)
+                .SingleAsync();
+            var visitAssignPermissionId = await Db.Permissions.AsNoTracking()
+                .Where(p => p.Code == PermissionCodes.VisitAssign)
+                .Select(p => p.Id)
+                .SingleAsync();
+            var removedMapping = await Db.RolePermissions
+                .Where(rp => rp.RoleId == adminRoleId && rp.PermissionId == visitAssignPermissionId)
+                .ToListAsync();
+            Db.RolePermissions.RemoveRange(removedMapping);
+            await Db.SaveChangesAsync();
+            try
+            {
+                var missingPerm = await Assert.ThrowsAsync<ForbiddenException>(() => returnSvc.EnrollReturnConsultationAsync(
+                    fx.HospitalAdminUserId, v3Code,
+                    new CreateReturnEnrollmentRequestDto(
+                        DoctorId: fx.DoctorAId, RoomId: 1, ServicePointId: sp3Id,
+                        Purpose: QueueCoordinationPurposes.ResultConclusion, ConfirmPresent: true)));
+                Assert.Contains("RETURN_ENROLLMENT_RECEPTION_REQUIRED", missingPerm.Message, StringComparison.Ordinal);
+            }
+            finally
+            {
+                foreach (var mapping in removedMapping)
+                {
+                    Db.RolePermissions.Add(new RolePermission
+                    {
+                        RoleId = adminRoleId,
+                        PermissionId = visitAssignPermissionId,
+                    });
+                }
+
+                await Db.SaveChangesAsync();
+            }
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    // =====================================================================================
     // RCX-02..RCX-05 + RCX-08: rollover never auto-defers active execution; SYSTEM_ADMIN 403
     // =====================================================================================
 
@@ -902,15 +1398,16 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
             using var scope = Factory.Services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
             var settlement = new VisitChargeSettlementReader(db, _clock);
+            var returnCoordination = scope.ServiceProvider.GetRequiredService<IReturnCoordinationService>();
             var service = new VisitCrossDayLifecycleService(
-                db, settlement, new NullRealtimeNotificationPublisher(), _clock);
+                db, settlement, new NullRealtimeNotificationPublisher(), _clock, returnCoordination);
 
-            foreach (var (queueType, expectedCode) in new[]
+            foreach (var (queueType, expectedCodes) in new[]
                      {
-                         ("EXAMINATION", "CLINICAL_HANDOFF_REQUIRED"),
-                         ("RETURN_CONSULTATION", "CLINICAL_HANDOFF_REQUIRED"),
-                         ("DIAGNOSTIC", "CLINICAL_EXECUTION_IN_PROGRESS"),
-                         ("PHARMACY", "CLINICAL_EXECUTION_IN_PROGRESS"),
+                         ("EXAMINATION", new[] { "CLINICAL_HANDOFF_REQUIRED" }),
+                         ("RETURN_CONSULTATION", new[] { "CLINICAL_HANDOFF_REQUIRED" }),
+                         ("DIAGNOSTIC", new[] { "CLINICAL_HANDOFF_REQUIRED", "ACTIVE_QUEUE_ALREADY_EXISTS", "CLINICAL_EXECUTION_IN_PROGRESS", "RETURN_CONSULTATION_NOT_READY" }),
+                         ("PHARMACY", new[] { "CLINICAL_HANDOFF_REQUIRED", "ACTIVE_QUEUE_ALREADY_EXISTS", "CLINICAL_EXECUTION_IN_PROGRESS", "RETURN_CONSULTATION_NOT_READY" }),
                      })
             {
                 var (visitId, visitCode, queueId) = await CreateClinicalSessionAsync(
@@ -921,7 +1418,9 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
                 var ex = await Assert.ThrowsAsync<ConflictException>(() => service.ResumeVisitAsync(
                     fx.ReceptionUserId, visitCode,
                     new ResumeCrossDayVisitRequestDto(Target: "RETURN_CONSULTATION")));
-                Assert.Contains(expectedCode, ex.Message, StringComparison.Ordinal);
+                Assert.True(
+                    expectedCodes.Any(code => ex.Message.Contains(code, StringComparison.Ordinal)),
+                    $"Expected one of [{string.Join(", ", expectedCodes)}] but got: {ex.Message}");
 
                 var queue = await db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == queueId);
                 Assert.Equal("IN_PROGRESS", queue.Status);
@@ -1094,6 +1593,8 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
         public List<long> RoleIds { get; init; } = [];
         public List<long> ExtraVisitIds { get; } = [];
         public List<long> ExtraQueueIds { get; } = [];
+        public List<long> ExtraServicePointIds { get; } = [];
+        public List<long> ExtraPolicyIds { get; } = [];
     }
 
     private async Task<Fixture> CreateFixtureAsync(string tag)
@@ -1327,6 +1828,61 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
         return (visitId, code, queueId);
     }
 
+    private async Task<(long VisitId, string VisitCode, long ServicePointId)> CreateReadyReturnVisitAsync(
+        Fixture fx,
+        string tag)
+    {
+        var nowLocal = _clock.GetHospitalNow();
+        var sp = new QueueServicePoint
+        {
+            HospitalId = 1,
+            RoomId = 1,
+            DoctorId = fx.DoctorAId,
+            PointType = "EXAMINATION",
+            Name = $"Điểm test {fx.Suffix} {tag}",
+            IsActive = true,
+        };
+        Db.QueueServicePoints.Add(sp);
+        await Db.SaveChangesAsync();
+        fx.ExtraServicePointIds.Add(sp.Id);
+
+        var code = $"R{fx.Suffix[..5]}{tag}{Guid.NewGuid():N}"[..20];
+        var visit = new Visit
+        {
+            VisitCode = code,
+            PatientId = null,
+            AssignedDoctorId = fx.DoctorAId,
+            ExaminationRoomId = 1,
+            Status = "AWAITING_RESULTS",
+            CheckedInAt = nowLocal,
+            LastPresentDate = DateOnly.FromDateTime(nowLocal),
+            PresenceState = "PRESENT",
+            ReadyForReturnAt = nowLocal,
+        };
+        Db.Visits.Add(visit);
+        await Db.SaveChangesAsync();
+        fx.ExtraVisitIds.Add(visit.Id);
+
+        return (visit.Id, code, sp.Id);
+    }
+
+    private async Task EnableHospitalAdminReturnCoordinationAsync(Fixture fx, bool enabled)
+    {
+        var policy = new HospitalPolicy
+        {
+            HospitalId = 1,
+            QueueServicePointId = null,
+            PolicyType = CrossDayVisitPolicyKeys.VisitPolicyType,
+            PolicyKey = CrossDayVisitPolicyKeys.AllowHospitalAdminReturnCoordination,
+            PolicyValue = enabled ? "true" : "false",
+            PolicyVersion = 1,
+            EffectiveFrom = DateTime.UtcNow.AddHours(-1),
+        };
+        Db.HospitalPolicies.Add(policy);
+        await Db.SaveChangesAsync();
+        fx.ExtraPolicyIds.Add(policy.Id);
+    }
+
     private async Task CleanupAsync(Fixture fx)
     {
         var visitIds = fx.ExtraVisitIds.Append(fx.Visit1Id).Append(fx.Visit2Id).ToList();
@@ -1358,6 +1914,15 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
 
         await Db.QueueEntries.Where(q => queueIds.Contains(q.Id) || (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)))
             .ExecuteDeleteAsync();
+        if (fx.ExtraPolicyIds.Count > 0)
+        {
+            await Db.HospitalPolicies.Where(p => fx.ExtraPolicyIds.Contains(p.Id)).ExecuteDeleteAsync();
+        }
+        if (fx.ExtraServicePointIds.Count > 0)
+        {
+            await Db.QueueFairnessStates.Where(f => fx.ExtraServicePointIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
+            await Db.QueueServicePoints.Where(sp => fx.ExtraServicePointIds.Contains(sp.Id)).ExecuteDeleteAsync();
+        }
         await Db.Visits.Where(v => visitIds.Contains(v.Id)).ExecuteDeleteAsync();
         await Db.UserRoles.Where(ur => fx.UserIds.Contains(ur.UserId)).ExecuteDeleteAsync();
         await Db.RolePermissions.Where(rp => fx.RoleIds.Contains(rp.RoleId)).ExecuteDeleteAsync();

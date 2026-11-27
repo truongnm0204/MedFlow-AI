@@ -429,20 +429,34 @@ public sealed class ReturnCoordinationService : IReturnCoordinationService
                     todayLocal,
                     nowLocal,
                     policy.PresenceTtlMinutes);
-                if (policy.RequirePresenceForReturnQueue)
+
+                // §8.2: presence is never auto-confirmed by the core/adapter. When the patient is not
+                // already present today, staff must send ConfirmPresent=true explicitly; otherwise the
+                // coordination fails with PATIENT_NOT_PRESENT when the policy requires presence.
+                if (!isPresentToday)
                 {
-                    if (!isPresentToday)
+                    if (request.ConfirmPresent == true)
+                    {
+                        VisitPresenceEvaluator.StampPresentToday(visit, todayLocal, nowLocal);
+                    }
+                    else if (policy.RequirePresenceForReturnQueue)
                     {
                         throw new ConflictException(PatientNotPresentMessage);
                     }
                 }
-                else
-                {
-                    // Staff at the desk physically confirms presence for this coordination.
-                    VisitPresenceEvaluator.StampPresentToday(visit, todayLocal, nowLocal);
-                }
 
-                if (VisitQueueEnrollmentService.HasActiveClinicalSession(visitQueues, todayLocal))
+                // A live RETURN_CONSULTATION ticket for the SAME visit today is the idempotent replay target,
+                // not another active clinical session. Exclude it from the handoff guard; every other active
+                // clinical execution (EXAM/DIAG/RETURN from another queue) still hard-blocks.
+                var clinicalHandoffGuardQueues = visitQueues
+                    .Where(q => !(
+                        q.QueueDate == todayLocal &&
+                        ClinicalQueueRules.ResolveQueueType(q.QueueType, null) == ClinicalQueueRules.QueueTypeReturnConsultation &&
+                        !ClosedQueueStatuses.Contains(AppointmentBookingRules.NormalizeStatusKey(q.Status)) &&
+                        !q.CompletedAt.HasValue))
+                    .ToList();
+
+                if (VisitQueueEnrollmentService.HasActiveClinicalSession(clinicalHandoffGuardQueues, todayLocal))
                 {
                     throw new ConflictException(VisitQueueEnrollmentService.ClinicalHandoffRequiredMessage);
                 }

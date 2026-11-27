@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Application.Services.Policies;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
@@ -200,6 +201,24 @@ public sealed partial class ExaminationQueueService
         var allDiagnosticResultsReady = openDiagnosticCount == 0 && request.DiagnosticResultsReady != false;
         var finalResultRequired = targetBucket.Policy.FinalResultRequired;
         var isAwaitingMandatoryResults = finalResultRequired && !allDiagnosticResultsReady;
+
+        // §8.2: explicit ConfirmPresent only. When the hospital policy requires presence and the client
+        // did not confirm it (and the patient is not already durably present today), fail 409 instead of
+        // minting a NOT_ARRIVED ticket.
+        var returnPolicy = await CrossDayVisitPolicyReader.LoadAsync(_db, hospital.Id, nowUtc, ct);
+        if (!request.ConfirmPresent && returnPolicy.RequirePresenceForReturnQueue)
+        {
+            var visitQueuesForPresence = await _db.QueueEntries.AsNoTracking()
+                .Where(q => q.VisitId == visit.Id)
+                .ToListAsync(ct);
+            var presentToday = VisitPresenceEvaluator.IsPresentToday(
+                visit, visitQueuesForPresence, today, board.NowLocal, returnPolicy.PresenceTtlMinutes);
+            if (!presentToday)
+            {
+                throw new ConflictException(VisitQueueEnrollmentService.PatientNotPresentMessage);
+            }
+        }
+
         var presenceStatus = request.ConfirmPresent ? "PRESENT" : "NOT_ARRIVED";
         var targetStatus = request.ConfirmPresent && !isAwaitingMandatoryResults ? "READY" : "WAITING";
 
