@@ -815,6 +815,8 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
     public async Task Bug04_Rc20_OverdueReturnConsultation_BlocksConfirmedDxIssuedRxAndCompleteUntilDoctorApprovesSnapshot_AndInvalidatesOnResultEditNewOrderOrDoctorChange()
     {
         var fx = await CreateIsolatedFixtureAsync();
+        long? recoveryGrantRoleId = null;
+        long? recoveryRecoverRoleId = null;
         try
         {
             _clock.SetVietnamLocalTime(new DateTime(2026, 11, 10, 9, 0, 0, DateTimeKind.Unspecified));
@@ -1048,6 +1050,70 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
             Assert.Equal(HttpStatusCode.OK, approve3Res.StatusCode);
 
             _clock.SetVietnamLocalTime(new DateTime(2026, 11, 21, 9, 0, 0, DateTimeKind.Unspecified));
+
+            // §10.3 re-author: the D+10 RETURN_CONSULTATION session was left IN_PROGRESS overnight.
+            // Recovery authority requires a delegated grant before Reception may reassign:
+            // Reception requests → Doctor1 (GRANT) grants Doctor2 → Doctor2 (RECOVER) confirms.
+            Db.ChangeTracker.Clear();
+            var priorDayReturn = await Db.QueueEntries.AsNoTracking()
+                .Where(q =>
+                    q.VisitId == visit.Id &&
+                    q.CompletedAt == null &&
+                    q.QueueType == "RETURN_CONSULTATION" &&
+                    q.Status == "IN_PROGRESS" &&
+                    q.QueueDate < DateOnly.FromDateTime(HospitalClock.GetNow(_clock)))
+                .OrderByDescending(q => q.Id)
+                .FirstOrDefaultAsync();
+            Assert.True(priorDayReturn is not null, "Expected the prior-day RETURN_CONSULTATION session to still be IN_PROGRESS.");
+
+            var grantPermission = await Db.Permissions.AsNoTracking()
+                .SingleAsync(p => p.Code == PermissionCodes.ClinicalSessionRecoveryGrant);
+            var recoverPermission = await Db.Permissions.AsNoTracking()
+                .SingleAsync(p => p.Code == PermissionCodes.ClinicalSessionRecover);
+            var grantRole = new Role { Code = $"E1CG{fx.Suffix}", Name = "StageE1 recovery GRANT role" };
+            var recoverRole = new Role { Code = $"E1CR{fx.Suffix}", Name = "StageE1 recovery RECOVER role" };
+            Db.Roles.AddRange(grantRole, recoverRole);
+            await Db.SaveChangesAsync();
+            recoveryGrantRoleId = grantRole.Id;
+            recoveryRecoverRoleId = recoverRole.Id;
+            Db.RolePermissions.AddRange(
+                new RolePermission { RoleId = grantRole.Id, PermissionId = grantPermission.Id },
+                new RolePermission { RoleId = recoverRole.Id, PermissionId = recoverPermission.Id });
+            Db.UserRoles.AddRange(
+                new UserRole { UserId = fx.Doctor1UserId, RoleId = grantRole.Id },
+                new UserRole { UserId = fx.Doctor2UserId, RoleId = recoverRole.Id });
+            await Db.SaveChangesAsync();
+
+            await using (var recoveryScope = _app.Services.CreateAsyncScope())
+            {
+                var recoverySvc = recoveryScope.ServiceProvider.GetRequiredService<IClinicalSessionRecoveryService>();
+                var expectedVersion = priorDayReturn!.StateVersion ?? 1;
+                var recoveryRequest = await recoverySvc.RequestRecoveryAsync(
+                    fx.Reception1UserId,
+                    visit.VisitCode!,
+                    new CreateClinicalSessionRecoveryRequestDto(
+                        priorDayReturn.Id,
+                        expectedVersion,
+                        "Phiên khám kết luận ngày trước bị gián đoạn, cần bàn giao trước khi đổi bác sĩ."));
+                var granted = await recoverySvc.GrantAsync(
+                    fx.Doctor1UserId,
+                    recoveryRequest.RequestId,
+                    new GrantClinicalSessionRecoveryRequestDto(
+                        fx.Doctor2Id,
+                        expectedVersion,
+                        "Bác sĩ phụ trách nghỉ phép, cấp grant cho bác sĩ đủ chuyên môn đánh giá phiên."));
+                Assert.Equal(ClinicalSessionRecoveryStatuses.Granted, granted.Status);
+                var recovered = await recoverySvc.ConfirmAsync(
+                    fx.Doctor2UserId,
+                    recoveryRequest.RequestId,
+                    new ConfirmClinicalSessionRecoveryRequestDto(
+                        expectedVersion,
+                        true,
+                        "Đã xác minh phiên khám kết luận ngày trước không còn được thực hiện trực tiếp."));
+                Assert.Equal(ClinicalSessionRecoveryStatuses.Recovered, recovered.Status);
+                Assert.Equal("DEFERRED", recovered.QueueStatus);
+            }
+
             await Db.Doctors.Where(d => d.Id == fx.Doctor1Id).ExecuteUpdateAsync(s => s.SetProperty(d => d.IsActive, false));
 
             await PostResumeAsync(
@@ -1124,6 +1190,20 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
         }
         finally
         {
+            if (recoveryGrantRoleId.HasValue)
+            {
+                await Db.UserRoles.Where(ur => ur.RoleId == recoveryGrantRoleId.Value).ExecuteDeleteAsync();
+                await Db.RolePermissions.Where(rp => rp.RoleId == recoveryGrantRoleId.Value).ExecuteDeleteAsync();
+                await Db.Roles.Where(r => r.Id == recoveryGrantRoleId.Value).ExecuteDeleteAsync();
+            }
+
+            if (recoveryRecoverRoleId.HasValue)
+            {
+                await Db.UserRoles.Where(ur => ur.RoleId == recoveryRecoverRoleId.Value).ExecuteDeleteAsync();
+                await Db.RolePermissions.Where(rp => rp.RoleId == recoveryRecoverRoleId.Value).ExecuteDeleteAsync();
+                await Db.Roles.Where(r => r.Id == recoveryRecoverRoleId.Value).ExecuteDeleteAsync();
+            }
+
             await CleanupIsolatedFixtureAsync(fx);
         }
     }
@@ -2050,6 +2130,12 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
             .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
             .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
         await Db.QueueFairnessStates.Where(f => fx.AllSpIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
+        if (visitIds.Count > 0)
+        {
+            await Db.ClinicalSessionRecoveryRequests
+                .Where(r => visitIds.Contains(r.VisitId))
+                .ExecuteDeleteAsync();
+        }
         await Db.QueueEntries.Where(q =>
             (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
             (q.ServicePointId.HasValue && fx.AllSpIds.Contains(q.ServicePointId.Value))).ExecuteDeleteAsync();
@@ -2112,6 +2198,12 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
         }
 
         await Db.QueueFairnessStates.Where(f => fx.AllSpIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
+        if (visitIds.Count > 0)
+        {
+            await Db.ClinicalSessionRecoveryRequests
+                .Where(r => visitIds.Contains(r.VisitId))
+                .ExecuteDeleteAsync();
+        }
         await Db.QueueEntries.Where(q =>
             (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
             (q.ServicePointId.HasValue && fx.AllSpIds.Contains(q.ServicePointId.Value))).ExecuteDeleteAsync();

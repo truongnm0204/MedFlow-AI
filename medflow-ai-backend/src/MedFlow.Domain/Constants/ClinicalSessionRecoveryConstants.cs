@@ -81,6 +81,9 @@ public static class ClinicalSessionRecoveryConstants
     public const string IdempotencyMismatchMessage =
         "[RECOVERY_IDEMPOTENCY_MISMATCH] Idempotency key đã được dùng cho một thao tác hoặc payload khác.";
 
+    public const string RequestRejectedByConstraintMessage =
+        "[RECOVERY_REQUEST_INVALID] Yêu cầu phục hồi phiên khám không thỏa ràng buộc dữ liệu (tham chiếu hoặc trạng thái không nhất quán).";
+
     public const string AlreadyRecoveredMessage =
         "[RECOVERY_ALREADY_RECOVERED] Yêu cầu phục hồi đã được xác nhận bởi thao tác khác.";
 

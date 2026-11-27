@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Exceptions;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +23,22 @@ public sealed partial class ExaminationQueueService
         if (actorUserId <= 0)
         {
             throw new UnauthorizedAccessException("Thông tin định danh người dùng không hợp lệ.");
+        }
+
+        // RCX-08 / §8.1: SYSTEM_ADMIN is forbidden on every RETURN entrypoint, even though the queue
+        // controller admits the role for other queue-management actions. Return coordination is Reception-only
+        // (or the policy-gated HospitalAdmin exception in the canonical core).
+        var actorRoleIds = await _db.UserRoles
+            .AsNoTracking()
+            .Where(ur => ur.UserId == actorUserId)
+            .Select(ur => ur.RoleId)
+            .ToListAsync(ct);
+        var isSystemAdmin = await _db.Roles
+            .AsNoTracking()
+            .AnyAsync(r => actorRoleIds.Contains(r.Id) && r.Code == RoleNames.SystemAdmin, ct);
+        if (isSystemAdmin)
+        {
+            throw new ForbiddenException(VisitQueueEnrollmentService.ReturnReceptionRequiredMessage);
         }
 
         if (request is null)

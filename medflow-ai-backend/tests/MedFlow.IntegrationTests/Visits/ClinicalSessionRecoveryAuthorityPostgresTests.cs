@@ -19,6 +19,11 @@ using Npgsql;
 
 namespace MedFlow.IntegrationTests.Visits;
 
+[CollectionDefinition("ClinicalRecoverySerial", DisableParallelization = true)]
+public sealed class ClinicalRecoverySerialCollection
+{
+}
+
 /// <summary>
 /// Commit A (PR #859 / Issue #858, F01 Option B) — Clinical Session Recovery Authority.
 /// Covers RA-01..RA-26 against real PostgreSQL + Migration 028 fresh/populated/idempotent checks
@@ -27,6 +32,7 @@ namespace MedFlow.IntegrationTests.Visits;
 /// Tests depend on the seeded medflow_test fixture (hospital 1, users 1..14); every created row is
 /// tagged with a unique suffix and removed in <c>finally</c>.
 /// </summary>
+[Collection("ClinicalRecoverySerial")]
 public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
 {
     private readonly TestClock _clock = new(new DateTime(2026, 11, 27, 9, 0, 0, DateTimeKind.Unspecified));
@@ -705,6 +711,176 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
             await Assert.ThrowsAsync<NotFoundException>(() => svc.ConfirmAsync(
                 fx.DoctorAUserId, request.RequestId,
                 new ConfirmClinicalSessionRecoveryRequestDto(1, true, "Xác nhận khi chưa chứng minh được scope.")));
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    // =====================================================================================
+    // F-01 (security): unresolvable visit hospital is not proof of tenancy → uniform 404
+    // =====================================================================================
+
+    [Fact]
+    public async Task F01_UnresolvableVisitHospital_FailsClosedWithUniform404()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("F01");
+        try
+        {
+            using var scope = Factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+            var svc = NewService(db);
+            var nowLocal = _clock.GetHospitalNow();
+
+            // Degenerate visit: no appointment, doctor, room, checked-in staff, queue service point or audit.
+            var visit = new Visit
+            {
+                VisitCode = $"V{fx.Suffix[..6]}NOHOSP" + Guid.NewGuid().ToString("N")[..4],
+                PatientId = null,
+                AssignedDoctorId = null,
+                ExaminationRoomId = null,
+                CheckedInByStaffId = null,
+                Status = "IN_PROGRESS",
+                CheckedInAt = nowLocal,
+                PresenceState = "PRESENT",
+            };
+            db.Visits.Add(visit);
+            await db.SaveChangesAsync();
+            fx.ExtraVisitIds.Add(visit.Id);
+
+            var queue = new QueueEntry
+            {
+                VisitId = visit.Id,
+                QueueDate = DateOnly.FromDateTime(nowLocal.AddDays(-1)),
+                QueueNumber = Random.Shared.Next(1, 9_000_000),
+                QueueType = "RETURN_CONSULTATION",
+                Status = "IN_PROGRESS",
+                StateVersion = 1,
+            };
+            db.QueueEntries.Add(queue);
+            await db.SaveChangesAsync();
+            fx.ExtraQueueIds.Add(queue.Id);
+
+            // Reception has no clinical-scope fallback: an unresolvable hospital must not bypass tenancy.
+            await Assert.ThrowsAsync<NotFoundException>(() =>
+                svc.GetContextAsync(fx.ReceptionUserId, visit.VisitCode!));
+            await Assert.ThrowsAsync<NotFoundException>(() => svc.RequestRecoveryAsync(
+                fx.ReceptionUserId, visit.VisitCode!,
+                new CreateClinicalSessionRecoveryRequestDto(queue.Id, 1, "Thử vượt ràng buộc tenancy.")));
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    // =====================================================================================
+    // PM-approved Commit B: scoped list + eligible recipients
+    // =====================================================================================
+
+    [Fact]
+    public async Task CommitB_ListAndEligibleRecipients_AreActorScoped()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("CBL");
+        try
+        {
+            using var scope = Factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+            var svc = NewService(db);
+
+            var request = await svc.RequestRecoveryAsync(
+                fx.ReceptionUserId, fx.Visit1Code,
+                new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, "Yêu cầu cho danh sách theo scope."));
+
+            // Reception and granting doctor see the hospital/clinical-scope request.
+            var receptionList = await svc.ListRequestsAsync(fx.ReceptionUserId);
+            Assert.Contains(receptionList, r => r.RequestId == request.RequestId);
+
+            var doctorAList = await svc.ListRequestsAsync(fx.DoctorAUserId);
+            Assert.Contains(doctorAList, r => r.RequestId == request.RequestId);
+
+            // Other hospital's doctor sees only their own tenant (empty here).
+            var doctorDList = await svc.ListRequestsAsync(fx.DoctorDUserId);
+            Assert.DoesNotContain(doctorDList, r => r.RequestId == request.RequestId);
+
+            // Patient / SystemAdmin role classes are forbidden, not an empty list.
+            await Assert.ThrowsAsync<ForbiddenException>(() => svc.ListRequestsAsync(fx.PatientUserId));
+            await Assert.ThrowsAsync<ForbiddenException>(() => svc.ListRequestsAsync(fx.SystemAdminUserId));
+
+            // Eligible recipients: only active + RECOVER + same hospital/department/specialty, never self.
+            var recipients = await svc.GetEligibleRecipientsAsync(fx.DoctorAUserId, request.RequestId);
+            Assert.Contains(recipients, r => r.DoctorId == fx.DoctorBId);
+            Assert.Contains(recipients, r => r.DoctorId == fx.DoctorCId);
+            Assert.DoesNotContain(recipients, r => r.DoctorId == fx.DoctorAId);
+            Assert.DoesNotContain(recipients, r => r.DoctorId == fx.SeededDoctor2Id); // no RECOVER, other department
+            Assert.DoesNotContain(recipients, r => r.DoctorId == fx.DoctorDId);        // other hospital
+
+            // Reception has visibility but no GRANT → 403; cross-hospital doctor has no visibility → 404.
+            await Assert.ThrowsAsync<ForbiddenException>(() =>
+                svc.GetEligibleRecipientsAsync(fx.ReceptionUserId, request.RequestId));
+            await Assert.ThrowsAsync<NotFoundException>(() =>
+                svc.GetEligibleRecipientsAsync(fx.DoctorDUserId, request.RequestId));
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    // =====================================================================================
+    // F-02 (security): SYSTEM_ADMIN has no return-context bypass
+    // =====================================================================================
+
+    [Fact]
+    public async Task F02_SystemAdminReturnCoordinationContext_Returns403()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("F02");
+        try
+        {
+            using var scope = Factory.Services.CreateScope();
+            var returnSvc = scope.ServiceProvider.GetRequiredService<IReturnCoordinationService>();
+            await Assert.ThrowsAsync<ForbiddenException>(() =>
+                returnSvc.GetReturnCoordinationContextAsync(fx.SystemAdminUserId, fx.Visit1Code));
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    [Fact]
+    public async Task RCX07_RCX08_SystemAdminForbiddenOnLegacyResumeAliasesAndCanonicalReturnEnrollment()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCX7");
+        try
+        {
+            using var scope = Factory.Services.CreateScope();
+            var jwt = scope.ServiceProvider.GetRequiredService<IJwtTokenService>();
+            var token = jwt.GenerateAccessToken(
+                new User { Id = fx.SystemAdminUserId, Email = fx.SystemAdminEmail },
+                new[] { RoleNames.SystemAdmin }).AccessToken;
+
+            foreach (var (method, url, body) in new (HttpMethod, string, object)[]
+                     {
+                         (HttpMethod.Post, $"/api/v1/visits/{fx.Visit1Code}/resume", new { target = "RETURN_CONSULTATION" }),
+                         (HttpMethod.Post, $"/api/v1/reception/visits/{fx.Visit1Code}/resume", new { target = "RETURN_CONSULTATION" }),
+                         (HttpMethod.Post, $"/api/v1/reception/visits/{fx.Visit1Code}/return-enrollment", new { }),
+                         (HttpMethod.Post, $"/api/v1/visits/{fx.Visit1Code}/return-to-doctor", new { servicePointId = "1", confirmPresent = true, reason = "SYSTEM_ADMIN thử cấp vé RETURN" }),
+                     })
+            {
+                using var req = new HttpRequestMessage(method, url)
+                {
+                    Content = JsonContent.Create(body),
+                };
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                var res = await Client.SendAsync(req);
+                Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+            }
         }
         finally
         {

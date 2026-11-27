@@ -88,3 +88,33 @@ public sealed record ClinicalSessionRecoveryConfirmResponseDto(
     string VisitStatus,
     DateTime RecoveredAt,
     bool IsIdempotentReplay);
+
+/// <summary>
+/// Scoped list projection for GET /api/v1/clinical-session-recovery-requests.
+/// Minimal data only: no free-text reasons, no EMR content.
+/// </summary>
+public sealed record ClinicalSessionRecoveryListItemDto(
+    long RequestId,
+    string Status,
+    long HospitalId,
+    long VisitId,
+    string VisitCode,
+    long QueueEntryId,
+    long? OriginalDoctorId,
+    long? AuthorizedDoctorId,
+    int ExpectedQueueStateVersion,
+    DateTime RequestedAt,
+    DateTime? GrantedAt,
+    DateTime? ExpiresAt,
+    DateTime? RecoveredAt);
+
+/// <summary>Candidate doctor for POST grant — minimal identity/department/specialty for selection.</summary>
+public sealed record ClinicalSessionRecoveryEligibleRecipientDto(
+    long DoctorId,
+    string DoctorCode,
+    string DoctorName,
+    long? DepartmentId,
+    string? DepartmentName,
+    long? SpecialtyId,
+    string? SpecialtyName);
+

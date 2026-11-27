@@ -54,4 +54,15 @@ public interface IClinicalSessionRecoveryService
         ConfirmClinicalSessionRecoveryRequestDto request,
         string? ipAddress = null,
         CancellationToken ct = default);
+
+    /// <summary>PM-approved Commit B addition: scoped request list for Doctor (grant/confirm) / Reception / HospitalAdmin.</summary>
+    Task<IReadOnlyList<ClinicalSessionRecoveryListItemDto>> ListRequestsAsync(
+        long actorUserId,
+        CancellationToken ct = default);
+
+    /// <summary>PM-approved Commit B addition: active doctors with RECOVER + same hospital/clinical scope, for GRANT holders.</summary>
+    Task<IReadOnlyList<ClinicalSessionRecoveryEligibleRecipientDto>> GetEligibleRecipientsAsync(
+        long actorUserId,
+        long requestId,
+        CancellationToken ct = default);
 }

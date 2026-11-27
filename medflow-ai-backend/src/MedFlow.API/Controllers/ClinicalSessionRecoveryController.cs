@@ -171,6 +171,28 @@ public sealed class ClinicalSessionRecoveryController : ControllerBase
         return Ok(await _service.ConfirmAsync(GetUserId(), id, request, GetIp(), ct));
     }
 
+    /// <summary>GET /api/v1/clinical-session-recovery-requests — PM-approved scoped list (Doctor grant/confirm scope, Reception/HospitalAdmin hospital scope).</summary>
+    [HttpGet("/api/v1/clinical-session-recovery-requests")]
+    [Authorize(Roles = ClinicalRoles)]
+    [ProducesResponseType<IReadOnlyList<ClinicalSessionRecoveryListItemDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<IReadOnlyList<ClinicalSessionRecoveryListItemDto>>> ListRequests(CancellationToken ct)
+        => Ok(await _service.ListRequestsAsync(GetUserId(), ct));
+
+    /// <summary>GET /api/v1/clinical-session-recovery-requests/{id}/eligible-recipients — active doctors with RECOVER + same hospital/clinical scope.</summary>
+    [HttpGet("/api/v1/clinical-session-recovery-requests/{id:long}/eligible-recipients")]
+    [Authorize(Roles = ClinicalRoles)]
+    [ProducesResponseType<IReadOnlyList<ClinicalSessionRecoveryEligibleRecipientDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<IReadOnlyList<ClinicalSessionRecoveryEligibleRecipientDto>>> GetEligibleRecipients(
+        [FromRoute] long id,
+        CancellationToken ct)
+        => Ok(await _service.GetEligibleRecipientsAsync(GetUserId(), id, ct));
+
     private long GetUserId()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)

@@ -273,8 +273,8 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
         }
         catch (DbUpdateException ex) when (PostgresConcurrencyException.TryGetSqlState(ex) is "23503" or "23514")
         {
-            // FK/check violations are request-scope validation failures, never unhandled HTTP 500.
-            throw new ConflictException(ClinicalSessionRecoveryConstants.UnresolvedRequestExistsMessage);
+            // F-03: FK/check violations are data-consistency failures, not "unresolved request exists".
+            throw new ConflictException(ClinicalSessionRecoveryConstants.RequestRejectedByConstraintMessage);
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -893,6 +893,169 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
     }
 
     // =====================================================================================
+    // PM-approved Commit B additions: scoped list + eligible recipients
+    // =====================================================================================
+
+    public async Task<IReadOnlyList<ClinicalSessionRecoveryListItemDto>> ListRequestsAsync(
+        long actorUserId,
+        CancellationToken ct = default)
+    {
+        var nowUtc = HospitalClock.GetUtcNowUnspecified(_timeProvider);
+        var actor = await LoadActorAsync(actorUserId, nowUtc, ct);
+        EnsureNotSystemAdmin(actor);
+        EnsureRecoveryRoleClass(actor);
+
+        // List has no single resource: visibility = actor's hospital. No uniform-404 semantics needed;
+        // actors outside their own tenant simply see an empty list. Missing tenant => 403.
+        var hospitalId = actor.Doctor?.HospitalId ?? actor.Staff?.HospitalId;
+        if (!hospitalId.HasValue)
+        {
+            throw new ForbiddenException("Người dùng không có cơ sở y tế hợp lệ để xem danh sách phục hồi phiên khám.");
+        }
+
+        EnsureContextReader(actor);
+
+        var requests = await _db.ClinicalSessionRecoveryRequests
+            .AsNoTracking()
+            .Where(r => r.HospitalId == hospitalId.Value)
+            .OrderByDescending(r => r.Id)
+            .Take(200)
+            .ToListAsync(ct);
+        if (requests.Count == 0)
+        {
+            return [];
+        }
+
+        var visitIds = requests.Select(r => r.VisitId).Distinct().ToList();
+        var visits = await _db.Visits.AsNoTracking()
+            .Where(v => visitIds.Contains(v.Id))
+            .ToListAsync(ct);
+        var visitById = visits.ToDictionary(v => v.Id);
+
+        if (actor.Doctor is not null)
+        {
+            var scopeCache = new Dictionary<long, bool>();
+            var scoped = new List<ClinicalSessionRecoveryRequest>();
+            foreach (var request in requests)
+            {
+                if (request.AuthorizedDoctorId == actor.Doctor.Id)
+                {
+                    scoped.Add(request);
+                    continue;
+                }
+
+                if (request.Status != ClinicalSessionRecoveryStatuses.Requested
+                    || !visitById.TryGetValue(request.VisitId, out var visit))
+                {
+                    continue;
+                }
+
+                if (!scopeCache.TryGetValue(visit.Id, out var inScope))
+                {
+                    inScope = await IsDoctorInClinicalScopeAsync(actor.Doctor, visit, ct);
+                    scopeCache[visit.Id] = inScope;
+                }
+
+                if (inScope)
+                {
+                    scoped.Add(request);
+                }
+            }
+
+            requests = scoped;
+        }
+
+        return requests.Select(r => new ClinicalSessionRecoveryListItemDto(
+                RequestId: r.Id,
+                Status: Normalize(r.Status),
+                HospitalId: r.HospitalId,
+                VisitId: r.VisitId,
+                VisitCode: visitById.TryGetValue(r.VisitId, out var v) ? FormatVisitCode(v) : $"VIS-{r.VisitId}",
+                QueueEntryId: r.QueueEntryId,
+                OriginalDoctorId: r.OriginalDoctorId,
+                AuthorizedDoctorId: r.AuthorizedDoctorId,
+                ExpectedQueueStateVersion: r.ExpectedQueueStateVersion,
+                RequestedAt: r.RequestedAt,
+                GrantedAt: r.GrantedAt,
+                ExpiresAt: r.ExpiresAt,
+                RecoveredAt: r.RecoveredAt))
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<ClinicalSessionRecoveryEligibleRecipientDto>> GetEligibleRecipientsAsync(
+        long actorUserId,
+        long requestId,
+        CancellationToken ct = default)
+    {
+        var nowUtc = HospitalClock.GetUtcNowUnspecified(_timeProvider);
+        var actor = await LoadActorAsync(actorUserId, nowUtc, ct);
+        EnsureNotSystemAdmin(actor);
+        EnsureRecoveryRoleClass(actor);
+
+        // D6: visibility first (404), then authority (403).
+        var (request, visit, hospitalId) = await ResolveRequestInScopeAsync(actor, requestId, ct);
+        var issuer = RequireGrantIssuer(actor);
+
+        if (request.Status != ClinicalSessionRecoveryStatuses.Requested)
+        {
+            throw new ConflictException(ClinicalSessionRecoveryConstants.GrantNotActiveMessage);
+        }
+
+        var doctors = await _db.Doctors.AsNoTracking()
+            .Include(d => d.Staff)
+            .Where(d =>
+                d.IsActive &&
+                (d.HospitalId == hospitalId || (d.Staff != null && d.Staff.HospitalId == hospitalId)))
+            .OrderBy(d => d.DoctorCode)
+            .ThenBy(d => d.Id)
+            .ToListAsync(ct);
+
+        var departments = await _db.Departments.AsNoTracking()
+            .Where(d => d.HospitalId == hospitalId)
+            .ToDictionaryAsync(d => d.Id, ct);
+        var specialties = await _db.Specialties.AsNoTracking()
+            .ToDictionaryAsync(s => s.Id, ct);
+
+        var recipients = new List<ClinicalSessionRecoveryEligibleRecipientDto>();
+        foreach (var doctor in doctors)
+        {
+            if (doctor.Id == issuer.Id || doctor.Staff is null || !doctor.Staff.UserId.HasValue)
+            {
+                continue;
+            }
+
+            var staff = doctor.Staff;
+            if (!string.Equals(staff.Status?.Trim(), "ACTIVE", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!await HasPermissionAsync(staff.UserId.Value, PermissionCodes.ClinicalSessionRecover, ct))
+            {
+                continue;
+            }
+
+            if (!await IsDoctorInClinicalScopeAsync(doctor, visit, ct))
+            {
+                continue;
+            }
+
+            departments.TryGetValue(staff.DepartmentId ?? 0, out var department);
+            specialties.TryGetValue(doctor.SpecialtyId ?? 0, out var specialty);
+            recipients.Add(new ClinicalSessionRecoveryEligibleRecipientDto(
+                DoctorId: doctor.Id,
+                DoctorCode: doctor.DoctorCode ?? string.Empty,
+                DoctorName: staff.FullName ?? doctor.DoctorCode ?? string.Empty,
+                DepartmentId: staff.DepartmentId,
+                DepartmentName: department?.Name,
+                SpecialtyId: doctor.SpecialtyId,
+                SpecialtyName: specialty?.Name));
+        }
+
+        return recipients.Take(100).ToList();
+    }
+
+    // =====================================================================================
     // Authorization
     // =====================================================================================
 
@@ -1139,7 +1302,10 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
             visitHospitals = [];
         }
 
-        if (visitHospitals.Count > 0 && !visitHospitals.Contains(actorHospitalId.Value))
+        // F-01 (security): an unresolvable visit hospital (empty set or resolver NotSupportedException)
+        // is NOT proof of tenancy. Treat it exactly like a mismatch: uniform 404, fail closed. Reception /
+        // HospitalAdmin have no clinical-scope fallback, so this is their only tenant constraint.
+        if (visitHospitals.Count == 0 || !visitHospitals.Contains(actorHospitalId.Value))
         {
             // Uniform 404 for not-found and not-in-scope: no existence/PHI oracle.
             throw new NotFoundException(ClinicalSessionRecoveryConstants.ContextNotFoundMessage);

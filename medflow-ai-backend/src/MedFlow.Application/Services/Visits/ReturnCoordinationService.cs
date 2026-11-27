@@ -1064,11 +1064,8 @@ public sealed class ReturnCoordinationService : IReturnCoordinationService
         long? visitHospitalId,
         CancellationToken ct)
     {
-        if (roleCodes.Contains(RoleNames.SystemAdmin))
-        {
-            return;
-        }
-
+        // F-02 (security): no SYSTEM_ADMIN bypass. A platform admin has no staff/clinical tenancy on this
+        // surface and must be rejected by the role checks below (403), including the return-context path.
         var isStaffReader = roleCodes.Contains(RoleNames.Reception) ||
                             roleCodes.Contains(RoleNames.HospitalAdmin) ||
                             roleCodes.Contains(RoleNames.DiagnosticStaff) ||

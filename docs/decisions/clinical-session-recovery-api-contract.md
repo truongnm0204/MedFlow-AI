@@ -13,6 +13,19 @@ permission, active staff/doctor, hospital scope, clinical scope, assignment and 
 | POST revoke | `POST /api/v1/clinical-session-recovery-requests/{id}/revoke` |
 | POST cancel | `POST /api/v1/clinical-session-recovery-requests/{id}/cancel` |
 | POST confirm | `POST /api/v1/clinical-session-recovery-requests/{id}/confirm` |
+| GET list (PM-approved Commit B) | `GET /api/v1/clinical-session-recovery-requests` |
+| GET eligible recipients (PM-approved Commit B) | `GET /api/v1/clinical-session-recovery-requests/{id}/eligible-recipients` |
+
+## List and eligible recipients (Commit B additions)
+
+- **List** is scoped, never uniform-404: Doctor sees REQUESTED requests inside their clinical scope plus
+  requests authorized to them (confirm); Reception/HospitalAdmin see their hospital's requests; other role
+  classes get 403. Minimal fields only (no reasons/EMR).
+- **Eligible recipients** requires a doctor with `CLINICAL_SESSION_RECOVERY_GRANT` and request visibility;
+  returns active doctors in the same hospital with `CLINICAL_SESSION_RECOVER` and matching
+  department/specialty, excluding the caller. Out-of-scope caller → 404; in-scope but no GRANT → 403;
+  non-REQUESTED request → 409.
+
 
 ## Error boundary (decision D6 — no existence oracle)
 
