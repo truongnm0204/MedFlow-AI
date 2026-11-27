@@ -91,6 +91,10 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
     {
         var nowUtc = HospitalClock.GetUtcNowUnspecified(_timeProvider);
         var actor = await LoadActorAsync(actorUserId, nowUtc, ct);
+        EnsureNotSystemAdmin(actor);
+        EnsureRecoveryRoleClass(actor);
+
+        // D6 final ordering: visibility first (404), permission second (403).
         var (visit, hospitalId) = await ResolveVisitInScopeAsync(actor, idOrCode, ct);
 
         EnsureContextReader(actor);
@@ -171,14 +175,17 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
         var reason = NormalizeReason(request.Reason);
         var actor = await LoadActorAsync(actorUserId, nowUtc, ct);
         EnsureNotSystemAdmin(actor);
+        EnsureRecoveryRoleClass(actor);
+
+        // D6 final ordering: resolve tenant/clinical visibility FIRST (uniform 404 for not-found,
+        // other-hospital, out-of-scope or missing scope mapping). Only a visible resource can produce 403.
+        var (preVisit, hospitalId) = await ResolveVisitInScopeAsync(actor, idOrCode, ct);
 
         if (!CanCreateRequest(actor))
         {
             throw new ForbiddenException(
                 "Chỉ nhân viên Tiếp đón đủ quyền hoặc bác sĩ có quyền phục hồi phiên khám mới được tạo yêu cầu.");
         }
-
-        var (preVisit, hospitalId) = await ResolveVisitInScopeAsync(actor, idOrCode, ct);
 
         IDbContextTransaction? tx = null;
         long createdRequestId = 0;
@@ -306,6 +313,7 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
         var reason = NormalizeReason(request.Reason);
         var actor = await LoadActorAsync(actorUserId, nowUtc, ct);
         EnsureNotSystemAdmin(actor);
+        EnsureRecoveryRoleClass(actor);
 
         var (preRequest, preVisit, hospitalId) = await ResolveRequestInScopeAsync(actor, requestId, ct);
         var issuer = RequireGrantIssuer(actor);
@@ -391,7 +399,9 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
                 || !await HasPermissionAsync(recipient.Staff.UserId.Value, PermissionCodes.ClinicalSessionRecover, ct)
                 || !await IsDoctorInClinicalScopeAsync(recipient.Doctor, visit, ct))
             {
-                throw new ConflictException(ClinicalSessionRecoveryConstants.RecipientNotEligibleMessage);
+                // RA-07: issuer has visibility; the operation fails because the target doctor lacks
+                // RECOVER/active/same-hospital/clinical scope → 403 (D6 class b), not 409/404.
+                throw new ForbiddenException(ClinicalSessionRecoveryConstants.RecipientNotEligibleMessage);
             }
 
             if (recipient.Staff.UserId == actor.UserId)
@@ -492,6 +502,7 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
         var reason = NormalizeReason(request.Reason);
         var actor = await LoadActorAsync(actorUserId, nowUtc, ct);
         EnsureNotSystemAdmin(actor);
+        EnsureRecoveryRoleClass(actor);
 
         var (preRequest, preVisit, hospitalId) = await ResolveRequestInScopeAsync(actor, requestId, ct);
 
@@ -655,6 +666,7 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
 
         var actor = await LoadActorAsync(actorUserId, nowUtc, ct);
         EnsureNotSystemAdmin(actor);
+        EnsureRecoveryRoleClass(actor);
 
         var (preRequest, preVisit, hospitalId) = await ResolveRequestInScopeAsync(actor, requestId, ct);
 
@@ -909,6 +921,22 @@ public sealed class ClinicalSessionRecoveryService : IClinicalSessionRecoverySer
         {
             throw new ForbiddenException(
                 "SYSTEM_ADMIN không có quyền thực hiện phục hồi phiên khám lâm sàng (không bypass chính sách chuyên môn).");
+        }
+    }
+
+    /// <summary>
+    /// Role-class gate (RA-03/RA-04): PATIENT / DIAGNOSTIC_STAFF / PHARMACY_STAFF / SYSTEM_ADMIN can never
+    /// operate this surface, so they get 403 before any resource lookup (no tenant visibility exists for them).
+    /// RECEPTION / DOCTOR / HOSPITAL_ADMIN then pass through scope resolution before the 403 permission gate.
+    /// </summary>
+    private static void EnsureRecoveryRoleClass(RecoveryActor actor)
+    {
+        var allowed = actor.Roles.Contains(RoleNames.Reception)
+                      || actor.Roles.Contains(RoleNames.Doctor)
+                      || actor.Roles.Contains(RoleNames.HospitalAdmin);
+        if (!allowed)
+        {
+            throw new ForbiddenException("Người dùng không có quyền thực hiện phục hồi phiên khám lâm sàng.");
         }
     }
 

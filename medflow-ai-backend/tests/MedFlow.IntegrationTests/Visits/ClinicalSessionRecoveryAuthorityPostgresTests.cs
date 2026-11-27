@@ -196,7 +196,8 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
             Assert.Contains("SELF_GRANT", selfGrant.Message, StringComparison.Ordinal);
 
             // doctor02@medflow.test: same hospital/active but no CLINICAL_SESSION_RECOVER.
-            var ineligible = await Assert.ThrowsAsync<ConflictException>(() => svc.GrantAsync(
+            // D6 final: actor has visibility, target doctor lacks RECOVER → 403 (not 409/404).
+            var ineligible = await Assert.ThrowsAsync<ForbiddenException>(() => svc.GrantAsync(
                 fx.DoctorAUserId, request.RequestId,
                 new GrantClinicalSessionRecoveryRequestDto(fx.SeededDoctor2Id, 4, "Cấp grant cho bác sĩ thiếu quyền RECOVER.")));
             Assert.Contains("RECIPIENT_NOT_ELIGIBLE", ineligible.Message, StringComparison.Ordinal);
@@ -667,6 +668,51 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
     }
 
     // =====================================================================================
+    // RA-25 (D6 edge): missing clinical mapping is unprovable visibility → uniform 404
+    // =====================================================================================
+
+    [Fact]
+    public async Task RA25_MissingClinicalMapping_FailsClosedWithUniform404_Before403()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RA25");
+        try
+        {
+            using var scope = Factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+            var svc = NewService(db);
+
+            // Visit has no appointment/service and no examination room → department/specialty unprovable.
+            var (visitId, visitCode, queueId) = await CreateClinicalSessionAsync(
+                fx, "NOMAP", fx.DoctorAId, "RETURN_CONSULTATION", "IN_PROGRESS", 1,
+                examinationRoomId: null);
+            fx.ExtraVisitIds.Add(visitId);
+            fx.ExtraQueueIds.Add(queueId);
+
+            // Doctor A holds RECOVER+GRANT, but visibility cannot be proven → 404, not 403.
+            await Assert.ThrowsAsync<NotFoundException>(() => svc.GetContextAsync(fx.DoctorAUserId, visitCode));
+            await Assert.ThrowsAsync<NotFoundException>(() => svc.RequestRecoveryAsync(
+                fx.DoctorAUserId, visitCode,
+                new CreateClinicalSessionRecoveryRequestDto(queueId, 1, "Không xác định được phạm vi chuyên môn.")));
+
+            // Reception (non-physician visibility) can create the request; a physician still cannot act on it.
+            var request = await svc.RequestRecoveryAsync(
+                fx.ReceptionUserId, visitCode,
+                new CreateClinicalSessionRecoveryRequestDto(queueId, 1, "Yêu cầu từ quầy tiếp đón."));
+            await Assert.ThrowsAsync<NotFoundException>(() => svc.GrantAsync(
+                fx.DoctorAUserId, request.RequestId,
+                new GrantClinicalSessionRecoveryRequestDto(fx.DoctorBId, 1, "Cấp grant khi chưa chứng minh được scope.")));
+            await Assert.ThrowsAsync<NotFoundException>(() => svc.ConfirmAsync(
+                fx.DoctorAUserId, request.RequestId,
+                new ConfirmClinicalSessionRecoveryRequestDto(1, true, "Xác nhận khi chưa chứng minh được scope.")));
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
+    // =====================================================================================
     // RCX-02..RCX-05 + RCX-08: rollover never auto-defers active execution; SYSTEM_ADMIN 403
     // =====================================================================================
 
@@ -1094,13 +1140,14 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
         long assignedDoctorId,
         string queueType,
         string status,
-        int stateVersion)
+        int stateVersion,
+        long? examinationRoomId = 1)
     {
         var code = $"V{fx.Suffix[..6]}{tag}{Guid.NewGuid():N}"[..20];
         var nowLocal = _clock.GetHospitalNow();
         var (visitId, queueId) = await CreateVisitAndQueueAsync(
             code, 1, assignedDoctorId, queueType, status, stateVersion,
-            DateOnly.FromDateTime(nowLocal.AddDays(-1)), nowLocal, examinationRoomId: 1);
+            DateOnly.FromDateTime(nowLocal.AddDays(-1)), nowLocal, examinationRoomId);
         return (visitId, code, queueId);
     }
 
