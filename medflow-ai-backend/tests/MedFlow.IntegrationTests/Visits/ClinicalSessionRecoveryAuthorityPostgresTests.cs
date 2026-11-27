@@ -3,9 +3,11 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MedFlow.Application.Common.Time;
+using MedFlow.Application.DTOs.Consultation;
 using MedFlow.Application.DTOs.Realtime;
 using MedFlow.Application.DTOs.Visits;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Payments;
 using MedFlow.Application.Services.Policies;
 using MedFlow.Application.Services.Realtime;
@@ -1605,6 +1607,158 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
         }
     }
 
+    [Fact]
+    public async Task CommitB_Race_ConfirmVsClinicalWrite_StaleWriterBlockedAfterRecovery()
+    {
+        if (!await CanConnectAsync()) return;
+        var fx = await CreateFixtureAsync("RCXW");
+        try
+        {
+            long requestId;
+            using (var seedScope = Factory.Services.CreateScope())
+            {
+                var seedDb = seedScope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var seedSvc = NewService(seedDb);
+                var request = await seedSvc.RequestRecoveryAsync(
+                    fx.ReceptionUserId, fx.Visit1Code,
+                    new CreateClinicalSessionRecoveryRequestDto(fx.Queue1Id, 4, "Seed for confirm/clinical-write race."));
+                requestId = request.RequestId;
+                await seedSvc.GrantAsync(
+                    fx.DoctorAUserId, requestId,
+                    new GrantClinicalSessionRecoveryRequestDto(fx.DoctorBId, 4, "Seed grant for clinical-write race."));
+            }
+
+            // Baseline: a clinical write on the still-open session must succeed before any recovery,
+            // proving the concurrent write below is a real write path (fixture wiring/permissions valid).
+            var baselineFindings = $"Baseline trước recovery {Guid.NewGuid():N}";
+            using (var baselineScope = Factory.Services.CreateScope())
+            {
+                var baselineConsult = baselineScope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
+                await baselineConsult.RecordClinicalExaminationAsync(
+                    fx.DoctorAUserId,
+                    fx.Visit1Code,
+                    new RecordClinicalExaminationRequest(
+                        ClinicalFindings: baselineFindings,
+                        TreatmentPlan: "Theo dõi baseline."));
+            }
+
+            using var gate = new SemaphoreSlim(0, 2);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            async Task<string> ConfirmAttempt()
+            {
+                using var scope = Factory.Services.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+                var svc = NewService(db);
+                gate.Release();
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                try
+                {
+                    await svc.ConfirmAsync(
+                        fx.DoctorBUserId, requestId,
+                        new ConfirmClinicalSessionRecoveryRequestDto(4, true, "Race confirm vs clinical write."));
+                    return "CONFIRM";
+                }
+                catch (ConflictException)
+                {
+                    return "CONFLICT";
+                }
+            }
+
+            async Task<string> WriteAttempt()
+            {
+                using var scope = Factory.Services.CreateScope();
+                var consultSvc = scope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
+                gate.Release();
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                try
+                {
+                    await consultSvc.RecordClinicalExaminationAsync(
+                        fx.DoctorAUserId,
+                        fx.Visit1Code,
+                        new RecordClinicalExaminationRequest(
+                            ClinicalFindings: "Ghi nhận lâm sàng chạy song song recovery.",
+                            TreatmentPlan: "Theo dõi."));
+                    return "WRITE";
+                }
+                catch (ConflictException)
+                {
+                    return "CONFLICT";
+                }
+                catch (ForbiddenException)
+                {
+                    return "FORBIDDEN";
+                }
+                catch (Exception ex)
+                {
+                    return "ERROR:" + ex.GetType().Name;
+                }
+            }
+
+            var t1 = Task.Run(ConfirmAttempt);
+            var t2 = Task.Run(WriteAttempt);
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            await gate.WaitAsync(TimeSpan.FromSeconds(15));
+            release.SetResult();
+            var results = await Task.WhenAll(t1, t2);
+
+            // The recovery confirm must always win deterministically: it never conflicts on its own,
+            // so the clinical write either loses (CONFLICT) or lands before the release is visible.
+            Assert.Contains("CONFIRM", results);
+            Assert.DoesNotContain(results, r => r.StartsWith("ERROR:", StringComparison.Ordinal));
+
+            Db.ChangeTracker.Clear();
+            var row = await Db.ClinicalSessionRecoveryRequests.AsNoTracking().SingleAsync(r => r.Id == requestId);
+            Assert.Equal(ClinicalSessionRecoveryStatuses.Recovered, row.Status);
+
+            // Captured BEFORE cleanup so assertions survive the fixture teardown deleting rows.
+            var recoveredQueue = await Db.QueueEntries.AsNoTracking().SingleAsync(q => q.Id == fx.Queue1Id);
+            var queueStatus = recoveredQueue.Status;
+            var queueCompletedAt = recoveredQueue.CompletedAt;
+            var recoveredVisit = await Db.Visits.AsNoTracking().SingleAsync(v => v.Id == fx.Visit1Id);
+            var visitStatus = AppointmentBookingRules.NormalizeStatusKey(recoveredVisit.Status);
+            var raceRevisions = await Db.MedicalRecordRevisions.AsNoTracking()
+                .Where(r => r.ClinicalFindings != null &&
+                            r.ClinicalFindings.Contains("song song recovery") &&
+                            Db.MedicalRecords.Any(m => m.Id == r.MedicalRecordId && m.VisitId == fx.Visit1Id))
+                .CountAsync();
+            var visit1Revisions = await Db.MedicalRecordRevisions.AsNoTracking()
+                .Where(r => Db.MedicalRecords.Any(m => m.Id == r.MedicalRecordId && m.VisitId == fx.Visit1Id))
+                .CountAsync();
+
+            Assert.Equal("DEFERRED", queueStatus);
+            Assert.NotNull(queueCompletedAt);
+
+            // §10.4: no stale write trái phép — the post-recovery state machine never shows the
+            // old session as still serving.
+            Assert.True(
+                visitStatus is "CHECKED_IN" or "AWAITING_RESULTS",
+                $"Visit status sau recovery phải là non-serving (CHECKED_IN/AWAITING_RESULTS), thực tế: {visitStatus}.");
+
+            // No lost update: any clinical write that reported success must be fully persisted
+            // (revision visible after the race), never half-applied.
+            if (results.Contains("WRITE"))
+            {
+                Assert.True(raceRevisions >= 1, "WRITE committed nhưng revision không tồn tại — lost update.");
+                Assert.True(visit1Revisions >= 2, "Baseline + concurrent write đều phải persist đầy đủ.");
+            }
+
+            // Stale writer after recovery must not be allowed to continue as if the session were open.
+            using var postScope = Factory.Services.CreateScope();
+            var postConsult = postScope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
+            await Assert.ThrowsAsync<ConflictException>(() => postConsult.RecordClinicalExaminationAsync(
+                fx.DoctorAUserId,
+                fx.Visit1Code,
+                new RecordClinicalExaminationRequest(
+                    ClinicalFindings: "Ghi nhận sau recovery (phải bị chặn).",
+                    TreatmentPlan: "Không hợp lệ.")));
+        }
+        finally
+        {
+            await CleanupAsync(fx);
+        }
+    }
+
     private sealed class RecordingRealtimePublisher : IRealtimeNotificationPublisher
     {
         public List<QueueChangedNotification> QueueChanged { get; } = [];
@@ -1900,6 +2054,7 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
         public string DiagStaffEmail { get; init; } = "diagnostic_staff01@medflow.test";
         public string PharmacyStaffEmail { get; init; } = "pharmacy_staff01@medflow.test";
         public string SystemAdminEmail { get; init; } = "system_admin01@medflow.test";
+        public long PatientId { get; init; }
         public long Visit1Id { get; init; }
         public string Visit1Code { get; init; } = string.Empty;
         public long Queue1Id { get; init; }
@@ -2052,8 +2207,19 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
             .Select(d => d.Id)
             .SingleAsync();
 
+        var patient = new Patient
+        {
+            PatientCode = $"PT{suffix}",
+            FullName = $"Test Patient {suffix}",
+            Gender = "MALE",
+            Status = "ACTIVE",
+        };
+        Db.Patients.Add(patient);
+        await Db.SaveChangesAsync();
+
         (visit1Id, queue1Id) = await CreateVisitAndQueueAsync(
             $"VIS-{suffix}-1", 1, doctorAId, "RETURN_CONSULTATION", "IN_PROGRESS", 4, yesterday, nowLocal, examinationRoomId: 1);
+        await Db.Visits.Where(v => v.Id == visit1Id).ExecuteUpdateAsync(s => s.SetProperty(v => v.PatientId, patient.Id));
         (visit2Id, queue2Id) = await CreateVisitAndQueueAsync(
             $"VIS-{suffix}-2", otherHospitalId, doctorDId, "RETURN_CONSULTATION", "IN_PROGRESS", 2, yesterday, nowLocal, examinationRoomId: otherRoomId);
 
@@ -2072,6 +2238,7 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
             DoctorDUserId = doctorDUserId,
             DoctorDId = doctorDId,
             SeededDoctor2Id = seededDoctor2Id,
+            PatientId = patient.Id,
             Visit1Id = visit1Id,
             Visit1Code = $"VIS-{suffix}-1",
             Queue1Id = queue1Id,
@@ -2242,7 +2409,20 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
             await Db.QueueFairnessStates.Where(f => fx.ExtraServicePointIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
             await Db.QueueServicePoints.Where(sp => fx.ExtraServicePointIds.Contains(sp.Id)).ExecuteDeleteAsync();
         }
+        var medicalRecordIds = await Db.MedicalRecords
+            .Where(m => m.VisitId.HasValue && visitIds.Contains(m.VisitId.Value))
+            .Select(m => m.Id)
+            .ToListAsync();
+        if (medicalRecordIds.Count > 0)
+        {
+            await Db.MedicalRecordRevisions.Where(r => r.MedicalRecordId.HasValue && medicalRecordIds.Contains(r.MedicalRecordId.Value))
+                .ExecuteDeleteAsync();
+            await Db.MedicalRecords.Where(m => medicalRecordIds.Contains(m.Id))
+                .ExecuteDeleteAsync();
+        }
+
         await Db.Visits.Where(v => visitIds.Contains(v.Id)).ExecuteDeleteAsync();
+        await Db.Patients.Where(p => p.Id == fx.PatientId).ExecuteDeleteAsync();
         await Db.UserRoles.Where(ur => fx.UserIds.Contains(ur.UserId)).ExecuteDeleteAsync();
         await Db.RolePermissions.Where(rp => fx.RoleIds.Contains(rp.RoleId)).ExecuteDeleteAsync();
         await Db.Roles.Where(r => fx.RoleIds.Contains(r.Id)).ExecuteDeleteAsync();

@@ -530,7 +530,7 @@ public sealed partial class ExaminationQueueService
         CreateReturnToDoctorQueueEntryRequest request,
         string? normalizedServicePointId,
         Hospital hospital,
-        string? reason,
+        string reason,
         string? notes,
         DateTime nowUtc,
         string? ipAddress,
