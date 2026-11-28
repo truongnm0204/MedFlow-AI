@@ -1340,6 +1340,48 @@ internal static class DiagnosticOrderLifecycleHelper
             // Minimal unit test DbContext without Notifications DbSet.
         }
     }
+
+    /// <summary>
+    /// #870: sau khi resolver chọn điểm (tiếp nhận/xác nhận/gọi bệnh nhân), nếu điểm thực tế khác
+    /// điểm đã phân công (điểm đóng/quá tải/không khả dụng) thì cập nhật lại phân công + ghi lịch sử.
+    /// </summary>
+    public static void EnsureAssignedServicePointAfterRouting(
+        IApplicationDbContext db,
+        DiagnosticOrder order,
+        long resolvedServicePointId,
+        long hospitalId,
+        long actorUserId,
+        DateTime nowLocal,
+        string reason)
+    {
+        if (order.AssignedServicePointId == resolvedServicePointId)
+        {
+            return;
+        }
+
+        var fromPointId = order.AssignedServicePointId;
+        order.AssignedServicePointId = resolvedServicePointId;
+        try
+        {
+            db.DiagnosticOrderRoutingHistories.Add(new DiagnosticOrderRoutingHistory
+            {
+                DiagnosticOrderId = order.Id,
+                VisitId = order.VisitId,
+                HospitalId = hospitalId,
+                FromServicePointId = fromPointId,
+                ToServicePointId = resolvedServicePointId,
+                Source = DiagnosticOrderRoutingHistory.SourceReceiveReroute,
+                Reason = reason,
+                ChangedByUserId = actorUserId,
+                ChangedByRole = null,
+                CreatedAt = nowLocal,
+            });
+        }
+        catch (NotSupportedException)
+        {
+            // Minimal unit-test DbContext without DiagnosticOrderRoutingHistories.
+        }
+    }
 }
 
 internal sealed record DiagnosticOrderCancellationOutcome(

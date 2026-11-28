@@ -454,6 +454,15 @@ public sealed class DiagnosticPatientReceiveService : IDiagnosticPatientReceiveS
                     postLockDepartmentsById,
                     validated.RoomId);
 
+                DiagnosticOrderLifecycleHelper.EnsureAssignedServicePointAfterRouting(
+                    _db,
+                    order,
+                    postLockSpId,
+                    hospitalId,
+                    actorUserId,
+                    nowLocal,
+                    "Điểm được phân công không còn khả dụng khi tiếp nhận; hệ thống tự điều phối lại.");
+
                 var resolvedSp = postLockHospitalServicePoints.First(sp => sp.Id == postLockSpId);
                 postLockRoomsById.TryGetValue(resolvedSp.RoomId!.Value, out var resolvedRoom);
                 await DiagnosticDepartmentScopeGuard.ReloadLiveStaffAndEnsureDepartmentScopeAsync(

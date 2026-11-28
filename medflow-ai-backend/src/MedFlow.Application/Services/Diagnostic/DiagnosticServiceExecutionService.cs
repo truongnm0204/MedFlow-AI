@@ -532,6 +532,14 @@ public sealed class DiagnosticServiceExecutionService : IDiagnosticServiceExecut
                         postLockDepartmentsById,
                         validated.RoomId);
                     var liveSp = postLockHospitalServicePoints!.First(sp => sp.Id == postLockSpId);
+                    DiagnosticOrderLifecycleHelper.EnsureAssignedServicePointAfterRouting(
+                        _db,
+                        order,
+                        postLockSpId,
+                        hospitalId,
+                        actorUserId,
+                        nowLocal,
+                        "Điểm được phân công không còn khả dụng khi bắt đầu thực hiện; hệ thống tự điều phối lại.");
                     postLockRoomsById!.TryGetValue(liveSp.RoomId!.Value, out var liveRoom);
                     plan = plan with
                     {
