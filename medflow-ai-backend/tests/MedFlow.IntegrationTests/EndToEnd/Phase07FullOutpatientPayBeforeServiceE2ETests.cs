@@ -1042,12 +1042,24 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
             Assert.Equal(0m, freeBpCharge.UnitPrice);
             Assert.Equal("WAIVED", freeBpCharge.PaymentRequirement);
 
-            // Decline optional CLS -> SelectionStatus = DECLINED, ChargeStatus = CANCELLED
-            using (var declineResp = await SendJsonAsync(
+            // #877: patient records refusal (no cancel), then treating doctor cancels the optional order.
+            using (var patientRefusal = await SendJsonAsync(
                 HttpMethod.Post,
                 $"/api/v1/patients/visits/{visitCode}/diagnostic-orders/{optOrder.OrderId}/decline",
                 new DeclineDiagnosticOrderRequestDto(Reason: "Bệnh nhân từ chối siêu âm tầm soát tùy chọn"),
                 patientToken))
+            {
+                Assert.Equal(HttpStatusCode.OK, patientRefusal.StatusCode);
+                var refusalDto = (await patientRefusal.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
+                Assert.True(refusalDto.RefusalRecorded);
+                Assert.Equal("ORDERED", refusalDto.OrderStatus);
+            }
+
+            using (var declineResp = await SendJsonAsync(
+                HttpMethod.Post,
+                $"/api/v1/doctor/visits/{visitCode}/diagnostic-orders/{optOrder.OrderId}/decline",
+                new DeclineDiagnosticOrderRequestDto(Reason: "Bác sĩ xác nhận bệnh nhân từ chối siêu âm tùy chọn"),
+                doctorToken))
             {
                 Assert.Equal(HttpStatusCode.OK, declineResp.StatusCode);
                 var declineDto = (await declineResp.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
@@ -1588,12 +1600,12 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                 Assert.Equal(HttpStatusCode.OK, compB.StatusCode);
             }
 
-            // Decline Optional C -> DECLINED
+            // #877: Optional C is cancelled by the treating doctor (patient/reception only record refusal).
             using (var decC = await SendJsonAsync(
                 HttpMethod.Post,
-                $"/api/v1/patients/visits/{visitCode}/diagnostic-orders/{orderC.OrderId}/decline",
-                new DeclineDiagnosticOrderRequestDto(Reason: "Không làm dịch vụ tùy chọn C"),
-                patientToken))
+                $"/api/v1/doctor/visits/{visitCode}/diagnostic-orders/{orderC.OrderId}/decline",
+                new DeclineDiagnosticOrderRequestDto(Reason: "Bác sĩ xác nhận không làm dịch vụ tùy chọn C"),
+                doctorToken))
             {
                 Assert.Equal(HttpStatusCode.OK, decC.StatusCode);
             }
@@ -1921,36 +1933,41 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
             // Patient accepts & pays Optional B (100k)
             var paidOptQr = await IssueSingleQrAndSettleAsync(visitCode, chargeB.Id, 100_000m, patientToken, $"FT-E2E06-OPTB-{fx.Suffix}");
 
-            // Patient self-decline on PAID Optional B -> 409
+            // #877: Patient self-decline on PAID Optional B -> records refusal only, no cancel.
             using (var patSelfDeclinePaid = await SendJsonAsync(
                 HttpMethod.Post,
                 $"/api/v1/patients/visits/{visitCode}/diagnostic-orders/{orderB.OrderCode}/decline",
                 new DeclineDiagnosticOrderRequestDto(Reason: "Tự bấm hủy sau khi đã thanh toán", ConfirmAbandonPaid: true),
                 patientToken))
             {
-                Assert.Equal(HttpStatusCode.Conflict, patSelfDeclinePaid.StatusCode);
-                Assert.Contains("PAID_ORDER_STAFF_CONFIRMATION_REQUIRED", await patSelfDeclinePaid.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+                Assert.Equal(HttpStatusCode.OK, patSelfDeclinePaid.StatusCode);
+                var refusal = (await patSelfDeclinePaid.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
+                Assert.True(refusal.RefusalRecorded);
+                Assert.Equal("ORDERED", refusal.OrderStatus);
             }
 
-            // Patient & Reception decline on Mandatory A -> 409 MANDATORY_ORDER_REVIEW_REQUIRED
+            // #877: Patient & Reception record mandatory refusal -> 200, order untouched.
             using (var patDeclineMand = await SendJsonAsync(
                 HttpMethod.Post,
                 $"/api/v1/patients/visits/{visitCode}/diagnostic-orders/{orderA.OrderCode}/decline",
                 new DeclineDiagnosticOrderRequestDto(Reason: "Xin tự bỏ xét nghiệm bắt buộc"),
                 patientToken))
             {
-                Assert.Equal(HttpStatusCode.Conflict, patDeclineMand.StatusCode);
-                Assert.Contains("MANDATORY_ORDER_REVIEW_REQUIRED", await patDeclineMand.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+                Assert.Equal(HttpStatusCode.OK, patDeclineMand.StatusCode);
+                var refusal = (await patDeclineMand.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
+                Assert.True(refusal.RefusalRecorded);
             }
 
             using (var recDeclineMand = await SendJsonAsync(
                 HttpMethod.Post,
                 $"/api/v1/reception/visits/{visitCode}/diagnostic-orders/{orderA.OrderCode}/decline",
-                new DeclineDiagnosticOrderRequestDto(Reason: "Quầy thử hủy xét nghiệm bắt buộc"),
+                new DeclineDiagnosticOrderRequestDto(Reason: "Quầy ghi nhận bệnh nhân từ chối xét nghiệm bắt buộc"),
                 receptionToken))
             {
-                Assert.Equal(HttpStatusCode.Conflict, recDeclineMand.StatusCode);
-                Assert.Contains("MANDATORY_ORDER_REVIEW_REQUIRED", await recDeclineMand.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+                var recDeclineBody = await recDeclineMand.Content.ReadAsStringAsync();
+                Assert.True(recDeclineMand.StatusCode == HttpStatusCode.OK, recDeclineBody);
+                var refusal = System.Text.Json.JsonSerializer.Deserialize<DeclineDiagnosticOrderResponseDto>(recDeclineBody, WebJson)!;
+                Assert.True(refusal.RefusalRecorded);
             }
 
             // Patient requests doctor review on Mandatory A -> SelectionStatus = REVIEW_REQUIRED, CompleteVisit blocked
@@ -1979,15 +1996,15 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                 Assert.Equal(HttpStatusCode.Conflict, blockedComplete.StatusCode);
             }
 
-            // Reception confirms voluntary abandonment of PAID Optional B (ConfirmAbandonPaid: true) ->
+            // #877: ONLY the treating doctor cancels PAID Optional B ->
             // SKIPPED_AFTER_PAID + CANCELLED + PAID_NOT_PERFORMED, while Payment & PaymentAllocation remain PAID!
             using (var recSkipPaidResp = await SendJsonAsync(
                 HttpMethod.Post,
-                $"/api/v1/reception/visits/{visitCode}/diagnostic-orders/{orderB.OrderCode}/decline",
+                $"/api/v1/doctor/visits/{visitCode}/diagnostic-orders/{orderB.OrderCode}/decline",
                 new DeclineDiagnosticOrderRequestDto(
-                    Reason: "Bệnh nhân tự nguyện bỏ siêu âm tùy chọn đã đóng tiền vì có việc gấp",
+                    Reason: "Bác sĩ xác nhận bệnh nhân tự nguyện bỏ siêu âm tùy chọn đã đóng tiền vì có việc gấp",
                     ConfirmAbandonPaid: true),
-                receptionToken))
+                doctorToken))
             {
                 Assert.Equal(HttpStatusCode.OK, recSkipPaidResp.StatusCode);
                 var skipDto = (await recSkipPaidResp.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
@@ -2263,12 +2280,12 @@ public sealed class Phase07FullOutpatientPayBeforeServiceE2ETests
                 Assert.Equal(300_000m, payOld.Amount);
             }
 
-            // 2. Decline Optional B -> PAY-OLD + both allocations become CANCELLED while Amount == 300k stays immutable
+            // 2. Treating doctor cancels Optional B -> PAY-OLD + both allocations become CANCELLED while Amount == 300k stays immutable (#877)
             using (var decBResp = await SendJsonAsync(
                 HttpMethod.Post,
-                $"/api/v1/patients/visits/{visitCode}/diagnostic-orders/{orderB.OrderId}/decline",
-                new DeclineDiagnosticOrderRequestDto(Reason: "Không làm Optional B"),
-                patientToken))
+                $"/api/v1/doctor/visits/{visitCode}/diagnostic-orders/{orderB.OrderId}/decline",
+                new DeclineDiagnosticOrderRequestDto(Reason: "Bác sĩ xác nhận không làm Optional B"),
+                doctorToken))
             {
                 Assert.Equal(HttpStatusCode.OK, decBResp.StatusCode);
             }

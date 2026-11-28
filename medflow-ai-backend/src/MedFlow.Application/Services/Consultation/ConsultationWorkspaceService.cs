@@ -1069,6 +1069,13 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         var specialtiesById = await _db.Specialties
             .AsNoTracking()
             .ToDictionaryAsync(s => s.Id, ct);
+        var routingWaitCounts = await DiagnosticRoutingRules.LoadWaitingCountsAsync(
+            _db,
+            hospitalDiagPoints.Select(sp => sp.Id).ToList(),
+            queueDate,
+            ct);
+        var routingRoomsById = await TryLoadHospitalRoomsAsync(doctorAccess.Hospital.Id, ct);
+        var routingDepartmentsById = await TryLoadHospitalDepartmentsAsync(doctorAccess.Hospital.Id, ct);
 
         var seenServiceIds = new HashSet<long>();
         var resolvedItems = new List<ResolvedDiagnosticOrderCreationItem>(validated.Items.Count);
@@ -1240,43 +1247,21 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 }
             }
 
-            QueueServicePoint? diagServicePoint = null;
-            var serviceSpecificPoints = hospitalDiagPoints
-                .Where(sp => sp.ServiceId == service.Id)
-                .OrderBy(sp => sp.Id)
-                .ToList();
-
-            if (serviceSpecificPoints.Count > 0)
-            {
-                diagServicePoint = serviceSpecificPoints.FirstOrDefault(sp => sp.IsActive != false);
-                if (diagServicePoint is null)
-                {
-                    throw new ConflictException(
-                        $"Điểm phục vụ cận lâm sàng cho dịch vụ '{service.Name}' hiện đang ngừng hoạt động.");
-                }
-            }
-            else
-            {
-                diagServicePoint = hospitalDiagPoints
-                    .Where(sp => sp.IsActive != false)
-                    .OrderBy(sp => sp.ServiceId.HasValue ? 1 : 0)
-                    .ThenBy(sp => sp.Id)
-                    .FirstOrDefault();
-            }
+            // #869: gán điểm ngay khi tạo chỉ định, chọn theo TẢI (số người đang chờ) sau khi
+            // đã loại điểm không hoạt động / không tương thích chuyên môn. Hết điểm => order giữ ORDERED.
+            var diagServicePoint = DiagnosticServicePointResolver.ResolveForAssignment(
+                service,
+                hospitalDiagPoints,
+                routingRoomsById,
+                routingDepartmentsById,
+                doctorAccess.Hospital.Id,
+                routingWaitCounts);
 
             HospitalRoom? diagRoom = null;
-            if (diagServicePoint?.RoomId.HasValue == true)
+            if (diagServicePoint?.RoomId.HasValue == true &&
+                routingRoomsById.TryGetValue(diagServicePoint.RoomId.Value, out var routedRoom))
             {
-                diagRoom = await _db.HospitalRooms
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(r => r.Id == diagServicePoint.RoomId.Value, ct);
-
-                if (diagRoom is not null &&
-                    !string.Equals(diagRoom.Status, "ACTIVE", StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new ConflictException(
-                        $"Phòng thực hiện cận lâm sàng '{diagRoom.RoomCode}' cho dịch vụ '{service.Name}' hiện đang bảo trì hoặc ngừng hoạt động.");
-                }
+                diagRoom = routedRoom;
             }
 
             var unitPrice = await ResolveRequiredEffectiveServicePriceAsync(service, nowLocal, ct);
@@ -1293,6 +1278,22 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         }
 
         var hasNewMandatoryItem = resolvedItems.Any(r => r.Item.RequiredForConclusion);
+
+        // #869: đề xuất thứ tự CLS (nhịn đói -> nhóm chuyên môn -> tải điểm) + tôn trọng điều kiện phụ thuộc.
+        var routingDependencies = await TryLoadDiagnosticDependenciesAsync(
+            doctorAccess.Hospital.Id,
+            resolvedItems.Select(r => r.Service.Id).ToList(),
+            ct);
+        var sequencedItems = DiagnosticRoutingRules.OrderForSequencing(
+            resolvedItems,
+            r => r.Service.Id,
+            r => r.Service,
+            r => r.ServicePoint is not null && routingWaitCounts.TryGetValue(r.ServicePoint.Id, out var waiting)
+                ? waiting
+                : int.MaxValue,
+            routingDependencies);
+        var orderedResolvedItems = sequencedItems.ToList();
+        var hasUnroutedOrders = orderedResolvedItems.Any(r => r.ServicePoint is null);
         if (hasNewMandatoryItem)
         {
             await DemoteConfirmedDiagnosesForMandatoryOrderAsync(
@@ -1363,9 +1364,9 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
 
         // Stage E2 (QE-03 / E-BR08): Doctor order creation NEVER pre-allocates DIAGNOSTIC QueueEntry rows.
         // Queue tickets are created strictly upon explicit post-settlement enrollment.
-        for (var index = 0; index < resolvedItems.Count; index++)
+        for (var index = 0; index < orderedResolvedItems.Count; index++)
         {
-            var resolved = resolvedItems[index];
+            var resolved = orderedResolvedItems[index];
             var diagSpId = resolved.ServicePoint?.Id;
 
             var initialSelectionStatus = resolved.Item.RequiredForConclusion
@@ -1388,12 +1389,62 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 ConfirmedByStaffId = null,
                 ConfirmedAt = null,
                 OrderedAt = nowLocal,
+                AssignedServicePointId = diagSpId,
+                SequenceNo = existingNonCancelledCount + index + 1,
             };
 
             _db.DiagnosticOrders.Add(diagnosticOrder);
             await SaveChangesWithConcurrencyGuardAsync(ct);
 
             diagnosticOrder.OrderCode = $"DIA-{queueDate:yyyyMM}-{diagnosticOrder.Id:D4}";
+
+            if (diagSpId.HasValue)
+            {
+                try
+                {
+                    _db.DiagnosticOrderRoutingHistories.Add(new DiagnosticOrderRoutingHistory
+                    {
+                        DiagnosticOrderId = diagnosticOrder.Id,
+                        VisitId = visit.Id,
+                        HospitalId = doctorAccess.Hospital.Id,
+                        FromServicePointId = null,
+                        ToServicePointId = diagSpId.Value,
+                        Source = DiagnosticOrderRoutingHistory.SourceAutoRouting,
+                        Reason = "Hệ thống tự đề xuất điểm theo tải và thứ tự CLS khi bác sĩ tạo chỉ định.",
+                        ChangedByUserId = actorUserId,
+                        ChangedByRole = RoleNames.Doctor,
+                        CreatedAt = nowLocal,
+                    });
+                }
+                catch (NotSupportedException)
+                {
+                    // Minimal unit-test DbContext without DiagnosticOrderRoutingHistories.
+                }
+            }
+            else
+            {
+                _db.AuditLogs.Add(new AuditLog
+                {
+                    ActorUserId = actorUserId,
+                    HospitalId = doctorAccess.Hospital.Id,
+                    Action = "DIAGNOSTIC_ROUTING_EXHAUSTED",
+                    EntityType = "DIAGNOSTIC_ORDER",
+                    EntityId = diagnosticOrder.Id.ToString(CultureInfo.InvariantCulture),
+                    Reason = $"Không còn điểm phục vụ cận lâm sàng khả dụng cho dịch vụ '{resolved.Service.Name}'. Phiếu giữ ORDERED chờ nhân viên phân công.",
+                    ChangeData = JsonSerializer.Serialize(new
+                    {
+                        visitId = visit.Id,
+                        visitCode,
+                        diagnosticOrderId = diagnosticOrder.Id,
+                        serviceId = resolved.Service.Id,
+                        serviceCode = resolved.Service.ServiceCode,
+                        serviceName = resolved.Service.Name,
+                        requiredForConclusion = diagnosticOrder.RequiredForConclusion == true,
+                    }, AuditJsonOptions),
+                    IpAddress = QueueEntryRequestParsing.ParseIpAddress(ipAddress),
+                    OccurredAt = nowUtc,
+                });
+            }
 
             var diagnosticCharge = VisitCharge.CreateDiagnostic(
                 visitId: visit.Id,
@@ -1556,6 +1607,19 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
                 RoomId: visit.ExaminationRoomId ?? context.Room?.Id,
                 AppointmentId: activeEntry.AppointmentId ?? visit.AppointmentId),
             ct);
+
+        if (hasUnroutedOrders)
+        {
+            // #869: hết điểm -> cảnh báo nhân viên qua kênh hospital queue (SignalR) để phân công lại.
+            await MedFlow.Application.Services.Realtime.RealtimePublishSafeExtensions.TryPublishQueueChangedSafeAsync(
+                _realtimePublisher,
+                new MedFlow.Application.DTOs.Realtime.QueueChangedNotification(
+                    HospitalId: doctorAccess.Hospital.Id,
+                    ServicePointId: null,
+                    RoomId: null,
+                    AppointmentId: visit.AppointmentId),
+                ct);
+        }
 
         return await BuildWorkspaceResponseAsync(
             doctorAccess,
@@ -7117,6 +7181,79 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
         catch (NotSupportedException)
         {
             return null;
+        }
+    }
+
+    private async Task<Dictionary<long, HospitalRoom>> TryLoadHospitalRoomsAsync(
+        long hospitalId,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _db.HospitalRooms
+                .AsNoTracking()
+                .Where(r => r.HospitalId == hospitalId)
+                .ToDictionaryAsync(r => r.Id, ct);
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    private async Task<Dictionary<long, Department>> TryLoadHospitalDepartmentsAsync(
+        long hospitalId,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _db.Departments
+                .AsNoTracking()
+                .Where(d => d.HospitalId == hospitalId)
+                .ToDictionaryAsync(d => d.Id, ct);
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    private async Task<IReadOnlyDictionary<long, HashSet<long>>> TryLoadDiagnosticDependenciesAsync(
+        long hospitalId,
+        IReadOnlyCollection<long> serviceIds,
+        CancellationToken ct)
+    {
+        if (serviceIds.Count == 0)
+        {
+            return new Dictionary<long, HashSet<long>>();
+        }
+
+        try
+        {
+            var rows = await _db.DiagnosticServiceDependencies
+                .AsNoTracking()
+                .Where(d => d.HospitalId == null || d.HospitalId == hospitalId)
+                .Where(d => serviceIds.Contains(d.ServiceId))
+                .Select(d => new { d.ServiceId, d.PrerequisiteServiceId })
+                .ToListAsync(ct);
+
+            var map = new Dictionary<long, HashSet<long>>();
+            foreach (var row in rows)
+            {
+                if (!map.TryGetValue(row.ServiceId, out var set))
+                {
+                    set = [];
+                    map[row.ServiceId] = set;
+                }
+
+                set.Add(row.PrerequisiteServiceId);
+            }
+
+            return map;
+        }
+        catch (NotSupportedException)
+        {
+            return new Dictionary<long, HashSet<long>>();
         }
     }
 

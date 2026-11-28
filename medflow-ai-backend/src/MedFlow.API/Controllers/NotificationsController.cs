@@ -9,7 +9,7 @@ namespace MedFlow.API.Controllers;
 
 [ApiController]
 [Route("api/v1/notifications")]
-[Authorize(Roles = RoleNames.Patient)]
+[Authorize(Roles = $"{RoleNames.Patient},{RoleNames.Doctor}")]
 public sealed class NotificationsController : ControllerBase
 {
     private readonly INotificationService _notificationService;

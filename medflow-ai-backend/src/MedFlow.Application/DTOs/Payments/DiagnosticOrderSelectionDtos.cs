@@ -23,4 +23,7 @@ public sealed record DeclineDiagnosticOrderResponseDto(
     bool WasAlreadyPaid,
     int CancelledPendingQrCount,
     bool TransitionedToReturnConsultation,
-    VisitChargesResponseDto ChargesSnapshot);
+    VisitChargesResponseDto ChargesSnapshot,
+    bool RefusalRecorded = false,
+    bool DoctorNotified = false,
+    long? NotifiedDoctorId = null);

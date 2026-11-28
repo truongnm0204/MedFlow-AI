@@ -102,6 +102,7 @@ public sealed class RoleCatalogService : IRoleCatalogService
             ["PAYMENT_COLLECT"] = new("Thu tiền mặt tại quầy tiếp nhận", "Viện phí"),
             ["PATIENT_IDENTITY_VERIFY"] = new("Xác minh định danh hồ sơ bệnh nhân", "Hồ sơ & Tiếp đón"),
             ["QUEUE_ENROLL"] = new("Đăng ký & Điều phối lấy số hàng đợi", "Tiếp đón & Hàng đợi"),
+            ["DIAGNOSTIC_REROUTE"] = new("Điều phối lại điểm cận lâm sàng", "Cận lâm sàng"),
         };
 
     private static readonly Dictionary<string, RoleCatalogMetadata> RoleMetadataCatalog =

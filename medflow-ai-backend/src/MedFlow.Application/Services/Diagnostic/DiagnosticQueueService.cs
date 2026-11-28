@@ -1270,6 +1270,15 @@ public sealed class DiagnosticQueueService : IDiagnosticQueueService
                         postLockDepartmentsById,
                         overrideRoomId);
 
+                    DiagnosticOrderLifecycleHelper.EnsureAssignedServicePointAfterRouting(
+                        _db,
+                        trackedOrder,
+                        postLockSpId,
+                        staffAccess.Hospital.Id,
+                        actorUserId,
+                        nowLocal,
+                        "Điểm được phân công không còn khả dụng khi điều phối hàng đợi; hệ thống tự điều phối lại.");
+
                     effectiveSpId = postLockSpId;
                     trackedQueueEntry.ServicePointId ??= postLockSpId;
                     trackedQueueEntry.CurrentServicePointId = postLockSpId;

@@ -22,6 +22,7 @@ public static class PermissionCodes
     public const string PaymentCollect = "PAYMENT_COLLECT";
     public const string PatientIdentityVerify = "PATIENT_IDENTITY_VERIFY";
     public const string QueueEnroll = "QUEUE_ENROLL";
+    public const string DiagnosticReroute = "DIAGNOSTIC_REROUTE";
 
     // Clinical Session Recovery authority (PR #859 / F01 Option B) — catalog-only, never blanket-granted.
     public const string ClinicalSessionRecoveryGrant = "CLINICAL_SESSION_RECOVERY_GRANT";

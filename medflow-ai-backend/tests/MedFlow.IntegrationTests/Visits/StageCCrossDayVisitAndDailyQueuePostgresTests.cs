@@ -1356,6 +1356,14 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
                 RoleNames.Patient));
             Assert.Equal(HttpStatusCode.OK, declineRes.StatusCode);
 
+            // #877: patient only records refusal; the treating doctor cancels the optional order.
+            var doctorCancelOptional = await _client.SendAsync(AuthedPostJson(
+                $"/api/v1/doctor/visits/{visit.VisitCode}/diagnostic-orders/{optional1Id}/decline",
+                new DeclineDiagnosticOrderRequestDto(Reason: "Bác sĩ xác nhận chỉ làm xét nghiệm bắt buộc"),
+                fx.Doctor1UserId,
+                RoleNames.Doctor));
+            Assert.Equal(HttpStatusCode.OK, doctorCancelOptional.StatusCode);
+
             // CD-T16: Mandatory still pending -> CompleteVisit blocked 409
             await using (var scope = _app.Services.CreateAsyncScope())
             {

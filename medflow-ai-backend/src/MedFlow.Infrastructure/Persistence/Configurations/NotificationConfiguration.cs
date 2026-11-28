@@ -18,6 +18,9 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
         builder.Property(n => n.PatientId)
             .HasColumnName("patient_id");
 
+        builder.Property(n => n.RecipientUserId)
+            .HasColumnName("recipient_user_id");
+
         builder.Property(n => n.AppointmentId)
             .HasColumnName("appointment_id");
 
@@ -84,6 +87,10 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
         builder.HasIndex(n => n.PatientId)
             .HasDatabaseName("ix_notifications_patient_id");
 
+        builder.HasIndex(n => n.RecipientUserId)
+            .HasDatabaseName("ix_notifications_recipient_user_id")
+            .HasFilter("\"recipient_user_id\" IS NOT NULL");
+
         builder.HasIndex(n => n.AppointmentId)
             .HasDatabaseName("ix_notifications_appointment_id");
 
@@ -112,6 +119,11 @@ public sealed class NotificationConfiguration : IEntityTypeConfiguration<Notific
             .WithMany()
             .HasForeignKey(n => n.PatientId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<User>()
+            .WithMany()
+            .HasForeignKey(n => n.RecipientUserId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         builder.HasOne(n => n.Appointment)
             .WithMany()

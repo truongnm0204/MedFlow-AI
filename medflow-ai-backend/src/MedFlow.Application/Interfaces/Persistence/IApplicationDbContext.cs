@@ -51,6 +51,9 @@ public interface IApplicationDbContext
     DbSet<Icd10Code> Icd10Codes => throw new NotSupportedException("Icd10Codes DbSet is not configured in this test context.");
     DbSet<ClinicalAddendum> ClinicalAddenda => throw new NotSupportedException("ClinicalAddenda DbSet is not configured in this test context.");
     DbSet<DiagnosticOrder> DiagnosticOrders => throw new NotSupportedException("DiagnosticOrders DbSet is not configured in this test context.");
+    DbSet<DiagnosticServiceDependency> DiagnosticServiceDependencies => throw new NotSupportedException("DiagnosticServiceDependencies DbSet is not configured in this test context.");
+    DbSet<DiagnosticOrderRoutingHistory> DiagnosticOrderRoutingHistories => throw new NotSupportedException("DiagnosticOrderRoutingHistories DbSet is not configured in this test context.");
+    DbSet<DiagnosticOrderDecline> DiagnosticOrderDeclines => throw new NotSupportedException("DiagnosticOrderDeclines DbSet is not configured in this test context.");
     DbSet<DiagnosticResult> DiagnosticResults => throw new NotSupportedException("DiagnosticResults DbSet is not configured in this test context.");
     DbSet<DiagnosticResultVersion> DiagnosticResultVersions => throw new NotSupportedException("DiagnosticResultVersions DbSet is not configured in this test context.");
     DbSet<Notification> Notifications => throw new NotSupportedException("Notifications DbSet is not configured in this test context.");

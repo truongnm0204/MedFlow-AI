@@ -212,7 +212,19 @@ public static class DiagnosticServicePointResolver
             return explicitRoomSp.Id;
         }
 
-        // 2. Reuse existing linked queue entry's service point ONLY if it is still operational AND compatible.
+        // 2. Điểm đã được phân công khi tạo chỉ định (#869) — chỉ dùng nếu vẫn hoạt động & tương thích.
+        //    Điểm đóng/bảo trì/không còn tương thích sẽ bị bỏ qua và chuyển sang bước chọn thay thế.
+        if (order.AssignedServicePointId.HasValue)
+        {
+            var assignedSp = hospitalDiagnosticServicePoints
+                .FirstOrDefault(sp => sp.Id == order.AssignedServicePointId.Value && sp.HospitalId == hospitalId);
+            if (IsValidCandidate(assignedSp))
+            {
+                return assignedSp!.Id;
+            }
+        }
+
+        // 3. Reuse existing linked queue entry's service point ONLY if it is still operational AND compatible.
         if (order.QueueEntryId.HasValue && visitQueues is not null)
         {
             var priorQe = visitQueues.FirstOrDefault(q => q.Id == order.QueueEntryId.Value);
@@ -253,6 +265,36 @@ public static class DiagnosticServicePointResolver
 
         throw new ConflictException(
             $"[{NoActiveCompatiblePointCode}] Hiện không có phòng hoặc điểm phục vụ cận lâm sàng tương thích đang hoạt động cho chỉ định '{orderLabel}' ({serviceLabel}). Vui lòng kiểm tra trạng thái phòng thực hiện trước khi điều phối.");
+    }
+
+    /// <summary>
+    /// Chọn điểm phục vụ CLS cho một chỉ định mới dựa trên TẢI (số người đang chờ tại điểm, D3),
+    /// sau khi đã loại các điểm không hoạt động/không tương thích chuyên môn.
+    /// Trả <c>null</c> khi không còn điểm hợp lệ (caller giữ order ORDERED và cảnh báo nhân viên),
+    /// tuyệt đối không ném lỗi để không chặn bác sĩ tạo chỉ định.
+    /// </summary>
+    public static QueueServicePoint? ResolveForAssignment(
+        Service? orderService,
+        IReadOnlyList<QueueServicePoint> hospitalDiagnosticServicePoints,
+        IReadOnlyDictionary<long, HospitalRoom> roomsById,
+        IReadOnlyDictionary<long, Department>? departmentsById,
+        long hospitalId,
+        IReadOnlyDictionary<long, int> waitingCountsByPointId)
+    {
+        if (orderService is null ||
+            !string.Equals(orderService.ServiceType?.Trim(), "DIAGNOSTIC", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return hospitalDiagnosticServicePoints
+            .Where(sp =>
+                IsOperational(sp, roomsById, departmentsById, hospitalId) &&
+                IsCompatibleForOrder(sp, roomsById, orderService.Id, orderService, departmentsById, hospitalId))
+            .OrderBy(sp => waitingCountsByPointId.TryGetValue(sp.Id, out var waiting) ? waiting : 0)
+            .ThenBy(sp => sp.ServiceId.HasValue && sp.ServiceId.Value == orderService.Id ? 0 : 1)
+            .ThenBy(sp => sp.Id)
+            .FirstOrDefault();
     }
 
     /// <summary>

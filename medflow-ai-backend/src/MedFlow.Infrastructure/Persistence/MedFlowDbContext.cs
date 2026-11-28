@@ -91,6 +91,9 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<Icd10Code> Icd10Codes => Set<Icd10Code>();
     public DbSet<ClinicalAddendum> ClinicalAddenda => Set<ClinicalAddendum>();
     public DbSet<DiagnosticOrder> DiagnosticOrders => Set<DiagnosticOrder>();
+    public DbSet<DiagnosticServiceDependency> DiagnosticServiceDependencies => Set<DiagnosticServiceDependency>();
+    public DbSet<DiagnosticOrderRoutingHistory> DiagnosticOrderRoutingHistories => Set<DiagnosticOrderRoutingHistory>();
+    public DbSet<DiagnosticOrderDecline> DiagnosticOrderDeclines => Set<DiagnosticOrderDecline>();
     public DbSet<DiagnosticResult> DiagnosticResults => Set<DiagnosticResult>();
     public DbSet<DiagnosticResultVersion> DiagnosticResultVersions => Set<DiagnosticResultVersion>();
     public DbSet<Notification> Notifications => Set<Notification>();
