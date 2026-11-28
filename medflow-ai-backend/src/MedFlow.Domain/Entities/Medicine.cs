@@ -13,4 +13,6 @@ public class Medicine
     public decimal? ContentQuantity { get; set; }
     public string? ContentUnit { get; set; }
     public bool? IsActive { get; set; }
+
+    public ICollection<MedicinePrice> MedicinePrices { get; set; } = new List<MedicinePrice>();
 }

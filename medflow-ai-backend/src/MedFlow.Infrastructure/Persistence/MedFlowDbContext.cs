@@ -37,6 +37,10 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
         // Level 20: ekyc_verification_sessions. FKs point to users/patients (levels 01/02), so it
         // locks after them. Finalize takes this lock to make concurrent finalize single-winner.
         EkycVerificationSessions = 20,
+        // Level 14a: medicines catalog row. Serializes medicine_prices effective-interval updates
+        // (#865) so two admins cannot insert overlapping windows. Higher enum value is only the
+        // physical lock ordering slot; no FK points to levels 15+.
+        Medicines = 21,
     }
 
     public MedFlowDbContext(DbContextOptions<MedFlowDbContext> options) : base(options) { }
@@ -72,6 +76,7 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<PaymentGatewayEvent> PaymentGatewayEvents => Set<PaymentGatewayEvent>();
     public DbSet<VisitCharge> VisitCharges => Set<VisitCharge>();
     public DbSet<Medicine> Medicines => Set<Medicine>();
+    public DbSet<MedicinePrice> MedicinePrices => Set<MedicinePrice>();
     public DbSet<MedicineBatch> MedicineBatches => Set<MedicineBatch>();
     public DbSet<Prescription> Prescriptions => Set<Prescription>();
     public DbSet<PrescriptionItem> PrescriptionItems => Set<PrescriptionItem>();
@@ -283,6 +288,9 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public Task<bool> TryLockMedicineBatchesForUpdateAsync(IReadOnlyCollection<long> batchIds, CancellationToken ct = default)
         => LockRowsForUpdateAsync(LockTargetTable.MedicineBatches, batchIds, ct);
 
+    public Task<bool> TryLockMedicineForUpdateAsync(long medicineId, CancellationToken ct = default)
+        => LockRowsForUpdateAsync(LockTargetTable.Medicines, [medicineId], ct);
+
     public Task<bool> TryLockVisitChargeForUpdateAsync(long visitChargeId, CancellationToken ct = default)
         => LockRowsForUpdateAsync(LockTargetTable.VisitCharges, [visitChargeId], ct);
 
@@ -386,6 +394,8 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
                 $"SELECT id AS \"Value\" FROM clinical_session_recovery_requests WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
             LockTargetTable.EkycVerificationSessions => await Database.SqlQuery<long>(
                 $"SELECT id AS \"Value\" FROM ekyc_verification_sessions WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
+            LockTargetTable.Medicines => await Database.SqlQuery<long>(
+                $"SELECT id AS \"Value\" FROM medicines WHERE id = ANY({sortedIds}) ORDER BY id ASC FOR UPDATE").ToListAsync(ct),
             _ => throw new ArgumentOutOfRangeException(nameof(table), table, "Unsupported lock target table."),
         };
 
