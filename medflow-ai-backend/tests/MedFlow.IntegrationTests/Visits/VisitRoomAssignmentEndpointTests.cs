@@ -451,6 +451,15 @@ public sealed class VisitRoomAssignmentEndpointTests : AuthTestBase
                     .ToListAsync();
                 if (extraQueueEntries.Count > 0)
                 {
+                    // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+                    // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+                    var extraQueueIds = extraQueueEntries.Select(q => q.Id).ToList();
+                    await db.PaymentEnrollmentIntents
+                        .Where(i => i.QueueEntryId.HasValue && extraQueueIds.Contains(i.QueueEntryId.Value))
+                        .ExecuteDeleteAsync();
+                    await db.ClinicalSessionRecoveryRequests
+                        .Where(r => extraQueueIds.Contains(r.QueueEntryId))
+                        .ExecuteDeleteAsync();
                     db.QueueEntries.RemoveRange(extraQueueEntries);
                 }
 

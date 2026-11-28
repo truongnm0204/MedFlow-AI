@@ -2111,6 +2111,23 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
             .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
             .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
         await db.QueueFairnessStates.Where(f => spIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
+        // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+        // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+        var queueIdsToDelete = await db.QueueEntries.AsNoTracking()
+            .Where(q => (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
+                        (q.AppointmentId.HasValue && apptIds.Contains(q.AppointmentId.Value)) ||
+                        (q.ServicePointId.HasValue && spIds.Contains(q.ServicePointId.Value)))
+            .Select(q => q.Id)
+            .ToListAsync();
+        if (queueIdsToDelete.Count > 0)
+        {
+            await db.PaymentEnrollmentIntents
+                .Where(i => i.QueueEntryId.HasValue && queueIdsToDelete.Contains(i.QueueEntryId.Value))
+                .ExecuteDeleteAsync();
+            await db.ClinicalSessionRecoveryRequests
+                .Where(r => queueIdsToDelete.Contains(r.QueueEntryId))
+                .ExecuteDeleteAsync();
+        }
         await db.QueueEntries
             .Where(q => (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
                         (q.AppointmentId.HasValue && apptIds.Contains(q.AppointmentId.Value)) ||

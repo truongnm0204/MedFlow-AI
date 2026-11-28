@@ -767,6 +767,14 @@ public sealed class ClinicalRealtimeHubIntegrationTests : AuthTestBase
 
             await Db.Notifications.Where(n => n.AppointmentId != null && apptIds.Contains(n.AppointmentId.Value)).ExecuteDeleteAsync();
             await Db.QueueFairnessStates.Where(s => spIds.Contains(s.ServicePointId)).ExecuteDeleteAsync();
+            // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+            // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+            await Db.PaymentEnrollmentIntents
+                .Where(i => i.QueueEntryId.HasValue && queueIds.Contains(i.QueueEntryId.Value))
+                .ExecuteDeleteAsync();
+            await Db.ClinicalSessionRecoveryRequests
+                .Where(r => queueIds.Contains(r.QueueEntryId))
+                .ExecuteDeleteAsync();
             await Db.QueueEntries.Where(q => queueIds.Contains(q.Id)).ExecuteDeleteAsync();
 
             var entityIds = queueIds.Concat(visitIds).Concat(apptIds)

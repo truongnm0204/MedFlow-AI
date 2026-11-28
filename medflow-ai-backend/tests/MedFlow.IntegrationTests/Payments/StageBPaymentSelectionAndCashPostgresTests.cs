@@ -2458,6 +2458,14 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
             .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
         await Db.QueueFairnessStates.Where(f => fx.AllSpIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
+        if (visitIds.Count > 0)
+        {
+            // #863: payment_enrollment_intents.queue_entry_id is ON DELETE RESTRICT; intent rows now exist
+            // for auto-enrolled CLS orders, so they must go before queue_entries.
+            await Db.PaymentEnrollmentIntents
+                .Where(i => visitIds.Contains(i.VisitId))
+                .ExecuteDeleteAsync();
+        }
         await Db.QueueEntries.Where(q => q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)).ExecuteDeleteAsync();
         if (visitIds.Count > 0)
         {

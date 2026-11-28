@@ -264,6 +264,15 @@ public sealed class CheckInScheduledPatientEndpointTests : AuthTestBase
                         .ToListAsync();
                     if (orphanQueues.Count > 0)
                     {
+                        // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+                        // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+                        var orphanQueueIds = orphanQueues.Select(q => q.Id).ToList();
+                        await db.PaymentEnrollmentIntents
+                            .Where(i => i.QueueEntryId.HasValue && orphanQueueIds.Contains(i.QueueEntryId.Value))
+                            .ExecuteDeleteAsync();
+                        await db.ClinicalSessionRecoveryRequests
+                            .Where(r => orphanQueueIds.Contains(r.QueueEntryId))
+                            .ExecuteDeleteAsync();
                         db.QueueEntries.RemoveRange(orphanQueues);
                         await db.SaveChangesAsync();
                     }
@@ -484,6 +493,14 @@ public sealed class CheckInScheduledPatientEndpointTests : AuthTestBase
                 var q = await db.QueueEntries.FirstOrDefaultAsync(x => x.Id == createdQueueEntryId.Value);
                 if (q is not null)
                 {
+                    // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+                    // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+                    await db.PaymentEnrollmentIntents
+                        .Where(i => i.QueueEntryId == q.Id)
+                        .ExecuteDeleteAsync();
+                    await db.ClinicalSessionRecoveryRequests
+                        .Where(r => r.QueueEntryId == q.Id)
+                        .ExecuteDeleteAsync();
                     db.QueueEntries.Remove(q);
                     await db.SaveChangesAsync();
                 }

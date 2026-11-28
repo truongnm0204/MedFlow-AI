@@ -82,7 +82,8 @@ public sealed class PaymentEnrollmentIntentProcessor : IPaymentEnrollmentIntentP
         CancellationToken ct = default)
     {
         var effectiveBatch = Math.Clamp(batchSize, 1, 200);
-        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        // payment_enrollment_intents.created_at/expires_at/processed_at là timestamp without time zone (giờ bệnh viện).
+        var nowLocal = HospitalClock.GetNow(_timeProvider);
 
         List<PaymentEnrollmentIntent> candidates;
         try
@@ -117,17 +118,17 @@ public sealed class PaymentEnrollmentIntentProcessor : IPaymentEnrollmentIntentP
 
             if (payment is null ||
                 paymentStatus is PaymentStatuses.Cancelled or PaymentStatuses.Expired or SePayWebhookService.MismatchPaymentStatus ||
-                nowUtc > candidate.ExpiresAt)
+                nowLocal > candidate.ExpiresAt)
             {
                 await CloseUnsettledIntentAsync(
                     candidate.Id,
-                    nowUtc > candidate.ExpiresAt && paymentStatus == PaymentStatuses.Pending
+                    nowLocal > candidate.ExpiresAt && paymentStatus == PaymentStatuses.Pending
                         ? PaymentEnrollmentIntentStatuses.Expired
                         : PaymentEnrollmentIntentStatuses.Cancelled,
-                    nowUtc > candidate.ExpiresAt && paymentStatus == PaymentStatuses.Pending
+                    nowLocal > candidate.ExpiresAt && paymentStatus == PaymentStatuses.Pending
                         ? PaymentEnrollmentIntentOutcomeCodes.IntentExpired
                         : "PAYMENT_NOT_SETTLED",
-                    nowUtc,
+                    nowLocal,
                     ct);
                 processedCount++;
             }
@@ -275,7 +276,7 @@ public sealed class PaymentEnrollmentIntentProcessor : IPaymentEnrollmentIntentP
                         intent.Status = PaymentEnrollmentIntentStatuses.Cancelled;
                         intent.OutcomeCode = "PAYMENT_NOT_SETTLED";
                         intent.OutcomeMessage = "Giao dịch thanh toán đã đóng hoặc không thành công, hủy yêu cầu lấy số tự động.";
-                        intent.ProcessedAt = nowUtc;
+                        intent.ProcessedAt = nowLocal;
                         await _db.SaveChangesAsync(ct);
                     }
 
@@ -283,12 +284,12 @@ public sealed class PaymentEnrollmentIntentProcessor : IPaymentEnrollmentIntentP
                     return await BuildIntentDtoAsync(intent, ct);
                 }
 
-                if (nowUtc > intent.ExpiresAt)
+                if (nowLocal > intent.ExpiresAt)
                 {
                     intent.Status = PaymentEnrollmentIntentStatuses.Expired;
                     intent.OutcomeCode = PaymentEnrollmentIntentOutcomeCodes.IntentExpired;
                     intent.OutcomeMessage = "Yêu cầu tự động lấy số sau thanh toán đã quá thời hạn hiệu lực.";
-                    intent.ProcessedAt = nowUtc;
+                    intent.ProcessedAt = nowLocal;
                     await _db.SaveChangesAsync(ct);
                     await tx.CommitAsync(ct);
                     return await BuildIntentDtoAsync(intent, ct);
@@ -546,7 +547,7 @@ public sealed class PaymentEnrollmentIntentProcessor : IPaymentEnrollmentIntentP
                 intent.Status = PaymentEnrollmentIntentStatuses.ConsumedEnrolled;
                 intent.OutcomeCode = PaymentEnrollmentIntentOutcomeCodes.Enrolled;
                 intent.OutcomeMessage = "Đã tự động cấp số hàng đợi cận lâm sàng sau khi hoàn tất thanh toán.";
-                intent.ProcessedAt = nowUtc;
+                intent.ProcessedAt = nowLocal;
 
                 _db.AuditLogs.Add(new AuditLog
                 {
@@ -625,7 +626,7 @@ public sealed class PaymentEnrollmentIntentProcessor : IPaymentEnrollmentIntentP
         intent.Status = PaymentEnrollmentIntentStatuses.SkippedNotEligible;
         intent.OutcomeCode = outcomeCode;
         intent.OutcomeMessage = outcomeMessage.Length > 500 ? outcomeMessage[..500] : outcomeMessage;
-        intent.ProcessedAt = nowUtc;
+        intent.ProcessedAt = HospitalClock.EnsureHospitalLocal(nowUtc);
 
         _db.AuditLogs.Add(new AuditLog
         {
@@ -710,7 +711,7 @@ public sealed class PaymentEnrollmentIntentProcessor : IPaymentEnrollmentIntentP
         {
             intent.Status = targetStatus;
             intent.OutcomeCode = outcomeCode;
-            intent.ProcessedAt = nowUtc;
+            intent.ProcessedAt = HospitalClock.EnsureHospitalLocal(nowUtc);
             await _db.SaveChangesAsync(ct);
         }
 
@@ -776,52 +777,58 @@ public sealed class PaymentEnrollmentIntentProcessor : IPaymentEnrollmentIntentP
             or PaymentEnrollmentIntentStatuses.Expired;
     }
 
-    internal static async Task<DiagnosticOrder?> ResolveRequestedEnrollOrderAsync(
+    /// <summary>
+    /// D2 / BR-BF02-06 (tạm thời cho tới S5a/#869): hệ thống tự chọn chỉ định CLS kế tiếp thay vì nhận
+    /// lựa chọn từ client. Thứ tự = thứ tự tạo chỉ định (<c>Id</c> tăng dần, <see cref="DiagnosticOrder"/>
+    /// không có cột CreatedAt). Chỉ xét các chỉ định thuộc khoản phí đã thanh toán trong giao dịch này,
+    /// chưa được xếp hàng và đã được chấp nhận; các gate còn lại (hết hạn, presence, phiên khám, hàng đợi
+    /// đang hoạt động, settlement) do <see cref="ExecuteSingleAttemptAsync"/> kiểm tra khi xử lý intent.
+    /// </summary>
+    internal static async Task<DiagnosticOrder?> ResolveNextAutoEnrollOrderAsync(
         IApplicationDbContext db,
         long visitId,
-        long? enrollOrderId,
-        string? enrollOrderCode,
+        IReadOnlyCollection<VisitCharge> paidCharges,
         CancellationToken ct)
     {
-        if (enrollOrderId is <= 0)
-        {
-            throw new ValidationException("EnrollDiagnosticOrderId phải lớn hơn 0.");
-        }
+        var orderIds = paidCharges
+            .Where(c => c.DiagnosticOrderId is > 0)
+            .Select(c => c.DiagnosticOrderId!.Value)
+            .Distinct()
+            .ToList();
 
-        var normalizedCode = string.IsNullOrWhiteSpace(enrollOrderCode)
-            ? null
-            : enrollOrderCode.Trim().ToUpperInvariant();
-
-        if (!enrollOrderId.HasValue && normalizedCode is null)
+        if (orderIds.Count == 0)
         {
             return null;
         }
 
-        DiagnosticOrder? order = null;
-        if (enrollOrderId.HasValue)
+        var candidates = await db.DiagnosticOrders.AsNoTracking()
+            .Where(o =>
+                o.VisitId == visitId &&
+                orderIds.Contains(o.Id) &&
+                o.QueueEntryId == null)
+            .OrderBy(o => o.Id)
+            .ToListAsync(ct);
+
+        foreach (var order in candidates)
         {
-            order = await db.DiagnosticOrders.AsNoTracking()
-                .FirstOrDefaultAsync(o => o.Id == enrollOrderId.Value && o.VisitId == visitId, ct);
-            if (order is null)
+            var orderStatus = AppointmentBookingRules.NormalizeStatusKey(order.Status);
+            if (orderStatus is not ("ORDERED" or "CONFIRMED"))
             {
-                throw new NotFoundException("DiagnosticOrder", enrollOrderId.Value);
+                continue;
             }
 
-            if (normalizedCode is not null &&
-                !string.IsNullOrWhiteSpace(order.OrderCode) &&
-                !string.Equals(order.OrderCode.Trim(), normalizedCode, StringComparison.OrdinalIgnoreCase))
+            var selectionStatus = string.IsNullOrWhiteSpace(order.SelectionStatus)
+                ? DiagnosticSelectionStatuses.Accepted
+                : order.SelectionStatus.Trim().ToUpperInvariant();
+            if (selectionStatus != DiagnosticSelectionStatuses.Accepted)
             {
-                throw new ValidationException("EnrollDiagnosticOrderId và EnrollDiagnosticOrderCode không thống nhất.");
+                continue;
             }
 
             return order;
         }
 
-        order = await db.DiagnosticOrders.AsNoTracking()
-            .FirstOrDefaultAsync(o => o.VisitId == visitId && o.OrderCode != null && o.OrderCode.ToUpper() == normalizedCode, ct)
-            ?? throw new NotFoundException("DiagnosticOrder", enrollOrderCode!);
-
-        return order;
+        return null;
     }
 
     internal static void EnsureEnrollOrderInPaidChargesOrThrow(
@@ -844,26 +851,6 @@ public sealed class PaymentEnrollmentIntentProcessor : IPaymentEnrollmentIntentP
         if (!includedInPayment)
         {
             throw new ConflictException(EnrollTargetNotInChargesMessage);
-        }
-    }
-
-    internal static async Task EnsureStaffHasQueueEnrollWhenIntentRequestedAsync(
-        IApplicationDbContext db,
-        long actorUserId,
-        string roleLabel,
-        CancellationToken ct)
-    {
-        if (!string.Equals(roleLabel, RoleNames.Reception, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(roleLabel, RoleNames.HospitalAdmin, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        var (roleIds, _) = await VisitPaymentAccess.LoadActorRolesAsync(db, actorUserId, ct);
-        var perms = await VisitPaymentAccess.LoadRolePermissionCodesAsync(db, roleIds, ct);
-        if (!perms.Contains(PermissionCodes.QueueEnroll))
-        {
-            throw new ForbiddenException(VisitQueueEnrollmentService.QueueEnrollRequiredMessage);
         }
     }
 

@@ -559,6 +559,14 @@ public sealed class NotificationsAndScheduleJobsEndpointTests : AuthTestBase
                 await Db.VisitCharges
                     .Where(c => c.VisitId != null && visitIds.Contains(c.VisitId.Value))
                     .ExecuteDeleteAsync();
+                // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+                // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+                await Db.PaymentEnrollmentIntents
+                    .Where(i => visitIds.Contains(i.VisitId))
+                    .ExecuteDeleteAsync();
+                await Db.ClinicalSessionRecoveryRequests
+                    .Where(r => visitIds.Contains(r.VisitId))
+                    .ExecuteDeleteAsync();
                 await Db.QueueEntries
                     .Where(q => q.VisitId != null && visitIds.Contains(q.VisitId.Value))
                     .ExecuteDeleteAsync();

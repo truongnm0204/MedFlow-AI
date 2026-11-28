@@ -1186,6 +1186,14 @@ public sealed class Phase05ReceptionQueueAndTransferPostgresConcurrencyTests : A
 
         if (queueIds.Count > 0)
         {
+            // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+            // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+            await db.PaymentEnrollmentIntents
+                .Where(i => i.QueueEntryId.HasValue && queueIds.Contains(i.QueueEntryId.Value))
+                .ExecuteDeleteAsync();
+            await db.ClinicalSessionRecoveryRequests
+                .Where(r => queueIds.Contains(r.QueueEntryId))
+                .ExecuteDeleteAsync();
             await db.QueueEntries
                 .Where(q => queueIds.Contains(q.Id))
                 .ExecuteDeleteAsync();

@@ -49,6 +49,12 @@ public sealed class VisitQueueEnrollmentService : IVisitQueueEnrollmentService
     public const string NoActivePharmacyPointMessage =
         "[NO_ACTIVE_PHARMACY_SERVICE_POINT] Hiện không có quầy phát thuốc (PHARMACY) đang hoạt động tại bệnh viện.";
 
+    /// <summary>D2 / BR-BF02-06: bệnh nhân chỉ được XEM ngữ cảnh CLS, không tự lấy số.</summary>
+    public const string PatientDiagnosticEnrollmentDisabledCode = "PATIENT_DIAGNOSTIC_ENROLLMENT_DISABLED";
+
+    public const string PatientDiagnosticEnrollmentDisabledMessage =
+        "Hệ thống tự điều phối điểm và thứ tự lấy số cận lâm sàng sau khi thanh toán; bệnh nhân không tự lấy số cận lâm sàng.";
+
     private static readonly JsonSerializerOptions AuditJsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -401,19 +407,18 @@ public sealed class VisitQueueEnrollmentService : IVisitQueueEnrollmentService
         string? ipAddress,
         CancellationToken ct)
     {
+        var parsed = VisitPaymentAccess.ParseVisitIdentifier(visitIdOrCode);
+        var preVisit = await VisitPaymentAccess.FindVisitAsync(_db, parsed, ct);
+
+        // D2 / BR-BF02-06: chỉ nhân sự mới được lấy số cận lâm sàng. Bệnh nhân bị từ chối (403)
+        // trước khi kiểm tra payload — hệ thống tự chọn điểm/thứ tự CLS.
+        var preActor = await AuthorizeDiagnosticEnrollmentActorAsync(actorUserId, preRoleIds, preRoleCodes, preVisit, ct);
+
         if (!request.DiagnosticOrderId.HasValue || request.DiagnosticOrderId.Value <= 0)
         {
             throw new ValidationException("Mã định danh phiếu chỉ định cận lâm sàng (DiagnosticOrderId > 0) là bắt buộc khi lấy số DIAGNOSTIC.");
         }
 
-        if (request.ServicePointId is <= 0)
-        {
-            throw new ValidationException("ServicePointId phải lớn hơn 0.");
-        }
-
-        var parsed = VisitPaymentAccess.ParseVisitIdentifier(visitIdOrCode);
-        var preVisit = await VisitPaymentAccess.FindVisitAsync(_db, parsed, ct);
-        var preActor = await AuthorizeDiagnosticEnrollmentActorAsync(actorUserId, preRoleIds, preRoleCodes, preVisit, ct);
         var hospitalId = preActor.HospitalId;
         var visitId = preVisit!.Id;
         var targetOrderId = request.DiagnosticOrderId.Value;
@@ -537,17 +542,9 @@ public sealed class VisitQueueEnrollmentService : IVisitQueueEnrollmentService
 
                 var policy = await CrossDayVisitPolicyReader.LoadAsync(_db, hospitalId, nowUtc, ct);
 
-                if (postActor.IsPatient)
-                {
-                    if (!VisitPresenceEvaluator.IsPresentToday(lockedVisit, trackedVisitQueues, todayLocal, nowLocal, policy.PresenceTtlMinutes))
-                    {
-                        throw new ConflictException(PatientNotPresentMessage);
-                    }
-                }
-                else
-                {
-                    VisitPresenceEvaluator.StampPresentToday(lockedVisit, todayLocal, nowLocal);
-                }
+                // D2: bệnh nhân không thể tới đây (403 ở authorize) — nhân sự lấy số CLS được hệ thống
+                // xác nhận hiện diện tại cơ sở trước khi cấp số.
+                VisitPresenceEvaluator.StampPresentToday(lockedVisit, todayLocal, nowLocal);
 
                 if (HasActiveClinicalSession(trackedVisitQueues, todayLocal))
                 {
@@ -605,10 +602,12 @@ public sealed class VisitQueueEnrollmentService : IVisitQueueEnrollmentService
                     .OrderBy(sp => sp.Id)
                     .ToList();
 
+                // D2 / BR-BF02-06: bỏ lựa chọn điểm CLS từ client — hệ thống tự resolver điểm
+                // hoạt động + tương thích với chỉ định hiện có (ServicePointId client gửi, nếu có, bị bỏ qua).
                 var targetSpId = DiagnosticServicePointResolver.ResolveForExecutionOrThrow(
                     lockedOrder,
                     liveService,
-                    request.ServicePointId,
+                    requestedSpId: null,
                     diagPoints,
                     roomsById,
                     trackedVisitQueues,
@@ -1576,7 +1575,7 @@ public sealed class VisitQueueEnrollmentService : IVisitQueueEnrollmentService
         return ClinicalQueueRules.NormalizeStoredPriority(referenceClinical?.ManualPriority);
     }
 
-    private static (bool CanEnroll, string? Code, string? Message) EvaluateDiagnosticItemBlock(
+    internal static (bool CanEnroll, string? Code, string? Message) EvaluateDiagnosticItemBlock(
         Visit visit,
         string orderStatus,
         string selectionStatus,
@@ -1588,6 +1587,13 @@ public sealed class VisitQueueEnrollmentService : IVisitQueueEnrollmentService
         bool isPatientActor,
         bool isPresentToday)
     {
+        // D2 / BR-BF02-06: ngữ cảnh CLS là READ-ONLY với bệnh nhân — chỉ xem trạng thái/điểm tương thích,
+        // không bao giờ được tự lấy số. Nhân sự giữ nguyên hành vi.
+        if (isPatientActor)
+        {
+            return (false, PatientDiagnosticEnrollmentDisabledCode, PatientDiagnosticEnrollmentDisabledMessage);
+        }
+
         var visitStatus = AppointmentBookingRules.NormalizeStatusKey(visit.Status);
         if (visitStatus is "CANCELLED" or "NO_SHOW" or "COMPLETED" or "DONE")
         {
@@ -1637,7 +1643,7 @@ public sealed class VisitQueueEnrollmentService : IVisitQueueEnrollmentService
         return (true, null, null);
     }
 
-    private static (bool CanEnroll, string? Code, string? Message) EvaluatePharmacyItemBlock(
+    internal static (bool CanEnroll, string? Code, string? Message) EvaluatePharmacyItemBlock(
         Visit visit,
         Prescription rx,
         string rxStatus,
@@ -1898,23 +1904,9 @@ public sealed class VisitQueueEnrollmentService : IVisitQueueEnrollmentService
         var isStaffEnrollRole = roleCodes.Contains(RoleNames.Reception) ||
                                 roleCodes.Contains(RoleNames.DiagnosticStaff) ||
                                 roleCodes.Contains(RoleNames.HospitalAdmin);
-        var isPatient = roleCodes.Contains(RoleNames.Patient);
 
-        if (!isStaffEnrollRole && isPatient &&
-            !roleCodes.Contains(RoleNames.Doctor) &&
-            !roleCodes.Contains(RoleNames.PharmacyStaff) &&
-            !roleCodes.Contains(RoleNames.SystemAdmin))
-        {
-            var owned = await VisitPaymentAccess.LoadOwnedPatientIdsAsync(_db, actorUserId, _timeProvider, ct);
-            if (visit is null || !owned.Contains(visit.PatientId ?? 0))
-            {
-                throw new NotFoundException(VisitPaymentAccess.VisitNotFoundMessage);
-            }
-
-            var hospitalId = await ResolveSingleHospitalIdAsync(visit, ct);
-            return new EnrollmentActorContext(true, RoleNames.Patient, hospitalId, null);
-        }
-
+        // D2 / BR-BF02-06 (owner D2): bỏ hoàn toàn việc bệnh nhân tự lấy số cận lâm sàng — kể cả khi
+        // bệnh nhân sở hữu lượt khám. Hệ thống tự chọn điểm + thứ tự CLS sau thanh toán.
         if (!isStaffEnrollRole)
         {
             throw new ForbiddenException("Vai trò hiện tại không được phép lấy số hàng đợi cận lâm sàng.");

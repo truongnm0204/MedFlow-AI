@@ -260,6 +260,14 @@ public sealed class VisitChargesEndpointTests : AuthTestBase
         }
         finally
         {
+            // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+            // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+            await Db.PaymentEnrollmentIntents
+                .Where(i => i.QueueEntryId == entryA.Id || i.QueueEntryId == entryB.Id)
+                .ExecuteDeleteAsync();
+            await Db.ClinicalSessionRecoveryRequests
+                .Where(r => r.QueueEntryId == entryA.Id || r.QueueEntryId == entryB.Id)
+                .ExecuteDeleteAsync();
             Db.QueueEntries.RemoveRange(
                 await Db.QueueEntries.Where(q => q.Id == entryA.Id || q.Id == entryB.Id).ToListAsync());
             Db.QueueServicePoints.RemoveRange(
@@ -453,6 +461,10 @@ public sealed class VisitChargesEndpointTests : AuthTestBase
         Db.VisitCharges.RemoveRange(charges);
         var orders = await Db.DiagnosticOrders.Where(o => o.VisitId == created.VisitId).ToListAsync();
         Db.DiagnosticOrders.RemoveRange(orders);
+        // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+        // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+        await Db.PaymentEnrollmentIntents.Where(i => i.VisitId == created.VisitId).ExecuteDeleteAsync();
+        await Db.ClinicalSessionRecoveryRequests.Where(r => r.VisitId == created.VisitId).ExecuteDeleteAsync();
         var entries = await Db.QueueEntries.Where(q => q.VisitId == created.VisitId).ToListAsync();
         Db.QueueEntries.RemoveRange(entries);
         var audits = await Db.AuditLogs.Where(a => a.EntityId == created.VisitId.ToString()).ToListAsync();

@@ -89,22 +89,6 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
         if (staff.HospitalId != visitHospitalId)
             throw new ForbiddenException(ForbiddenMessage);
 
-        var preEnrollOrder = await PaymentEnrollmentIntentProcessor.ResolveRequestedEnrollOrderAsync(
-            _db,
-            visit.Id,
-            request.EnrollDiagnosticOrderId,
-            request.EnrollDiagnosticOrderCode,
-            ct);
-        if (preEnrollOrder is not null)
-        {
-            var (preRoleIds, preRoleCodes) = await VisitPaymentAccess.LoadActorRolesAsync(_db, actorUserId, ct);
-            var prePerms = await VisitPaymentAccess.LoadRolePermissionCodesAsync(_db, preRoleIds, ct);
-            if (!prePerms.Contains(PermissionCodes.QueueEnroll))
-            {
-                throw new ForbiddenException(MedFlow.Application.Services.Visits.VisitQueueEnrollmentService.QueueEnrollRequiredMessage);
-            }
-        }
-
         var visitId = visit.Id;
         CollectCashPaymentResponseDto response;
         long? settledPaymentIdForEnrollment = null;
@@ -116,11 +100,13 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
             try
             {
                 // ADR-0061 strict lock order: [02 patients] -> 09 visits -> 12 diagnostic_orders -> 15 visit_charges -> 16 payments -> 16b payment_allocations -> 16c payment_enrollment_intents
+                // D2: việc tự lấy số CLS sau thanh toán do hệ thống quyết định, nên luôn khóa bệnh nhân
+                // (nếu có) để tuần tự hóa presence + intent với các luồng lấy số khác.
                 await PaymentAllocationLookup.AcquireVisitPaymentChainLocksAsync(
                     _db,
                     visitId,
                     ct,
-                    patientIdToLock: preEnrollOrder is not null ? visit.PatientId : null);
+                    patientIdToLock: visit.PatientId);
 
                 if (_db is DbContext trackerCtx)
                     trackerCtx.ChangeTracker.Clear();
@@ -144,21 +130,6 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                 staff = verifiedCollector.Staff!;
                 visitHospitalId = verifiedCollector.VisitHospitalId;
 
-                var enrollOrder = await PaymentEnrollmentIntentProcessor.ResolveRequestedEnrollOrderAsync(
-                    _db,
-                    visitId,
-                    request.EnrollDiagnosticOrderId,
-                    request.EnrollDiagnosticOrderCode,
-                    ct);
-                if (enrollOrder is not null)
-                {
-                    await PaymentEnrollmentIntentProcessor.EnsureStaffHasQueueEnrollWhenIntentRequestedAsync(
-                        _db,
-                        actorUserId,
-                        verifiedCollector.RoleLabel,
-                        ct);
-                }
-
                 // Check IdempotencyKey post-lock first
                 var existingByKey = await _db.Payments.AsNoTracking()
                     .FirstOrDefaultAsync(p => p.IdempotencyKey == idempotencyKey, ct);
@@ -169,7 +140,6 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                         staff,
                         existingByKey,
                         requestedChargeIds,
-                        enrollOrder?.Id,
                         ct);
                     await tx.CommitAsync(ct);
 
@@ -253,10 +223,21 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                 }
 
                 GenerateQrPaymentService.RequireValidIntegerVnd(totalAmount);
-                PaymentEnrollmentIntentProcessor.EnsureEnrollOrderInPaidChargesOrThrow(enrollOrder, selectedCharges);
 
                 // Promote any explicitly paid UNDECIDED optional DiagnosticOrders -> ACCEPTED
-                await PromoteUndecidedOrdersAsync(selectedCharges, ct);
+                if (await PromoteUndecidedOrdersAsync(selectedCharges, ct))
+                {
+                    await _db.SaveChangesAsync(ct);
+                }
+
+                // D2 / BR-BF02-06: hệ thống tự chọn chỉ định CLS kế tiếp trong các khoản phí vừa thu
+                // (thứ tự tạo chỉ định, chưa xếp hàng, đã chấp nhận). Client không còn truyền chỉ định.
+                var enrollOrder = await PaymentEnrollmentIntentProcessor.ResolveNextAutoEnrollOrderAsync(
+                    _db,
+                    visitId,
+                    selectedCharges,
+                    ct);
+                PaymentEnrollmentIntentProcessor.EnsureEnrollOrderInPaidChargesOrThrow(enrollOrder, selectedCharges);
 
                 var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
                 // Cancel ALL overlapping open PENDING QR attempts (and ALL of their PENDING allocations & intents!)
@@ -313,8 +294,9 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                         PresenceSessionNo = sessionNo,
                         Status = PaymentEnrollmentIntentStatuses.PendingPostCommit,
                         RetryCount = 0,
-                        CreatedAt = nowUtc,
-                        ExpiresAt = nowUtc.AddMinutes(30),
+                        // payment_enrollment_intents dùng timestamp without time zone (giờ bệnh viện).
+                        CreatedAt = nowLocal,
+                        ExpiresAt = nowLocal.AddMinutes(30),
                     };
                     PaymentAllocationLookup.TryAddIntent(_db, createdIntent);
                     settledPaymentIdForEnrollment = cashPayment.Id;
@@ -386,7 +368,6 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                         staff,
                         racedByKey,
                         requestedChargeIds,
-                        preEnrollOrder?.Id,
                         ct);
                     if (hasRacedIntent)
                     {
@@ -518,7 +499,6 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
         Staff currentStaff,
         Payment existingPayment,
         IReadOnlyList<long> requestedChargeIds,
-        long? requestedEnrollOrderId,
         CancellationToken ct)
     {
         if (existingPayment.VisitId != visit.Id ||
@@ -527,12 +507,10 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
             throw new ConflictException(IdempotencyMismatchMessage);
         }
 
+        // D2 / BR-BF02-06: chỉ định CLS do hệ thống tự chọn nên không còn là một phần payload
+        // idempotency của client — chỉ so khớp phương thức + tập khoản phí.
         var existingIntents = await PaymentAllocationLookup.TryLoadNoTrackingIntentsForVisitAsync(_db, visit.Id, ct);
         var existingIntent = existingIntents.FirstOrDefault(i => i.PaymentId == existingPayment.Id);
-        if (existingIntent?.DiagnosticOrderId != requestedEnrollOrderId)
-        {
-            throw new ConflictException(IdempotencyMismatchMessage);
-        }
 
         var persistedAllocs = await PaymentAllocationLookup.TryLoadNoTrackingForVisitAsync(_db, visit.Id, ct);
         var existingAllocs = persistedAllocs
@@ -594,7 +572,7 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
         }
     }
 
-    private async Task PromoteUndecidedOrdersAsync(IReadOnlyList<VisitCharge> selectedCharges, CancellationToken ct)
+    private async Task<bool> PromoteUndecidedOrdersAsync(IReadOnlyList<VisitCharge> selectedCharges, CancellationToken ct)
     {
         var orderIds = selectedCharges
             .Where(c => c.DiagnosticOrderId.HasValue)
@@ -603,7 +581,7 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
             .ToList();
 
         if (orderIds.Count == 0)
-            return;
+            return false;
 
         try
         {
@@ -611,16 +589,21 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                 .Where(o => orderIds.Contains(o.Id))
                 .ToListAsync(ct);
 
+            var promoted = false;
             foreach (var order in orders)
             {
                 if (string.Equals(order.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.Undecided, StringComparison.OrdinalIgnoreCase))
                 {
                     order.SelectionStatus = DiagnosticSelectionStatuses.Accepted;
+                    promoted = true;
                 }
             }
+
+            return promoted;
         }
         catch (NotSupportedException)
         {
+            return false;
         }
     }
 
@@ -667,7 +650,7 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
             {
                 pi.Status = PaymentEnrollmentIntentStatuses.Cancelled;
                 pi.OutcomeCode = "PAYMENT_CANCELLED";
-                pi.ProcessedAt = nowUtc;
+                pi.ProcessedAt = HospitalClock.EnsureHospitalLocal(nowUtc);
             }
         }
     }

@@ -986,6 +986,18 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             await PayDiagnosticOrderByCashAsync(fx, visit.VisitCode!, labOrderId);
             await PayDiagnosticOrderByCashAsync(fx, visit.VisitCode!, imgOrderId);
 
+            // #863: paying the CLS fees now auto-issues the first CLS ticket (Lab). The single-active-queue
+            // invariant prevents UC42 for Imaging from opening a second ticket, so release the auto ticket
+            // before executing Imaging on day D.
+            await Db.QueueEntries
+                .Where(q => q.VisitId == visit.Id &&
+                            q.CompletedAt == null &&
+                            q.QueueType != null && q.QueueType.ToUpper() == "DIAGNOSTIC")
+                .ExecuteUpdateAsync(s => s.SetProperty(q => q.Status, "CANCELLED"));
+            await Db.DiagnosticOrders
+                .Where(o => o.VisitId == visit.Id && o.QueueEntryId.HasValue)
+                .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
+
             // Complete UC42 on Imaging on Day D (so it is COMPLETED awaiting UC43)
             await ExecuteDiagnosticOrderThroughUc42Async(fx, imgOrderCode);
 
@@ -3229,6 +3241,14 @@ public sealed class StageCCrossDayVisitAndDailyQueuePostgresTests : IClassFixtur
             .Where(o => o.QueueEntryId.HasValue && o.VisitId.HasValue && visitIds.Contains(o.VisitId.Value))
             .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
         await Db.QueueFairnessStates.Where(f => fx.AllSpIds.Contains(f.ServicePointId)).ExecuteDeleteAsync();
+        if (visitIds.Count > 0)
+        {
+            // #863: payment_enrollment_intents.queue_entry_id is ON DELETE RESTRICT; intent rows now exist
+            // for auto-enrolled CLS orders, so they must go before queue_entries.
+            await Db.PaymentEnrollmentIntents
+                .Where(i => visitIds.Contains(i.VisitId))
+                .ExecuteDeleteAsync();
+        }
         await Db.QueueEntries.Where(q =>
             (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
             (q.AppointmentId.HasValue && apptIds.Contains(q.AppointmentId.Value)) ||
