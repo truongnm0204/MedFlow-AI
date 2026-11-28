@@ -87,6 +87,7 @@ public class MedFlowDbContext : DbContext, IApplicationDbContext
     public DbSet<DiagnosticResultVersion> DiagnosticResultVersions => Set<DiagnosticResultVersion>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<ClinicalSessionRecoveryRequest> ClinicalSessionRecoveryRequests => Set<ClinicalSessionRecoveryRequest>();
+    public DbSet<EkycVerificationSession> EkycVerificationSessions => Set<EkycVerificationSession>();
 
     public Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default)
         => Database.BeginTransactionAsync(ct);

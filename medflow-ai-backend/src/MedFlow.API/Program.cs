@@ -51,6 +51,15 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddApplication();
 builder.Services.Configure<MedFlow.Application.Options.IdentityHashOptions>(
     builder.Configuration.GetSection("Identity"));
+builder.Services.AddOptions<MedFlow.Application.Options.EkycOptions>()
+    .Bind(builder.Configuration.GetSection(MedFlow.Application.Options.EkycOptions.SectionName))
+    .Validate(
+        o => o.SessionTtlMinutes > 0 &&
+             o.MaxAttempts > 0 &&
+             o.CompareThreshold is > 0d and <= 100d &&
+             !string.IsNullOrWhiteSpace(o.BackendUrl),
+        "Ekyc options must specify positive SessionTtlMinutes/MaxAttempts, CompareThreshold in (0,100] and a non-empty BackendUrl.")
+    .ValidateOnStart();
 builder.Services.AddOptions<MedFlow.Application.Options.AuthSecurityOptions>()
     .Bind(builder.Configuration.GetSection(MedFlow.Application.Options.AuthSecurityOptions.SectionName))
     .Validate(

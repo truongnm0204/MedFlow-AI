@@ -1,0 +1,48 @@
+namespace MedFlow.Application.Options;
+
+/// <summary>
+/// VNPT eKYC integration settings (bound to <c>Ekyc</c> section).
+/// Secrets come from environment / secret manager only — NEVER database, NEVER committed files:
+/// <list type="bullet">
+///   <item><c>EncryptionKeyBase64</c> — 32-byte AES-256 key (base64) for evidence_payload_full at-rest encryption.</item>
+///   <item><c>HmacKey</c> — server secret for identification HMAC dedupe. Falls back to <c>Identity:HashKey</c> when unset.</item>
+///   <item><c>TokenId</c> / <c>TokenKey</c> / <c>AccessToken</c> / <c>PublicKeyCa</c> — VNPT credentials (env <c>VNPT_EKYC_*</c>).</item>
+/// </list>
+/// Non-secret knobs (<c>CompareThreshold</c>, <c>SessionTtlMinutes</c>, <c>MaxAttempts</c>, <c>BackendUrl</c>)
+/// are config-driven per hard requirement 7 — never hardcoded in service logic.
+/// </summary>
+public sealed class EkycOptions
+{
+    public const string SectionName = "Ekyc";
+
+    /// <summary>VNPT AI gateway base URL.</summary>
+    public string BackendUrl { get; set; } = "https://api.idg.vnpt.vn";
+
+    /// <summary>Minimum face-compare prob for a positive verification verdict. Never hardcoded in logic —
+    /// tune via config after volunteer testing (plan v2.1 mục 8). Scale follows VNPT compare.prob percentage (0-100).</summary>
+    public double CompareThreshold { get; set; } = 70.0;
+
+    /// <summary>eKYC session TTL in minutes (hard requirement 4: short-lived).</summary>
+    public int SessionTtlMinutes { get; set; } = 15;
+
+    /// <summary>Max step re-submission attempts per session before forced rejection.</summary>
+    public int MaxAttempts { get; set; } = 5;
+
+    /// <summary>SECRET — base64-encoded 32-byte AES-256 key. From env/secret store only.</summary>
+    public string? EncryptionKeyBase64 { get; set; }
+
+    /// <summary>SECRET — HMAC key for identification dedupe. Falls back to Identity:HashKey when unset.</summary>
+    public string? HmacKey { get; set; }
+
+    /// <summary>SECRET — VNPT Token-id header credential.</summary>
+    public string? TokenId { get; set; }
+
+    /// <summary>SECRET — VNPT Token-key header credential.</summary>
+    public string? TokenKey { get; set; }
+
+    /// <summary>SECRET — VNPT Bearer access token (JWT, short-lived per probe Q5).</summary>
+    public string? AccessToken { get; set; }
+
+    /// <summary>SECRET — VNPT CA public key (base64 DER/SPKI) for server-side dataSign verification.</summary>
+    public string? PublicKeyCa { get; set; }
+}
