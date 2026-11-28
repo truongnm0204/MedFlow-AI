@@ -77,8 +77,7 @@ export function CreateUnverifiedPatientModal({
   };
 
   const reasonRequiresIdentityCard =
-    form.reason !== '' &&
-    PATIENT_UNVERIFIED_REASONS_REQUIRING_IDENTIFICATION.includes(form.reason);
+    form.reason !== '' && PATIENT_UNVERIFIED_REASONS_REQUIRING_IDENTIFICATION.includes(form.reason);
 
   const handleClose = () => {
     if (submitting) return;
@@ -314,12 +313,7 @@ export function CreateUnverifiedPatientModal({
             ) : null}
 
             <div className="flex justify-end gap-3 border-t border-border pt-4">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={handleClose}
-                disabled={submitting}
-              >
+              <Button type="button" variant="secondary" onClick={handleClose} disabled={submitting}>
                 Hủy bỏ
               </Button>
               <Button type="submit" loading={submitting}>

@@ -1,15 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 
-import {
-  Alert,
-  Button,
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-  Spinner,
-} from '@/shared/ui';
+import { Alert, Button, Card, CardContent, CardFooter, CardHeader, Spinner } from '@/shared/ui';
 
 import { useEkycFlow } from '../hooks/use-ekyc-flow';
 import { EKYC_SDK_CONTAINER_ID, buildEkycSdkConfig } from '../sdk/ekyc-sdk-config';
@@ -37,8 +29,7 @@ const SDK_LOAD_ERROR =
  * Giá trị lạ (backend thêm mới) rơi về câu trung tính, không hiển thị mã kỹ thuật.
  */
 const ACTIVATION_OUTCOME_MESSAGES: Record<string, string> = {
-  NEW_IDENTITY_ACTIVATED:
-    'Danh tính của bạn đã được xác minh và ghi nhận cho hồ sơ bệnh nhân mới.',
+  NEW_IDENTITY_ACTIVATED: 'Danh tính của bạn đã được xác minh và ghi nhận cho hồ sơ bệnh nhân mới.',
   CLAIM_LINKED_ACTIVATED:
     'Danh tính của bạn đã được xác minh và liên kết với hồ sơ bệnh nhân đã có.',
   FAMILY_MANAGED_PENDING_REVIEW:
@@ -188,9 +179,7 @@ export function EkycCaptureWizard({
             <CheckCircle2 className="h-7 w-7 text-emerald-600" aria-hidden="true" />
           </div>
           <h2 className="mt-4 text-lg font-bold text-ink">Xác minh danh tính thành công</h2>
-          <p className="mt-1 text-sm text-sub">
-            Giấy tờ và khuôn mặt của bạn đã được xác minh.
-          </p>
+          <p className="mt-1 text-sm text-sub">Giấy tờ và khuôn mặt của bạn đã được xác minh.</p>
 
           {finalizeResult?.accountActivated === true ? (
             <Alert tone="success" className="mt-4 text-left">

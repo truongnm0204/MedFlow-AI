@@ -22,9 +22,7 @@ export async function getEkycSession(sessionId: string): Promise<EkycSessionStat
   return data;
 }
 
-export async function finalizeEkycSession(
-  sessionId: string,
-): Promise<FinalizeEkycSessionResponse> {
+export async function finalizeEkycSession(sessionId: string): Promise<FinalizeEkycSessionResponse> {
   const { data } = await apiClient.post<FinalizeEkycSessionResponse>(
     `/ekyc/sessions/${sessionId}/finalize`,
   );

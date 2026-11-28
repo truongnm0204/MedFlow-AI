@@ -34,11 +34,7 @@ export function EkycConsentScreen({
   submitting = false,
 }: EkycConsentScreenProps) {
   return (
-    <Card
-      className="mx-auto w-full max-w-2xl"
-      role="region"
-      aria-labelledby={CONSENT_HEADING_ID}
-    >
+    <Card className="mx-auto w-full max-w-2xl" role="region" aria-labelledby={CONSENT_HEADING_ID}>
       <CardHeader>
         <h2 id={CONSENT_HEADING_ID} className="text-base font-bold text-ink">
           Đồng ý xác thực danh tính điện tử (eKYC)

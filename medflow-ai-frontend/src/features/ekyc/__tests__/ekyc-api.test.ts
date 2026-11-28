@@ -21,7 +21,13 @@ import type {
 const client = apiClient as unknown as { get: Mock; post: Mock };
 
 function axiosResponse<T>(data: T): AxiosResponse<T> {
-  return { data, status: 200, statusText: 'OK', headers: {}, config: {} } as unknown as AxiosResponse<T>;
+  return {
+    data,
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config: {},
+  } as unknown as AxiosResponse<T>;
 }
 
 describe('ekyc.api', () => {

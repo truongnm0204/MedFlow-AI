@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import {
-  loadVnptEkycSdk,
-  resetVnptSdkLoaderForTests,
-} from '../sdk/vnpt-sdk-loader';
+import { loadVnptEkycSdk, resetVnptSdkLoaderForTests } from '../sdk/vnpt-sdk-loader';
 import type { VnptEkycSdk } from '../sdk/vnpt-sdk.types';
 
 const SDK_BASE_PATH = '/ekyc-sdk';
@@ -173,7 +170,9 @@ describe('vnpt-sdk-loader', () => {
     await flushMicrotasks();
 
     // Không có thẻ thứ hai cho cùng một src.
-    expect(sdkScripts().filter((script) => script.getAttribute('src') === EXPECTED_SOURCES[0])).toHaveLength(1);
+    expect(
+      sdkScripts().filter((script) => script.getAttribute('src') === EXPECTED_SOURCES[0]),
+    ).toHaveLength(1);
 
     inFlight.dispatchEvent(new Event('load'));
 

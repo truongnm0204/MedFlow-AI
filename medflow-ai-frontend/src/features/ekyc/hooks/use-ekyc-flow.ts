@@ -16,13 +16,7 @@ import { createEkycSession, finalizeEkycSession } from '../api/ekyc.api';
  * endpoint response.
  */
 export type EkycFlowStage =
-  | 'consent'
-  | 'creating-session'
-  | 'capturing'
-  | 'finalizing'
-  | 'verified'
-  | 'rejected'
-  | 'error';
+  'consent' | 'creating-session' | 'capturing' | 'finalizing' | 'verified' | 'rejected' | 'error';
 
 interface EkycFlowState {
   stage: EkycFlowStage;
@@ -81,9 +75,7 @@ const FINALIZE_CONFLICT_ERROR =
  * Gọi finalize một lần; nếu gặp 409 (finalize đồng thời) thì thử lại đúng một lần.
  * Ném lại lỗi để phía gọi hiển thị thông báo phù hợp.
  */
-async function finalizeWithConflictRetry(
-  sessionId: string,
-): Promise<FinalizeEkycSessionResponse> {
+async function finalizeWithConflictRetry(sessionId: string): Promise<FinalizeEkycSessionResponse> {
   try {
     return await finalizeEkycSession(sessionId);
   } catch (error) {

@@ -130,11 +130,7 @@ export type EkycPurpose = 'ACCOUNT_ACTIVATION' | 'PATIENT_PROFILE';
 
 /** Step-binding validation states (fail-closed). NOT_APPLICABLE in document-only flow (no compare). */
 export type EkycBindingState =
-  | 'PENDING'
-  | 'NOT_APPLICABLE'
-  | 'VALID'
-  | 'INVALID_BINDING'
-  | 'UNVERIFIABLE_BINDING';
+  'PENDING' | 'NOT_APPLICABLE' | 'VALID' | 'INVALID_BINDING' | 'UNVERIFIABLE_BINDING';
 
 /** Patient identity verification state (PatientIdentityStatuses). VERIFIED only via engine finalize. */
 export type PatientIdentityStatus = 'VERIFIED' | 'UNVERIFIED';

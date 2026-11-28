@@ -38,8 +38,7 @@ export interface EkycAssistedModalProps {
   onVerified?: (result: FinalizeEkycSessionResponse) => void;
 }
 
-const CREATE_SESSION_ERROR =
-  'Không thể tạo phiên xác minh cho hồ sơ bệnh nhân. Vui lòng thử lại.';
+const CREATE_SESSION_ERROR = 'Không thể tạo phiên xác minh cho hồ sơ bệnh nhân. Vui lòng thử lại.';
 const FINALIZE_ERROR = 'Không thể hoàn tất xác minh danh tính. Vui lòng thử lại.';
 const IDENTITY_CARD_REGEX = /^(?:\d{9}|\d{12})$/;
 const IDENTITY_CARD_REQUIRED_ERROR =
@@ -150,10 +149,7 @@ export function EkycAssistedModal({
           if (generationRef.current !== generation) return;
 
           setFinalizeResult(finalized);
-          if (
-            finalized.status === 'VERIFIED' ||
-            finalized.patientIdentityStatus === 'VERIFIED'
-          ) {
+          if (finalized.status === 'VERIFIED' || finalized.patientIdentityStatus === 'VERIFIED') {
             setStage('verified');
             if (!verifiedNotifiedRef.current) {
               verifiedNotifiedRef.current = true;
@@ -197,8 +193,8 @@ export function EkycAssistedModal({
           {stage === 'consent' || stage === 'creating-session' ? (
             <div className="space-y-4">
               <Alert tone="info">
-                Lễ tân hỗ trợ thao tác trên thiết bị tại quầy. Bệnh nhân cần đọc và tự xác nhận
-                đồng ý trước khi chụp giấy tờ tùy thân.
+                Lễ tân hỗ trợ thao tác trên thiết bị tại quầy. Bệnh nhân cần đọc và tự xác nhận đồng
+                ý trước khi chụp giấy tờ tùy thân.
               </Alert>
               <Input
                 id="assisted-identity-card"
@@ -210,9 +206,7 @@ export function EkycAssistedModal({
                 onChange={(event) =>
                   setIdentityCard(event.target.value.replace(/\D/g, '').slice(0, 12))
                 }
-                error={
-                  errorMessage === IDENTITY_CARD_REQUIRED_ERROR ? errorMessage : undefined
-                }
+                error={errorMessage === IDENTITY_CARD_REQUIRED_ERROR ? errorMessage : undefined}
               />
               {errorMessage && errorMessage !== IDENTITY_CARD_REQUIRED_ERROR ? (
                 <Alert tone="error">{errorMessage}</Alert>
@@ -253,8 +247,8 @@ export function EkycAssistedModal({
                   onLoadError={handleSdkLoadError}
                 />
                 <p className="mt-3 text-xs text-sub">
-                  Nếu trình xác minh không hiển thị, vui lòng kiểm tra quyền truy cập camera và
-                  thử lại.
+                  Nếu trình xác minh không hiển thị, vui lòng kiểm tra quyền truy cập camera và thử
+                  lại.
                 </p>
               </CardContent>
             </Card>

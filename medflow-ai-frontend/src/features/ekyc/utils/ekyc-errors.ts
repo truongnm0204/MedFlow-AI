@@ -24,8 +24,7 @@ export const EKYC_FAILURE_MESSAGES: Record<EkycFailureCode, string> = {
     'Giấy tờ tùy thân không hợp lệ hoặc có dấu hiệu chỉnh sửa. Vui lòng kiểm tra lại giấy tờ và thử lại.',
   OCR_MISMATCH:
     'Thông tin trên giấy tờ không khớp với thông tin đăng ký. Vui lòng kiểm tra lại thông tin cá nhân.',
-  SESSION_EXPIRED:
-    'Phiên xác minh đã hết hạn. Vui lòng bắt đầu lại quá trình xác minh.',
+  SESSION_EXPIRED: 'Phiên xác minh đã hết hạn. Vui lòng bắt đầu lại quá trình xác minh.',
 };
 
 const GENERIC_FAILURE_MESSAGE = 'Xác minh danh tính không thành công. Vui lòng thử lại.';

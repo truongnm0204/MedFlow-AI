@@ -180,8 +180,8 @@ export function EkycVerificationPage({ onVerified, onCancel }: EkycVerificationP
           </CardHeader>
           <CardContent className="space-y-4">
             <Alert tone="warning">
-              Phiên xác thực email không còn hiệu lực. Vui lòng đăng nhập bằng tài khoản vừa đăng
-              ký để tiếp tục xác minh danh tính.
+              Phiên xác thực email không còn hiệu lực. Vui lòng đăng nhập bằng tài khoản vừa đăng ký
+              để tiếp tục xác minh danh tính.
             </Alert>
           </CardContent>
           <CardFooter className="flex justify-end">
@@ -271,8 +271,8 @@ export function EkycVerificationPage({ onVerified, onCancel }: EkycVerificationP
           <CardContent>
             <div id={EKYC_SDK_CONTAINER_ID} className="min-h-[520px] w-full" />
             <p className="mt-3 text-xs text-sub">
-              Nếu trình xác minh không hiển thị, vui lòng kiểm tra quyền truy cập camera và tải
-              lại trang.
+              Nếu trình xác minh không hiển thị, vui lòng kiểm tra quyền truy cập camera và tải lại
+              trang.
             </p>
           </CardContent>
         </Card>
@@ -352,8 +352,8 @@ export function EkycVerificationPage({ onVerified, onCancel }: EkycVerificationP
               </Alert>
               {finalizeResult.accountActivated === true ? (
                 <p className="mt-3 text-sm text-sub">
-                  Bạn có thể đăng nhập và sử dụng tài khoản; việc liên kết hồ sơ sẽ hoàn tất sau
-                  khi được duyệt.
+                  Bạn có thể đăng nhập và sử dụng tài khoản; việc liên kết hồ sơ sẽ hoàn tất sau khi
+                  được duyệt.
                 </p>
               ) : (
                 <p className="mt-3 text-sm text-sub">
