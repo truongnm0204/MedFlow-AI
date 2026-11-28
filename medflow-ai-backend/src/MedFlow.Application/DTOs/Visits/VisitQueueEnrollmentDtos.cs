@@ -85,6 +85,10 @@ public sealed record VisitQueueEnrollmentContextDto(
     VisitQueueEnrollmentReturnSummaryDto ReturnConsultationSummary,
     IReadOnlyList<VisitQueueEnrollmentPharmacyItemDto> PharmacyItems);
 
+/// <param name="ServicePointId">
+/// D2 / BR-BF02-06: bị BỎ QUA với <c>DIAGNOSTIC</c> — hệ thống tự resolver điểm CLS. Vẫn dùng cho
+/// <c>PHARMACY</c> / <c>RETURN_CONSULTATION</c>.
+/// </param>
 public sealed record CreateVisitQueueEnrollmentRequestDto(
     string Target,
     long? DiagnosticOrderId = null,

@@ -554,7 +554,8 @@ public sealed class SePayWebhookService : ISePayWebhookService
                     // PE-05: Late/mismatched/cancelled transfer NEVER triggers post-commit enrollment.
                     thisPaymentIntent.Status = PaymentEnrollmentIntentStatuses.Cancelled;
                     thisPaymentIntent.OutcomeCode = "PAYMENT_NOT_SETTLED";
-                    thisPaymentIntent.ProcessedAt = nowUtcForGateway;
+                    // payment_enrollment_intents.processed_at là timestamp without time zone (giờ bệnh viện).
+                    thisPaymentIntent.ProcessedAt = HospitalClock.EnsureHospitalLocal(nowUtcForGateway);
                 }
 
                 var gatewayEvent = new PaymentGatewayEvent
@@ -751,7 +752,8 @@ public sealed class SePayWebhookService : ISePayWebhookService
             {
                 pi.Status = PaymentEnrollmentIntentStatuses.Expired;
                 pi.OutcomeCode = PaymentEnrollmentIntentOutcomeCodes.IntentExpired;
-                pi.ProcessedAt = nowUtc;
+                // payment_enrollment_intents.processed_at là timestamp without time zone (giờ bệnh viện).
+                pi.ProcessedAt = HospitalClock.EnsureHospitalLocal(nowUtc);
             }
         }
     }

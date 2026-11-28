@@ -571,6 +571,16 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
             var dPlus9Date = DateOnly.FromDateTime(dPlus9);
             _clock.SetVietnamLocalTime(dPlus9);
 
+            // #863: paying the CLS fee now auto-issues the day-D queue ticket. Close it before seeding the
+            // D+9 fixture ticket, otherwise ux_queue_entries_one_active_post_exam_per_visit is violated.
+            await Db.QueueEntries
+                .Where(q => q.VisitId == visit.Id &&
+                            q.CompletedAt == null &&
+                            q.QueueType == "DIAGNOSTIC")
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(q => q.Status, "COMPLETED")
+                    .SetProperty(q => q.CompletedAt, dPlus9));
+
             // 1) Reception Resume WITH ConfirmOverdueOverride = true is strictly blocked!
             var recOverrideRes = await _client.SendAsync(AuthedPostJson(
                 $"/api/v1/reception/visits/{visit.VisitCode}/resume",
@@ -2142,6 +2152,12 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
         {
             await Db.ClinicalSessionRecoveryRequests
                 .Where(r => visitIds.Contains(r.VisitId))
+                .ExecuteDeleteAsync();
+
+            // #863: payment_enrollment_intents.queue_entry_id is ON DELETE RESTRICT; intent rows now exist
+            // for auto-enrolled CLS orders, so they must go before queue_entries.
+            await Db.PaymentEnrollmentIntents
+                .Where(i => visitIds.Contains(i.VisitId))
                 .ExecuteDeleteAsync();
         }
         await Db.QueueEntries.Where(q =>

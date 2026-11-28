@@ -131,21 +131,6 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             }
         }
 
-        var preEnrollOrder = await PaymentEnrollmentIntentProcessor.ResolveRequestedEnrollOrderAsync(
-            _db,
-            visit.Id,
-            request?.EnrollDiagnosticOrderId,
-            request?.EnrollDiagnosticOrderCode,
-            ct);
-        if (preEnrollOrder is not null && !actor.IsPatient && actor.Doctor is null)
-        {
-            await PaymentEnrollmentIntentProcessor.EnsureStaffHasQueueEnrollWhenIntentRequestedAsync(
-                _db,
-                actorUserId,
-                actor.RoleLabel,
-                ct);
-        }
-
         var visitId = visit.Id;
 
         await using (var tx = await _db.BeginTransactionAsync(ct))
@@ -155,13 +140,14 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             var txCommitted = false;
             try
             {
-                var shouldStampStaffCounterPresence = preEnrollOrder is not null && !actor.IsPatient && actor.Doctor is null;
+                // D2 / BR-BF02-06: việc tự lấy số CLS sau thanh toán do hệ thống quyết định, nên luôn
+                // khóa bệnh nhân (nếu có) để tuần tự hóa presence + intent với các luồng lấy số khác.
                 // ADR-0061 strict lock order: [02 patients] -> 09 visits -> 12 diagnostic_orders -> 15 visit_charges -> 16 payments -> 16b payment_allocations -> 16c payment_enrollment_intents
                 await PaymentAllocationLookup.AcquireVisitPaymentChainLocksAsync(
                     _db,
                     visitId,
                     ct,
-                    patientIdToLock: shouldStampStaffCounterPresence ? visit.PatientId : null);
+                    patientIdToLock: visit.PatientId);
 
                 if (_db is DbContext trackerCtx)
                     trackerCtx.ChangeTracker.Clear();
@@ -191,21 +177,6 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                     verifiedActor.OwnedPatientIds);
                 hospitalId = verifiedActor.VisitHospitalId;
 
-                var enrollOrder = await PaymentEnrollmentIntentProcessor.ResolveRequestedEnrollOrderAsync(
-                    _db,
-                    visitId,
-                    request?.EnrollDiagnosticOrderId,
-                    request?.EnrollDiagnosticOrderCode,
-                    ct);
-                if (enrollOrder is not null && !actor.IsPatient && actor.Doctor is null)
-                {
-                    await PaymentEnrollmentIntentProcessor.EnsureStaffHasQueueEnrollWhenIntentRequestedAsync(
-                        _db,
-                        actorUserId,
-                        actor.RoleLabel,
-                        ct);
-                }
-
                 var nowLocal = Clock();
                 var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
 
@@ -221,7 +192,6 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                             hospitalId,
                             existingByKey,
                             explicitChargeIds,
-                            enrollOrder?.Id,
                             nowLocal,
                             nowUtc,
                             async token =>
@@ -266,13 +236,21 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                 }
 
                 var targetChargeIds = targetCharges.Select(c => c.Id).OrderBy(id => id).ToList();
-                PaymentEnrollmentIntentProcessor.EnsureEnrollOrderInPaidChargesOrThrow(enrollOrder, targetCharges);
 
                 // Promote any explicitly selected UNDECIDED optional DiagnosticOrders -> ACCEPTED
-                if (explicitChargeIds is not null)
+                if (explicitChargeIds is not null && await PromoteUndecidedOrdersAsync(targetCharges, ct))
                 {
-                    await PromoteUndecidedOrdersAsync(targetCharges, ct);
+                    await _db.SaveChangesAsync(ct);
                 }
+
+                // D2 / BR-BF02-06: hệ thống tự chọn chỉ định CLS kế tiếp trong các khoản phí của giao dịch
+                // (thứ tự tạo chỉ định, chưa xếp hàng, đã chấp nhận). Client không còn truyền chỉ định.
+                var enrollOrder = await PaymentEnrollmentIntentProcessor.ResolveNextAutoEnrollOrderAsync(
+                    _db,
+                    visitId,
+                    targetCharges,
+                    ct);
+                PaymentEnrollmentIntentProcessor.EnsureEnrollOrderInPaidChargesOrThrow(enrollOrder, targetCharges);
 
                 var account = await VietQrAccountPolicyReader.ReadAsync(
                     _db,
@@ -513,8 +491,9 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                         PresenceSessionNo = isPresentAtCreation ? Math.Max(1, effectiveVisitForPresence.PresenceSessionNo) : null,
                         Status = PaymentEnrollmentIntentStatuses.PendingSettlement,
                         RetryCount = 0,
-                        CreatedAt = nowUtc,
-                        ExpiresAt = nowUtc.AddMinutes(Math.Max(30, _qrOptions.PendingExpiryMinutes + 15)),
+                        // payment_enrollment_intents dùng timestamp without time zone (giờ bệnh viện).
+                        CreatedAt = nowLocal,
+                        ExpiresAt = nowLocal.AddMinutes(Math.Max(30, _qrOptions.PendingExpiryMinutes + 15)),
                     };
                     PaymentAllocationLookup.TryAddIntent(_db, createdIntent);
                     await _db.SaveChangesAsync(ct);
@@ -645,7 +624,6 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         long hospitalId,
         Payment existingPayment,
         IReadOnlyList<long>? requestedChargeIds,
-        long? requestedEnrollOrderId,
         DateTime nowLocal,
         DateTime nowUtc,
         Func<CancellationToken, Task> commitBeforeThrowAsync,
@@ -657,12 +635,10 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             throw new ConflictException(IdempotencyMismatchMessage);
         }
 
+        // D2 / BR-BF02-06: chỉ định CLS do hệ thống tự chọn nên không còn là một phần payload
+        // idempotency của client — chỉ so khớp phương thức + tập khoản phí.
         var existingIntents = await PaymentAllocationLookup.TryLoadNoTrackingIntentsForVisitAsync(_db, visit.Id, ct);
         var existingIntent = existingIntents.FirstOrDefault(i => i.PaymentId == existingPayment.Id);
-        if (existingIntent?.DiagnosticOrderId != requestedEnrollOrderId)
-        {
-            throw new ConflictException(IdempotencyMismatchMessage);
-        }
 
         var persistedAllocs = await PaymentAllocationLookup.TryLoadNoTrackingForVisitAsync(_db, visit.Id, ct);
         var existingAllocs = persistedAllocs
@@ -717,7 +693,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                 {
                     pi.Status = PaymentEnrollmentIntentStatuses.Expired;
                     pi.OutcomeCode = PaymentEnrollmentIntentOutcomeCodes.IntentExpired;
-                    pi.ProcessedAt = nowUtc;
+                    pi.ProcessedAt = HospitalClock.EnsureHospitalLocal(nowUtc);
                 }
 
                 await _db.SaveChangesAsync(ct);
@@ -794,7 +770,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                 {
                     pi.Status = PaymentEnrollmentIntentStatuses.Cancelled;
                     pi.OutcomeCode = "PAYMENT_NOT_SETTLED";
-                    pi.ProcessedAt = nowUtc;
+                    pi.ProcessedAt = HospitalClock.EnsureHospitalLocal(nowUtc);
                 }
 
                 await _db.SaveChangesAsync(ct);
@@ -1021,7 +997,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         }
     }
 
-    private async Task PromoteUndecidedOrdersAsync(IReadOnlyList<VisitCharge> selectedCharges, CancellationToken ct)
+    private async Task<bool> PromoteUndecidedOrdersAsync(IReadOnlyList<VisitCharge> selectedCharges, CancellationToken ct)
     {
         var orderIds = selectedCharges
             .Where(c => c.DiagnosticOrderId.HasValue)
@@ -1030,7 +1006,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             .ToList();
 
         if (orderIds.Count == 0)
-            return;
+            return false;
 
         try
         {
@@ -1038,16 +1014,21 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                 .Where(o => orderIds.Contains(o.Id))
                 .ToListAsync(ct);
 
+            var promoted = false;
             foreach (var order in orders)
             {
                 if (string.Equals(order.SelectionStatus?.Trim(), DiagnosticSelectionStatuses.Undecided, StringComparison.OrdinalIgnoreCase))
                 {
                     order.SelectionStatus = DiagnosticSelectionStatuses.Accepted;
+                    promoted = true;
                 }
             }
+
+            return promoted;
         }
         catch (NotSupportedException)
         {
+            return false;
         }
     }
 
@@ -1090,7 +1071,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         {
             pi.Status = PaymentEnrollmentIntentStatuses.Expired;
             pi.OutcomeCode = PaymentEnrollmentIntentOutcomeCodes.IntentExpired;
-            pi.ProcessedAt = nowUtc;
+            pi.ProcessedAt = HospitalClock.EnsureHospitalLocal(nowUtc);
         }
 
         await _db.SaveChangesAsync(ct);
@@ -1176,7 +1157,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         {
             pi.Status = PaymentEnrollmentIntentStatuses.Cancelled;
             pi.OutcomeCode = "PAYMENT_CANCELLED";
-            pi.ProcessedAt = nowUtc;
+            pi.ProcessedAt = HospitalClock.EnsureHospitalLocal(nowUtc);
         }
     }
 
