@@ -59,6 +59,8 @@ public sealed record DispenseConfirmContextDto(
     string DispenseStatus = "PENDING"
 );
 
+// ShortageReason: giữ lại để tương thích hợp đồng API với FE cũ.
+// BR-BF03-03: backend bỏ qua hoàn toàn — không được dùng để xuất thiếu và không được lưu vào DB.
 public sealed record ConfirmDispenseItemRequest(
     long PrescriptionItemId,
     long? MedicineBatchId = null,

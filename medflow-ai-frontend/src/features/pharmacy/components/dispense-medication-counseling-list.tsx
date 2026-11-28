@@ -10,7 +10,6 @@ import type {
 
 export interface DispenseLineEditState {
   dispensedQuantity?: number;
-  shortageReason?: string;
 }
 
 interface DispenseMedicationCounselingListProps {
@@ -20,7 +19,6 @@ interface DispenseMedicationCounselingListProps {
   onToggleCheck: (checkId: string) => void;
   lineEdits?: Record<string, DispenseLineEditState>;
   onChangeLineQuantity?: (medId: string, quantity: number) => void;
-  onChangeShortageReason?: (medId: string, reason: string) => void;
   disabled?: boolean;
 }
 
@@ -31,10 +29,9 @@ export function DispenseMedicationCounselingList({
   onToggleCheck,
   lineEdits,
   onChangeLineQuantity,
-  onChangeShortageReason,
   disabled = false,
 }: DispenseMedicationCounselingListProps) {
-  // Compute total dispensed per prescriptionItemId to know when shortageReason is required
+  // Tổng số lượng thực xuất theo prescriptionItemId — dùng để phát hiện cấp thiếu (bị cấm).
   const totalsByPrescriptionItemId = new Map<number, { prescribed: number; dispensed: number }>();
   for (const med of medications) {
     if (med.prescriptionItemId == null) continue;
@@ -69,12 +66,11 @@ export function DispenseMedicationCounselingList({
           {medications.map((med) => {
             const defaultQty = med.dispensedQuantity ?? med.prescribedQuantity ?? 0;
             const currentQty = lineEdits?.[med.id]?.dispensedQuantity ?? defaultQty;
-            const currentReason = lineEdits?.[med.id]?.shortageReason ?? '';
             const itemTotals =
               med.prescriptionItemId != null
                 ? totalsByPrescriptionItemId.get(med.prescriptionItemId)
                 : undefined;
-            const requiresShortageReason =
+            const hasShortage =
               itemTotals !== undefined && itemTotals.dispensed < itemTotals.prescribed;
 
             return (
@@ -119,23 +115,21 @@ export function DispenseMedicationCounselingList({
                       />
                     </div>
 
-                    {requiresShortageReason && onChangeShortageReason ? (
+                    {hasShortage ? (
                       <div className="sm:col-span-8">
-                        <label
-                          htmlFor={`shortage-reason-${med.id}`}
-                          className="block text-[11px] font-semibold text-amber-800"
+                        <div
+                          role="alert"
+                          className="mt-1 flex items-start gap-2 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-2 text-[11px] font-medium text-rose-700"
                         >
-                          Lý do cấp thiếu / bằng 0 (bắt buộc)
-                        </label>
-                        <input
-                          id={`shortage-reason-${med.id}`}
-                          type="text"
-                          disabled={disabled}
-                          value={currentReason}
-                          placeholder="Nhập lý do cấp thiếu thuốc hoặc hết hàng tạm thời..."
-                          onChange={(e) => onChangeShortageReason(med.id, e.target.value)}
-                          className="mt-1 w-full rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-xs text-ink focus:border-primary focus:outline-none disabled:opacity-60"
-                        />
+                          <AlertTriangle
+                            className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                            aria-hidden="true"
+                          />
+                          <span>
+                            Không đủ thuốc (thiếu so với kê đơn). Không thể cấp phát — vui lòng báo
+                            bệnh nhân và kết thúc luồng cấp phát.
+                          </span>
+                        </div>
                       </div>
                     ) : null}
                   </div>

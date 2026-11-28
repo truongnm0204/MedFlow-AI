@@ -257,7 +257,7 @@ describe('DispenseConfirmPage (real API)', () => {
 
     // Attempt 2 retries same submit -> MUST reuse identical idempotencyKey, then fails with 409
     fireEvent.click(submitBtn);
-    expect(await screen.findByText('Số lượng tồn không đủ.')).toBeInTheDocument();
+    expect(await screen.findByText(/Số lượng tồn không đủ/i)).toBeInTheDocument();
     expect(postSpy).toHaveBeenCalledTimes(2);
     const key2 = (postSpy.mock.calls[1]?.[1] as { idempotencyKey: string }).idempotencyKey;
     expect(key2).toBe(key1);
@@ -270,27 +270,8 @@ describe('DispenseConfirmPage (real API)', () => {
     expect(key3).not.toBe(key1);
   });
 
-  it('requires shortageReason when dispensedQuantity is 0 and sends explicit 0 without fallback', async () => {
-    const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
-      data: {
-        dispenseCode: 'DISP-2026-1125-0089',
-        rxCode: 'RX-2026-0415-0088',
-        visitCode: 'VIS-2026-0501',
-        ticketNo: 'PHA-012',
-        patientName: 'NGUYỄN VĂN AN',
-        patientCode: 'PAT-2024-0108',
-        receiverName: 'NGUYỄN VĂN AN',
-        receiverIdentityMasked: '001088******',
-        prescribingDoctor: 'TS.BS Nguyễn Minh Đức',
-        dispensingPharmacist: 'DS. Trần Thu Hương',
-        dispensedAt: '25/11/2026 09:15',
-        statusLabel: 'DISPENSED',
-        paymentSummary: 'Chưa có dữ liệu',
-        totalAmountFormatted: 'Chưa có dữ liệu',
-        items: [],
-        auditNote: 'Audit OK',
-      },
-    } as AxiosResponse);
+  it('blocks under-quantity dispense (issue #864): shows khong du thuoc, bao benh nhan and never calls API', async () => {
+    const postSpy = vi.spyOn(apiClient, 'post');
 
     renderDispensePage();
     expect((await screen.findAllByText('NGUYỄN VĂN AN')).length).toBeGreaterThan(0);
@@ -301,6 +282,7 @@ describe('DispenseConfirmPage (real API)', () => {
       }
     }
 
+    // Cài đặt số lượng thực xuất thấp hơn kê đơn (kể cả 0) — cấm cấp phát thiếu.
     const qtyInput = screen.getByLabelText(/Số lượng thực xuất \(Viên\)/i);
     fireEvent.change(qtyInput, { target: { value: '0' } });
 
@@ -309,30 +291,35 @@ describe('DispenseConfirmPage (real API)', () => {
     });
     fireEvent.click(submitBtn);
 
-    expect(
-      await screen.findByText(/nhỏ hơn kê đơn.*Vui lòng nhập lý do cấp thiếu thuốc/i),
-    ).toBeInTheDocument();
+    // Hiển thị rõ không đủ thuốc + báo bệnh nhân; không gọi API, không có ô lý do thiếu.
+    expect(await screen.findByText(/Không đủ thuốc \(thiếu so với kê đơn\)/i)).toBeInTheDocument();
     expect(postSpy).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText(/Lý do cấp thiếu/i)).not.toBeInTheDocument();
+  });
 
-    const reasonInput = screen.getByLabelText(/Lý do cấp thiếu \/ bằng 0/i);
-    fireEvent.change(reasonInput, { target: { value: 'Tạm hết lô thuốc tại quầy' } });
-
-    fireEvent.click(submitBtn);
-
-    await waitFor(() => {
-      expect(postSpy).toHaveBeenCalledWith(
-        '/pharmacy/prescriptions/RX-2026-0415-0088/dispense',
-        expect.objectContaining({
-          items: [
-            expect.objectContaining({
-              prescriptionItemId: 101,
-              medicineBatchId: 1001,
-              dispensedQuantity: 0,
-              shortageReason: 'Tạm hết lô thuốc tại quầy',
-            }),
-          ],
-        }),
-      );
+  it('surfaces patient-facing guidance when backend rejects with 409 insufficient stock (issue #864)', async () => {
+    const stockErr = Object.assign(new Error('Không đủ tồn kho để cấp phát đầy đủ'), {
+      isAxiosError: true,
+      response: { status: 409, data: { detail: 'Không đủ tồn kho để cấp phát đầy đủ' } },
     });
+    const postSpy = vi.spyOn(apiClient, 'post').mockRejectedValueOnce(stockErr);
+
+    renderDispensePage();
+    expect((await screen.findAllByText('NGUYỄN VĂN AN')).length).toBeGreaterThan(0);
+
+    for (const cb of screen.getAllByRole('checkbox')) {
+      if (!(cb as HTMLInputElement).checked) {
+        fireEvent.click(cb);
+      }
+    }
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Xác nhận Hoàn tất Bàn giao & Trừ tồn kho/i }),
+    );
+
+    // Lỗi backend + guidance báo bệnh nhân/kết thúc luồng phải hiển thị cùng nhau.
+    await waitFor(() => expect(postSpy).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/báo bệnh nhân và kết thúc luồng/i)).toBeInTheDocument();
+    expect(screen.getByText(/Không đủ tồn kho để cấp phát đầy đủ/i)).toBeInTheDocument();
   });
 });
