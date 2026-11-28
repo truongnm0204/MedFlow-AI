@@ -94,9 +94,11 @@ export function buildEkycSdkConfig(options: BuildEkycSdkConfigOptions): VnptEkyc
     AUTHORIZION: VNPT_PLACEHOLDER_CREDENTIAL,
     ACCESS_TOKEN: VNPT_PLACEHOLDER_CREDENTIAL,
 
-    // Bundle 3.0 reads FLOW_TAKEN ("BOTH" = document then face). SDK_FLOW is the
-    // documented name and is kept for compatibility; the bundle ignores it.
-    FLOW_TAKEN: 'BOTH',
+    // Owner scope 2026-11-28: CCCD-only verification — document capture + document liveness,
+    // NO face liveness/compare. The bundle reads FLOW_TAKEN; "DOCUMENT" branches straight to the
+    // validations result and skips the face step entirely ("BOTH" would run document then face).
+    // SDK_FLOW is the documented name and is kept for compatibility; the bundle ignores it.
+    FLOW_TAKEN: 'DOCUMENT',
     SDK_FLOW: 'DOCUMENT_TO_FACE',
     LIST_TYPE_DOCUMENT: [9],
     DOCUMENT_TYPE_START: 9,
@@ -107,16 +109,17 @@ export function buildEkycSdkConfig(options: BuildEkycSdkConfigOptions): VnptEkyc
     // Allow both live camera and upload.
     USE_METHOD: 'BOTH',
 
-    // Bundle 3.0 reads these CHECK_*/COMPARE_FACE keys directly.
+    // Bundle 3.0 reads these CHECK_*/COMPARE_FACE keys directly. Document-only scope:
+    // card liveness stays ON (document authenticity), face/mask/compare are OFF.
     CHECK_LIVENESS_CARD: true,
-    CHECK_LIVENESS_FACE: true,
-    CHECK_MASKED_FACE: true,
-    COMPARE_FACE: true,
+    CHECK_LIVENESS_FACE: false,
+    CHECK_MASKED_FACE: false,
+    COMPARE_FACE: false,
     // Documented names kept for compatibility (ignored by the bundle).
     ENABLE_API_LIVENESS_DOCUMENT: true,
-    ENABLE_API_LIVENESS_FACE: true,
-    ENABLE_API_MASKED_FACE: true,
-    ENABLE_API_COMPARE_FACE: true,
+    ENABLE_API_LIVENESS_FACE: false,
+    ENABLE_API_MASKED_FACE: false,
+    ENABLE_API_COMPARE_FACE: false,
 
     // We render our own shell/result UX instead of the SDK's default result screen.
     HAS_RESULT_SCREEN: false,

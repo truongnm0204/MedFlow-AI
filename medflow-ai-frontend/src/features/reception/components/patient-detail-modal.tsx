@@ -1,20 +1,39 @@
-import type { ReactNode } from 'react';
-import { CalendarClock, IdCard, MapPin, Phone, ShieldCheck, UserRound } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import {
+  CalendarClock,
+  IdCard,
+  MapPin,
+  Phone,
+  ShieldAlert,
+  ShieldCheck,
+  UserRound,
+} from 'lucide-react';
 
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Modal } from '@/shared/ui/modal';
 
+import type { FinalizeEkycSessionResponse } from '@/features/ekyc/types/ekyc.types';
+
+import { EkycAssistedModal } from './ekyc-assisted-modal';
 import type {
   PatientDetail,
   PatientGender,
   TodayAppointmentStatus,
 } from '../types/patient-detail.types';
+import {
+  PATIENT_IDENTITY_STATUS_LABELS,
+  PATIENT_UNVERIFIED_REASON_LABELS,
+} from '../types/patient-identity.types';
 
 interface PatientDetailModalProps {
   patient: PatientDetail | null;
   onClose: () => void;
   onActivate?: (patient: PatientDetail) => void;
+  /** Trang cha tự mở luồng eKYC (dùng khi id hồ sơ không phải số). */
+  onStartEkyc?: (patient: PatientDetail) => void;
+  /** Được gọi khi hồ sơ vừa được xác minh xong để trang cha tải lại dữ liệu. */
+  onIdentityVerified?: (result: FinalizeEkycSessionResponse) => void;
 }
 
 const GENDER_LABEL: Record<PatientGender, string> = {
@@ -49,9 +68,39 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-export function PatientDetailModal({ patient, onClose, onActivate }: PatientDetailModalProps) {
+export function PatientDetailModal({
+  patient,
+  onClose,
+  onActivate,
+  onStartEkyc,
+  onIdentityVerified,
+}: PatientDetailModalProps) {
+  const [ekycOpen, setEkycOpen] = useState(false);
+
+  const identityStatus = patient?.identityStatus ?? 'UNVERIFIED';
+  const numericPatientId = patient ? Number(patient.id) : Number.NaN;
+  const canOpenEkycLocally = Number.isInteger(numericPatientId) && numericPatientId > 0;
+  const showEkycAction =
+    patient !== null &&
+    identityStatus === 'UNVERIFIED' &&
+    (onStartEkyc !== undefined || canOpenEkycLocally);
+
+  const handleStartEkyc = () => {
+    if (!patient) return;
+    if (onStartEkyc) {
+      onStartEkyc(patient);
+      return;
+    }
+    setEkycOpen(true);
+  };
+
+  const handleCloseDetail = () => {
+    setEkycOpen(false);
+    onClose();
+  };
+
   return (
-    <Modal open={patient !== null} onClose={onClose} maxWidth="max-w-2xl">
+    <Modal open={patient !== null} onClose={handleCloseDetail} maxWidth="max-w-2xl">
       {patient && (
         <div className="max-h-[90vh] overflow-y-auto" aria-label="Chi tiết bệnh nhân">
           {/* Header */}
@@ -134,6 +183,45 @@ export function PatientDetailModal({ patient, onClose, onActivate }: PatientDeta
               </dl>
             </section>
 
+            {/* Identity verification */}
+            <section aria-label="Trạng thái xác minh danh tính">
+              <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-sub">
+                Xác minh danh tính
+              </h3>
+              <div className="space-y-3 rounded-xl border border-border bg-canvas px-4 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={identityStatus === 'VERIFIED' ? 'emerald' : 'slate'}>
+                    {identityStatus === 'VERIFIED' ? (
+                      <ShieldCheck className="mr-1 h-3 w-3" aria-hidden="true" />
+                    ) : (
+                      <ShieldAlert className="mr-1 h-3 w-3" aria-hidden="true" />
+                    )}
+                    {PATIENT_IDENTITY_STATUS_LABELS[identityStatus]}
+                  </Badge>
+                  {identityStatus === 'UNVERIFIED' && patient.unverifiedReason ? (
+                    <span className="text-xs text-sub">
+                      Lý do: {PATIENT_UNVERIFIED_REASON_LABELS[patient.unverifiedReason]}
+                    </span>
+                  ) : null}
+                </div>
+                {patient.identityNote ? (
+                  <p className="text-xs text-sub">Ghi chú: {patient.identityNote}</p>
+                ) : null}
+                {showEkycAction ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleStartEkyc}
+                    aria-label="Xác minh eKYC hỗ trợ cho bệnh nhân"
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+                    Xác minh eKYC hỗ trợ
+                  </Button>
+                ) : null}
+              </div>
+            </section>
+
             {/* Past visits */}
             <section aria-label="Lịch sử khám">
               <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-sub">
@@ -170,7 +258,12 @@ export function PatientDetailModal({ patient, onClose, onActivate }: PatientDeta
 
           {/* Actions */}
           <div className="flex justify-end gap-3 border-t border-border p-4">
-            <Button variant="secondary" size="md" onClick={onClose} aria-label="Đóng hộp thoại">
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={handleCloseDetail}
+              aria-label="Đóng hộp thoại"
+            >
               Đóng
             </Button>
             <Button
@@ -182,6 +275,16 @@ export function PatientDetailModal({ patient, onClose, onActivate }: PatientDeta
               Tiếp nhận / Kích hoạt lượt khám
             </Button>
           </div>
+
+          {ekycOpen && canOpenEkycLocally ? (
+            <EkycAssistedModal
+              open
+              patientId={numericPatientId}
+              patientName={patient.fullName}
+              onClose={() => setEkycOpen(false)}
+              onVerified={(result) => onIdentityVerified?.(result)}
+            />
+          ) : null}
         </div>
       )}
     </Modal>

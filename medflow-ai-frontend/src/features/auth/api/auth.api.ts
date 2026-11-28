@@ -14,6 +14,7 @@ import type {
   ResetPasswordRequest,
   UserDto,
   VerifyOtpRequest,
+  VerifyOtpResponse,
 } from '../types/auth.types';
 
 export async function login(payload: LoginRequest): Promise<LoginResponse> {
@@ -26,8 +27,8 @@ export async function register(payload: RegisterRequest): Promise<MessageRespons
   return data;
 }
 
-export async function verifyOtp(payload: VerifyOtpRequest): Promise<MessageResponse> {
-  const { data } = await apiClient.post<MessageResponse>('/auth/verify-otp', payload);
+export async function verifyOtp(payload: VerifyOtpRequest): Promise<VerifyOtpResponse> {
+  const { data } = await apiClient.post<VerifyOtpResponse>('/auth/verify-otp', payload);
   return data;
 }
 

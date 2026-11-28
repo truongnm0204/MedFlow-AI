@@ -51,8 +51,8 @@ export interface UseEkycFlowResult {
   /** Đang có thao tác mạng chạy (tạo phiên hoặc hoàn tất xác minh). */
   isBusy: boolean;
 
-  /** Bắt đầu phiên mới sau khi người dùng đã đồng ý. */
-  acceptConsentAndStart: (consentVersion: string) => Promise<void>;
+  /** Bắt đầu phiên mới sau khi người dùng đã đồng ý. `identityCard` là số CCCD/CMND đã khai báo (backend bắt buộc để đối chiếu OCR). */
+  acceptConsentAndStart: (consentVersion: string, identityCard?: string) => Promise<void>;
   /** SDK báo kết thúc chụp — điểm duy nhất kích hoạt finalize. */
   handleSdkEndFlow: (result: VnptEkycResult) => void;
   /** Báo lỗi hạ tầng SDK (tải/khởi động widget) để vào stage 'error'. */
@@ -143,51 +143,59 @@ export function useEkycFlow(): UseEkycFlowResult {
     setState((previous) => ({ ...previous, stage: 'error', errorMessage: message }));
   }, []);
 
-  const acceptConsentAndStart = useCallback(async (consentVersion: string) => {
-    if (creatingRef.current) return;
+  const acceptConsentAndStart = useCallback(
+    async (consentVersion: string, identityCard?: string) => {
+      if (creatingRef.current) return;
 
-    const generation = generationRef.current + 1;
-    generationRef.current = generation;
-    creatingRef.current = true;
-    capturingRef.current = false;
-    sessionIdRef.current = null;
+      const generation = generationRef.current + 1;
+      generationRef.current = generation;
+      creatingRef.current = true;
+      capturingRef.current = false;
+      sessionIdRef.current = null;
 
-    setState({
-      stage: 'creating-session',
-      sessionId: null,
-      proxyBasePath: null,
-      finalizeResult: null,
-      errorMessage: null,
-    });
-
-    try {
-      const session = await createEkycSession({ consentVersion, consentAccepted: true });
-      if (!mountedRef.current || generationRef.current !== generation) return;
-
-      sessionIdRef.current = session.sessionId;
-      capturingRef.current = true;
       setState({
-        stage: 'capturing',
-        sessionId: session.sessionId,
-        proxyBasePath: session.proxyBasePath,
-        finalizeResult: null,
-        errorMessage: null,
-      });
-    } catch (error) {
-      if (!mountedRef.current || generationRef.current !== generation) return;
-      setState({
-        stage: 'error',
+        stage: 'creating-session',
         sessionId: null,
         proxyBasePath: null,
         finalizeResult: null,
-        errorMessage: getErrorMessage(error, CREATE_SESSION_ERROR),
+        errorMessage: null,
       });
-    } finally {
-      if (generationRef.current === generation) {
-        creatingRef.current = false;
+
+      try {
+        const declaredIdentityCard = identityCard?.trim();
+        const session = await createEkycSession({
+          consentVersion,
+          consentAccepted: true,
+          ...(declaredIdentityCard ? { identityCard: declaredIdentityCard } : {}),
+        });
+        if (!mountedRef.current || generationRef.current !== generation) return;
+
+        sessionIdRef.current = session.sessionId;
+        capturingRef.current = true;
+        setState({
+          stage: 'capturing',
+          sessionId: session.sessionId,
+          proxyBasePath: session.proxyBasePath,
+          finalizeResult: null,
+          errorMessage: null,
+        });
+      } catch (error) {
+        if (!mountedRef.current || generationRef.current !== generation) return;
+        setState({
+          stage: 'error',
+          sessionId: null,
+          proxyBasePath: null,
+          finalizeResult: null,
+          errorMessage: getErrorMessage(error, CREATE_SESSION_ERROR),
+        });
+      } finally {
+        if (generationRef.current === generation) {
+          creatingRef.current = false;
+        }
       }
-    }
-  }, []);
+    },
+    [],
+  );
 
   const handleSdkEndFlow = useCallback((_result: VnptEkycResult) => {
     // Kết quả SDK là bằng chứng mờ (opaque) — chỉ dùng làm tín hiệu "đã chụp xong".

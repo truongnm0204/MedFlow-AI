@@ -69,21 +69,21 @@ describe('buildEkycSdkConfig', () => {
     expect(config.ACCESS_TOKEN).toBe(VNPT_PLACEHOLDER_CREDENTIAL);
   });
 
-  it('bật luồng chụp BOTH, tắt QR và cấu hình giấy tờ CCDD (9)', () => {
+  it('chỉ chụp giấy tờ (DOCUMENT), tắt QR và cấu hình CCDD (9)', () => {
     const config = buildEkycSdkConfig({
       proxyBasePath: PROXY_PATH,
       origin: ORIGIN,
       onEndFlow,
     });
 
-    expect(config.FLOW_TAKEN).toBe('BOTH');
+    expect(config.FLOW_TAKEN).toBe('DOCUMENT');
     expect(config.HAS_QR_SCAN).toBe(false);
     expect(config.USE_METHOD).toBe('BOTH');
     expect(config.LIST_TYPE_DOCUMENT).toEqual([9]);
     expect(config.DOCUMENT_TYPE_START).toBe(9);
   });
 
-  it('bật đầy đủ các bước kiểm tra liveness/mask/compare thực tế của bundle 3.0', () => {
+  it('phạm vi chỉ CCCD: bật liveness giấy tờ, tắt khuôn mặt và so khớp khuôn mặt', () => {
     const config = buildEkycSdkConfig({
       proxyBasePath: PROXY_PATH,
       origin: ORIGIN,
@@ -91,9 +91,9 @@ describe('buildEkycSdkConfig', () => {
     });
 
     expect(config.CHECK_LIVENESS_CARD).toBe(true);
-    expect(config.CHECK_LIVENESS_FACE).toBe(true);
-    expect(config.CHECK_MASKED_FACE).toBe(true);
-    expect(config.COMPARE_FACE).toBe(true);
+    expect(config.CHECK_LIVENESS_FACE).toBe(false);
+    expect(config.CHECK_MASKED_FACE).toBe(false);
+    expect(config.COMPARE_FACE).toBe(false);
   });
 
   it('gắn nguyên callback kết thúc luồng do người gọi truyền vào', () => {

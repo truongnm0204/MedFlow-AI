@@ -421,6 +421,13 @@ const ForgotPasswordPage = withRouteSuspense(
     })),
   ),
 );
+const EkycVerificationPage = withRouteSuspense(
+  lazy(() =>
+    import('@/features/ekyc/pages/ekyc-verification-page').then((m) => ({
+      default: m.EkycVerificationPage,
+    })),
+  ),
+);
 const MedicalRecordDetailPage = withRouteSuspense(
   lazy(() =>
     import('@/features/patient-records/pages/medical-record-detail-page').then((m) => ({
@@ -737,6 +744,9 @@ function AppRoutes() {
           </GuestOnly>
         }
       />
+      {/* Tài khoản đăng ký đang PENDING chỉ có registration-scope token, chưa có phiên đầy đủ
+          → route này KHÔNG đặt sau RequireAuth/GuestOnly. API vẫn được bảo vệ phía server. */}
+      <Route path="/register/verify-identity" element={<EkycVerificationPage />} />
       <Route
         path="/reception"
         element={

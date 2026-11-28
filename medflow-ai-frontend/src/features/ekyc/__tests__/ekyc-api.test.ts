@@ -73,9 +73,10 @@ describe('ekyc.api', () => {
   describe('getEkycSession', () => {
     const response: EkycSessionStatusResponse = {
       sessionId: 'sess-123',
-      status: 'FACE_DONE',
-      verificationMethod: 'EKYC_VNPT',
-      bindingState: 'VALID',
+      status: 'DOCUMENT_BACK_DONE',
+      verificationMode: 'SELF_SERVICE',
+      purpose: 'ACCOUNT_ACTIVATION',
+      bindingState: 'NOT_APPLICABLE',
       attemptCount: 1,
       expiresAt: '2026-11-28T10:00:00Z',
       expired: false,

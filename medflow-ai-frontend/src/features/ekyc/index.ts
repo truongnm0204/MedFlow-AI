@@ -24,7 +24,14 @@ export { useEkycFlow } from './hooks/use-ekyc-flow';
 export type { EkycFlowStage, UseEkycFlowResult } from './hooks/use-ekyc-flow';
 
 // API
-export { createEkycSession, finalizeEkycSession, getEkycSession } from './api/ekyc.api';
+export {
+  createEkycSession,
+  finalizeEkycSession,
+  getEkycSession,
+  createReceptionEkycSession,
+  createUnverifiedPatientProfile,
+  getReceptionEkycSession,
+} from './api/ekyc.api';
 
 // Error helpers
 export { getEkycFailureMessage, isEkycTerminal, isRetriableFailure } from './utils/ekyc-errors';
@@ -37,11 +44,23 @@ export { loadVnptEkycSdk } from './sdk/vnpt-sdk-loader';
 export type {
   CreateEkycSessionRequest,
   CreateEkycSessionResponse,
+  CreateReceptionEkycSessionRequest,
+  CreateUnverifiedPatientProfileRequest,
+  CreateUnverifiedPatientProfileResponse,
   EkycSessionStatusResponse,
   FinalizeEkycSessionResponse,
   EkycVerificationStatus,
   EkycFailureCode,
-  EkycVerificationMethod,
+  EkycVerificationMode,
+  EkycPurpose,
+  EkycActivationOutcome,
+  PatientIdentityStatus,
+  PatientUnverifiedReason,
   EkycBindingState,
+} from './types/ekyc.types';
+export {
+  EKYC_TERMINAL_STATUSES,
+  PATIENT_UNVERIFIED_REASONS,
+  PATIENT_UNVERIFIED_REASONS_REQUIRING_IDENTIFICATION,
 } from './types/ekyc.types';
 export type { VnptEkycResult } from './sdk/vnpt-sdk.types';
