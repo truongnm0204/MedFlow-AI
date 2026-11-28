@@ -36,6 +36,7 @@ public interface IApplicationDbContext
     DbSet<PaymentGatewayEvent> PaymentGatewayEvents => throw new NotSupportedException("PaymentGatewayEvents DbSet is not configured in this test context.");
     DbSet<VisitCharge> VisitCharges => throw new NotSupportedException("VisitCharges DbSet is not configured in this test context.");
     DbSet<Medicine> Medicines => throw new NotSupportedException("Medicines DbSet is not configured in this test context.");
+    DbSet<MedicinePrice> MedicinePrices => throw new NotSupportedException("MedicinePrices DbSet is not configured in this test context.");
     DbSet<MedicineBatch> MedicineBatches => throw new NotSupportedException("MedicineBatches DbSet is not configured in this test context.");
     DbSet<Prescription> Prescriptions => throw new NotSupportedException("Prescriptions DbSet is not configured in this test context.");
     DbSet<PrescriptionItem> PrescriptionItems => throw new NotSupportedException("PrescriptionItems DbSet is not configured in this test context.");
@@ -136,6 +137,10 @@ public interface IApplicationDbContext
 
     // Level 14: medicine_batches
     Task<bool> TryLockMedicineBatchesForUpdateAsync(IReadOnlyCollection<long> batchIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 14a: medicines catalog row — serializes medicine_prices interval updates (#865).
+    Task<bool> TryLockMedicineForUpdateAsync(long medicineId, CancellationToken ct = default)
         => Task.FromResult(false);
 
     // Level 15: visit_charges
