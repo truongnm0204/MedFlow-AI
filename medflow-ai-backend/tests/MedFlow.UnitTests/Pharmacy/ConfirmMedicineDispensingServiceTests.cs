@@ -557,6 +557,109 @@ public sealed class ConfirmMedicineDispensingServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ConfirmDispenseAsync_ShortQuantityWithShortageReason_ThrowsAndDoesNotMarkDispensed()
+    {
+        var request = new ConfirmDispenseRequest(
+            ReceiverName: "Nguyễn Văn An",
+            IsIdentityVerified: true,
+            ChecksConfirmed: true,
+            Items:
+            [
+                new ConfirmDispenseItemRequest(
+                    PrescriptionItemId: 10,
+                    MedicineBatchId: 101,
+                    DispensedQuantity: 5m, // Prescribed 20
+                    ShortageReason: "Kho chỉ còn 5 viên, bệnh nhân đồng ý nhận thiếu")
+            ]);
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.ConfirmDispenseAsync(10, "RX-2026-0001", request));
+
+        Assert.Contains("thiếu so với số lượng kê đơn", ex.Message);
+        Assert.Contains("báo bệnh nhân", ex.Message);
+
+        _db.ChangeTracker.Clear();
+        Assert.Equal("ISSUED", (await _db.Prescriptions.AsNoTracking().FirstAsync(p => p.Id == 1001)).Status);
+        Assert.Equal(100m, (await _db.MedicineBatches.AsNoTracking().FirstAsync(b => b.Id == 101)).QuantityOnHand);
+        Assert.Equal(0, await _db.StockTransactions.CountAsync());
+        Assert.Equal(0, await _db.MedicationDispenses.CountAsync(md => md.PrescriptionId == 1001));
+    }
+
+    [Fact]
+    public async Task ConfirmDispenseAsync_ZeroQuantityWithShortageReason_ThrowsAndDoesNotMarkDispensed()
+    {
+        var request = new ConfirmDispenseRequest(
+            ReceiverName: "Nguyễn Văn An",
+            IsIdentityVerified: true,
+            ChecksConfirmed: true,
+            Items:
+            [
+                new ConfirmDispenseItemRequest(
+                    PrescriptionItemId: 10,
+                    MedicineBatchId: 101,
+                    DispensedQuantity: 0m,
+                    ShortageReason: "Hết thuốc")
+            ]);
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.ConfirmDispenseAsync(10, "RX-2026-0001", request));
+
+        Assert.Contains("chưa có số lượng thực xuất", ex.Message);
+
+        _db.ChangeTracker.Clear();
+        Assert.Equal("ISSUED", (await _db.Prescriptions.AsNoTracking().FirstAsync(p => p.Id == 1001)).Status);
+        Assert.Equal(0, await _db.StockTransactions.CountAsync());
+    }
+
+    [Fact]
+    public async Task ConfirmDispenseAsync_ExcessQuantity_ThrowsAndDoesNotMarkDispensed()
+    {
+        var request = new ConfirmDispenseRequest(
+            ReceiverName: "Nguyễn Văn An",
+            IsIdentityVerified: true,
+            ChecksConfirmed: true,
+            Items:
+            [
+                new ConfirmDispenseItemRequest(
+                    PrescriptionItemId: 10,
+                    MedicineBatchId: 101,
+                    DispensedQuantity: 21m) // Prescribed 20
+            ]);
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.ConfirmDispenseAsync(10, "RX-2026-0001", request));
+
+        Assert.Contains("vượt quá số lượng kê đơn", ex.Message);
+
+        _db.ChangeTracker.Clear();
+        Assert.Equal("ISSUED", (await _db.Prescriptions.AsNoTracking().FirstAsync(p => p.Id == 1001)).Status);
+        Assert.Equal(100m, (await _db.MedicineBatches.AsNoTracking().FirstAsync(b => b.Id == 101)).QuantityOnHand);
+    }
+
+    [Fact]
+    public async Task ConfirmDispenseAsync_InsufficientBatchStock_ThrowsConflictAndDoesNotMarkDispensed()
+    {
+        var batch = await _db.MedicineBatches.FirstAsync(b => b.Id == 201);
+        batch.QuantityOnHand = 5m; // Prescribed 10 for Amoxicillin
+        await _db.SaveChangesAsync();
+
+        var request = new ConfirmDispenseRequest(
+            ReceiverName: "Nguyễn Văn An",
+            IsIdentityVerified: true,
+            ChecksConfirmed: true);
+
+        var ex = await Assert.ThrowsAsync<ConflictException>(() =>
+            _service.ConfirmDispenseAsync(10, "RX-2026-0001", request));
+
+        Assert.Contains("không đủ", ex.Message);
+        Assert.Contains("báo bệnh nhân", ex.Message);
+
+        _db.ChangeTracker.Clear();
+        Assert.Equal("ISSUED", (await _db.Prescriptions.AsNoTracking().FirstAsync(p => p.Id == 1001)).Status);
+        Assert.Equal(0, await _db.StockTransactions.CountAsync());
+    }
+
+    [Fact]
     public async Task ConfirmDispenseAsync_Idempotency_ReturnsExistingResult()
     {
         var request = new ConfirmDispenseRequest(
