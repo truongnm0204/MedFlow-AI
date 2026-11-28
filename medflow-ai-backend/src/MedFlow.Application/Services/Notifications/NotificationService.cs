@@ -70,8 +70,8 @@ public sealed class NotificationService : INotificationService
         var visibleQuery = _db.Notifications
             .AsNoTracking()
             .Where(n =>
-                n.PatientId != null &&
-                ownedPatientIds.Contains(n.PatientId.Value) &&
+                ((n.PatientId != null && ownedPatientIds.Contains(n.PatientId.Value)) ||
+                 n.RecipientUserId == userId) &&
                 (n.Status == null || n.Status != Notification.StatusCancelled));
 
         var unreadCount = await visibleQuery.CountAsync(n => n.ReadAt == null, ct);
@@ -146,7 +146,8 @@ public sealed class NotificationService : INotificationService
             .FirstOrDefaultAsync(n => n.Id == notificationId, ct)
             ?? throw new NotFoundException("Notification", notificationId);
 
-        if (!notification.PatientId.HasValue || !ownedPatientIds.Contains(notification.PatientId.Value))
+        if ((!notification.PatientId.HasValue || !ownedPatientIds.Contains(notification.PatientId.Value)) &&
+            notification.RecipientUserId != userId)
         {
             throw new ForbiddenException("Bạn không có quyền truy cập hoặc cập nhật thông báo này.");
         }
@@ -157,7 +158,7 @@ public sealed class NotificationService : INotificationService
             await _db.SaveChangesAsync(ct);
         }
 
-        var unreadCount = await CountUnreadAsync(ownedPatientIds, ct);
+        var unreadCount = await CountUnreadAsync(ownedPatientIds, userId, ct);
         var readAtIso = AppointmentReadModel.FormatVietnamTimestamp(notification.ReadAt.Value);
 
         return new MarkNotificationReadResponse(
@@ -181,8 +182,8 @@ public sealed class NotificationService : INotificationService
 
         var unreadRows = await _db.Notifications
             .Where(n =>
-                n.PatientId != null &&
-                ownedPatientIds.Contains(n.PatientId.Value) &&
+                ((n.PatientId != null && ownedPatientIds.Contains(n.PatientId.Value)) ||
+                 n.RecipientUserId == userId) &&
                 n.ReadAt == null &&
                 (n.Status == null || n.Status != Notification.StatusCancelled))
             .ToListAsync(ct);
@@ -207,24 +208,33 @@ public sealed class NotificationService : INotificationService
         DateTime nowLocal,
         CancellationToken ct)
     {
-        var owned = await AppointmentBookingRules.LoadOwnedPatientsAsync(_db, userId, nowLocal, ct);
-        var set = new HashSet<long> { owned.Self.Id };
-        foreach (var link in owned.FamilyLinks)
+        try
         {
-            set.Add(link.MemberPatientId);
-        }
+            var owned = await AppointmentBookingRules.LoadOwnedPatientsAsync(_db, userId, nowLocal, ct);
+            var set = new HashSet<long> { owned.Self.Id };
+            foreach (var link in owned.FamilyLinks)
+            {
+                set.Add(link.MemberPatientId);
+            }
 
-        return set;
+            return set;
+        }
+        catch (Exception ex) when (ex is NotFoundException or ForbiddenException)
+        {
+            // Bác sĩ/nhân viên nhận thông báo qua recipient_user_id, không có hồ sơ bệnh nhân sở hữu.
+            return [];
+        }
     }
 
     private Task<int> CountUnreadAsync(
         HashSet<long> ownedPatientIds,
+        long userId,
         CancellationToken ct)
         => _db.Notifications
             .AsNoTracking()
             .CountAsync(
-                n => n.PatientId != null &&
-                     ownedPatientIds.Contains(n.PatientId.Value) &&
+                n => ((n.PatientId != null && ownedPatientIds.Contains(n.PatientId.Value)) ||
+                      n.RecipientUserId == userId) &&
                      n.ReadAt == null &&
                      (n.Status == null || n.Status != Notification.StatusCancelled),
                 ct);

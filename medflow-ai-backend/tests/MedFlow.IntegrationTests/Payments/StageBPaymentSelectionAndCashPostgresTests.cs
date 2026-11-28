@@ -338,7 +338,7 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             var qrDto = await qrRes.Content.ReadFromJsonAsync<GenerateQrPaymentResponseDto>(WebJson);
             Assert.NotNull(qrDto);
 
-            // Patient then declines the unpaid optional order
+            // #877: Patient only RECORDS refusal; order & pending QR are untouched, doctor is notified.
             var declineRes = await Client.SendAsync(AuthedPostJson(
                 $"/api/v1/patients/visits/{visit.VisitCode}/diagnostic-orders/{optOrderId}/decline",
                 new DeclineDiagnosticOrderRequestDto(Reason: "Bệnh nhân chưa có nhu cầu siêu âm hôm nay."),
@@ -347,22 +347,34 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             Assert.Equal(HttpStatusCode.OK, declineRes.StatusCode);
             var declineDto = await declineRes.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson);
             Assert.NotNull(declineDto);
-            Assert.Equal("CANCELLED", declineDto!.OrderStatus);
-            Assert.Equal(DiagnosticSelectionStatuses.Declined, declineDto.SelectionStatus);
-            Assert.Equal(VisitChargeStatuses.Cancelled, declineDto.ChargeStatus);
-            Assert.Equal(1, declineDto.CancelledPendingQrCount);
+            Assert.True(declineDto!.RefusalRecorded);
+            Assert.True(declineDto.DoctorNotified);
+            Assert.Equal("ORDERED", declineDto.OrderStatus);
+            Assert.Equal(0, declineDto.CancelledPendingQrCount);
+            Assert.Equal(VisitChargeStatuses.Active, declineDto.ChargeStatus);
 
             Db.ChangeTracker.Clear();
-            var cancelledQr = await Db.Payments.AsNoTracking().SingleAsync(p => p.Id == qrDto!.PaymentId);
-            Assert.Equal(PaymentStatuses.Cancelled, cancelledQr.Status);
-            var cancelledAlloc = await Db.PaymentAllocations.AsNoTracking().SingleAsync(pa => pa.PaymentId == qrDto!.PaymentId);
-            Assert.Equal(PaymentAllocationStatuses.Cancelled, cancelledAlloc.Status);
+            var stillPendingQr = await Db.Payments.AsNoTracking().SingleAsync(p => p.Id == qrDto!.PaymentId);
+            Assert.Equal(PaymentStatuses.Pending, stillPendingQr.Status);
+            var stillPendingAlloc = await Db.PaymentAllocations.AsNoTracking().SingleAsync(pa => pa.PaymentId == qrDto!.PaymentId);
+            Assert.Equal(PaymentAllocationStatuses.Pending, stillPendingAlloc.Status);
 
             Assert.True(await Db.AuditLogs.AnyAsync(a =>
                 (a.EntityId == optOrderId.ToString() || a.EntityId == declineDto.OrderCode) &&
-                a.Action == "DIAGNOSTIC_ORDER_DECLINED"));
+                a.Action == "DIAGNOSTIC_ORDER_DECLINE_RECORDED"));
 
-            // Doctor completes visit cleanly without payment for declined optional order
+            // Only the treating doctor cancels the order; then the visit can conclude.
+            var doctorCancelRes = await Client.SendAsync(AuthedPostJson(
+                $"/api/v1/doctor/visits/{visit.VisitCode}/diagnostic-orders/{optOrderId}/decline",
+                new DeclineDiagnosticOrderRequestDto(Reason: "Bác sĩ xác nhận bệnh nhân không cần siêu âm."),
+                fx.Doctor1UserId,
+                RoleNames.Doctor));
+            Assert.Equal(HttpStatusCode.OK, doctorCancelRes.StatusCode);
+            var doctorCancelDto = (await doctorCancelRes.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
+            Assert.Equal("CANCELLED", doctorCancelDto.OrderStatus);
+            Assert.Equal(VisitChargeStatuses.Cancelled, doctorCancelDto.ChargeStatus);
+
+            // Doctor completes visit cleanly without payment for the cancelled optional order
             await CompleteVisitWithConfirmedDiagnosisAsync(fx, visit.VisitCode!);
         }
         finally
@@ -410,23 +422,27 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
                 mandatoryOrderCode = created.CreatedDiagnosticOrders[0].OrderCode;
             }
 
-            // 1. PATIENT decline on Mandatory -> 409 [MANDATORY_ORDER_REVIEW_REQUIRED]
+            // 1. PATIENT records mandatory refusal -> 200 (order NOT cancelled), doctor notified.
             var patDecline = await Client.SendAsync(AuthedPostJson(
                 $"/api/v1/patients/visits/{visit.VisitCode}/diagnostic-orders/{mandatoryOrderId}/decline",
                 new DeclineDiagnosticOrderRequestDto(Reason: "Sợ lấy máu"),
                 fx.PatientUserId,
                 RoleNames.Patient));
-            Assert.Equal(HttpStatusCode.Conflict, patDecline.StatusCode);
-            Assert.Contains("MANDATORY_ORDER_REVIEW_REQUIRED", await patDecline.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+            Assert.Equal(HttpStatusCode.OK, patDecline.StatusCode);
+            var patDeclineDto = (await patDecline.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
+            Assert.True(patDeclineDto.RefusalRecorded);
+            Assert.Equal("ORDERED", patDeclineDto.OrderStatus);
 
-            // 2. RECEPTION decline on Mandatory -> 409 [MANDATORY_ORDER_REVIEW_REQUIRED]
+            // 2. RECEPTION records mandatory refusal -> 200 (only doctor may cancel later).
             var recDecline = await Client.SendAsync(AuthedPostJson(
                 $"/api/v1/reception/visits/{visit.VisitCode}/diagnostic-orders/{mandatoryOrderId}/decline",
                 new DeclineDiagnosticOrderRequestDto(Reason: "Bệnh nhân báo tại quầy"),
                 fx.Reception1UserId,
                 RoleNames.Reception));
-            Assert.Equal(HttpStatusCode.Conflict, recDecline.StatusCode);
-            Assert.Contains("MANDATORY_ORDER_REVIEW_REQUIRED", await recDecline.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+            Assert.Equal(HttpStatusCode.OK, recDecline.StatusCode);
+            var recDeclineDto = (await recDecline.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
+            Assert.True(recDeclineDto.RefusalRecorded);
+            Assert.Equal("ORDERED", recDeclineDto.OrderStatus);
 
             // 3. DIAGNOSTIC_STAFF non-technical cancel on Mandatory -> 409 [MANDATORY_ORDER_REVIEW_REQUIRED]
             await using (var scope = Factory.Services.CreateAsyncScope())
@@ -1063,31 +1079,37 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             Assert.Equal(VisitChargeStatuses.Active, deferredLine.ChargeStatus);
             Assert.Equal(DiagnosticSelectionStatuses.Accepted, deferredLine.SelectionStatus);
 
-            // PAY-16a: PATIENT self-call on already-PAID optional order -> 409 [PAID_ORDER_STAFF_CONFIRMATION_REQUIRED]
+            // #877 PAY-16a: PATIENT self-call on already-PAID optional order -> RECORD refusal only, no cancel.
             var patSkipRes = await Client.SendAsync(AuthedPostJson(
                 $"/api/v1/patients/visits/{visit.VisitCode}/diagnostic-orders/{optPaidOrderId}/decline",
                 new DeclineDiagnosticOrderRequestDto(Reason: "Tôi muốn tự hủy trên điện thoại", ConfirmAbandonPaid: true),
                 fx.PatientUserId,
                 RoleNames.Patient));
-            Assert.Equal(HttpStatusCode.Conflict, patSkipRes.StatusCode);
-            Assert.Contains("PAID_ORDER_STAFF_CONFIRMATION_REQUIRED", await patSkipRes.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+            Assert.Equal(HttpStatusCode.OK, patSkipRes.StatusCode);
+            var patSkipDto = (await patSkipRes.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
+            Assert.True(patSkipDto.RefusalRecorded);
+            Assert.Equal("ORDERED", patSkipDto.OrderStatus);
 
-            // PAY-16b: RECEPTION without confirmAbandonPaid=true -> 400 BadRequest (ValidationException)
+            // #877 PAY-16b: RECEPTION records refusal only (no cancellation, no confirmation bypass).
             var missingConfirmRes = await Client.SendAsync(AuthedPostJson(
                 $"/api/v1/reception/visits/{visit.VisitCode}/diagnostic-orders/{optPaidOrderId}/decline",
                 new DeclineDiagnosticOrderRequestDto(Reason: "Bỏ qua", ConfirmAbandonPaid: false),
                 fx.Reception1UserId,
                 RoleNames.Reception));
-            Assert.Equal(HttpStatusCode.BadRequest, missingConfirmRes.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, missingConfirmRes.StatusCode);
+            var receptionSkipDto = (await missingConfirmRes.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
+            Assert.True(receptionSkipDto.RefusalRecorded);
+            Assert.Equal("ORDERED", receptionSkipDto.OrderStatus);
+            Assert.Equal(VisitChargeStatuses.Active, receptionSkipDto.ChargeStatus);
 
-            // PAY-16c: RECEPTION with confirmAbandonPaid=true -> SKIPPED_AFTER_PAID + PAID_NOT_PERFORMED, Payment stays PAID!
+            // #877 PAY-16c: only the treating DOCTOR cancels a paid optional order -> SKIPPED_AFTER_PAID, Payment stays PAID.
             var staffSkipRes = await Client.SendAsync(AuthedPostJson(
-                $"/api/v1/reception/visits/{visit.VisitCode}/diagnostic-orders/{optPaidOrderId}/decline",
+                $"/api/v1/doctor/visits/{visit.VisitCode}/diagnostic-orders/{optPaidOrderId}/decline",
                 new DeclineDiagnosticOrderRequestDto(
-                    Reason: "Bệnh nhân có việc gấp xin bỏ qua siêu âm tùy chọn đã đóng tiền.",
+                    Reason: "Bác sĩ xác nhận bệnh nhân có việc gấp, bỏ qua siêu âm tùy chọn đã đóng tiền.",
                     ConfirmAbandonPaid: true),
-                fx.Reception1UserId,
-                RoleNames.Reception));
+                fx.Doctor1UserId,
+                RoleNames.Doctor));
             Assert.Equal(HttpStatusCode.OK, staffSkipRes.StatusCode);
             var skipDto = (await staffSkipRes.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
             Assert.True(skipDto.WasAlreadyPaid);
@@ -1181,12 +1203,12 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             var oldQr = (await oldQrRes.Content.ReadFromJsonAsync<GenerateQrPaymentResponseDto>(WebJson))!;
             Assert.Equal(360_000m, oldQr.Amount);
 
-            // 2. Patient declines clsDeclineId -> cancels oldQr + marks declineChargeId CANCELLED
+            // 2. Treating doctor cancels clsDeclineId -> cancels oldQr + marks declineChargeId CANCELLED (#877)
             var declineRes = await Client.SendAsync(AuthedPostJson(
-                $"/api/v1/patients/visits/{visit.VisitCode}/diagnostic-orders/{clsDeclineId}/decline",
-                new DeclineDiagnosticOrderRequestDto(Reason: "Không làm siêu âm"),
-                fx.PatientUserId,
-                RoleNames.Patient));
+                $"/api/v1/doctor/visits/{visit.VisitCode}/diagnostic-orders/{clsDeclineId}/decline",
+                new DeclineDiagnosticOrderRequestDto(Reason: "Bác sĩ xác nhận không làm siêu âm"),
+                fx.Doctor1UserId,
+                RoleNames.Doctor));
             Assert.Equal(HttpStatusCode.OK, declineRes.StatusCode);
 
             // 3. Reception collects valid CASH for keepChargeId (120k)
@@ -1745,7 +1767,7 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
                     ready.Release();
                     await release.Task;
                     return await selSvc.DeclineOrderAsync(
-                        fx.PatientUserId,
+                        fx.Doctor1UserId,
                         visit3A.VisitCode,
                         optOrder3A.Id.ToString(),
                         new DeclineDiagnosticOrderRequestDto(Reason: "Từ chối đồng thời"));
@@ -1840,7 +1862,7 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
                     try
                     {
                         await selSvc.DeclineOrderAsync(
-                            fx.Reception1UserId,
+                            fx.Doctor1UserId,
                             visit3B.VisitCode,
                             optOrder3BId.ToString(),
                             new DeclineDiagnosticOrderRequestDto(
@@ -2094,6 +2116,271 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
         return visit;
     }
 
+    // =========================================================================
+    // #869/#870/#871: auto-assignment data, reassign with reason/audit, patient slip.
+    // =========================================================================
+    [Fact]
+    public async Task G2_Routing_AssignsPointAndSequence_ReassignWritesHistoryAndSlipExposesContract()
+    {
+        var fx = await CreateIsolatedFixtureAsync();
+        long? altPointId = null;
+        try
+        {
+            var visit = await CreateCheckedInVisitAsync(fx, "G2A", examPrice: 150_000m, payExamNow: true);
+            long orderId;
+            long assignedPointId;
+
+            await using (var scope = Factory.Services.CreateAsyncScope())
+            {
+                var consultSvc = scope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
+                await consultSvc.OpenWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
+                await consultSvc.RecordClinicalExaminationAsync(
+                    fx.Doctor1UserId,
+                    visit.VisitCode!,
+                    new RecordClinicalExaminationRequest(ClinicalFindings: "Đau bụng nhẹ.", TreatmentPlan: "Xét nghiệm máu."));
+                var created = await consultSvc.CreateDiagnosticOrderAsync(
+                    fx.Doctor1UserId,
+                    visit.VisitCode!,
+                    new CreateDiagnosticOrderRequest(
+                        ServiceId: fx.LabServiceId,
+                        Instruction: "Công thức máu",
+                        RequiredForConclusion: true));
+                orderId = created.CreatedDiagnosticOrders![0].OrderId;
+                assignedPointId = created.CreatedDiagnosticOrders[0].ServicePointId!.Value;
+            }
+
+            Db.ChangeTracker.Clear();
+            var order = await Db.DiagnosticOrders.AsNoTracking().SingleAsync(o => o.Id == orderId);
+            Assert.Equal(assignedPointId, order.AssignedServicePointId);
+            Assert.Equal(1, order.SequenceNo);
+            Assert.True(await Db.DiagnosticOrderRoutingHistories.AnyAsync(h =>
+                h.DiagnosticOrderId == orderId && h.Source == DiagnosticOrderRoutingHistory.SourceAutoRouting));
+
+            // #871 slip data as patient owner
+            var slipRes = await Client.SendAsync(AuthedGet(
+                $"/api/v1/patients/visits/{visit.VisitCode}/diagnostic-order-assignments",
+                fx.PatientUserId,
+                RoleNames.Patient));
+            Assert.Equal(HttpStatusCode.OK, slipRes.StatusCode);
+            var slip = (await slipRes.Content.ReadFromJsonAsync<DiagnosticOrderAssignmentSlipDto>(WebJson))!;
+            var slipItem = Assert.Single(slip.Orders);
+            Assert.Equal(1, slipItem.SequenceNo);
+            Assert.Equal(fx.LabServiceId, slipItem.ServiceId);
+            Assert.Equal(assignedPointId, slipItem.AssignedServicePointId);
+            Assert.False(string.IsNullOrWhiteSpace(slipItem.ServiceName));
+            Assert.False(string.IsNullOrWhiteSpace(slipItem.AssignedServicePointName));
+
+            // Add an alternative lab point in the same active department.
+            var sourcePoint = await Db.QueueServicePoints.AsNoTracking().SingleAsync(sp => sp.Id == assignedPointId);
+            var altPoint = new QueueServicePoint
+            {
+                HospitalId = fx.HospitalId,
+                RoomId = sourcePoint.RoomId,
+                ServiceId = fx.LabServiceId,
+                PointType = "DIAGNOSTIC",
+                Name = $"PXN phụ G2 {fx.Suffix}",
+                IsActive = true,
+            };
+            Db.QueueServicePoints.Add(altPoint);
+            await Db.SaveChangesAsync();
+            altPointId = altPoint.Id;
+
+            // Reason is mandatory.
+            var missingReason = await Client.SendAsync(AuthedPostJson(
+                $"/api/v1/reception/diagnostic-orders/{orderId}/reassign",
+                new ReassignDiagnosticOrderRequest(TargetServicePointId: altPoint.Id),
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            Assert.Equal(HttpStatusCode.BadRequest, missingReason.StatusCode);
+
+            var reassignRes = await Client.SendAsync(AuthedPostJson(
+                $"/api/v1/reception/diagnostic-orders/{orderId}/reassign",
+                new ReassignDiagnosticOrderRequest(
+                    TargetServicePointId: altPoint.Id,
+                    Reason: "Điểm cũ quá tải, điều phối sang điểm phụ."),
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            Assert.Equal(HttpStatusCode.OK, reassignRes.StatusCode);
+            var reassigned = (await reassignRes.Content.ReadFromJsonAsync<ReassignDiagnosticOrderResponseDto>(WebJson))!;
+            Assert.Equal(altPoint.Id, reassigned.AssignedServicePointId);
+            Assert.Equal(assignedPointId, reassigned.PreviousServicePointId);
+
+            Db.ChangeTracker.Clear();
+            var moved = await Db.DiagnosticOrders.AsNoTracking().SingleAsync(o => o.Id == orderId);
+            Assert.Equal(altPoint.Id, moved.AssignedServicePointId);
+            Assert.True(await Db.DiagnosticOrderRoutingHistories.AnyAsync(h =>
+                h.DiagnosticOrderId == orderId &&
+                h.Source == DiagnosticOrderRoutingHistory.SourceManualReassign &&
+                h.ToServicePointId == altPoint.Id &&
+                h.Reason == "Điểm cũ quá tải, điều phối sang điểm phụ."));
+            Assert.True(await Db.AuditLogs.AnyAsync(a =>
+                a.Action == "DIAGNOSTIC_ORDER_REASSIGNED" && a.ActorUserId == fx.Reception1UserId));
+
+            // In-progress service cannot be reassigned.
+            var qe = new QueueEntry
+            {
+                VisitId = visit.Id,
+                ServicePointId = altPoint.Id,
+                CurrentServicePointId = altPoint.Id,
+                QueueDate = DateOnly.FromDateTime(HospitalClock.GetNow(TimeProvider.System)),
+                QueueNumber = 991,
+                QueueType = "DIAGNOSTIC",
+                Status = "IN_PROGRESS",
+                PresenceStatus = "PRESENT",
+                ArrivalClass = "WALK_IN",
+                StartedAt = DateTime.SpecifyKind(HospitalClock.GetNow(TimeProvider.System), DateTimeKind.Unspecified),
+                StateVersion = 2,
+            };
+            Db.QueueEntries.Add(qe);
+            await Db.SaveChangesAsync();
+            await Db.DiagnosticOrders.Where(o => o.Id == orderId)
+                .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, qe.Id));
+
+            var blocked = await Client.SendAsync(AuthedPostJson(
+                $"/api/v1/diagnostic/orders/{orderId}/reassign",
+                new ReassignDiagnosticOrderRequest(
+                    TargetServicePointId: assignedPointId,
+                    Reason: "Thử điều phối khi đang thực hiện."),
+                fx.DiagStaffUserId,
+                RoleNames.DiagnosticStaff));
+            Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+            using var blockedDoc = JsonDocument.Parse(await blocked.Content.ReadAsStringAsync());
+            var blockedDetail = blockedDoc.RootElement.TryGetProperty("detail", out var detailElement)
+                ? detailElement.GetString()
+                : null;
+            Assert.Contains("đang thực hiện", blockedDetail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+        }
+        finally
+        {
+            // Fixture cleanup only knows its own seeded points; remove the ad-hoc alternative point first.
+            if (altPointId.HasValue)
+            {
+                var adHocQueueIds = await Db.QueueEntries.AsNoTracking()
+                    .Where(q => q.ServicePointId == altPointId.Value || q.CurrentServicePointId == altPointId.Value)
+                    .Select(q => q.Id)
+                    .ToListAsync();
+                await Db.DiagnosticOrders
+                    .Where(o => o.QueueEntryId.HasValue && adHocQueueIds.Contains(o.QueueEntryId.Value))
+                    .ExecuteUpdateAsync(s => s.SetProperty(o => o.QueueEntryId, (long?)null));
+                await Db.QueueEntries.Where(q => adHocQueueIds.Contains(q.Id)).ExecuteDeleteAsync();
+                await Db.DiagnosticOrderRoutingHistories
+                    .Where(h => h.FromServicePointId == altPointId.Value || h.ToServicePointId == altPointId.Value)
+                    .ExecuteDeleteAsync();
+                await Db.QueueServicePoints.Where(sp => sp.Id == altPointId.Value).ExecuteDeleteAsync();
+            }
+
+            await CleanupIsolatedFixtureAsync(fx);
+        }
+    }
+
+    // =========================================================================
+    // #877: reception/patient only record refusal + notify doctor; only doctor cancels.
+    // =========================================================================
+    [Fact]
+    public async Task G2_Refusal_ReceptionAndPatientRecordOnly_NotifyDoctor_DoctorCancels()
+    {
+        var fx = await CreateIsolatedFixtureAsync();
+        try
+        {
+            var visit = await CreateCheckedInVisitAsync(fx, "G2R", examPrice: 150_000m, payExamNow: true);
+            long optionalOrderId;
+            long mandatoryOrderId;
+
+            await using (var scope = Factory.Services.CreateAsyncScope())
+            {
+                var consultSvc = scope.ServiceProvider.GetRequiredService<IConsultationWorkspaceService>();
+                await consultSvc.OpenWorkspaceAsync(fx.Doctor1UserId, visit.VisitCode!);
+                await consultSvc.RecordClinicalExaminationAsync(
+                    fx.Doctor1UserId,
+                    visit.VisitCode!,
+                    new RecordClinicalExaminationRequest(ClinicalFindings: "Bụng mềm.", TreatmentPlan: "Theo dõi."));
+                var created = await consultSvc.CreateDiagnosticOrderAsync(
+                    fx.Doctor1UserId,
+                    visit.VisitCode!,
+                    new CreateDiagnosticOrderRequest(Items:
+                    [
+                        new CreateDiagnosticOrderItemRequest(
+                            ServiceId: fx.ImagingServiceId,
+                            Instruction: "Siêu âm tùy chọn",
+                            RequiredForConclusion: false),
+                        new CreateDiagnosticOrderItemRequest(
+                            ServiceId: fx.LabServiceId,
+                            Instruction: "Xét nghiệm bắt buộc",
+                            RequiredForConclusion: true),
+                    ]));
+                optionalOrderId = created.CreatedDiagnosticOrders!.Single(o => o.ServiceId == fx.ImagingServiceId).OrderId;
+                mandatoryOrderId = created.CreatedDiagnosticOrders!.Single(o => o.ServiceId == fx.LabServiceId).OrderId;
+            }
+
+            // Patient records refusal -> order/charge untouched, doctor notified.
+            var patientRefusal = await Client.SendAsync(AuthedPostJson(
+                $"/api/v1/patients/visits/{visit.VisitCode}/diagnostic-orders/{optionalOrderId}/decline",
+                new DeclineDiagnosticOrderRequestDto(Reason: "Bệnh nhân chưa muốn siêu âm."),
+                fx.PatientUserId,
+                RoleNames.Patient));
+            Assert.Equal(HttpStatusCode.OK, patientRefusal.StatusCode);
+            var patientDto = (await patientRefusal.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
+            Assert.True(patientDto.RefusalRecorded);
+            Assert.True(patientDto.DoctorNotified);
+            Assert.Equal("ORDERED", patientDto.OrderStatus);
+
+            Db.ChangeTracker.Clear();
+            var optionalAfter = await Db.DiagnosticOrders.AsNoTracking().SingleAsync(o => o.Id == optionalOrderId);
+            Assert.Equal("ORDERED", optionalAfter.Status);
+            Assert.Equal(DiagnosticSelectionStatuses.Undecided, optionalAfter.SelectionStatus);
+            var optionalCharge = await Db.VisitCharges.AsNoTracking().SingleAsync(c => c.DiagnosticOrderId == optionalOrderId);
+            Assert.Equal(VisitChargeStatuses.Active, optionalCharge.Status);
+            Assert.True(await Db.DiagnosticOrderDeclines.AnyAsync(d =>
+                d.DiagnosticOrderId == optionalOrderId &&
+                d.Source == DiagnosticOrderDecline.SourcePatient &&
+                d.RecordedByUserId == fx.PatientUserId));
+            Assert.True(await Db.AuditLogs.AnyAsync(a =>
+                a.Action == "DIAGNOSTIC_ORDER_DECLINE_RECORDED" && a.ActorUserId == fx.PatientUserId));
+
+            var doctorNotification = await Db.Notifications.AsNoTracking()
+                .FirstOrDefaultAsync(n => n.VisitId == visit.Id && n.RecipientUserId == fx.Doctor1UserId);
+            Assert.NotNull(doctorNotification);
+            Assert.Equal(Notification.TypeDiagnosticOrderDeclined, doctorNotification!.NotificationType);
+
+            var doctorFeed = await Client.SendAsync(AuthedGet("/api/v1/notifications", fx.Doctor1UserId, RoleNames.Doctor));
+            Assert.Equal(HttpStatusCode.OK, doctorFeed.StatusCode);
+
+            // Reception records refusal on mandatory order too -> still ORDERED (not cancelled).
+            var receptionRefusal = await Client.SendAsync(AuthedPostJson(
+                $"/api/v1/reception/visits/{visit.VisitCode}/diagnostic-orders/{mandatoryOrderId}/decline",
+                new DeclineDiagnosticOrderRequestDto(Reason: "Bệnh nhân từ chối lấy máu tại quầy."),
+                fx.Reception1UserId,
+                RoleNames.Reception));
+            Assert.Equal(HttpStatusCode.OK, receptionRefusal.StatusCode);
+            var receptionDto = (await receptionRefusal.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
+            Assert.True(receptionDto.RefusalRecorded);
+            Assert.Equal("ORDERED", receptionDto.OrderStatus);
+
+            Db.ChangeTracker.Clear();
+            Assert.Equal("ORDERED", (await Db.DiagnosticOrders.AsNoTracking().SingleAsync(o => o.Id == mandatoryOrderId)).Status);
+            Assert.True(await Db.DiagnosticOrderDeclines.AnyAsync(d =>
+                d.DiagnosticOrderId == mandatoryOrderId && d.Source == DiagnosticOrderDecline.SourceReception));
+
+            // Only the treating doctor cancels the mandatory order after clinical review.
+            var doctorCancel = await Client.SendAsync(AuthedPostJson(
+                $"/api/v1/doctor/visits/{visit.VisitCode}/diagnostic-orders/{mandatoryOrderId}/decline",
+                new DeclineDiagnosticOrderRequestDto(Reason: "Bác sĩ đánh giá bệnh nhân không thể thực hiện xét nghiệm."),
+                fx.Doctor1UserId,
+                RoleNames.Doctor));
+            Assert.Equal(HttpStatusCode.OK, doctorCancel.StatusCode);
+            var doctorDto = (await doctorCancel.Content.ReadFromJsonAsync<DeclineDiagnosticOrderResponseDto>(WebJson))!;
+            Assert.Equal("CANCELLED", doctorDto.OrderStatus);
+            Db.ChangeTracker.Clear();
+            Assert.True(await Db.DiagnosticOrderDeclines.AnyAsync(d =>
+                d.DiagnosticOrderId == mandatoryOrderId && d.Source == DiagnosticOrderDecline.SourceDoctor));
+        }
+        finally
+        {
+            await CleanupIsolatedFixtureAsync(fx);
+        }
+    }
+
     private async Task<StageBFixture> CreateIsolatedFixtureAsync()
     {
         Db.ChangeTracker.Clear();
@@ -2120,6 +2407,7 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             PermissionCodes.DiagnosticOrder,
             PermissionCodes.DiagnosticResultWrite,
             PermissionCodes.QueueManage,
+            PermissionCodes.DiagnosticReroute,
         ]);
 
         await EnsureRolePermissionsAsync(recRole.Id,
@@ -2128,6 +2416,7 @@ public sealed class StageBPaymentSelectionAndCashPostgresTests : AuthTestBase
             PermissionCodes.PaymentCollect,
             PermissionCodes.PatientCheckin,
             PermissionCodes.QueueManage,
+            PermissionCodes.DiagnosticReroute,
         ]);
 
         await EnsureRolePermissionsAsync(hospAdminRole.Id,

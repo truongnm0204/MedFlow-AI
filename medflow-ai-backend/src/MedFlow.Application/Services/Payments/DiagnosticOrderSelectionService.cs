@@ -345,11 +345,10 @@ public sealed class DiagnosticOrderSelectionService : IDiagnosticOrderSelectionS
                 if (order is null)
                     throw new NotFoundException("Không tìm thấy phiếu chỉ định cận lâm sàng thuộc lượt khám này.");
 
-                // Mandatory order guard (§3, §6.2, PAY-06): never cancel or downgrade RequiredForConclusion via decline!
-                if (order.RequiredForConclusion != false)
-                {
-                    throw new ConflictException(MandatoryReviewRequiredMessage);
-                }
+                // #877 (owner chốt 5a): Reception/bệnh nhân KHÔNG huỷ chỉ định — chỉ ghi nhận từ chối.
+                // Chỉ bác sĩ được huỷ chỉ định chuyên môn và đánh giá tiếp tục/kết thúc khám.
+                var isDoctor = string.Equals(actor.RoleLabel, RoleNames.Doctor, StringComparison.OrdinalIgnoreCase);
+                var isPatientActor = actor.IsPatient;
 
                 EnsureOrderNotExecutedOrCancelled(order);
                 await EnsureNoNonCancelledDiagnosticResultAsync(order.Id, ct);
@@ -363,7 +362,7 @@ public sealed class DiagnosticOrderSelectionService : IDiagnosticOrderSelectionS
                     var qs = AppointmentBookingRules.NormalizeStatusKey(diagQueue.Status);
                     if (qs is "IN_PROGRESS" or "COMPLETED" || diagQueue.CompletedAt.HasValue)
                     {
-                        throw new ConflictException("Không thể từ chối chỉ định cận lâm sàng đã bắt đầu hoặc hoàn tất thực hiện.");
+                        throw new ConflictException("Không thể từ chối chỉ định cận lâm sàng đã bắt đầu hoàn tất thực hiện.");
                     }
                 }
 
@@ -386,143 +385,271 @@ public sealed class DiagnosticOrderSelectionService : IDiagnosticOrderSelectionS
                 var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
                 var cancelledPendingQrCount = 0;
 
-                if (!wasAlreadyPaid)
+                if (!isDoctor)
                 {
-                    // Case 1: Unpaid Optional Decline (PATIENT, RECEPTION, HOSPITAL_ADMIN, or assigned DOCTOR)
-                    if (diagCharge is not null)
+                    // === Ghi nhận từ chối (Reception / Bệnh nhân): KHÔNG huỷ chỉ định, KHÔNG huỷ phí, KHÔNG đụng Payment. ===
+                    var refusalReason = ValidateRequiredDeclineReason(reason);
+                    var notifiedDoctorId = order.OrderingDoctorId ?? lockedVisit.AssignedDoctorId;
+                    Doctor? notifiedDoctor = null;
+                    if (notifiedDoctorId.HasValue)
                     {
-                        cancelledPendingQrCount = CancelOverlappingPendingQrs(
-                            payments,
-                            allocations,
-                            new HashSet<long> { diagCharge.Id });
-
-                        diagCharge.Status = VisitChargeStatuses.Cancelled;
-                        diagCharge.CancelledAt = nowLocal;
+                        notifiedDoctor = await _db.Doctors
+                            .AsNoTracking()
+                            .Include(d => d.Staff)
+                            .FirstOrDefaultAsync(d => d.Id == notifiedDoctorId.Value, ct);
                     }
 
-                    order.Status = "CANCELLED";
-                    order.SelectionStatus = DiagnosticSelectionStatuses.Declined;
+                    var doctorUserId = notifiedDoctor?.Staff?.UserId;
+                    var orderCodeLabel = !string.IsNullOrWhiteSpace(order.OrderCode)
+                        ? order.OrderCode!.Trim()
+                        : $"#{order.Id}";
+                    var serviceName = order.ServiceId.HasValue
+                        ? await _db.Services.AsNoTracking()
+                            .Where(s => s.Id == order.ServiceId.Value)
+                            .Select(s => s.Name)
+                            .FirstOrDefaultAsync(ct)
+                        : null;
+
+                    _db.DiagnosticOrderDeclines.Add(new DiagnosticOrderDecline
+                    {
+                        DiagnosticOrderId = order.Id,
+                        VisitId = visitId,
+                        HospitalId = hospitalId,
+                        RecordedByUserId = actorUserId,
+                        RecordedByRole = isPatientActor ? RoleNames.Patient : actor.RoleLabel,
+                        Source = isPatientActor
+                            ? DiagnosticOrderDecline.SourcePatient
+                            : DiagnosticOrderDecline.SourceReception,
+                        Reason = refusalReason,
+                        NotifiedDoctorId = notifiedDoctor?.Id,
+                        NotifiedDoctorUserId = doctorUserId,
+                        CreatedAt = nowLocal,
+                    });
+
+                    if (doctorUserId.HasValue)
+                    {
+                        var localStamp = DateTime.SpecifyKind(nowLocal, DateTimeKind.Unspecified);
+                        _db.Notifications.Add(new Notification
+                        {
+                            RecipientUserId = doctorUserId.Value,
+                            VisitId = visitId,
+                            Channel = Notification.ChannelInApp,
+                            NotificationType = Notification.TypeDiagnosticOrderDeclined,
+                            Subject = "Bệnh nhân từ chối chỉ định cận lâm sàng",
+                            Body = $"Bệnh nhân từ chối chỉ định {orderCodeLabel}"
+                                + (string.IsNullOrWhiteSpace(serviceName) ? string.Empty : $" ({serviceName})")
+                                + $". Lý do: {refusalReason}. Vui lòng đánh giá tiếp tục hay kết thúc khám.",
+                            Status = Notification.StatusPending,
+                            RetryCount = 0,
+                            IdempotencyKey = $"diagnostic-order-declined:{order.Id}:{Guid.NewGuid():N}",
+                            ScheduledAt = localStamp,
+                            CreatedAt = localStamp,
+                        });
+                    }
+
+                    _db.AuditLogs.Add(new AuditLog
+                    {
+                        ActorUserId = actorUserId,
+                        HospitalId = hospitalId,
+                        Action = "DIAGNOSTIC_ORDER_DECLINE_RECORDED",
+                        EntityType = "DIAGNOSTIC_ORDER",
+                        EntityId = orderCodeLabel,
+                        Reason = refusalReason,
+                        ChangeData = JsonSerializer.Serialize(new
+                        {
+                            visitId,
+                            visitCode = lockedVisit.VisitCode,
+                            diagnosticOrderId = order.Id,
+                            orderCode = order.OrderCode,
+                            orderStatus = order.Status,
+                            selectionStatus = order.SelectionStatus,
+                            requiredForConclusion = order.RequiredForConclusion == true,
+                            visitChargeId = diagCharge?.Id,
+                            chargeStatus = diagCharge?.Status,
+                            wasAlreadyPaid,
+                            notifiedDoctorId = notifiedDoctor?.Id,
+                            notifiedDoctorUserId = doctorUserId,
+                            doctorNotified = doctorUserId.HasValue,
+                            actorRole = actor.RoleLabel,
+                            reason = refusalReason,
+                        }),
+                        IpAddress = IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
+                        OccurredAt = nowUtc,
+                    });
+
+                    await _db.SaveChangesAsync(ct);
+
+                    var refusalSnapshot = await BuildChargesSnapshotAsync(lockedVisit, ct);
+                    response = new DeclineDiagnosticOrderResponseDto(
+                        visitId,
+                        lockedVisit.VisitCode,
+                        lockedVisit.Status,
+                        order.Id,
+                        order.OrderCode,
+                        order.Status ?? "ORDERED",
+                        order.SelectionStatus,
+                        diagCharge?.Id,
+                        diagCharge?.Status,
+                        wasAlreadyPaid,
+                        CancelledPendingQrCount: 0,
+                        TransitionedToReturnConsultation: false,
+                        refusalSnapshot,
+                        RefusalRecorded: true,
+                        DoctorNotified: doctorUserId.HasValue,
+                        NotifiedDoctorId: notifiedDoctor?.Id);
+
+                    await tx.CommitAsync(ct);
                 }
                 else
                 {
-                    // Case 2: Already-PAID Optional Voluntary Abandonment (PAY-16)
-                    // PATIENT self-call is forbidden; must be confirmed by RECEPTION/HOSPITAL_ADMIN or assigned DOCTOR!
-                    if (actor.IsPatient)
+                    // === Bác sĩ huỷ chỉ định chuyên môn (kể cả bắt buộc) và đánh giá tiếp tục/kết thúc khám. ===
+                    if (!wasAlreadyPaid)
                     {
-                        throw new ConflictException(PaidOrderStaffRequiredMessage);
+                        // Case 1: Unpaid cancellation by the treating doctor.
+                        if (diagCharge is not null)
+                        {
+                            cancelledPendingQrCount = CancelOverlappingPendingQrs(
+                                payments,
+                                allocations,
+                                new HashSet<long> { diagCharge.Id });
+
+                            diagCharge.Status = VisitChargeStatuses.Cancelled;
+                            diagCharge.CancelledAt = nowLocal;
+                        }
+
+                        order.Status = "CANCELLED";
+                        order.SelectionStatus = DiagnosticSelectionStatuses.Declined;
+                    }
+                    else
+                    {
+                        // Case 2: Already-PAID Optional Voluntary Abandonment (PAY-16)
+                        if (request?.ConfirmAbandonPaid == false ||
+                            (request?.ConfirmAbandonPaid != true && string.IsNullOrWhiteSpace(reason)))
+                        {
+                            throw new ValidationException(
+                                "Xác nhận bỏ qua dịch vụ cận lâm sàng đã thanh toán yêu cầu confirmAbandonPaid = true hoặc lý do xác nhận rõ ràng.");
+                        }
+
+                        // Keep Payment & PaymentAllocation 100% PAID (no refund module, no CANCELLED_REFUND_PENDING!)
+                        order.Status = "CANCELLED";
+                        order.SelectionStatus = DiagnosticSelectionStatuses.SkippedAfterPaid;
+
+                        if (diagCharge is not null)
+                        {
+                            diagCharge.Status = VisitChargeStatuses.PaidNotPerformed;
+                            diagCharge.CancelledAt = nowLocal;
+                        }
                     }
 
-                    if (request?.ConfirmAbandonPaid == false ||
-                        (request?.ConfirmAbandonPaid != true && string.IsNullOrWhiteSpace(reason)))
+                    if (diagQueue is not null &&
+                        AppointmentBookingRules.NormalizeStatusKey(diagQueue.Status) != "CANCELLED")
                     {
-                        throw new ValidationException(
-                            "Xác nhận bỏ qua dịch vụ cận lâm sàng đã thanh toán yêu cầu confirmAbandonPaid = true hoặc lý do xác nhận rõ ràng.");
+                        var prevVersion = diagQueue.StateVersion is > 0 ? diagQueue.StateVersion.Value : 1;
+                        diagQueue.Status = "CANCELLED";
+                        diagQueue.CompletedAt ??= nowLocal;
+                        diagQueue.BlockedReason = reason;
+                        diagQueue.StateVersion = prevVersion + 1;
+
+                        if (diagQueue.ServicePointId.HasValue || diagQueue.CurrentServicePointId.HasValue)
+                        {
+                            queueNotifications.Add(new QueueChangedNotification(
+                                HospitalId: hospitalId,
+                                ServicePointId: diagQueue.CurrentServicePointId ?? diagQueue.ServicePointId));
+                        }
                     }
 
-                    // Keep Payment & PaymentAllocation 100% PAID (no refund module, no CANCELLED_REFUND_PENDING!)
-                    order.Status = "CANCELLED";
-                    order.SelectionStatus = DiagnosticSelectionStatuses.SkippedAfterPaid;
+                    var (transitionedToReturn, returnQueue) =
+                        await DiagnosticOrderLifecycleHelper.TryTransitionVisitToReturnConsultationAsync(
+                            _db,
+                            lockedVisit,
+                            hospitalId,
+                            nowLocal,
+                            excludingCancelledOrderId: order.Id,
+                            newlyFinalizedOrderId: null,
+                            ct: ct,
+                            mutatingCancelledOrder: order,
+                            nowUtcOverride: nowUtc);
 
-                    if (diagCharge is not null)
-                    {
-                        diagCharge.Status = VisitChargeStatuses.PaidNotPerformed;
-                        diagCharge.CancelledAt = nowLocal;
-                    }
-                }
-
-                if (diagQueue is not null &&
-                    AppointmentBookingRules.NormalizeStatusKey(diagQueue.Status) != "CANCELLED")
-                {
-                    var prevVersion = diagQueue.StateVersion is > 0 ? diagQueue.StateVersion.Value : 1;
-                    diagQueue.Status = "CANCELLED";
-                    diagQueue.CompletedAt ??= nowLocal;
-                    diagQueue.BlockedReason = reason;
-                    diagQueue.StateVersion = prevVersion + 1;
-
-                    if (diagQueue.ServicePointId.HasValue || diagQueue.CurrentServicePointId.HasValue)
+                    if (transitionedToReturn)
                     {
                         queueNotifications.Add(new QueueChangedNotification(
                             HospitalId: hospitalId,
-                            ServicePointId: diagQueue.CurrentServicePointId ?? diagQueue.ServicePointId));
+                            ServicePointId: returnQueue?.CurrentServicePointId ?? returnQueue?.ServicePointId,
+                            RoomId: lockedVisit.ExaminationRoomId,
+                            AppointmentId: lockedVisit.AppointmentId));
                     }
-                }
 
-                var (transitionedToReturn, returnQueue) =
-                    await DiagnosticOrderLifecycleHelper.TryTransitionVisitToReturnConsultationAsync(
-                        _db,
-                        lockedVisit,
-                        hospitalId,
-                        nowLocal,
-                        excludingCancelledOrderId: order.Id,
-                        newlyFinalizedOrderId: null,
-                        ct: ct,
-                        mutatingCancelledOrder: order,
-                        nowUtcOverride: nowUtc);
+                    var auditAction = wasAlreadyPaid ? PaidOrderSkippedAuditAction : OrderDeclinedAuditAction;
+                    var defaultReason = wasAlreadyPaid
+                        ? "Bác sĩ ghi nhận bệnh nhân không thực hiện chỉ định cận lâm sàng đã thanh toán (không hoàn tiền)."
+                        : "Bác sĩ huỷ chỉ định cận lâm sàng sau khi đánh giá chuyên môn.";
+                    var doctorReason = reason ?? defaultReason;
 
-                if (transitionedToReturn)
-                {
-                    queueNotifications.Add(new QueueChangedNotification(
-                        HospitalId: hospitalId,
-                        ServicePointId: returnQueue?.CurrentServicePointId ?? returnQueue?.ServicePointId,
-                        RoomId: lockedVisit.ExaminationRoomId,
-                        AppointmentId: lockedVisit.AppointmentId));
-                }
-
-                var auditAction = wasAlreadyPaid ? PaidOrderSkippedAuditAction : OrderDeclinedAuditAction;
-                var defaultReason = wasAlreadyPaid
-                    ? "Bệnh nhân tự nguyện không thực hiện chỉ định cận lâm sàng tùy chọn sau khi đã thanh toán (không hoàn tiền)."
-                    : "Bệnh nhân từ chối thực hiện chỉ định cận lâm sàng tùy chọn trước thanh toán.";
-
-                _db.AuditLogs.Add(new AuditLog
-                {
-                    ActorUserId = actorUserId,
-                    HospitalId = hospitalId,
-                    Action = auditAction,
-                    EntityType = "DIAGNOSTIC_ORDER",
-                    EntityId = !string.IsNullOrWhiteSpace(order.OrderCode)
-                        ? order.OrderCode.Trim()
-                        : order.Id.ToString(CultureInfo.InvariantCulture),
-                    Reason = reason ?? defaultReason,
-                    ChangeData = JsonSerializer.Serialize(new
+                    _db.DiagnosticOrderDeclines.Add(new DiagnosticOrderDecline
                     {
+                        DiagnosticOrderId = order.Id,
+                        VisitId = visitId,
+                        HospitalId = hospitalId,
+                        RecordedByUserId = actorUserId,
+                        RecordedByRole = RoleNames.Doctor,
+                        Source = DiagnosticOrderDecline.SourceDoctor,
+                        Reason = doctorReason,
+                        NotifiedDoctorId = actor.Doctor?.Id,
+                        NotifiedDoctorUserId = actorUserId,
+                        CreatedAt = nowLocal,
+                    });
+
+                    _db.AuditLogs.Add(new AuditLog
+                    {
+                        ActorUserId = actorUserId,
+                        HospitalId = hospitalId,
+                        Action = auditAction,
+                        EntityType = "DIAGNOSTIC_ORDER",
+                        EntityId = !string.IsNullOrWhiteSpace(order.OrderCode)
+                            ? order.OrderCode.Trim()
+                            : order.Id.ToString(CultureInfo.InvariantCulture),
+                        Reason = doctorReason,
+                        ChangeData = JsonSerializer.Serialize(new
+                        {
+                            visitId,
+                            visitCode = lockedVisit.VisitCode,
+                            diagnosticOrderId = order.Id,
+                            orderCode = order.OrderCode,
+                            orderStatus = order.Status,
+                            selectionStatus = order.SelectionStatus,
+                            visitChargeId = diagCharge?.Id,
+                            chargeStatus = diagCharge?.Status,
+                            wasAlreadyPaid,
+                            cancelledPendingQrCount,
+                            transitionedToReturnConsultation = transitionedToReturn,
+                            returnQueueEntryId = returnQueue?.Id,
+                            actorRole = actor.RoleLabel,
+                            reason = doctorReason,
+                        }),
+                        IpAddress = IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
+                        OccurredAt = nowUtc,
+                    });
+
+                    await _db.SaveChangesAsync(ct);
+
+                    var snapshot = await BuildChargesSnapshotAsync(lockedVisit, ct);
+                    response = new DeclineDiagnosticOrderResponseDto(
                         visitId,
-                        visitCode = lockedVisit.VisitCode,
-                        diagnosticOrderId = order.Id,
-                        orderCode = order.OrderCode,
-                        orderStatus = order.Status,
-                        selectionStatus = order.SelectionStatus,
-                        visitChargeId = diagCharge?.Id,
-                        chargeStatus = diagCharge?.Status,
+                        lockedVisit.VisitCode,
+                        lockedVisit.Status,
+                        order.Id,
+                        order.OrderCode,
+                        order.Status,
+                        order.SelectionStatus,
+                        diagCharge?.Id,
+                        diagCharge?.Status,
                         wasAlreadyPaid,
                         cancelledPendingQrCount,
-                        transitionedToReturnConsultation = transitionedToReturn,
-                        returnQueueEntryId = returnQueue?.Id,
-                        actorRole = actor.RoleLabel,
-                        reason = reason ?? defaultReason,
-                    }),
-                    IpAddress = IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
-                    OccurredAt = nowUtc,
-                });
+                        transitionedToReturn,
+                        snapshot);
 
-                await _db.SaveChangesAsync(ct);
-
-                var snapshot = await BuildChargesSnapshotAsync(lockedVisit, ct);
-                response = new DeclineDiagnosticOrderResponseDto(
-                    visitId,
-                    lockedVisit.VisitCode,
-                    lockedVisit.Status,
-                    order.Id,
-                    order.OrderCode,
-                    order.Status,
-                    order.SelectionStatus,
-                    diagCharge?.Id,
-                    diagCharge?.Status,
-                    wasAlreadyPaid,
-                    cancelledPendingQrCount,
-                    transitionedToReturn,
-                    snapshot);
-
-                await tx.CommitAsync(ct);
+                    await tx.CommitAsync(ct);
+                }
             }
             catch (Exception ex) when (PostgresConcurrencyException.IsDeadlockOrSerializationFailure(ex))
             {
@@ -783,6 +910,22 @@ public sealed class DiagnosticOrderSelectionService : IDiagnosticOrderSelectionS
         var trimmed = raw.Trim();
         if (trimmed.Length > 500 || trimmed.Contains('<') || trimmed.Contains('>'))
             throw new ValidationException("Lý do tối đa 500 ký tự và không chứa ký tự HTML.");
+        return trimmed;
+    }
+
+    private static string ValidateRequiredDeclineReason(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            throw new ValidationException("Ghi nhận từ chối cận lâm sàng bắt buộc phải có lý do.");
+        }
+
+        var trimmed = raw.Trim();
+        if (trimmed.Length > 500 || trimmed.Contains('<') || trimmed.Contains('>'))
+        {
+            throw new ValidationException("Lý do tối đa 500 ký tự và không chứa ký tự HTML.");
+        }
+
         return trimmed;
     }
 

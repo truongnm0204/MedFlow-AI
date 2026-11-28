@@ -18,9 +18,11 @@ public class Notification
     public const string TypeAppointmentReminder = "APPOINTMENT_REMINDER";
     public const string TypeAppointmentNoShow = "APPOINTMENT_NO_SHOW";
     public const string TypeVisitReturnReady = "VISIT_RETURN_READY";
+    public const string TypeDiagnosticOrderDeclined = "DIAGNOSTIC_ORDER_DECLINED";
 
     public long Id { get; set; }
     public long? PatientId { get; set; }
+    public long? RecipientUserId { get; set; }
     public long? AppointmentId { get; set; }
     public long? VisitId { get; set; }
     public string? Channel { get; set; }

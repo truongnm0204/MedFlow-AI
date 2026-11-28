@@ -688,10 +688,10 @@ public sealed class Phase07CrossModuleConcurrencyAndSignalRIntegrityTests
                     try
                     {
                         await selSvc.DeclineOrderAsync(
-                            fx.ReceptionUserId,
+                            fx.Doctor1UserId,
                             visit.VisitCode!,
                             orderId.ToString(CultureInfo.InvariantCulture),
-                            new DeclineDiagnosticOrderRequestDto(Reason: "Bỏ qua đúng lúc bắt đầu CLS", ConfirmAbandonPaid: true));
+                            new DeclineDiagnosticOrderRequestDto(Reason: "Bác sĩ bỏ qua đúng lúc bắt đầu CLS", ConfirmAbandonPaid: true));
                         return (Exception?)null;
                     }
                     catch (Exception ex)
