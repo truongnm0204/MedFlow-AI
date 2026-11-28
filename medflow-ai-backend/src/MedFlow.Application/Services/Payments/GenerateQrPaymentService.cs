@@ -35,6 +35,8 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
     public const string DiagnosticCancelledMessage = "Chỉ định cận lâm sàng đã bị hủy hoặc đang chờ xem xét lại, không thể thanh toán.";
     public const string InvalidVisitChargeIdMessage = "Mã khoản phí cần thanh toán không hợp lệ.";
     public const string ForbiddenMessage = "Bạn không có quyền tạo yêu cầu thanh toán QR cho lượt khám này.";
+    public const string PharmacyCounterOnlyMessage = "[PHARMACY_COUNTER_ONLY] Khoản phí thuốc chỉ được thu tại quầy thuốc bởi nhân viên nhà thuốc.";
+    public const string PharmacyMedicineOnlyMessage = "[PHARMACY_MEDICINE_ONLY] Nhân viên nhà thuốc chỉ được thu các khoản phí thuốc (MEDICINE).";
 
     internal const decimal MaxVndAmount = 9_999_999_999_999m;
     private const int MaxIdempotencyKeyLength = 100;
@@ -168,13 +170,20 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                         PermissionCodes.PaymentCollect,
                         PermissionCodes.HospitalConfig,
                     ],
+                    allowPharmacy: actor.IsPharmacyStaff,
                     ct: ct);
                 actor = new QrActorContext(
                     verifiedActor.IsPatient,
                     verifiedActor.RoleLabel,
                     verifiedActor.IsPatient ? null : verifiedActor.VisitHospitalId,
                     verifiedActor.Doctor,
-                    verifiedActor.OwnedPatientIds);
+                    verifiedActor.OwnedPatientIds)
+                {
+                    IsPharmacyStaff = string.Equals(
+                        verifiedActor.RoleLabel,
+                        RoleNames.PharmacyStaff,
+                        StringComparison.OrdinalIgnoreCase),
+                };
                 hospitalId = verifiedActor.VisitHospitalId;
 
                 var nowLocal = Clock();
@@ -225,8 +234,9 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                     explicitChargeIds,
                     usesStageBAllocatedMode,
                     allowCashierToQrSwitch,
-                    nowLocal,
-                    ct);
+                    pharmacyMedicineOnly: actor.IsPharmacyStaff,
+                    nowLocal: nowLocal,
+                    ct: ct);
 
                 if (targetCharges.Count == 1 && targetCharges[0].Id == 0)
                 {
@@ -566,9 +576,10 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         var isPatient = roleCodes.Contains(RoleNames.Patient);
         var isDoctor = roleCodes.Contains(RoleNames.Doctor);
         var isReception = roleCodes.Contains(RoleNames.Reception);
+        var isPharmacy = roleCodes.Contains(RoleNames.PharmacyStaff);
         var isHospitalAdmin = roleCodes.Contains(RoleNames.HospitalAdmin);
 
-        if (isReception || isHospitalAdmin)
+        if (isReception || isHospitalAdmin || isPharmacy)
         {
             var permSet = await VisitPaymentAccess.LoadRolePermissionCodesAsync(_db, roleIds, ct);
             var hasPerm = permSet.Contains(PermissionCodes.PaymentView) ||
@@ -595,8 +606,13 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             if (hospital.IsActive == false)
                 throw new ForbiddenException(VisitPaymentAccess.InactiveHospitalMessage);
 
-            var roleLabel = isHospitalAdmin ? RoleNames.HospitalAdmin : RoleNames.Reception;
-            return new QrActorContext(false, roleLabel, staff.HospitalId, null, []);
+            var roleLabel = isHospitalAdmin
+                ? RoleNames.HospitalAdmin
+                : isPharmacy ? RoleNames.PharmacyStaff : RoleNames.Reception;
+            return new QrActorContext(false, roleLabel, staff.HospitalId, null, [])
+            {
+                IsPharmacyStaff = string.Equals(roleLabel, RoleNames.PharmacyStaff, StringComparison.OrdinalIgnoreCase),
+            };
         }
 
         if (isDoctor)
@@ -840,6 +856,7 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         IReadOnlyList<long>? explicitChargeIds,
         bool usesStageBAllocatedMode,
         bool allowCashierToQrSwitch,
+        bool pharmacyMedicineOnly,
         DateTime nowLocal,
         CancellationToken ct)
     {
@@ -863,6 +880,12 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
 
                 if (chargeStatus != VisitChargeStatuses.Active)
                     throw new ConflictException(ChargeCancelledMessage);
+
+                // Owner decision D1: MEDICINE charges are paid only at the pharmacy counter.
+                if (pharmacyMedicineOnly && !VisitPaymentAccess.IsMedicineCharge(target))
+                    throw new ForbiddenException(PharmacyMedicineOnlyMessage);
+                if (!pharmacyMedicineOnly && VisitPaymentAccess.IsMedicineCharge(target))
+                    throw new ForbiddenException(PharmacyCounterOnlyMessage);
 
                 await EnsureDiagnosticOrderEligibleForPaymentAsync(target, ct);
 
@@ -910,6 +933,10 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         // No explicit VisitChargeId / VisitChargeIds requested
         if (trackedCharges.Count == 0)
         {
+            // Pharmacy staff cannot materialise the legacy examination charge — they bill medicine only.
+            if (pharmacyMedicineOnly)
+                throw new ConflictException(NothingDueMessage);
+
             var derivedAmount = RequireAmount(visit, assessment);
             var derivedLine = assessment.Lines.FirstOrDefault();
 
@@ -926,6 +953,45 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
             };
 
             return ([materialized], derivedAmount);
+        }
+
+        if (pharmacyMedicineOnly)
+        {
+            var medicineLines = assessment.Lines
+                .Where(l => string.Equals(l.ChargeType, VisitChargeTypes.Medicine, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (medicineLines.Count == 0)
+                throw new ConflictException(NothingDueMessage);
+
+            if (medicineLines.Any(l =>
+                    l.ChargeDataStatus is VisitChargesService.ChargeDataInvalid or VisitChargesService.ChargeDataUnpriced ||
+                    l.LineSettlementStatus is VisitChargesService.SettlementMismatch or VisitChargesService.SettlementUndetermined))
+            {
+                throw new ConflictException(UndeterminedMessage);
+            }
+
+            if (IsBlocked(visit.Status))
+                throw new ConflictException(VisitBlockedMessage);
+
+            var unpaidMedicineLines = medicineLines
+                .Where(l =>
+                    l.ChargeId.HasValue &&
+                    string.Equals(l.ChargeStatus, VisitChargeStatuses.Active, StringComparison.OrdinalIgnoreCase) &&
+                    l.Payable == true &&
+                    l.UnitPrice is > 0m &&
+                    l.LineSettlementStatus == VisitChargesService.SettlementUnpaid)
+                .ToList();
+
+            if (unpaidMedicineLines.Count == 0)
+                throw new ConflictException(NothingDueMessage);
+
+            if (unpaidMedicineLines.Count > 1)
+                throw new ConflictException(MultipleUnpaidChargesMessage);
+
+            var singleMedicineLine = unpaidMedicineLines[0];
+            var singleMedicineCharge = trackedCharges.First(c => c.Id == singleMedicineLine.ChargeId!.Value);
+            return ([singleMedicineCharge], RequireValidIntegerVnd(singleMedicineLine.UnitPrice));
         }
 
         if (assessment.HasUnpricedPayableCharges ||
@@ -950,6 +1016,16 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                 l.UnitPrice is > 0m &&
                 l.LineSettlementStatus == VisitChargesService.SettlementUnpaid)
             .ToList();
+
+        var nonMedicineUnpaidLines = unpaidLines
+            .Where(l => !string.Equals(l.ChargeType, VisitChargeTypes.Medicine, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        // Owner decision D1: a non-pharmacy actor can never settle medicine money over QR.
+        if (nonMedicineUnpaidLines.Count == 0 && unpaidLines.Count > 0)
+            throw new ConflictException(PharmacyCounterOnlyMessage);
+
+        unpaidLines = nonMedicineUnpaidLines;
 
         if (unpaidLines.Count == 0)
             throw new ConflictException(NothingDueMessage);
@@ -1266,7 +1342,12 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                     line?.DiagnosticOrderId ?? charge?.DiagnosticOrderId,
                     line?.ServiceName,
                     pa.AllocatedAmount,
-                    pa.Status);
+                    pa.Status,
+                    line?.PrescriptionId ?? charge?.PrescriptionId,
+                    line?.MedicineId ?? charge?.MedicineId,
+                    line?.MedicineName,
+                    line?.Quantity ?? charge?.Quantity,
+                    line?.MedicineUnitPrice ?? charge?.MedicineUnitPrice);
             }).ToList()
             : charges.Select(c =>
             {
@@ -1278,7 +1359,12 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
                     line?.DiagnosticOrderId ?? c.DiagnosticOrderId,
                     line?.ServiceName,
                     c.UnitPrice ?? amount,
-                    PaymentAllocationLookup.MapPaymentStatusToAllocationStatus(payment.Status));
+                    PaymentAllocationLookup.MapPaymentStatusToAllocationStatus(payment.Status),
+                    line?.PrescriptionId ?? c.PrescriptionId,
+                    line?.MedicineId ?? c.MedicineId,
+                    line?.MedicineName,
+                    line?.Quantity ?? c.Quantity,
+                    line?.MedicineUnitPrice ?? c.MedicineUnitPrice);
             }).ToList();
 
         var singleChargeId = charges.Count == 1 ? charges[0].Id : payment.VisitChargeId;
@@ -1349,5 +1435,8 @@ public sealed class GenerateQrPaymentService : IGenerateQrPaymentService
         string RoleLabel,
         long? HospitalId,
         Doctor? Doctor,
-        HashSet<long> OwnedPatientIds);
+        HashSet<long> OwnedPatientIds)
+    {
+        public bool IsPharmacyStaff { get; init; }
+    }
 }

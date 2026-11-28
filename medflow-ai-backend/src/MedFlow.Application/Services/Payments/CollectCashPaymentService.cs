@@ -21,6 +21,8 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
     public const string AuditAction = "CASH_PAYMENT_COLLECTED";
     public const string ForbiddenMessage = "Bạn không có quyền thu tiền mặt tại quầy cho lượt khám này.";
     public const string MissingPaymentCollectPermissionMessage = "[PAYMENT_COLLECT_REQUIRED] Tài khoản chưa được cấp quyền thu tiền mặt (PAYMENT_COLLECT).";
+    public const string PharmacyCounterOnlyMessage = "[PHARMACY_COUNTER_ONLY] Khoản phí thuốc chỉ được thu tại quầy thuốc bởi nhân viên nhà thuốc.";
+    public const string PharmacyMedicineOnlyMessage = "[PHARMACY_MEDICINE_ONLY] Nhân viên nhà thuốc chỉ được thu các khoản phí thuốc (MEDICINE).";
     public const string InvalidIdempotencyKeyMessage = "Tham số idempotencyKey là bắt buộc (1–100 ký tự) khi thu tiền mặt.";
     public const string MissingChargesMessage = "Vui lòng chọn ít nhất một khoản phí cần thu tiền mặt.";
     public const string ChargeAlreadyPaidMessage = "[CHARGE_ALREADY_PAID] Một hoặc nhiều khoản phí đã được thanh toán.";
@@ -73,7 +75,9 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
         if (requestedChargeIds is null || requestedChargeIds.Count == 0)
             throw new ValidationException(MissingChargesMessage);
 
-        var staff = await AuthorizeCashCollectorAsync(actorUserId, ct);
+        var collector = await AuthorizeCashCollectorAsync(actorUserId, ct);
+        var staff = collector.Staff;
+        var isPharmacyCollector = collector.IsPharmacy;
 
         var parsed = VisitPaymentAccess.ParseVisitIdentifier(idOrCode);
         var visit = await VisitPaymentAccess.FindVisitAsync(_db, parsed, ct)
@@ -126,8 +130,13 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                     MissingPaymentCollectPermissionMessage,
                     allowPatient: false,
                     allowDoctor: false,
+                    allowPharmacy: true,
                     ct: ct);
                 staff = verifiedCollector.Staff!;
+                isPharmacyCollector = string.Equals(
+                    verifiedCollector.RoleLabel,
+                    RoleNames.PharmacyStaff,
+                    StringComparison.OrdinalIgnoreCase);
                 visitHospitalId = verifiedCollector.VisitHospitalId;
 
                 // Check IdempotencyKey post-lock first
@@ -197,6 +206,13 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
 
                     if (chargeStatus != VisitChargeStatuses.Active)
                         throw new ConflictException(GenerateQrPaymentService.ChargeCancelledMessage);
+
+                    // Owner decision D1: medicine money is collected only at the pharmacy counter;
+                    // reception/hospital-admin may collect any other charge type.
+                    if (isPharmacyCollector && !VisitPaymentAccess.IsMedicineCharge(target))
+                        throw new ForbiddenException(PharmacyMedicineOnlyMessage);
+                    if (!isPharmacyCollector && VisitPaymentAccess.IsMedicineCharge(target))
+                        throw new ForbiddenException(PharmacyCounterOnlyMessage);
 
                     await EnsureDiagnosticOrderEligibleForCashAsync(target, ct);
 
@@ -320,6 +336,7 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                         paymentScope = PaymentScopes.Allocated,
                         collectedByStaffId = staff.Id,
                         collectedByStaffName = staff.FullName,
+                        collectedByRole = isPharmacyCollector ? RoleNames.PharmacyStaff : verifiedCollector.RoleLabel,
                         actorUserId,
                         hospitalId = visitHospitalId,
                         amount = totalAmount,
@@ -447,14 +464,19 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
         }
     }
 
-    private async Task<Staff> AuthorizeCashCollectorAsync(long actorUserId, CancellationToken ct)
+    private async Task<CashCollectorContext> AuthorizeCashCollectorAsync(long actorUserId, CancellationToken ct)
     {
         await VisitPaymentAccess.RequireActiveUserAsync(_db, actorUserId, _timeProvider, ct);
 
         var (roleIds, roleCodes) = await VisitPaymentAccess.LoadActorRolesAsync(_db, actorUserId, ct);
 
-        // Strict RBAC (§4, PAY-10, PAY-11): ONLY RECEPTION or HOSPITAL_ADMIN (never DOCTOR, DIAGNOSTIC_STAFF, PATIENT, SYSTEM_ADMIN)
-        var hasEligibleRole = roleCodes.Contains(RoleNames.Reception) || roleCodes.Contains(RoleNames.HospitalAdmin);
+        // Strict RBAC (§4, PAY-10, PAY-11): ONLY RECEPTION / HOSPITAL_ADMIN (counter cash) or
+        // PHARMACY_STAFF (medicine cash at the pharmacy counter, owner decision D1) — never DOCTOR,
+        // DIAGNOSTIC_STAFF, PATIENT or SYSTEM_ADMIN.
+        var isPharmacy = roleCodes.Contains(RoleNames.PharmacyStaff);
+        var hasEligibleRole = roleCodes.Contains(RoleNames.Reception) ||
+                              roleCodes.Contains(RoleNames.HospitalAdmin) ||
+                              isPharmacy;
         if (!hasEligibleRole)
             throw new ForbiddenException(ForbiddenMessage);
 
@@ -480,13 +502,17 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
         if (hospital.IsActive == false)
             throw new ForbiddenException(VisitPaymentAccess.InactiveHospitalMessage);
 
-        return staff;
+        return new CashCollectorContext(staff, isPharmacy);
     }
+
+    private sealed record CashCollectorContext(Staff Staff, bool IsPharmacy);
 
     private async Task VerifyLivePaymentCollectPermissionAsync(long actorUserId, CancellationToken ct)
     {
         var (roleIds, roleCodes) = await VisitPaymentAccess.LoadActorRolesAsync(_db, actorUserId, ct);
-        if (!roleCodes.Contains(RoleNames.Reception) && !roleCodes.Contains(RoleNames.HospitalAdmin))
+        if (!roleCodes.Contains(RoleNames.Reception) &&
+            !roleCodes.Contains(RoleNames.HospitalAdmin) &&
+            !roleCodes.Contains(RoleNames.PharmacyStaff))
             throw new ForbiddenException(ForbiddenMessage);
 
         var permSet = await VisitPaymentAccess.LoadRolePermissionCodesAsync(_db, roleIds, ct);
@@ -711,7 +737,12 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                         line?.DiagnosticOrderId ?? charge?.DiagnosticOrderId,
                         line?.ServiceName,
                         pa.AllocatedAmount,
-                        pa.Status);
+                        pa.Status,
+                        line?.PrescriptionId ?? charge?.PrescriptionId,
+                        line?.MedicineId ?? charge?.MedicineId,
+                        line?.MedicineName,
+                        line?.Quantity ?? charge?.Quantity,
+                        line?.MedicineUnitPrice ?? charge?.MedicineUnitPrice);
                 }).ToList()
             : charges
                 .OrderBy(c => c.Id)
@@ -725,7 +756,12 @@ public sealed class CollectCashPaymentService : ICollectCashPaymentService
                         line?.DiagnosticOrderId ?? c.DiagnosticOrderId,
                         line?.ServiceName,
                         c.UnitPrice ?? 0m,
-                        PaymentAllocationStatuses.Paid);
+                        PaymentAllocationStatuses.Paid,
+                        line?.PrescriptionId ?? c.PrescriptionId,
+                        line?.MedicineId ?? c.MedicineId,
+                        line?.MedicineName,
+                        line?.Quantity ?? c.Quantity,
+                        line?.MedicineUnitPrice ?? c.MedicineUnitPrice);
                 }).ToList();
 
         return new CollectCashPaymentResponseDto(

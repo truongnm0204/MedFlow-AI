@@ -11,7 +11,7 @@ using Microsoft.AspNetCore.RateLimiting;
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{RoleNames.Patient},{RoleNames.Doctor},{RoleNames.Reception},{RoleNames.HospitalAdmin}")]
+[Authorize(Roles = $"{RoleNames.Patient},{RoleNames.Doctor},{RoleNames.Reception},{RoleNames.PharmacyStaff},{RoleNames.HospitalAdmin}")]
 public sealed class VisitQrPaymentsController : ControllerBase
 {
     private static readonly JsonSerializerOptions RequestJsonOptions = new(JsonSerializerDefaults.Web);
@@ -28,6 +28,7 @@ public sealed class VisitQrPaymentsController : ControllerBase
     [HttpPost("/api/v1/patients/visits/{idOrCode}/payments/qr")]
     [HttpPost("/api/v1/doctor/visits/{idOrCode}/payments/qr")]
     [HttpPost("/api/v1/reception/visits/{idOrCode}/payments/qr")]
+    [HttpPost("/api/v1/pharmacy/visits/{idOrCode}/payments/qr")]
     [EnableRateLimiting("payment-qr-generate")]
     [ProducesResponseType<GenerateQrPaymentResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<GenerateQrPaymentResponseDto>(StatusCodes.Status201Created)]

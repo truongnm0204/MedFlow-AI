@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using MedFlow.Application.DTOs.Consultation;
 using MedFlow.Application.Services.Appointments;
+using MedFlow.Application.Services.Payments;
 using MedFlow.Application.Services.Visits;
 using MedFlow.Application.Services.Visits.Queueing;
 using MedFlow.Domain.Entities;
@@ -276,6 +277,22 @@ public sealed partial class ConsultationWorkspaceService
             };
             persistedItems.Add(persisted);
             _db.PrescriptionItems.Add(persisted);
+        }
+
+        // Persist prescription line IDs first: the MEDICINE charge links to prescription_item_id and
+        // snapshots the effective medicine price for the issue instant (#866).
+        await SaveChangesWithConcurrencyGuardAsync(ct);
+
+        if (string.Equals(prescription.Status, "ISSUED", StringComparison.OrdinalIgnoreCase))
+        {
+            await MedicineChargeProvisioner.EnsureForPrescriptionAsync(
+                _db,
+                _medicinePriceResolver,
+                prescription,
+                doctorAccess.Hospital.Id,
+                actorUserId,
+                nowLocal,
+                ct);
         }
 
         var previousItemsPayload = await BuildPreviousPrescriptionItemAuditAsync(previousRows, ct);

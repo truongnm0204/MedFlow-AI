@@ -152,6 +152,89 @@ public sealed class VisitChargeSettlementReaderTests : IDisposable
         Assert.True(paidClearance.IsUnlocked);
     }
 
+    [Fact]
+    public async Task CheckPharmacyVisitClearanceAsync_BlocksUnpaidMedicine_ThenUnlocksWhenPaid()
+    {
+        _db.Visits.Add(new Visit { Id = 30, Status = "COMPLETED" });
+        var examCharge = VisitCharge.CreateExamination(30, 1, 200_000m, FixedNow.DateTime);
+        examCharge.Id = 3001;
+        var medicineCharge = VisitCharge.CreateMedicine(30, 700, 1, 11, 12_500m, 2m, FixedNow.DateTime);
+        medicineCharge.Id = 3002;
+        _db.VisitCharges.AddRange(examCharge, medicineCharge);
+
+        var examPayment = Payment.CreateForCharge(30, 3001, 200_000m, FixedNow.DateTime, PaymentStatuses.Paid);
+        examPayment.Id = 3101;
+        examPayment.PaymentCode = "MF3101";
+        _db.Payments.Add(examPayment);
+        await _db.SaveChangesAsync();
+
+        // Exam paid but medicine unpaid -> hand-over blocked with a medicine-specific message.
+        var blocked = await _reader.CheckPharmacyVisitClearanceAsync(30);
+        Assert.False(blocked.IsUnlocked);
+        Assert.Equal(VisitChargeSettlementReader.StatusUnpaid, blocked.StatusCode);
+        Assert.Contains("tiền thuốc", blocked.Message!, StringComparison.OrdinalIgnoreCase);
+
+        var medicinePayment = Payment.CreateForCharge(30, 3002, 25_000m, FixedNow.DateTime, PaymentStatuses.Paid);
+        medicinePayment.Id = 3102;
+        medicinePayment.PaymentCode = "MF3102";
+        _db.Payments.Add(medicinePayment);
+        await _db.SaveChangesAsync();
+
+        var unlocked = await _reader.CheckPharmacyVisitClearanceAsync(30);
+        Assert.True(unlocked.IsUnlocked);
+        Assert.Equal(VisitChargeSettlementReader.StatusPaid, unlocked.StatusCode);
+        Assert.Equal(25_000m, unlocked.UnitPrice);
+    }
+
+    [Fact]
+    public async Task CheckPharmacyVisitClearanceAsync_MedicineOnlyVisit_IsEvaluatedInsteadOfCancelledExam()
+    {
+        _db.Visits.Add(new Visit { Id = 31, Status = "COMPLETED" });
+        var medicineCharge = VisitCharge.CreateMedicine(31, 701, 2, 12, 10_000m, 1m, FixedNow.DateTime);
+        medicineCharge.Id = 3110;
+        _db.VisitCharges.Add(medicineCharge);
+        await _db.SaveChangesAsync();
+
+        var unpaid = await _reader.CheckPharmacyVisitClearanceAsync(31);
+        Assert.False(unpaid.IsUnlocked);
+        Assert.Equal(VisitChargeSettlementReader.StatusUnpaid, unpaid.StatusCode);
+        Assert.Contains("tiền thuốc", unpaid.Message!, StringComparison.OrdinalIgnoreCase);
+
+        var medicinePayment = Payment.CreateForCharge(31, 3110, 10_000m, FixedNow.DateTime, PaymentStatuses.Paid);
+        medicinePayment.Id = 3111;
+        medicinePayment.PaymentCode = "MF3111";
+        _db.Payments.Add(medicinePayment);
+        await _db.SaveChangesAsync();
+
+        var unlocked = await _reader.CheckPharmacyVisitClearanceAsync(31);
+        Assert.True(unlocked.IsUnlocked);
+        Assert.Equal(VisitChargeSettlementReader.StatusPaid, unlocked.StatusCode);
+    }
+
+    [Fact]
+    public async Task CheckPharmacyQueueClearanceAsync_KeepsLegacyScope_IgnoresMedicine()
+    {
+        _db.Visits.Add(new Visit { Id = 32, Status = "COMPLETED" });
+        var examCharge = VisitCharge.CreateExamination(32, 1, 200_000m, FixedNow.DateTime);
+        examCharge.Id = 3201;
+        var medicineCharge = VisitCharge.CreateMedicine(32, 702, 3, 13, 5_000m, 3m, FixedNow.DateTime);
+        medicineCharge.Id = 3202;
+        _db.VisitCharges.AddRange(examCharge, medicineCharge);
+
+        var examPayment = Payment.CreateForCharge(32, 3201, 200_000m, FixedNow.DateTime, PaymentStatuses.Paid);
+        examPayment.Id = 3203;
+        examPayment.PaymentCode = "MF3203";
+        _db.Payments.Add(examPayment);
+        await _db.SaveChangesAsync();
+
+        var queueGate = await _reader.CheckPharmacyQueueClearanceAsync(32);
+        Assert.True(queueGate.IsUnlocked);
+
+        var handoverGate = await _reader.CheckPharmacyVisitClearanceAsync(32);
+        Assert.False(handoverGate.IsUnlocked);
+        Assert.Equal(VisitChargeSettlementReader.StatusUnpaid, handoverGate.StatusCode);
+    }
+
     private sealed class FixedTime(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;

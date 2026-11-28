@@ -204,6 +204,7 @@ internal static class VisitPaymentAccess
         string? missingRequiredPermissionMessage = null,
         bool allowPatient = true,
         bool allowDoctor = true,
+        bool allowPharmacy = false,
         CancellationToken ct = default)
     {
         await RequireActiveUserAsync(db, actorUserId, time, ct);
@@ -211,10 +212,11 @@ internal static class VisitPaymentAccess
 
         var isReception = roleCodes.Contains(RoleNames.Reception);
         var isHospitalAdmin = roleCodes.Contains(RoleNames.HospitalAdmin);
+        var isPharmacy = allowPharmacy && roleCodes.Contains(RoleNames.PharmacyStaff);
         var isDoctor = roleCodes.Contains(RoleNames.Doctor);
         var isPatient = roleCodes.Contains(RoleNames.Patient);
 
-        if (!isReception && !isHospitalAdmin && !(allowDoctor && isDoctor) && allowPatient && isPatient)
+        if (!isReception && !isHospitalAdmin && !isPharmacy && !(allowDoctor && isDoctor) && allowPatient && isPatient)
         {
             var owned = await LoadOwnedPatientIdsAsync(db, actorUserId, time, ct);
             if (!owned.Contains(lockedVisit.PatientId ?? 0))
@@ -237,7 +239,7 @@ internal static class VisitPaymentAccess
 
         var visitHospitalId = hospitalIds.First();
 
-        if (isReception || isHospitalAdmin)
+        if (isReception || isHospitalAdmin || isPharmacy)
         {
             var permSet = await LoadRolePermissionCodesAsync(db, roleIds, ct);
             if (allowedStaffPermissions is { Count: > 0 })
@@ -267,7 +269,9 @@ internal static class VisitPaymentAccess
             if (staff.HospitalId.Value != visitHospitalId)
                 throw new ForbiddenException(forbiddenMessage);
 
-            var roleLabel = isHospitalAdmin ? RoleNames.HospitalAdmin : RoleNames.Reception;
+            var roleLabel = isHospitalAdmin
+                ? RoleNames.HospitalAdmin
+                : isPharmacy ? RoleNames.PharmacyStaff : RoleNames.Reception;
             return new PostLockActorVerification(false, roleLabel, visitHospitalId, staff, null, []);
         }
 
@@ -298,6 +302,12 @@ internal static class VisitPaymentAccess
         Staff? Staff,
         Doctor? Doctor,
         HashSet<long> OwnedPatientIds);
+
+    public static bool IsMedicineCharge(VisitCharge charge) =>
+        string.Equals(
+            charge.ChargeType?.Trim(),
+            VisitChargeTypes.Medicine,
+            StringComparison.OrdinalIgnoreCase);
 
     public static IReadOnlyList<long>? ParseExplicitVisitChargeIds(
         long? visitChargeId,

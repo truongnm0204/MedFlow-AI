@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using MedFlow.Application.DTOs.Pharmacy;
 using MedFlow.Application.Interfaces.Persistence;
 using MedFlow.Application.Interfaces.Services;
+using MedFlow.Application.Services.Payments;
+using MedFlow.Domain.Constants;
 using MedFlow.Domain.Entities;
 using MedFlow.Domain.Enums;
 using MedFlow.IntegrationTests.Auth;
@@ -53,6 +55,7 @@ public sealed class ConfirmMedicineDispensingEndpointTests : IClassFixture<TestW
         public DbSet<Appointment> Appointments => throw NotUsed();
         public DbSet<PatientFamilyLink> PatientFamilyLinks => throw NotUsed();
         public DbSet<Visit> Visits => Set<Visit>();
+        public DbSet<VisitCharge> VisitCharges => Set<VisitCharge>();
         public DbSet<QueueEntry> QueueEntries => throw NotUsed();
         public DbSet<Payment> Payments => Set<Payment>();
         public DbSet<Medicine> Medicines => Set<Medicine>();
@@ -100,6 +103,7 @@ public sealed class ConfirmMedicineDispensingEndpointTests : IClassFixture<TestW
                 .WithMany()
                 .HasForeignKey(d => d.SpecialtyId);
             modelBuilder.Entity<Visit>().HasKey(v => v.Id);
+            modelBuilder.Entity<VisitCharge>().HasKey(vc => vc.Id);
             modelBuilder.Entity<Payment>().HasKey(p => p.Id);
             modelBuilder.Entity<Medicine>().HasKey(m => m.Id);
             modelBuilder.Entity<MedicineBatch>().HasKey(mb => mb.Id);
@@ -436,5 +440,104 @@ public sealed class ConfirmMedicineDispensingEndpointTests : IClassFixture<TestW
 
         var response = await _client.SendAsync(request);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetDispenseContext_UnpaidMedicineCharge_BlocksAndShowsRealPaymentState()
+    {
+        var chargeId = await SeedUnpaidMedicineChargeAsync();
+        var token = GenerateToken(10, "pharmacist@medflow.test", "PHARMACY_STAFF");
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/pharmacy/prescriptions/RX-2026-0088/dispense");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var dto = await response.Content.ReadFromJsonAsync<DispenseConfirmContextDto>();
+        Assert.NotNull(dto);
+        Assert.False(dto!.CanDispense);
+        Assert.Equal("PENDING", dto.PaymentStatus);
+        Assert.Equal("Chờ thanh toán", dto.PaymentMethodLabel);
+        Assert.Contains("tiền thuốc", dto.DisabledReason!, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Miễn phí", dto.PaymentMethodLabel);
+        Assert.DoesNotContain("Miễn phí", dto.TotalPaidFormatted);
+
+        await AddPaidMedicinePaymentAsync(chargeId, 700_000m);
+
+        using var paidRequest = new HttpRequestMessage(HttpMethod.Get, "/api/v1/pharmacy/prescriptions/RX-2026-0088/dispense");
+        paidRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var paidResponse = await _client.SendAsync(paidRequest);
+        Assert.Equal(HttpStatusCode.OK, paidResponse.StatusCode);
+
+        var paidDto = await paidResponse.Content.ReadFromJsonAsync<DispenseConfirmContextDto>();
+        Assert.NotNull(paidDto);
+        Assert.True(paidDto!.CanDispense);
+        Assert.Equal("PAID", paidDto.PaymentStatus);
+        Assert.Contains("Đã thanh toán", paidDto.PaymentMethodLabel, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Miễn phí", paidDto.PaymentMethodLabel);
+    }
+
+    [Fact]
+    public async Task ConfirmDispense_UnpaidMedicineCharge_ReturnsConflictAndKeepsPrescriptionIssued()
+    {
+        await SeedUnpaidMedicineChargeAsync();
+        var token = GenerateToken(10, "pharmacist@medflow.test", "PHARMACY_STAFF");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/pharmacy/prescriptions/RX-2026-0088/dispense");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new ConfirmDispenseRequest(
+            ReceiverName: "Nguyễn Văn An",
+            Relationship: "Bản thân",
+            IsIdentityVerified: true,
+            ChecksConfirmed: true,
+            IdempotencyKey: "test-integration-867-unpaid"
+        ));
+
+        var response = await _client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("MEDICINE_PAYMENT_REQUIRED", body);
+
+        using var scope = _customFactory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+        Assert.Equal("ISSUED", (await db.Prescriptions.AsNoTracking().SingleAsync(p => p.Id == 1001)).Status);
+        Assert.Equal(100m, (await db.MedicineBatches.AsNoTracking().SingleAsync(b => b.Id == 1)).QuantityOnHand);
+        Assert.Equal(0, await db.StockTransactions.CountAsync());
+    }
+
+    private async Task<long> SeedUnpaidMedicineChargeAsync()
+    {
+        using var scope = _customFactory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+        var charge = new VisitCharge
+        {
+            VisitId = 501,
+            PrescriptionId = 1001,
+            PrescriptionItemId = 1,
+            MedicineId = 1,
+            ChargeType = VisitChargeTypes.Medicine,
+            Quantity = 56m,
+            MedicineUnitPrice = 12_500m,
+            UnitPrice = 700_000m,
+            PaymentRequirement = "REQUIRED",
+            Status = VisitChargeStatuses.Active,
+            CreatedAt = FixedNowUtc.AddMinutes(-25),
+        };
+        db.VisitCharges.Add(charge);
+        await db.SaveChangesAsync();
+        return charge.Id;
+    }
+
+    private async Task AddPaidMedicinePaymentAsync(long visitChargeId, decimal amount)
+    {
+        using var scope = _customFactory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+        var payment = Payment.CreateForCharge(501, visitChargeId, amount, FixedNowUtc, PaymentStatuses.Paid);
+        payment.Id = 2;
+        payment.PaymentCode = "PAY-867-002";
+        payment.PaymentMethod = PaymentMethods.Cash;
+        payment.PaidAt = FixedNowUtc;
+        db.Payments.Add(payment);
+        await db.SaveChangesAsync();
     }
 }
