@@ -502,7 +502,7 @@ public sealed class PrepareMedicinesServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task PreparePrescription_WithValidShortageReason_Succeeds()
+    public async Task PreparePrescription_ShortQuantityWithShortageReason_ThrowsValidationException()
     {
         var request = new PreparePrescriptionRequest(
             Items:
@@ -520,10 +520,15 @@ public sealed class PrepareMedicinesServiceTests : IDisposable
                     PickedQuantity: 56),
             ]);
 
-        var response = await _service.PreparePrescriptionAsync(10, "RX-2026-0415-0088", request);
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.PreparePrescriptionAsync(10, "RX-2026-0415-0088", request));
 
-        Assert.NotNull(response);
-        Assert.Equal("READY", response.Status);
+        Assert.Contains("thiếu so với y lệnh", ex.Message);
+        Assert.Contains("báo bệnh nhân", ex.Message);
+
+        // Nothing persisted: prescription stays ISSUED and no dispense record is created.
+        Assert.Equal("ISSUED", (await _db.Prescriptions.AsNoTracking().FirstAsync(p => p.Id == 100)).Status);
+        Assert.Equal(0, await _db.MedicationDispenses.CountAsync());
     }
 
     [Fact]
@@ -547,7 +552,62 @@ public sealed class PrepareMedicinesServiceTests : IDisposable
         var ex = await Assert.ThrowsAsync<ValidationException>(() =>
             _service.PreparePrescriptionAsync(10, "RX-2026-0415-0088", request));
 
-        Assert.Contains("chưa khớp y lệnh", ex.Message);
+        Assert.Contains("thiếu so với y lệnh", ex.Message);
+    }
+
+    [Fact]
+    public async Task PreparePrescription_ExcessQuantity_ThrowsValidationException()
+    {
+        var request = new PreparePrescriptionRequest(
+            Items:
+            [
+                new PrepareMedicineItemRequest(
+                    PrescriptionItemId: 201,
+                    MedicineBatchId: 11,
+                    BatchCode: "NX-2026-EARLIEST",
+                    PickedQuantity: 29, // Prescribed was 28
+                    ShortageReason: "Cố tình khai lý do để thử bypass"),
+                new PrepareMedicineItemRequest(
+                    PrescriptionItemId: 202,
+                    MedicineBatchId: 20,
+                    BatchCode: "BM-2027",
+                    PickedQuantity: 56),
+            ]);
+
+        var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+            _service.PreparePrescriptionAsync(10, "RX-2026-0415-0088", request));
+
+        Assert.Contains("vượt quá y lệnh", ex.Message);
+        Assert.Equal(0, await _db.MedicationDispenses.CountAsync());
+    }
+
+    [Fact]
+    public async Task PreparePrescription_ExactQuantityWithShortageReason_IgnoresAndDoesNotPersistReason()
+    {
+        var request = new PreparePrescriptionRequest(
+            Items:
+            [
+                new PrepareMedicineItemRequest(
+                    PrescriptionItemId: 201,
+                    MedicineBatchId: 11,
+                    BatchCode: "NX-2026-EARLIEST",
+                    PickedQuantity: 28,
+                    ShortageReason: "Lý do thừa không còn ý nghĩa"),
+                new PrepareMedicineItemRequest(
+                    PrescriptionItemId: 202,
+                    MedicineBatchId: 20,
+                    BatchCode: "BM-2027",
+                    PickedQuantity: 56),
+            ]);
+
+        var response = await _service.PreparePrescriptionAsync(10, "RX-2026-0415-0088", request);
+
+        Assert.Equal("READY", response.Status);
+        var dispenseItems = await _db.DispenseItems.AsNoTracking()
+            .Where(di => di.DispenseId == response.DispenseId)
+            .ToListAsync();
+        Assert.Equal(2, dispenseItems.Count);
+        Assert.All(dispenseItems, di => Assert.Null(di.ShortageReason));
     }
 
     [Fact]

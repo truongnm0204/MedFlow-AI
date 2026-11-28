@@ -53,6 +53,8 @@ public sealed record PreparePrescriptionContextDto(
     IReadOnlyList<PrepareMedicineItemDto> Items,
     IReadOnlyList<GppCheckItemDto> GppChecks);
 
+// ShortageReason: giữ lại để tương thích hợp đồng API với FE cũ.
+// BR-BF03-03: backend bỏ qua hoàn toàn — không được dùng để soạn thiếu và không được lưu vào DB.
 public sealed record PrepareMedicineItemRequest(
     long PrescriptionItemId,
     long? MedicineBatchId,
