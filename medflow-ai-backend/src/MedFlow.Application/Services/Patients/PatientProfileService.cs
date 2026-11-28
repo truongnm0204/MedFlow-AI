@@ -359,7 +359,10 @@ public sealed partial class PatientProfileService : IPatientProfileService
             Address: patient.Address,
             BloodType: patient.BloodType,
             AllowedActions: DefaultAllowedActions,
-            EmergencyContact: emergencyContact
+            EmergencyContact: emergencyContact,
+            IdentityStatus: patient.IdentityStatus,
+            UnverifiedReason: patient.UnverifiedReason,
+            IdentityNote: patient.IdentityNote
         );
     }
 
