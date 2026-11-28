@@ -4,6 +4,9 @@ public static class VisitChargeTypes
 {
     public const string Examination = "EXAMINATION";
     public const string Diagnostic = "DIAGNOSTIC";
+
+    /// <summary>Medicine dispensed by the hospital pharmacy (#866, BF-03 CL-4/CL-5, owner decision D1).</summary>
+    public const string Medicine = "MEDICINE";
 }
 
 public static class VisitChargeStatuses

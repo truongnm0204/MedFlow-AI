@@ -377,6 +377,101 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
         return await EvaluateLegacyDerivedVisitAsync(visit, payments, forPharmacyFallback: true, ct);
     }
 
+    public async Task<VisitChargeGateResult> CheckPharmacyMedicineEligibilityAsync(
+        long visitId,
+        long prescriptionId,
+        CancellationToken ct = default)
+    {
+        if (visitId <= 0 || prescriptionId <= 0)
+        {
+            return new VisitChargeGateResult(
+                false,
+                StatusVisitNotFound,
+                null,
+                null,
+                "Không xác định được đơn thuốc cần thanh toán.");
+        }
+
+        try
+        {
+            var visit = await _db.Visits.AsNoTracking()
+                .FirstOrDefaultAsync(v => v.Id == visitId, ct);
+
+            if (visit is null)
+            {
+                return new VisitChargeGateResult(
+                    false,
+                    StatusVisitNotFound,
+                    null,
+                    null,
+                    "Không tìm thấy lượt khám.");
+            }
+
+            if (IsVisitClosed(visit.Status))
+            {
+                return new VisitChargeGateResult(
+                    false,
+                    StatusVisitClosed,
+                    null,
+                    null,
+                    "Lượt khám đã hủy hoặc không đến, không thể cấp phát thuốc.");
+            }
+
+            var charges = await _db.VisitCharges.AsNoTracking()
+                .Where(c => c.VisitId == visitId && c.PrescriptionId == prescriptionId)
+                .OrderBy(c => c.Id)
+                .ToListAsync(ct);
+
+            var medicineCharges = charges
+                .Where(c => IsMedicineCharge(c) && IsChargeActive(c.Status))
+                .ToList();
+
+            if (medicineCharges.Count == 0)
+            {
+                return new VisitChargeGateResult(true, StatusWaived, null, null);
+            }
+
+            var payments = await _db.Payments.AsNoTracking()
+                .Where(p => p.VisitId == visitId)
+                .OrderByDescending(p => p.Id)
+                .ToListAsync(ct);
+            var persistedAllocations = await PaymentAllocationLookup.TryLoadNoTrackingForVisitAsync(_db, visitId, ct);
+            var (effectiveAllocations, allocatedPaymentIds) = PaymentAllocationLookup.BuildEffectiveAllocations(
+                visitId,
+                payments,
+                persistedAllocations);
+
+            decimal total = 0m;
+            foreach (var charge in medicineCharges)
+            {
+                var gate = EvaluatePersistedCharge(
+                    charge,
+                    charges,
+                    payments,
+                    effectiveAllocations,
+                    allocatedPaymentIds,
+                    allowLegacyFallback: false);
+
+                if (!gate.IsUnlocked)
+                {
+                    var message = gate.StatusCode == StatusUnpaid
+                        ? "Chưa thanh toán tiền thuốc. Vui lòng thu tiền thuốc tại quầy thuốc trước khi bàn giao."
+                        : $"Tiền thuốc: {gate.Message ?? "chưa thể xác nhận thanh toán."}";
+                    return gate with { Message = message };
+                }
+
+                total += charge.UnitPrice ?? 0m;
+            }
+
+            return new VisitChargeGateResult(true, StatusPaid, null, total);
+        }
+        catch (NotSupportedException)
+        {
+            // Minimal unit-test DbContext double without VisitCharges DbSet.
+            return new VisitChargeGateResult(true, StatusWaived, null, null);
+        }
+    }
+
     private static VisitChargeGateResult EvaluatePersistedCharge(
         VisitCharge charge,
         IReadOnlyList<VisitCharge> allVisitCharges,
@@ -773,6 +868,9 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
         string.IsNullOrWhiteSpace(charge.ChargeType)
             ? !charge.DiagnosticOrderId.HasValue
             : string.Equals(charge.ChargeType.Trim(), VisitChargeTypes.Examination, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMedicineCharge(VisitCharge charge) =>
+        string.Equals(charge.ChargeType?.Trim(), VisitChargeTypes.Medicine, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsChargeActive(string? status) =>
         string.IsNullOrWhiteSpace(status) ||

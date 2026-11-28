@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{RoleNames.Patient},{RoleNames.Doctor},{RoleNames.Reception},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
+[Authorize(Roles = $"{RoleNames.Patient},{RoleNames.Doctor},{RoleNames.Reception},{RoleNames.PharmacyStaff},{RoleNames.HospitalAdmin},{RoleNames.SystemAdmin}")]
 public sealed class VisitChargesController : ControllerBase
 {
     private readonly IVisitChargesService _service;
@@ -23,6 +23,7 @@ public sealed class VisitChargesController : ControllerBase
     [HttpGet("/api/v1/reception/visits/{idOrCode}/charges")]
     [HttpGet("/api/v1/doctor/visits/{idOrCode}/charges")]
     [HttpGet("/api/v1/patients/visits/{idOrCode}/charges")]
+    [HttpGet("/api/v1/pharmacy/visits/{idOrCode}/charges")]
     [ProducesResponseType<VisitChargesResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

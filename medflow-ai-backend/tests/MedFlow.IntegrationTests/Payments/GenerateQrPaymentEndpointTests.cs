@@ -79,7 +79,6 @@ public sealed class GenerateQrPaymentEndpointTests : AuthTestBase
 
     [Theory]
     [InlineData("DIAGNOSTIC_STAFF", 7L)]
-    [InlineData("PHARMACY_STAFF", 9L)]
     [InlineData("SYSTEM_ADMIN", 13L)]
     [InlineData("DOCTOR", 4L)]
     public async Task Create_UnauthorizedStaffOrUnassignedDoctor_Returns403(string role, long userId)

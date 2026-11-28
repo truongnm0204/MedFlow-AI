@@ -24,4 +24,13 @@ public interface IVisitChargeSettlementReader
     Task<VisitChargeGateResult> CheckPharmacyVisitClearanceAsync(
         long visitId,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// #866: medicine charges of one prescription must be settled at the pharmacy counter before hand-over.
+    /// Returns unlocked when the prescription has no priced MEDICINE charge (no billable medicine to collect).
+    /// </summary>
+    Task<VisitChargeGateResult> CheckPharmacyMedicineEligibilityAsync(
+        long visitId,
+        long prescriptionId,
+        CancellationToken ct = default);
 }

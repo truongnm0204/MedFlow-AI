@@ -129,6 +129,17 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             : [];
 
         var clearance = await _settlementReader.CheckPharmacyVisitClearanceAsync(visit.Id, ct);
+        if (clearance.IsUnlocked)
+        {
+            // #866: priced medicine charges of THIS prescription must be settled at the pharmacy counter.
+            var medicineClearance = await _settlementReader.CheckPharmacyMedicineEligibilityAsync(
+                visit.Id,
+                prescription.Id,
+                ct);
+            if (!medicineClearance.IsUnlocked)
+                clearance = medicineClearance;
+        }
+
         var hasPaidPayment = visitPayments.Any(p => string.Equals(p.Status, "PAID", StringComparison.OrdinalIgnoreCase));
         var isBlockedByPayment = !clearance.IsUnlocked;
 
@@ -437,6 +448,17 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                 }
 
                 var clearance = await _settlementReader.CheckPharmacyVisitClearanceAsync(visit.Id, ct);
+                if (clearance.IsUnlocked)
+                {
+                    // #866: priced medicine charges of THIS prescription must be settled before hand-over.
+                    var medicineClearance = await _settlementReader.CheckPharmacyMedicineEligibilityAsync(
+                        visit.Id,
+                        prescription.Id,
+                        ct);
+                    if (!medicineClearance.IsUnlocked)
+                        clearance = medicineClearance;
+                }
+
                 if (!clearance.IsUnlocked)
                 {
                     throw new ConflictException(

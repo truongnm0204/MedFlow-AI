@@ -23,4 +23,11 @@ public sealed record VisitChargeLineDto(
     string? SelectionStatus = null,
     bool CanSelect = false,
     bool CanDecline = false,
-    bool CanSkipPaid = false);
+    bool CanSkipPaid = false,
+    long? PrescriptionId = null,
+    long? PrescriptionItemId = null,
+    long? MedicineId = null,
+    string? MedicineCode = null,
+    string? MedicineName = null,
+    decimal? Quantity = null,
+    decimal? MedicineUnitPrice = null);

@@ -10,6 +10,7 @@ using MedFlow.Application.Services.Appointments;
 using MedFlow.Application.Services.Diagnostic;
 using MedFlow.Application.Services.Doctors;
 using MedFlow.Application.Services.Payments;
+using MedFlow.Application.Services.Pharmacy;
 using MedFlow.Application.Services.Visits;
 using MedFlow.Application.Services.Visits.Queueing;
 using MedFlow.Domain.Constants;
@@ -50,19 +51,22 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
     private readonly IRealtimeNotificationPublisher _realtimePublisher;
     private readonly IRealtimeAccessRevoker _accessRevoker;
     private readonly IVisitChargeSettlementReader _settlementReader;
+    private readonly IMedicinePriceResolver _medicinePriceResolver;
 
     public ConsultationWorkspaceService(
         IApplicationDbContext db,
         TimeProvider timeProvider,
         IRealtimeNotificationPublisher? realtimePublisher = null,
         IRealtimeAccessRevoker? accessRevoker = null,
-        IVisitChargeSettlementReader? settlementReader = null)
+        IVisitChargeSettlementReader? settlementReader = null,
+        IMedicinePriceResolver? medicinePriceResolver = null)
     {
         _db = db;
         _timeProvider = timeProvider;
         _realtimePublisher = realtimePublisher ?? MedFlow.Application.Services.Realtime.NullRealtimeNotificationPublisher.Instance;
         _accessRevoker = accessRevoker ?? MedFlow.Application.Services.Realtime.NullRealtimeAccessRevoker.Instance;
         _settlementReader = settlementReader ?? new VisitChargeSettlementReader(_db, _timeProvider);
+        _medicinePriceResolver = medicinePriceResolver ?? new MedicinePriceResolver(_db, _timeProvider);
     }
 
     public async Task<ConsultationWorkspaceResponseDto> GetWorkspaceAsync(
@@ -3937,6 +3941,16 @@ public sealed partial class ConsultationWorkspaceService : IConsultationWorkspac
 
                     prescription.Status = "ISSUED";
                     prescription.IssuedAt ??= nowLocal;
+
+                    // #866: draft prescription becomes billable medicine at the exact issue instant.
+                    await MedicineChargeProvisioner.EnsureForPrescriptionAsync(
+                        _db,
+                        _medicinePriceResolver,
+                        prescription,
+                        doctorAccess.Hospital.Id,
+                        actorUserId,
+                        nowLocal,
+                        ct);
                 }
             }
         }

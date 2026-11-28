@@ -24,6 +24,23 @@ public class VisitChargeConfiguration : IEntityTypeConfiguration<VisitCharge>
         builder.Property(c => c.DiagnosticOrderId)
             .HasColumnName("diagnostic_order_id");
 
+        builder.Property(c => c.PrescriptionId)
+            .HasColumnName("prescription_id");
+
+        builder.Property(c => c.PrescriptionItemId)
+            .HasColumnName("prescription_item_id");
+
+        builder.Property(c => c.MedicineId)
+            .HasColumnName("medicine_id");
+
+        builder.Property(c => c.Quantity)
+            .HasColumnName("quantity")
+            .HasColumnType("numeric(14,3)");
+
+        builder.Property(c => c.MedicineUnitPrice)
+            .HasColumnName("medicine_unit_price")
+            .HasColumnType("numeric(14,2)");
+
         builder.Property(c => c.UnitPrice)
             .HasColumnName("unit_price")
             .HasColumnType("numeric(14,2)");
@@ -60,6 +77,20 @@ public class VisitChargeConfiguration : IEntityTypeConfiguration<VisitCharge>
             .IsUnique()
             .HasFilter("\"diagnostic_order_id\" IS NOT NULL");
 
+        builder.HasIndex(c => c.PrescriptionItemId)
+            .HasDatabaseName("uq_visit_charges_prescription_item")
+            .IsUnique()
+            .HasFilter("\"prescription_item_id\" IS NOT NULL");
+
+        builder.HasIndex(c => c.PrescriptionId)
+            .HasDatabaseName("ix_visit_charges_prescription_id");
+
+        builder.HasIndex(c => c.MedicineId)
+            .HasDatabaseName("ix_visit_charges_medicine_id");
+
+        builder.HasIndex(c => new { c.VisitId, c.ChargeType })
+            .HasDatabaseName("ix_visit_charges_visit_type");
+
         builder.HasOne<Visit>()
             .WithMany()
             .HasForeignKey(c => c.VisitId)
@@ -68,6 +99,21 @@ public class VisitChargeConfiguration : IEntityTypeConfiguration<VisitCharge>
         builder.HasOne<DiagnosticOrder>()
             .WithMany()
             .HasForeignKey(c => c.DiagnosticOrderId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Prescription>()
+            .WithMany()
+            .HasForeignKey(c => c.PrescriptionId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<PrescriptionItem>()
+            .WithMany()
+            .HasForeignKey(c => c.PrescriptionItemId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Medicine>()
+            .WithMany()
+            .HasForeignKey(c => c.MedicineId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

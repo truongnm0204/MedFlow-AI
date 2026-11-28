@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace MedFlow.API.Controllers;
 
 [ApiController]
-[Authorize(Roles = $"{RoleNames.Reception},{RoleNames.HospitalAdmin}")]
+[Authorize(Roles = $"{RoleNames.Reception},{RoleNames.PharmacyStaff},{RoleNames.HospitalAdmin}")]
 public sealed class VisitCashPaymentsController : ControllerBase
 {
     private readonly ICollectCashPaymentService _service;
@@ -21,6 +21,7 @@ public sealed class VisitCashPaymentsController : ControllerBase
     /// <summary>POST /api/v1/visits/{idOrCode}/payments/cash — Thu tiền mặt tại quầy tiếp nhận với kiểm tra quyền PAYMENT_COLLECT trực tiếp (ADR-0060).</summary>
     [HttpPost("/api/v1/visits/{idOrCode}/payments/cash")]
     [HttpPost("/api/v1/reception/visits/{idOrCode}/payments/cash")]
+    [HttpPost("/api/v1/pharmacy/visits/{idOrCode}/payments/cash")]
     [ProducesResponseType<CollectCashPaymentResponseDto>(StatusCodes.Status200OK)]
     [ProducesResponseType<CollectCashPaymentResponseDto>(StatusCodes.Status201Created)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status400BadRequest)]

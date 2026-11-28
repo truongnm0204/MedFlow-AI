@@ -126,10 +126,11 @@ public sealed class VisitChargesService : IVisitChargesService
         var isSystemAdmin = roleCodes.Contains(RoleNames.SystemAdmin);
         var isHospitalAdmin = roleCodes.Contains(RoleNames.HospitalAdmin);
         var isReception = roleCodes.Contains(RoleNames.Reception);
+        var isPharmacy = roleCodes.Contains(RoleNames.PharmacyStaff);
         var isDoctor = roleCodes.Contains(RoleNames.Doctor);
         var isPatient = roleCodes.Contains(RoleNames.Patient);
 
-        if (isSystemAdmin || isHospitalAdmin || isReception)
+        if (isSystemAdmin || isHospitalAdmin || isReception || isPharmacy)
         {
             var permSet = await VisitPaymentAccess.LoadRolePermissionCodesAsync(_db, roleIds, ct);
             var hasRequiredPerm = isSystemAdmin

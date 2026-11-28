@@ -17,7 +17,12 @@ public sealed record PaymentAllocationItemDto(
     long? DiagnosticOrderId,
     string? ServiceName,
     decimal AllocatedAmount,
-    string Status);
+    string Status,
+    long? PrescriptionId = null,
+    long? MedicineId = null,
+    string? MedicineName = null,
+    decimal? Quantity = null,
+    decimal? MedicineUnitPrice = null);
 
 public sealed record PaymentEnrollmentResultDto(
     long? IntentId,

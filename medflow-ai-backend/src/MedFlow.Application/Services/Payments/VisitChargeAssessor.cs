@@ -82,6 +82,7 @@ internal static class VisitChargeAssessor
             persistedAllocations);
 
         var diagOrdersById = await TryLoadDiagnosticOrdersAsync(db, charges, ct);
+        var medicinesById = await TryLoadMedicinesAsync(db, charges, ct);
 
         var paidAll = DedupePaid(payments);
         var recognizedPaid = paidAll.Aggregate(0m, (sum, p) => sum + (p.Amount ?? 0m));
@@ -95,7 +96,7 @@ internal static class VisitChargeAssessor
         var hasActiveLegacyPending = legacyPayments.Any(p => IsActivePending(p, staleCutoff));
 
         var rawLines = charges
-            .Select(c => MapPersistedBase(c, diagOrdersById))
+            .Select(c => MapPersistedBase(c, diagOrdersById, medicinesById))
             .ToList();
         rawLines = await FillServiceNamesAsync(db, rawLines, ct);
 
@@ -632,7 +633,8 @@ internal static class VisitChargeAssessor
 
     private static VisitChargeLineDto MapPersistedBase(
         VisitCharge charge,
-        IReadOnlyDictionary<long, DiagnosticOrder>? diagOrdersById)
+        IReadOnlyDictionary<long, DiagnosticOrder>? diagOrdersById,
+        IReadOnlyDictionary<long, Medicine>? medicinesById)
     {
         var raw = string.IsNullOrWhiteSpace(charge.PaymentRequirement)
             ? null
@@ -695,6 +697,10 @@ internal static class VisitChargeAssessor
             ? diagOrder.RequiredForConclusion ?? true
             : (chargeType == VisitChargeTypes.Examination ? true : (bool?)null);
 
+        Medicine? medicine = null;
+        if (charge.MedicineId.HasValue && medicinesById is not null)
+            medicinesById.TryGetValue(charge.MedicineId.Value, out medicine);
+
         return new VisitChargeLineDto(
             charge.Id,
             VisitChargesService.ChargeSourcePersisted,
@@ -710,7 +716,14 @@ internal static class VisitChargeAssessor
             ChargeStatus: chargeStatus,
             DiagnosticOrderCode: diagOrder?.OrderCode,
             RequiredForConclusion: requiredForConclusion,
-            SelectionStatus: selectionStatus);
+            SelectionStatus: selectionStatus,
+            PrescriptionId: charge.PrescriptionId,
+            PrescriptionItemId: charge.PrescriptionItemId,
+            MedicineId: charge.MedicineId,
+            MedicineCode: medicine?.MedicineCode,
+            MedicineName: medicine?.Name,
+            Quantity: charge.Quantity,
+            MedicineUnitPrice: charge.MedicineUnitPrice);
     }
 
     private static async Task<VisitChargeLineDto> MapDerivedAsync(
@@ -789,6 +802,32 @@ internal static class VisitChargeAssessor
             return await db.DiagnosticOrders.AsNoTracking()
                 .Where(d => orderIds.Contains(d.Id))
                 .ToDictionaryAsync(d => d.Id, ct);
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private static async Task<IReadOnlyDictionary<long, Medicine>?> TryLoadMedicinesAsync(
+        IApplicationDbContext db,
+        IReadOnlyList<VisitCharge> charges,
+        CancellationToken ct)
+    {
+        var medicineIds = charges
+            .Where(c => c.MedicineId.HasValue)
+            .Select(c => c.MedicineId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (medicineIds.Count == 0)
+            return null;
+
+        try
+        {
+            return await db.Medicines.AsNoTracking()
+                .Where(m => medicineIds.Contains(m.Id))
+                .ToDictionaryAsync(m => m.Id, ct);
         }
         catch (NotSupportedException)
         {
