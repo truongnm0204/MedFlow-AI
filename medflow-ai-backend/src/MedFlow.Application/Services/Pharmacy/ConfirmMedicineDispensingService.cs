@@ -526,11 +526,12 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                     .GroupBy(i => i.PrescriptionItemId)
                     .ToDictionary(g => g.Key, g => g.ToList());
 
+                // BR-BF03-03: no partial dispensing — request ShortageReason is kept for contract
+                // backward-compatibility but is deliberately ignored (it can never relax quantity checks or be persisted).
                 var allocations = new List<(
                     PrescriptionItem Item,
                     MedicineBatch? Batch,
                     decimal Qty,
-                    string? ShortageReason,
                     DispenseItem? ExistingItem)>();
 
                 var consumedInAutoAllocationByBatchId = new Dictionary<long, decimal>();
@@ -552,7 +553,6 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                         PrescriptionItem Item,
                         MedicineBatch? Batch,
                         decimal Qty,
-                        string? ShortageReason,
                         DispenseItem? ExistingItem)>();
 
                     var usePreparedMultiBatchDirectly =
@@ -580,14 +580,10 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                                 matchedExistingSet.Add(matchedExisting);
                             }
 
-                            // BUG-P3-03: null -> PlannedQuantity ?? PrescribedQuantity; 0 -> explicit zero-dispense (never fallback!); > 0 -> physical qty
+                            // BUG-P3-03: null -> PlannedQuantity ?? PrescribedQuantity; 0 -> explicit zero-dispense (never fallback!, always rejected below); > 0 -> physical qty
                             decimal qtyToDispense = reqLine.DispensedQuantity.HasValue
                                 ? reqLine.DispensedQuantity.Value
                                 : (matchedExisting?.DispensedQuantity ?? matchedExisting?.PlannedQuantity ?? prescribedQty);
-
-                            var shortageReason = !string.IsNullOrWhiteSpace(reqLine.ShortageReason)
-                                ? reqLine.ShortageReason.Trim()
-                                : matchedExisting?.ShortageReason;
 
                             MedicineBatch? targetBatch = null;
                             if (reqLine.MedicineBatchId.HasValue)
@@ -618,18 +614,14 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                                 consumedInAutoAllocationByBatchId[targetBatch.Id] = prevAuto + qtyToDispense;
                             }
 
-                            itemAllocations.Add((pItem, targetBatch, qtyToDispense, shortageReason, matchedExisting));
+                            itemAllocations.Add((pItem, targetBatch, qtyToDispense, matchedExisting));
                         }
                     }
                     else if (existListForPi.Count > 0)
                     {
-                        var fallbackReason = reqListForPi.FirstOrDefault()?.ShortageReason;
                         foreach (var existDi in existListForPi)
                         {
                             var qtyToDispense = existDi.DispensedQuantity ?? existDi.PlannedQuantity ?? prescribedQty;
-                            var shortageReason = !string.IsNullOrWhiteSpace(fallbackReason)
-                                ? fallbackReason.Trim()
-                                : existDi.ShortageReason;
 
                             MedicineBatch? targetBatch = null;
                             if (existDi.MedicineBatchId.HasValue)
@@ -653,7 +645,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                                 consumedInAutoAllocationByBatchId[targetBatch.Id] = prevAuto + qtyToDispense;
                             }
 
-                            itemAllocations.Add((pItem, targetBatch, qtyToDispense, shortageReason, existDi));
+                            itemAllocations.Add((pItem, targetBatch, qtyToDispense, existDi));
                         }
                     }
                     else
@@ -673,29 +665,29 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                             consumedInAutoAllocationByBatchId[targetBatch.Id] = prevAuto + prescribedQty;
                         }
 
-                        itemAllocations.Add((pItem, targetBatch, prescribedQty, null, null));
+                        itemAllocations.Add((pItem, targetBatch, prescribedQty, null));
                     }
 
-                    // Validate per-item quantities & shortage reasons (BUG-P3-03)
+                    // BR-BF03-03: bắt buộc xuất đủ 100% số lượng kê đơn.
+                    // Không có lối tắt ShortageReason: thiếu (kể cả 0) hoặc thừa đều bị chặn và đơn không chuyển DISPENSED.
                     var totalDispensedForItem = itemAllocations.Sum(a => a.Qty);
-                    var hasItemShortageReason = itemAllocations.Any(a => !string.IsNullOrWhiteSpace(a.ShortageReason));
 
-                    if (totalDispensedForItem == 0m && !hasItemShortageReason)
+                    if (totalDispensedForItem <= 0m)
                     {
                         throw new ValidationException(
-                            $"Khoản thuốc '{medName}' có số lượng thực xuất bằng 0 bắt buộc phải nhập lý do thiếu thuốc (ShortageReason).");
+                            $"Khoản thuốc '{medName}' chưa có số lượng thực xuất nên không thể cấp phát. Không đủ tồn kho để cấp phát đầy đủ — vui lòng báo bệnh nhân và kết thúc luồng, đơn thuốc không được chuyển sang DISPENSED.");
                     }
 
-                    if (totalDispensedForItem < prescribedQty && !hasItemShortageReason)
+                    if (totalDispensedForItem < prescribedQty)
                     {
                         throw new ValidationException(
-                            $"Số lượng thực xuất ({totalDispensedForItem:0.###}) nhỏ hơn số lượng kê đơn ({prescribedQty:0.###}) cho thuốc '{medName}'. Vui lòng nhập lý do thiếu thuốc.");
+                            $"Số lượng thực xuất ({totalDispensedForItem:0.###}) thiếu so với số lượng kê đơn ({prescribedQty:0.###}) cho thuốc '{medName}'. Không đủ tồn kho để cấp phát đầy đủ — vui lòng báo bệnh nhân và kết thúc luồng, đơn thuốc không được chuyển sang DISPENSED.");
                     }
 
                     if (totalDispensedForItem > prescribedQty)
                     {
                         throw new ValidationException(
-                            $"Số lượng thực xuất ({totalDispensedForItem:0.###}) không được vượt quá số lượng kê đơn ({prescribedQty:0.###}) cho thuốc '{medName}'.");
+                            $"Số lượng thực xuất ({totalDispensedForItem:0.###}) vượt quá số lượng kê đơn ({prescribedQty:0.###}) cho thuốc '{medName}'. Chỉ được xuất đúng 100% số lượng kê đơn.");
                     }
 
                     foreach (var alloc in itemAllocations)
@@ -707,7 +699,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                                 continue;
                             }
 
-                            throw new ConflictException($"Không tìm thấy lô thuốc khả dụng trong kho cho thuốc '{medName}'.");
+                            throw new ConflictException($"Không đủ tồn kho để cấp phát đầy đủ cho thuốc '{medName}'. Vui lòng báo bệnh nhân và kết thúc luồng, đơn thuốc không được chuyển sang DISPENSED.");
                         }
 
                         if (alloc.Batch.MedicineId != pItem.MedicineId)
@@ -745,7 +737,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                     if (currentOnHand < totalRequested)
                     {
                         throw new ConflictException(
-                            $"Số lượng tồn khả dụng của lô '{batch.BatchNumber}' không đủ ({currentOnHand:0.###} < {totalRequested:0.###}).");
+                            $"Số lượng tồn khả dụng của lô '{batch.BatchNumber}' không đủ ({currentOnHand:0.###} < {totalRequested:0.###}). Vui lòng báo bệnh nhân và kết thúc luồng, đơn thuốc không được chuyển sang DISPENSED.");
                     }
                 }
 
@@ -781,7 +773,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                     _db.DispenseItems.RemoveRange(obsoleteDispenseItems);
                 }
 
-                foreach (var (item, batch, qtyToDispense, shortageReason, matchedExistingItem) in allocations)
+                foreach (var (item, batch, qtyToDispense, matchedExistingItem) in allocations)
                 {
                     if (batch is not null && qtyToDispense > 0m)
                     {
@@ -794,7 +786,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                         dispenseItem = matchedExistingItem;
                         dispenseItem.MedicineBatchId = batch?.Id;
                         dispenseItem.DispensedQuantity = qtyToDispense;
-                        dispenseItem.ShortageReason = shortageReason;
+                        dispenseItem.ShortageReason = null;
                     }
                     else
                     {
@@ -804,8 +796,7 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                             PrescriptionItemId = item.Id,
                             MedicineBatchId = batch?.Id,
                             PlannedQuantity = item.PrescribedQuantity ?? qtyToDispense,
-                            DispensedQuantity = qtyToDispense,
-                            ShortageReason = shortageReason
+                            DispensedQuantity = qtyToDispense
                         };
                         _db.DispenseItems.Add(dispenseItem);
                     }

@@ -159,20 +159,20 @@ public sealed class Phase03PharmacyAndPaymentPostgresConcurrencyTests : AuthTest
     }
 
     [Fact]
-    public async Task Group1C_NonEmptyShortageReasonWithQtyExceedingOnHand_ThrowsConflictAndNeverProducesNegativeStock()
+    public async Task Group1C_NonEmptyShortageReasonWithQtyBelowPrescribed_ThrowsValidationAndNeverProducesNegativeStock()
     {
         var fx = await CreateIsolatedFixtureAsync(batchQuantities: [10m]);
         try
         {
             var visit = await AddPaidVisitAsync(fx, "V1C-1");
-            // Prescribed = 20, OnHand = 10, Requested = 12 (< Prescribed so ShortageReason applies, but 12 > OnHand!)
+            // Prescribed = 20, OnHand = 10, Requested = 12 (short) — BR-BF03-03 forbids partial dispensing regardless of ShortageReason.
             var rx = await AddPrescriptionAsync(fx, visit.Id, "RX1C-1", [(fx.MedicineId, 20m)]);
             var batchId = fx.BatchIds[0];
 
             await using (var scope = Factory.Services.CreateAsyncScope())
             {
                 var svc = scope.ServiceProvider.GetRequiredService<IConfirmMedicineDispensingService>();
-                await Assert.ThrowsAsync<ConflictException>(() =>
+                var ex = await Assert.ThrowsAsync<ValidationException>(() =>
                     svc.ConfirmDispenseAsync(
                         fx.PharmacistUserId,
                         rx.Prescription.PrescriptionCode!,
@@ -189,12 +189,14 @@ public sealed class Phase03PharmacyAndPaymentPostgresConcurrencyTests : AuthTest
                                     DispensedQuantity: 12m,
                                     ShortageReason: "Kho chỉ còn ít thuốc")
                             ])));
+                Assert.Contains("báo bệnh nhân", ex.Message);
             }
 
             Db.ChangeTracker.Clear();
             var batch = await Db.MedicineBatches.AsNoTracking().FirstAsync(b => b.Id == batchId);
             Assert.Equal(10m, batch.QuantityOnHand);
             Assert.Equal(0, await Db.StockTransactions.CountAsync(st => st.MedicineBatchId == batchId));
+            Assert.Equal("ISSUED", (await Db.Prescriptions.AsNoTracking().FirstAsync(p => p.Id == rx.Prescription.Id)).Status);
         }
         finally
         {
@@ -317,7 +319,7 @@ public sealed class Phase03PharmacyAndPaymentPostgresConcurrencyTests : AuthTest
     }
 
     [Fact]
-    public async Task Group2B_ExplicitZeroDispensedQuantity_RequiresShortageReason_DeductsZeroStock_AndRejectsDraftOrExternalRx()
+    public async Task Group2B_ExplicitZeroDispensedQuantity_IsAlwaysRejected_AndRejectsDraftOrExternalRx()
     {
         var fx = await CreateIsolatedFixtureAsync(batchQuantities: [10m]);
         try
@@ -341,42 +343,35 @@ public sealed class Phase03PharmacyAndPaymentPostgresConcurrencyTests : AuthTest
                             Items: [new ConfirmDispenseItemRequest(rx.ItemIds[0], batchId, 0m, ShortageReason: null)])));
             }
 
-            // 2. Explicit 0 WITH ShortageReason -> 0 stock deducted (never falls back to PrescribedQuantity = 10!)
-            DispensingResultDetailDto zeroResult;
+            // 2. Explicit 0 WITH ShortageReason -> still ValidationException (BR-BF03-03: no partial/zero dispensing bypass)
             await using (var scope = Factory.Services.CreateAsyncScope())
             {
                 var confirmSvc = scope.ServiceProvider.GetRequiredService<IConfirmMedicineDispensingService>();
-                zeroResult = await confirmSvc.ConfirmDispenseAsync(
-                    fx.PharmacistUserId,
-                    rx.Prescription.PrescriptionCode!,
-                    new ConfirmDispenseRequest(
-                        ReceiverName: "Nguyễn Văn Test",
-                        IsIdentityVerified: true,
-                        ChecksConfirmed: true,
-                        IdempotencyKey: $"idem-2b-{Guid.NewGuid():N}",
-                        Items:
-                        [
-                            new ConfirmDispenseItemRequest(
-                                rx.ItemIds[0],
-                                batchId,
-                                0m,
-                                ShortageReason: "Hết hàm lượng tương đương, bệnh nhân đồng ý nhận đơn mua bổ sung")
-                        ]));
+                var ex = await Assert.ThrowsAsync<ValidationException>(() =>
+                    confirmSvc.ConfirmDispenseAsync(
+                        fx.PharmacistUserId,
+                        rx.Prescription.PrescriptionCode!,
+                        new ConfirmDispenseRequest(
+                            ReceiverName: "Nguyễn Văn Test",
+                            IsIdentityVerified: true,
+                            ChecksConfirmed: true,
+                            IdempotencyKey: $"idem-2b-{Guid.NewGuid():N}",
+                            Items:
+                            [
+                                new ConfirmDispenseItemRequest(
+                                    rx.ItemIds[0],
+                                    batchId,
+                                    0m,
+                                    ShortageReason: "Hết hàm lượng tương đương, bệnh nhân đồng ý nhận đơn mua bổ sung")
+                            ])));
+                Assert.Contains("chưa có số lượng thực xuất", ex.Message);
             }
 
             Db.ChangeTracker.Clear();
             Assert.Equal(10m, (await Db.MedicineBatches.AsNoTracking().FirstAsync(b => b.Id == batchId)).QuantityOnHand);
             Assert.Equal(0, await Db.StockTransactions.CountAsync(st => st.MedicineBatchId == batchId));
-            var savedItem = await Db.DispenseItems.AsNoTracking().SingleAsync(di => di.PrescriptionItemId == rx.ItemIds[0]);
-            Assert.Equal(0m, savedItem.DispensedQuantity);
-
-            // SCR-PHA-04 receipt still loads 200 OK for 0-qty shortage item
-            await using (var scope = Factory.Services.CreateAsyncScope())
-            {
-                var resultSvc = scope.ServiceProvider.GetRequiredService<IDispensingResultService>();
-                var detail = await resultSvc.GetDispensingResultAsync(fx.PharmacistUserId, zeroResult.DispenseCode);
-                Assert.Equal(0m, Assert.Single(detail.Items).QtyDispensed);
-            }
+            Assert.Equal(0, await Db.MedicationDispenses.CountAsync(md => md.PrescriptionId == rx.Prescription.Id));
+            Assert.Equal("ISSUED", (await Db.Prescriptions.AsNoTracking().FirstAsync(p => p.Id == rx.Prescription.Id)).Status);
 
             // 3. DRAFT and EXTERNAL_PHARMACY prescriptions rejected (409 Conflict)
             var visitOther = await AddPaidVisitAsync(fx, "V2B-2");

@@ -223,6 +223,17 @@ public sealed class ConfirmMedicineDispensingEndpointTests : IClassFixture<TestW
             IsBlocked = false
         });
 
+        // Deliberately under-stocked batch used by the no-partial-dispensing conflict test.
+        db.MedicineBatches.Add(new MedicineBatch
+        {
+            Id = 2,
+            MedicineId = 1,
+            BatchNumber = "LO-LOW-STOCK",
+            ExpiryDate = new DateOnly(2028, 3, 31),
+            QuantityOnHand = 10m,
+            IsBlocked = false
+        });
+
         // Visit 501
         db.Visits.Add(new Visit
         {
@@ -352,6 +363,63 @@ public sealed class ConfirmMedicineDispensingEndpointTests : IClassFixture<TestW
         var receiptDto = await resultResponse.Content.ReadFromJsonAsync<DispensingResultDetailDto>();
         Assert.NotNull(receiptDto);
         Assert.Equal(result.DispenseCode, receiptDto.DispenseCode);
+    }
+
+    [Fact]
+    public async Task ConfirmDispense_PartialQuantityWithShortageReason_ReturnsBadRequestAndKeepsPrescriptionIssued()
+    {
+        var token = GenerateToken(10, "pharmacist@medflow.test", "PHARMACY_STAFF");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/pharmacy/prescriptions/RX-2026-0088/dispense");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new ConfirmDispenseRequest(
+            ReceiverName: "Nguyễn Văn An",
+            IsIdentityVerified: true,
+            ChecksConfirmed: true,
+            Items:
+            [
+                new ConfirmDispenseItemRequest(
+                    PrescriptionItemId: 1,
+                    MedicineBatchId: 1,
+                    DispensedQuantity: 50m, // Prescribed 56 — ShortageReason must NOT allow partial dispensing
+                    ShortageReason: "Kho chỉ còn 50 viên")
+            ]));
+
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        using var scope = _customFactory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+        Assert.Equal("ISSUED", (await db.Prescriptions.AsNoTracking().SingleAsync(p => p.Id == 1001)).Status);
+        Assert.Equal(100m, (await db.MedicineBatches.AsNoTracking().SingleAsync(b => b.Id == 1)).QuantityOnHand);
+        Assert.Equal(0, await db.StockTransactions.CountAsync());
+    }
+
+    [Fact]
+    public async Task ConfirmDispense_InsufficientBatchStock_ReturnsConflictAndKeepsPrescriptionIssued()
+    {
+        var token = GenerateToken(10, "pharmacist@medflow.test", "PHARMACY_STAFF");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/pharmacy/prescriptions/RX-2026-0088/dispense");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new ConfirmDispenseRequest(
+            ReceiverName: "Nguyễn Văn An",
+            IsIdentityVerified: true,
+            ChecksConfirmed: true,
+            Items:
+            [
+                new ConfirmDispenseItemRequest(
+                    PrescriptionItemId: 1,
+                    MedicineBatchId: 2, // On hand 10 < prescribed 56
+                    DispensedQuantity: 56m)
+            ]));
+
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        using var scope = _customFactory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IApplicationDbContext>();
+        Assert.Equal("ISSUED", (await db.Prescriptions.AsNoTracking().SingleAsync(p => p.Id == 1001)).Status);
+        Assert.Equal(10m, (await db.MedicineBatches.AsNoTracking().SingleAsync(b => b.Id == 2)).QuantityOnHand);
+        Assert.Equal(0, await db.StockTransactions.CountAsync());
     }
 
     [Fact]

@@ -54,7 +54,6 @@ export interface PrepareMedicineItemPayload {
   medicineBatchId?: number | null;
   batchCode?: string | null;
   pickedQuantity: number;
-  shortageReason?: string | null;
 }
 
 export interface PreparePrescriptionPayload {
