@@ -88,6 +88,86 @@ internal static class EkycProxyMetadataParser
     }
 
     // ------------------------------------------------------------------
+    // inference response: extract signed evidence (dataSign + dataBase64)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Extracts the <c>dataSign</c>/<c>dataBase64</c> pair from an AI-endpoint response body.
+    /// Probe Q3: EVERY AI response (even 4xx/5xx) carries these fields — they are the only
+    /// verifiable evidence finalize has, since no server-side re-query API exists.
+    /// Shape assumption: fields at response root, with a defensive fallback to the nested
+    /// <c>object</c> element. Both are textual cryptographic material — never image content.
+    /// Returns false when either field is absent/unparseable (never throws).
+    /// </summary>
+    public static bool TryExtractSignedEvidence(
+        string? responseBody,
+        out string? dataSign,
+        out string? dataBase64)
+    {
+        dataSign = null;
+        dataBase64 = null;
+
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (TryReadEvidencePair(doc.RootElement, out dataSign, out dataBase64))
+            {
+                return true;
+            }
+
+            if (doc.RootElement.TryGetProperty("object", out var objectElement)
+                && objectElement.ValueKind == JsonValueKind.Object)
+            {
+                return TryReadEvidencePair(objectElement, out dataSign, out dataBase64);
+            }
+
+            return false;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryReadEvidencePair(
+        JsonElement element,
+        out string? dataSign,
+        out string? dataBase64)
+    {
+        dataSign = null;
+        dataBase64 = null;
+
+        if (!element.TryGetProperty("dataSign", out var signElement)
+            || signElement.ValueKind != JsonValueKind.String
+            || !element.TryGetProperty("dataBase64", out var payloadElement)
+            || payloadElement.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        var sign = signElement.GetString();
+        var payload = payloadElement.GetString();
+        if (string.IsNullOrWhiteSpace(sign) || string.IsNullOrWhiteSpace(payload))
+        {
+            return false;
+        }
+
+        dataSign = sign;
+        dataBase64 = payload;
+        return true;
+    }
+
+    // ------------------------------------------------------------------
     // inference request: extract hash refs (img / img_front / img_back)
     // ------------------------------------------------------------------
 

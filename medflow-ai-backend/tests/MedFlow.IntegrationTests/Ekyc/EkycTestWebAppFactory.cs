@@ -17,6 +17,36 @@ public sealed class StubVnptUpstreamHandler : HttpMessageHandler
     public readonly List<(string Path, string? Authorization, string? TokenId, string? TokenKey, string? Origin)> Seen = [];
     private readonly object _lock = new();
 
+    /// <summary>
+    /// RSA-512 test keypair (mirrors trial CA key size). The stub signs every AI-endpoint
+    /// payload exactly like VNPT: RSA-SHA256/PKCS1v15 over the verbatim dataBase64 string.
+    /// The factory exposes the public key so the app's Ekyc:PublicKeyCa matches.
+    /// </summary>
+    public readonly System.Security.Cryptography.RSA SigningKey = CreateKey();
+
+    private static System.Security.Cryptography.RSA CreateKey()
+    {
+        var rsa = System.Security.Cryptography.RSA.Create();
+        rsa.KeySize = 512;
+        return rsa;
+    }
+
+    public string PublicKeyBase64 => Convert.ToBase64String(SigningKey.ExportSubjectPublicKeyInfo());
+
+    private string SignPayload(string payloadJson)
+    {
+        var dataBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(payloadJson));
+        var signature = SigningKey.SignData(
+            Encoding.UTF8.GetBytes(dataBase64),
+            System.Security.Cryptography.HashAlgorithmName.SHA256,
+            System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        var dataSign = Convert.ToBase64String(signature);
+        return "{\"dataBase64\":\"" + dataBase64 + "\",\"dataSign\":\"" + dataSign + "\",\"message\":\"ok\"}";
+    }
+
+    /// <summary>Configurable payload overrides per endpoint substring (test-controlled failure injection).</summary>
+    public readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> PayloadOverrides = new();
+
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var path = request.RequestUri?.AbsolutePath ?? string.Empty;
@@ -30,15 +60,55 @@ public sealed class StubVnptUpstreamHandler : HttpMessageHandler
             Seen.Add((path, auth, tokenId, tokenKey, origin));
         }
 
-        // addFile returns an object.hash; everything else a minimal 200 JSON envelope.
-        var body = path.Contains("addFile", StringComparison.OrdinalIgnoreCase)
-            ? """{"object":{"hash":"idg20261127/IDG01_stubbed_upload"},"message":"ok"}"""
-            : """{"message":"ok"}""";
+        string body;
+        if (path.Contains("addFile", StringComparison.OrdinalIgnoreCase))
+        {
+            body = """{"object":{"hash":"idg20261127/IDG01_stubbed_upload"},"message":"ok"}""";
+        }
+        else
+        {
+            // Signed AI responses — payload shape depends on endpoint family.
+            var payloadJson = ResolvePayload(path);
+            body = SignPayload(payloadJson);
+        }
 
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json"),
         });
+    }
+
+    private string ResolvePayload(string path)
+    {
+        foreach (var (key, overridePayload) in PayloadOverrides)
+        {
+            if (path.Contains(key, StringComparison.OrdinalIgnoreCase))
+            {
+                return overridePayload;
+            }
+        }
+
+        if (path.Contains("ocr/id", StringComparison.OrdinalIgnoreCase))
+        {
+            return """{"object":{"id":"012345678901","name":"NGUYEN VAN EKYC","birth_day":"15/06/1995","gender":"Nam","nationality":"Viet Nam","valid_date":"15/06/2040","tampering":{"is_legal":"yes","warning":[]}},"type_document":9,"challengeCode":"11111"}""";
+        }
+
+        if (path.Contains("card/liveness", StringComparison.OrdinalIgnoreCase))
+        {
+            return """{"object":{"liveness":"success","liveness_msg":"OK"},"challengeCode":"11111"}""";
+        }
+
+        if (path.Contains("face/liveness", StringComparison.OrdinalIgnoreCase))
+        {
+            return """{"object":{"liveness":"success","liveness_msg":"OK","is_eye_open":true},"challengeCode":"11111"}""";
+        }
+
+        if (path.Contains("face/compare", StringComparison.OrdinalIgnoreCase))
+        {
+            return """{"object":{"result":"success","msg":"match","prob":"92.45"},"challengeCode":"11111"}""";
+        }
+
+        return """{"object":{"liveness":"success"},"challengeCode":"11111"}""";
     }
 }
 
@@ -89,7 +159,7 @@ public sealed class EkycTestWebAppFactory : WebApplicationFactory<Program>
                 ["Ekyc:TokenId"] = "integration-token-id",
                 ["Ekyc:TokenKey"] = "integration-token-key",
                 ["Ekyc:AccessToken"] = "integration-access-token",
-                ["Ekyc:PublicKeyCa"] = "integration-public-key-ca",
+                ["Ekyc:PublicKeyCa"] = VnptHandler.PublicKeyBase64,
                 ["Ekyc:EncryptionKeyBase64"] = Convert.ToBase64String(new byte[32]),
                 ["Ekyc:HmacKey"] = "integration-ekyc-hmac-key",
             }));

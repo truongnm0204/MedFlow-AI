@@ -19,11 +19,16 @@ public sealed class EkycController : ControllerBase
 {
     private readonly IEkycSessionService _sessionService;
     private readonly IEkycProxyService _proxyService;
+    private readonly IEkycVerificationService _verificationService;
 
-    public EkycController(IEkycSessionService sessionService, IEkycProxyService proxyService)
+    public EkycController(
+        IEkycSessionService sessionService,
+        IEkycProxyService proxyService,
+        IEkycVerificationService verificationService)
     {
         _sessionService = sessionService;
         _proxyService = proxyService;
+        _verificationService = verificationService;
     }
 
     /// <summary>POST /api/v1/ekyc/sessions — create consent-gated eKYC session.</summary>
@@ -53,6 +58,24 @@ public sealed class EkycController : ControllerBase
         long id,
         CancellationToken ct)
         => Ok(await _sessionService.GetStatusAsync(GetUserId(), id, ct));
+
+    /// <summary>
+    /// POST /api/v1/ekyc/sessions/{id}/finalize — strict finalize, the trust anchor.
+    /// Takes NO verdict input: the backend verifies signed evidence, step completeness, binding,
+    /// policy verdict, ownership/TTL/single-use and decides VERIFIED vs REJECTED entirely.
+    /// Concurrent finalize is single-winner (409 for the loser).
+    /// </summary>
+    [HttpPost("sessions/{id:long}/finalize")]
+    [Authorize]
+    [EnableRateLimiting("ekyc-proxy")]
+    [ProducesResponseType<FinalizeEkycSessionResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<FinalizeEkycSessionResponse>> FinalizeSession(
+        long id,
+        CancellationToken ct)
+        => Ok(await _verificationService.FinalizeAsync(GetUserId(), id, GetIp(), ct));
 
     /// <summary>
     /// ANY /api/v1/ekyc/proxy/{sessionId}/{**path} — transparent forward to VNPT.

@@ -26,6 +26,8 @@ public class EkycProxyCallLogConfiguration : IEntityTypeConfiguration<EkycProxyC
         builder.Property(x => x.HttpStatus).HasColumnName("http_status").IsRequired();
         builder.Property(x => x.RequestObjectHashes).HasColumnName("request_object_hashes").HasColumnType("jsonb");
         builder.Property(x => x.ResponseObjectHash).HasColumnName("response_object_hash").HasMaxLength(256);
+        builder.Property(x => x.ResponseDataSign).HasColumnName("response_data_sign");
+        builder.Property(x => x.ResponsePayloadEncrypted).HasColumnName("response_payload_encrypted");
         builder.Property(x => x.ParseWarning).HasColumnName("parse_warning").HasMaxLength(128);
         builder.Property(x => x.DurationMs).HasColumnName("duration_ms");
         builder.Property(x => x.CreatedAt)

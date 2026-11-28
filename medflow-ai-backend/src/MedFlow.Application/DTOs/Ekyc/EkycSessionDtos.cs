@@ -30,3 +30,15 @@ public sealed record EkycSessionStatusResponse(
     bool Expired,
     string? FailureReason,
     DateTime CreatedAt);
+
+/// <summary>
+/// Finalize response — the verdict is fully backend-decided (TRUST ANCHOR: the client never
+/// submits verdicts). On rejection the reason is a coarse machine-readable code plus a
+/// user-safe message — never evidence payloads, never OCR PII, never internals beyond need-to-know.
+/// </summary>
+public sealed record FinalizeEkycSessionResponse(
+    string SessionId,
+    string Status,
+    string? FailureReason,
+    string? FailureCode,
+    DateTime? ConsumedAt);

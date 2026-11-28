@@ -114,6 +114,7 @@ public static class DependencyInjection
         services.AddScoped<IMedicalHistoryService, MedicalHistoryService>();
         services.AddScoped<IEkycSessionService, MedFlow.Application.Services.Ekyc.EkycSessionService>();
         services.AddScoped<IEkycProxyService, MedFlow.Application.Services.Ekyc.EkycProxyService>();
+        services.AddScoped<IEkycVerificationService, MedFlow.Application.Services.Ekyc.EkycVerificationService>();
         services.AddScoped<IClinicalRealtimeAccessService, ClinicalRealtimeAccessService>();
         services.TryAddScoped<IRealtimeNotificationPublisher, NullRealtimeNotificationPublisher>();
         services.TryAddScoped<IRealtimeAccessRevoker, NullRealtimeAccessRevoker>();

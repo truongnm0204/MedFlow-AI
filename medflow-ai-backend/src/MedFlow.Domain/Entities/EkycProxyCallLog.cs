@@ -23,6 +23,14 @@ public class EkycProxyCallLog
     /// <summary>object.hash extracted from an addFile response — server-issued upload reference.</summary>
     public string? ResponseObjectHash { get; set; }
 
+    /// <summary>dataSign (base64 RSA signature over the dataBase64 string) captured from the response.
+    /// Cryptographic proof material for finalize verification — not secret, not an image.</summary>
+    public string? ResponseDataSign { get; set; }
+
+    /// <summary>dataBase64 response payload encrypted at rest with AES-256-GCM (EkycCrypto).
+    /// Plaintext is OCR JSON text (personal data — never images); decrypted only during finalize.</summary>
+    public byte[]? ResponsePayloadEncrypted { get; set; }
+
     /// <summary>Machine-readable parse-failure reason when body shape diverges from assumptions.</summary>
     public string? ParseWarning { get; set; }
 

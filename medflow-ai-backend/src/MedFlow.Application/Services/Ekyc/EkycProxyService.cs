@@ -227,13 +227,42 @@ public sealed class EkycProxyService : IEkycProxyService
 
         var durationMs = (int)_timeProvider.GetElapsedTime(startedAt).TotalMilliseconds;
 
-        // --- Post-forward metadata extraction ----------------------------------------------------
+        // --- Post-forward metadata extraction (never retains content) --------------------------
         string? responseObjectHash = null;
         string? responseParseWarning = null;
         if (isAddFile)
         {
             responseObjectHash = EkycProxyMetadataParser.ExtractAddFileHash(
                 DecodeUtf8(responseBody), out responseParseWarning);
+        }
+
+        // --- Signed-evidence capture (slice 3 — trust anchor input) ----------------------------
+        // Probe Q3: every AI response carries dataSign+dataBase64 and NO server re-query exists —
+        // capture at proxy time or finalize has nothing to verify. Encrypted at rest (AES-256-GCM):
+        // the plaintext is OCR personal data (never images). Capture failure NEVER breaks the
+        // forward — a missing capture makes finalize fail-closed (rejected), which is safe.
+        string? capturedDataSign = null;
+        byte[]? capturedPayloadEncrypted = null;
+        if (!isAddFile
+            && EkycProxyMetadataParser.TryExtractSignedEvidence(
+                DecodeUtf8(responseBody), out var dataSign, out var dataBase64))
+        {
+            capturedDataSign = dataSign;
+            try
+            {
+                var encryptionKey = EkycCrypto.RequireEncryptionKey(OptionsWrapper());
+                capturedPayloadEncrypted = EkycCrypto.Encrypt(
+                    System.Text.Encoding.UTF8.GetBytes(dataBase64!), encryptionKey);
+            }
+            catch (InvalidOperationException)
+            {
+                // Encryption key missing/misconfigured — log-only capture. Finalize will fail
+                // closed for lack of payload evidence; never surface config detail upstream.
+                capturedPayloadEncrypted = null;
+                _logger?.LogWarning(
+                    "eKYC proxy could not encrypt response payload capture for session {SessionId} — encryption key unavailable",
+                    session.Id);
+            }
         }
 
         var parseWarning = FirstNonEmpty(requestParseWarning, compareParseWarning, responseParseWarning);
@@ -250,6 +279,8 @@ public sealed class EkycProxyService : IEkycProxyService
                 ? JsonSerializer.Serialize(requestHashes)
                 : null,
             ResponseObjectHash = responseObjectHash,
+            ResponseDataSign = capturedDataSign,
+            ResponsePayloadEncrypted = capturedPayloadEncrypted,
             ParseWarning = parseWarning,
             DurationMs = durationMs,
             CreatedAt = nowUtc,

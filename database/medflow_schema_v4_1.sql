@@ -1478,3 +1478,13 @@ BEGIN
       CHECK ("binding_state" IN ('PENDING','VALID','INVALID_BINDING','UNVERIFIABLE_BINDING'));
   END IF;
 END $$;
+
+-- ============================================================================
+-- Migration 031: signed-evidence capture on proxy call logs (slice 3 — trust anchor).
+-- Probe Q3: every AI response carries dataSign+dataBase64, no server re-query exists —
+-- capture at proxy time or finalize has nothing to verify. Encrypted at rest (AES-256-GCM,
+-- EkycCrypto — personal OCR data protection, Luật 91/2025). NEVER images.
+-- ============================================================================
+ALTER TABLE "ekyc_proxy_call_logs"
+  ADD COLUMN IF NOT EXISTS "response_data_sign" text NULL,
+  ADD COLUMN IF NOT EXISTS "response_payload_encrypted" bytea NULL;

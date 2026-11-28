@@ -167,4 +167,8 @@ public interface IApplicationDbContext
         => Task.FromResult(false);
     Task<bool> TryLockClinicalSessionRecoveryRequestsForUpdateAsync(IReadOnlyCollection<long> requestIds, CancellationToken ct = default)
         => Task.FromResult(false);
+
+    // Level 20: ekyc_verification_sessions — finalize takes this lock so concurrent finalize is single-winner.
+    Task<bool> TryLockEkycVerificationSessionForUpdateAsync(long sessionId, CancellationToken ct = default)
+        => Task.FromResult(false);
 }
