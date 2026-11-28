@@ -97,6 +97,15 @@ async function finalizeWithConflictRetry(
  *
  * Không lưu trữ dữ liệu sinh trắc học hay kết quả SDK: `handleSdkEndFlow` chỉ dùng callback
  * của SDK như tín hiệu "đã chụp xong". Phán quyết lấy từ `finalizeEkycSession`.
+ *
+ * EXTENSION POINT — chế độ RECEPTION_ASSISTED (lễ tân hỗ trợ, cùng SDK flow chạy trên máy quầy):
+ * luồng capture → finalize → verdict giữ nguyên y hệt vì backend dùng chung một SDK flow và một
+ * trust anchor finalize. Điểm DUY NHẤT phụ thuộc chế độ là bước tạo phiên (`acceptConsentAndStart`
+ * hiện gọi `createEkycSession` cho self-service registration). Khi backend slice reception chốt
+ * contract, thêm một nhánh tạo phiên reception-assisted (ví dụ khác endpoint / kèm patient context,
+ * consent do lễ tân xác nhận thay) rồi nạp sessionId+proxyBasePath vào cùng state machine này —
+ * các stage capturing/finalizing/verified/rejected không cần đổi. CHƯA implement: chờ backend
+ * slice 5 (PM ruling) chốt contract trước.
  */
 export function useEkycFlow(): UseEkycFlowResult {
   const [state, setState] = useState<EkycFlowState>(INITIAL_STATE);
