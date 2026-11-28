@@ -1885,26 +1885,22 @@ public sealed partial class ConsultationWorkspaceServiceTests : IDisposable
         sp6.IsActive = false;
         await _db.SaveChangesAsync();
 
-        // Inactive diagnostic service point -> 409
-        await Assert.ThrowsAsync<ConflictException>(
-            () => _service.CreateDiagnosticOrderAsync(
-                3,
-                "VIS-202610-0011",
-                new CreateDiagnosticOrderRequest(ServiceId: 6)));
+        // #869: điểm không hoạt động -> bỏ qua, order vẫn ORDERED chờ phân công (không còn 409 chặn bác sĩ)
+        var routedWithInactivePoint = await _service.CreateDiagnosticOrderAsync(
+            3,
+            "VIS-202610-0011",
+            new CreateDiagnosticOrderRequest(ServiceId: 6));
+        var unroutedOrder = Assert.Single(routedWithInactivePoint.CreatedDiagnosticOrders!, o => o.ServiceId == 6);
+        Assert.Null(unroutedOrder.ServicePointId);
+        Assert.True(await _db.AuditLogs.AnyAsync(a =>
+            a.Action == "DIAGNOSTIC_ROUTING_EXHAUSTED" && a.EntityId == unroutedOrder.OrderId.ToString()));
 
         sp6.IsActive = true;
-        var room6 = await _db.HospitalRooms.FirstAsync(r => r.Id == 6);
-        room6.Status = "MAINTENANCE";
         await _db.SaveChangesAsync();
 
-        // Inactive diagnostic room -> 409
-        await Assert.ThrowsAsync<ConflictException>(
-            () => _service.CreateDiagnosticOrderAsync(
-                3,
-                "VIS-202610-0011",
-                new CreateDiagnosticOrderRequest(ServiceId: 6)));
-
-        room6.Status = "ACTIVE";
+        // Dọn order vừa tạo để các bước sau vẫn kiểm tra được duplicate/room.
+        var createdOrder = await _db.DiagnosticOrders.FirstAsync(o => o.Id == unroutedOrder.OrderId);
+        createdOrder.Status = "CANCELLED";
         await _db.SaveChangesAsync();
 
         // First order for Service 5 succeeds

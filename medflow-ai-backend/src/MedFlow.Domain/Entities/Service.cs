@@ -13,6 +13,8 @@ public class Service
     public bool? AllowsOnlineBooking { get; set; }
     public bool? RequiresResultVerification { get; set; }
     public bool? IsActive { get; set; }
+    public string? DiagnosticGroup { get; set; }
+    public bool RequiresFasting { get; set; }
 
     public Department? Department { get; set; }
     public Specialty? Specialty { get; set; }

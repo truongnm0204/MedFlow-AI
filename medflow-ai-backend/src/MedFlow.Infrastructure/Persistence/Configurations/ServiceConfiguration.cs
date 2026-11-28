@@ -48,6 +48,14 @@ public class ServiceConfiguration : IEntityTypeConfiguration<Service>
         builder.Property(s => s.IsActive)
             .HasColumnName("is_active");
 
+        builder.Property(s => s.DiagnosticGroup)
+            .HasColumnName("diagnostic_group")
+            .HasMaxLength(32);
+
+        builder.Property(s => s.RequiresFasting)
+            .HasColumnName("requires_fasting")
+            .IsRequired();
+
         builder.HasIndex(s => new { s.HospitalId, s.ServiceCode })
             .IsUnique()
             .HasDatabaseName("uq_services_hospital_id_service_code");

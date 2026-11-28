@@ -65,6 +65,15 @@ public class DiagnosticOrderConfiguration : IEntityTypeConfiguration<DiagnosticO
             .HasColumnName("ordered_at")
             .HasColumnType("timestamp without time zone");
 
+        builder.Property(x => x.AssignedServicePointId)
+            .HasColumnName("assigned_service_point_id");
+
+        builder.Property(x => x.SequenceNo)
+            .HasColumnName("sequence_no");
+
+        builder.HasIndex(x => new { x.VisitId, x.SequenceNo })
+            .HasDatabaseName("ix_diagnostic_orders_visit_sequence");
+
         builder.Property(x => x.ValidityExtendedUntil)
             .HasColumnName("validity_extended_until")
             .HasColumnType("timestamp without time zone");
