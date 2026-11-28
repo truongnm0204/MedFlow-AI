@@ -112,6 +112,8 @@ public static class DependencyInjection
         services.AddScoped<ISePayWebhookService, SePayWebhookService>();
         services.AddScoped<IConsultationWorkspaceService, ConsultationWorkspaceService>();
         services.AddScoped<IMedicalHistoryService, MedicalHistoryService>();
+        services.AddScoped<IEkycSessionService, MedFlow.Application.Services.Ekyc.EkycSessionService>();
+        services.AddScoped<IEkycProxyService, MedFlow.Application.Services.Ekyc.EkycProxyService>();
         services.AddScoped<IClinicalRealtimeAccessService, ClinicalRealtimeAccessService>();
         services.TryAddScoped<IRealtimeNotificationPublisher, NullRealtimeNotificationPublisher>();
         services.TryAddScoped<IRealtimeAccessRevoker, NullRealtimeAccessRevoker>();

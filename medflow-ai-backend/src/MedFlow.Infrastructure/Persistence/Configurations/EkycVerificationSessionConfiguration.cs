@@ -73,6 +73,9 @@ public class EkycVerificationSessionConfiguration : IEntityTypeConfiguration<Eky
             .HasColumnName("consumed_at")
             .HasColumnType("timestamp without time zone");
 
+        builder.Property(x => x.BindingState).HasColumnName("binding_state").HasMaxLength(32).IsRequired();
+        builder.Property(x => x.CompareReferenceHash).HasColumnName("compare_reference_hash").HasMaxLength(256);
+
         builder.Property(x => x.CreatedAt)
             .HasColumnName("created_at")
             .HasColumnType("timestamp without time zone")

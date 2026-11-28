@@ -71,6 +71,16 @@ public class EkycVerificationSession
     /// <summary>Single-use enforcement — set when the session is consumed by activation/claim.</summary>
     public DateTime? ConsumedAt { get; set; }
 
+    /// <summary>
+    /// Step-binding validation state (migration 030). PENDING until a compare reference is
+    /// observed; VALID when the compare document hash matches a session-uploaded hash;
+    /// INVALID_BINDING on mismatch, UNVERIFIABLE_BINDING when unparseable — both fail-closed.
+    /// </summary>
+    public string BindingState { get; set; } = "PENDING";
+
+    /// <summary>Document object-hash the first face-compare call referenced (evidence for binding audit).</summary>
+    public string? CompareReferenceHash { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

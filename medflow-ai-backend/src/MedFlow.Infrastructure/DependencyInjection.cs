@@ -31,6 +31,16 @@ public static class DependencyInjection
         services.AddScoped<IAuthSessionService, AuthSessionService>();
         services.AddTransient<IEmailSender, SmtpEmailSender>();
 
+        // VNPT eKYC upstream client — no Origin header ever added (VNPT domain check rejects any
+        // Origin, probe Q4); credentials injected per-request by EkycProxyService from env config.
+        // No automatic retries: inference idempotency is unknown (double-charge risk) — see service docs.
+        services.AddHttpClient("vnpt-ekyc")
+            .ConfigureHttpClient(client =>
+            {
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("MedFlowAI-EkycProxy/1.0");
+                client.MaxResponseContentBufferSize = 4 * 1024 * 1024;
+            });
+
         services.AddOptions<MedFlow.Application.Options.ScheduleJobsOptions>()
             .Bind(configuration.GetSection(MedFlow.Application.Options.ScheduleJobsOptions.SectionName))
             .Validate(

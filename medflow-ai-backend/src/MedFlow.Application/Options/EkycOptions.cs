@@ -28,6 +28,16 @@ public sealed class EkycOptions
     /// <summary>Max step re-submission attempts per session before forced rejection.</summary>
     public int MaxAttempts { get; set; } = 5;
 
+    /// <summary>
+    /// Currently active consent text version (Luật 91/2025 + NĐ 356/2025 versioning). Session creation
+    /// requires the client to accept exactly this version — bumping the version invalidates older consents.
+    /// Non-secret operational config.
+    /// </summary>
+    public string ConsentVersion { get; set; } = "ekyc-consent-v1";
+
+    /// <summary>Upstream timeout (seconds) for one VNPT proxy call. No retries — see service docs.</summary>
+    public int UpstreamTimeoutSeconds { get; set; } = 30;
+
     /// <summary>SECRET — base64-encoded 32-byte AES-256 key. From env/secret store only.</summary>
     public string? EncryptionKeyBase64 { get; set; }
 

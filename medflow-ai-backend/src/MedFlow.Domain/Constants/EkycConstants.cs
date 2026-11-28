@@ -42,6 +42,27 @@ public static class EkycVerificationMethods
     };
 }
 
+/// <summary>Step-binding validation states (migration 030) — fail-closed semantics.</summary>
+public static class EkycBindingStates
+{
+    /// <summary>No compare reference observed yet.</summary>
+    public const string Pending = "PENDING";
+
+    /// <summary>Compare document hash matches a hash uploaded within this session.</summary>
+    public const string Valid = "VALID";
+
+    /// <summary>Compare document hash does NOT match any session-uploaded hash — composite-attack signal.</summary>
+    public const string Invalid = "INVALID_BINDING";
+
+    /// <summary>Compare reference could not be extracted/parsed — cannot prove binding, treat as failure.</summary>
+    public const string Unverifiable = "UNVERIFIABLE_BINDING";
+
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Pending, Valid, Invalid, Unverifiable,
+    };
+}
+
 public static class EkycConstants
 {
     /// <summary>Max length of consent version tag (varchar(32) in schema).</summary>

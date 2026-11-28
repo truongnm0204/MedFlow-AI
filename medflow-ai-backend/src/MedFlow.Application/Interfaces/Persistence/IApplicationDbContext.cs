@@ -55,6 +55,7 @@ public interface IApplicationDbContext
     DbSet<Notification> Notifications => throw new NotSupportedException("Notifications DbSet is not configured in this test context.");
     DbSet<ClinicalSessionRecoveryRequest> ClinicalSessionRecoveryRequests => throw new NotSupportedException("ClinicalSessionRecoveryRequests DbSet is not configured in this test context.");
     DbSet<EkycVerificationSession> EkycVerificationSessions => throw new NotSupportedException("EkycVerificationSessions DbSet is not configured in this test context.");
+    DbSet<EkycProxyCallLog> EkycProxyCallLogs => throw new NotSupportedException("EkycProxyCallLogs DbSet is not configured in this test context.");
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);

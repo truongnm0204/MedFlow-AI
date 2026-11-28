@@ -294,6 +294,17 @@ builder.Services.AddRateLimiter(options =>
         RateLimitPartition.GetFixedWindowLimiter(
             ResolveUserOrClientIpPartitionKey(httpContext, "ai-recommend"),
             _ => BuildFixedWindowOptions(httpContext, "AiRecommendPermitLimit", 15)));
+
+    options.AddPolicy("ekyc-session-create", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ResolveUserOrClientIpPartitionKey(httpContext, "ekyc-session-create"),
+            _ => BuildFixedWindowOptions(httpContext, "EkycSessionCreatePermitLimit", 5)));
+
+    options.AddPolicy("ekyc-proxy", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ResolveUserOrClientIpPartitionKey(httpContext, "ekyc-proxy"),
+            _ => BuildFixedWindowOptions(httpContext, "EkycProxyPermitLimit", 30)));
+
 });
 
 var configuredCorsOrigins = builder.Configuration
