@@ -12,7 +12,8 @@
 -- Only endpoint paths, status codes, object-hash references and JSON fingerprints.
 --
 -- Also adds binding-validation columns on ekyc_verification_sessions:
---   binding_state      — PENDING / VALID / INVALID_BINDING / UNVERIFIABLE_BINDING (fail-closed)
+--   binding_state      — PENDING / NOT_APPLICABLE / VALID / INVALID_BINDING / UNVERIFIABLE_BINDING
+--                        (fail-closed; NOT_APPLICABLE = optional face-compare step not run)
 --   compare_reference_hash — the document hash the compare call referenced (first observed)
 -- Stores hashes (hex/base64 refs), not images.
 --
@@ -106,11 +107,19 @@ ALTER TABLE "ekyc_verification_sessions"
 
 DO $$
 BEGIN
+  -- Recreate when the earlier unmerged constraint predates NOT_APPLICABLE (owner scope
+  -- 2026-11-28: face/compare optional, so "not run" must be representable without failing).
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_binding_state'
+               AND conrelid = '"ekyc_verification_sessions"'::regclass
+               AND pg_get_constraintdef(oid) NOT LIKE '%NOT_APPLICABLE%') THEN
+    ALTER TABLE "ekyc_verification_sessions" DROP CONSTRAINT "chk_ekyc_binding_state";
+  END IF;
+
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_binding_state'
                    AND conrelid = '"ekyc_verification_sessions"'::regclass) THEN
     ALTER TABLE "ekyc_verification_sessions"
       ADD CONSTRAINT "chk_ekyc_binding_state"
-      CHECK ("binding_state" IN ('PENDING','VALID','INVALID_BINDING','UNVERIFIABLE_BINDING'));
+      CHECK ("binding_state" IN ('PENDING','NOT_APPLICABLE','VALID','INVALID_BINDING','UNVERIFIABLE_BINDING'));
   END IF;
 END $$;
 

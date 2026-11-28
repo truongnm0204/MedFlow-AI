@@ -55,7 +55,8 @@ public sealed class EkycFinalizeEvaluationTests
         Id = 42,
         UserId = 7,
         Status = EkycVerificationStatuses.Initiated,
-        VerificationMethod = EkycVerificationMethods.EkycVnpt,
+        VerificationMode = EkycVerificationModes.SelfService,
+        Purpose = EkycPurposes.AccountActivation,
         BindingState = bindingState,
         ExpiresAt = DateTime.UtcNow.AddMinutes(10),
         CreatedAt = DateTime.UtcNow.AddMinutes(-5),
@@ -103,10 +104,13 @@ public sealed class EkycFinalizeEvaluationTests
         List<EkycProxyCallLog> logs,
         VnptEkycConfig? config = null,
         string? expectedName = null,
-        DateOnly? expectedDob = null)
+        DateOnly? expectedDob = null,
+        string? expectedIdentificationHmac = null)
         => EkycVerificationService.EvaluateEvidence(
             session, logs, config ?? BuildConfig(), EncryptionKey, HmacKey, 7,
-            expectedNameOverride: expectedName, expectedDobOverride: expectedDob);
+            expectedNameOverride: expectedName,
+            expectedDobOverride: expectedDob,
+            expectedIdentificationHmac: expectedIdentificationHmac);
 
     // ---------------------------------------------------------------
     // Happy path — full valid evidence passes
@@ -187,15 +191,30 @@ public sealed class EkycFinalizeEvaluationTests
     // ---------------------------------------------------------------
 
     [Fact]
-    public void Evaluate_MissingCompareStep_Rejected()
+    public void Evaluate_NoFaceCompare_DocumentAndCardOnly_Succeeds()
+    {
+        // Owner scope 2026-11-28: face compare (and face liveness) are OPTIONAL. CCCD proof is
+        // document OCR + card liveness + tampering verdict, all still cryptographically verified.
+        var logs = ValidEvidence();
+        logs.RemoveAll(l => l.EndpointPath.Contains("compare"));
+        logs.RemoveAll(l => l.EndpointPath.Contains("face/liveness"));
+
+        var result = Evaluate(BuildSession(bindingState: EkycBindingStates.Pending), logs);
+
+        Assert.True(result.Success, $"unexpected fail: {result.FailureCode}");
+        Assert.Null(result.CompareResult); // optional step did not run
+    }
+
+    [Fact]
+    public void Evaluate_NoFaceCompare_FaceLivenessStillEnforcedWhenPresent()
     {
         var logs = ValidEvidence();
         logs.RemoveAll(l => l.EndpointPath.Contains("compare"));
 
-        var result = Evaluate(BuildSession(), logs);
+        var result = Evaluate(BuildSession(bindingState: EkycBindingStates.Pending), logs);
 
-        Assert.False(result.Success);
-        Assert.Equal(EkycVerificationService.FailMissingStep, result.FailureCode);
+        Assert.True(result.Success, $"unexpected fail: {result.FailureCode}");
+        Assert.Null(result.CompareResult);
     }
 
     [Fact]
@@ -211,15 +230,15 @@ public sealed class EkycFinalizeEvaluationTests
     }
 
     [Fact]
-    public void Evaluate_MissingFaceLiveness_Rejected()
+    public void Evaluate_MissingFaceLiveness_ButComparePresent_Succeeds()
     {
+        // Face liveness is optional; compare still requires VALID binding and threshold.
         var logs = ValidEvidence();
         logs.RemoveAll(l => l.EndpointPath.Contains("face/liveness"));
 
         var result = Evaluate(BuildSession(), logs);
 
-        Assert.False(result.Success);
-        Assert.Equal(EkycVerificationService.FailMissingStep, result.FailureCode);
+        Assert.True(result.Success, $"unexpected fail: {result.FailureCode}");
     }
 
     [Fact]
@@ -378,6 +397,34 @@ public sealed class EkycFinalizeEvaluationTests
         Assert.Equal(EkycVerificationService.FailOcrMismatch, result.FailureCode);
     }
 
+    [Fact]
+    public void Evaluate_OcrIdentificationMatchesDeclared_Passes()
+    {
+        var declaredHmac = EkycCrypto.ComputeIdentificationHmac("012345678901", HmacKey);
+
+        var result = Evaluate(BuildSession(), ValidEvidence(),
+            expectedName: "Nguyễn Văn An",
+            expectedDob: new DateOnly(1995, 6, 15),
+            expectedIdentificationHmac: declaredHmac);
+
+        Assert.True(result.Success, $"unexpected fail: {result.FailureCode}");
+    }
+
+    [Fact]
+    public void Evaluate_OcrIdentificationMismatch_Rejected()
+    {
+        // Declared CCCD differs from the OCR id — owner scope makes the CCCD match mandatory.
+        var declaredHmac = EkycCrypto.ComputeIdentificationHmac("099999999999", HmacKey);
+
+        var result = Evaluate(BuildSession(), ValidEvidence(),
+            expectedName: "Nguyễn Văn An",
+            expectedDob: new DateOnly(1995, 6, 15),
+            expectedIdentificationHmac: declaredHmac);
+
+        Assert.False(result.Success);
+        Assert.Equal(EkycVerificationService.FailOcrMismatch, result.FailureCode);
+    }
+
     // ---------------------------------------------------------------
     // Step classification sanity
     // ---------------------------------------------------------------
@@ -436,7 +483,8 @@ public sealed class EkycFinalizePolicyTests
         Id = 42,
         UserId = 7,
         Status = EkycVerificationStatuses.Initiated,
-        VerificationMethod = EkycVerificationMethods.EkycVnpt,
+        VerificationMode = EkycVerificationModes.SelfService,
+        Purpose = EkycPurposes.AccountActivation,
         BindingState = EkycBindingStates.Valid,
         ExpiresAt = DateTime.UtcNow.AddMinutes(10),
         CreatedAt = DateTime.UtcNow.AddMinutes(-5),

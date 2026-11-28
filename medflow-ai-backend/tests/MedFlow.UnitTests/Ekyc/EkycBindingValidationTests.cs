@@ -148,7 +148,8 @@ public sealed class EkycBindingValidationTests : IDisposable
         {
             UserId = 10,
             Status = EkycVerificationStatuses.Initiated,
-            VerificationMethod = EkycVerificationMethods.EkycVnpt,
+            VerificationMode = EkycVerificationModes.SelfService,
+            Purpose = EkycPurposes.AccountActivation,
             ExpiresAt = DateTime.UtcNow.AddMinutes(15),
             BindingState = EkycBindingStates.Pending,
             CreatedAt = DateTime.UtcNow,

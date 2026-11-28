@@ -69,7 +69,7 @@ public sealed class EkycFinalizeEndpointTests : IClassFixture<EkycTestWebAppFact
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/ekyc/sessions")
         {
-            Content = JsonContent.Create(new { consentVersion = "ekyc-consent-v1", consentAccepted = true }),
+            Content = JsonContent.Create(new { consentVersion = "ekyc-consent-v1", consentAccepted = true, identityCard = "012345678901" }),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -146,6 +146,115 @@ public sealed class EkycFinalizeEndpointTests : IClassFixture<EkycTestWebAppFact
 
         // OCR snapshot must not contain any base64 image material — bounded size sanity.
         Assert.True(session.OcrSnapshot!.Length < 2000);
+    }
+
+    [Fact]
+    public async Task Finalize_DocumentAndCardOnly_Verified()
+    {
+        // Owner scope 2026-11-28: face liveness + compare are OPTIONAL. Document OCR + card
+        // liveness are the required CCCD proof.
+        var token = await CreatePatientTokenAsync();
+        var (sessionId, proxyBase) = await CreateSessionAsync(token);
+
+        await ProxyPostAsync(token, proxyBase, "/file-service/v1/addFile", "fake-upload");
+        await ProxyPostAsync(token, proxyBase, "/ai/v1/web/ocr/id/front",
+            "{\"img_front\":\"idg20261127/IDG01_stubbed_upload\",\"client_session\":\"x\"}");
+        await ProxyPostAsync(token, proxyBase, "/ai/v1/web/card/liveness",
+            "{\"img\":\"idg20261127/IDG01_stubbed_upload\"}");
+
+        var response = await FinalizeAsync(token, sessionId);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("VERIFIED", body);
+        Assert.Contains(EkycBindingStates.NotApplicable, await Db.EkycVerificationSessions
+            .Where(s => s.Id == sessionId).Select(s => s.BindingState).FirstAsync());
+    }
+
+    [Fact]
+    public async Task Finalize_DeclaredCccdMismatch_Rejected()
+    {
+        var token = await CreatePatientTokenAsync();
+        using var create = new HttpRequestMessage(HttpMethod.Post, "/api/v1/ekyc/sessions")
+        {
+            Content = JsonContent.Create(new
+            {
+                consentVersion = "ekyc-consent-v1",
+                consentAccepted = true,
+                identityCard = "099999999999", // differs from the stub OCR id
+            }),
+        };
+        create.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var createResponse = await _client.SendAsync(create);
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        var created = await createResponse.Content.ReadFromJsonAsync<CreateSessionShape>();
+
+        await ProxyPostAsync(token, created!.ProxyBasePath, "/file-service/v1/addFile", "fake-upload");
+        await ProxyPostAsync(token, created.ProxyBasePath, "/ai/v1/web/ocr/id/front",
+            "{\"img_front\":\"idg20261127/IDG01_stubbed_upload\"}");
+        await ProxyPostAsync(token, created.ProxyBasePath, "/ai/v1/web/card/liveness",
+            "{\"img\":\"idg20261127/IDG01_stubbed_upload\"}");
+
+        var response = await FinalizeAsync(token, long.Parse(created.SessionId));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("REJECTED", body);
+        Assert.Contains("OCR_MISMATCH", body);
+    }
+
+    [Fact]
+    public async Task Finalize_TamperingDetected_Rejected()
+    {
+        var token = await CreatePatientTokenAsync();
+        var (sessionId, proxyBase) = await CreateSessionAsync(token);
+
+        _factory.VnptHandler.PayloadOverrides["ocr/id"] =
+            """{"object":{"id":"012345678901","name":"NGUYEN VAN EKYC","birth_day":"15/06/1995","gender":"Nam","tampering":{"is_legal":"no","warning":["edited"]}},"type_document":9,"challengeCode":"11111"}""";
+        try
+        {
+            await ProxyPostAsync(token, proxyBase, "/file-service/v1/addFile", "fake-upload");
+            await ProxyPostAsync(token, proxyBase, "/ai/v1/web/ocr/id/front",
+                "{\"img_front\":\"idg20261127/IDG01_stubbed_upload\"}");
+            await ProxyPostAsync(token, proxyBase, "/ai/v1/web/card/liveness",
+                "{\"img\":\"idg20261127/IDG01_stubbed_upload\"}");
+        }
+        finally
+        {
+            _factory.VnptHandler.PayloadOverrides.TryRemove("ocr/id", out _);
+        }
+
+        var response = await FinalizeAsync(token, sessionId);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("REJECTED", body);
+        Assert.Contains("TAMPERING_DETECTED", body);
+    }
+
+    [Fact]
+    public async Task Finalize_CompareBelowThreshold_Rejected()
+    {
+        var token = await CreatePatientTokenAsync();
+        var (sessionId, proxyBase) = await CreateSessionAsync(token);
+
+        _factory.VnptHandler.PayloadOverrides["face/compare"] =
+            """{"object":{"result":"success","msg":"match","prob":"10.00"},"challengeCode":"11111"}""";
+        try
+        {
+            await RunFullFlowAsync(token, proxyBase);
+        }
+        finally
+        {
+            _factory.VnptHandler.PayloadOverrides.TryRemove("face/compare", out _);
+        }
+
+        var response = await FinalizeAsync(token, sessionId);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("REJECTED", body);
+        Assert.Contains("COMPARE_BELOW_THRESHOLD", body);
     }
 
     // ------------------------------------------------------------------

@@ -99,8 +99,12 @@ public sealed class EkycProxyService : IEkycProxyService
             .FirstOrDefaultAsync(s => s.Id == sessionId, ct)
             ?? throw new NotFoundException("EkycVerificationSession", sessionId);
 
-        // Layer-2 ownership: a session belongs to exactly one account — never leak existence cross-account.
-        if (session.UserId != actorUserId)
+        // Layer-2 ownership: a self-service session belongs to exactly one account; a
+        // reception-assisted session belongs to the staff member who created it (performed_by).
+        // Never leak existence cross-account.
+        var isReceptionOperator = string.Equals(session.VerificationMode, EkycVerificationModes.ReceptionAssisted, StringComparison.Ordinal)
+            && session.PerformedBy == actorUserId;
+        if (session.UserId != actorUserId && !isReceptionOperator)
         {
             throw new NotFoundException("EkycVerificationSession", sessionId);
         }

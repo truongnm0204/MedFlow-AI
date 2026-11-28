@@ -77,7 +77,7 @@ public sealed class EkycRegistrationDedupeEndpointTests : IDisposable
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/ekyc/sessions")
         {
-            Content = JsonContent.Create(new { consentVersion = "ekyc-consent-v1", consentAccepted = true }),
+            Content = JsonContent.Create(new { consentVersion = "ekyc-consent-v1", consentAccepted = true, identityCard = "012345678901" }),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var response = await _client.SendAsync(request);

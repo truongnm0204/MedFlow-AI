@@ -71,7 +71,7 @@ public sealed class EkycProxyEndpointTests : IClassFixture<EkycTestWebAppFactory
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/ekyc/sessions")
         {
-            Content = JsonContent.Create(new { consentVersion = "ekyc-consent-v1", consentAccepted = true }),
+            Content = JsonContent.Create(new { consentVersion = "ekyc-consent-v1", consentAccepted = true, identityCard = "012345678901" }),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
@@ -92,7 +92,7 @@ public sealed class EkycProxyEndpointTests : IClassFixture<EkycTestWebAppFactory
     public async Task CreateSession_RequiresAuth()
     {
         var response = await _client.PostAsJsonAsync("/api/v1/ekyc/sessions",
-            new { consentVersion = "ekyc-consent-v1", consentAccepted = true });
+            new { consentVersion = "ekyc-consent-v1", consentAccepted = true, identityCard = "012345678901" });
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }

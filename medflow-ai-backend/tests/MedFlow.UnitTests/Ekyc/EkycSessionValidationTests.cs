@@ -60,7 +60,9 @@ public sealed class EkycSessionValidationTests : IDisposable
             modelBuilder.Ignore<Permission>();
             modelBuilder.Ignore<UserRole>();
             modelBuilder.Ignore<RolePermission>();
-            modelBuilder.Ignore<Patient>();
+            modelBuilder.Entity<Patient>().HasKey(p => p.Id);
+            modelBuilder.Entity<Patient>().Property(p => p.Id).ValueGeneratedOnAdd();
+            modelBuilder.Entity<Patient>().Ignore(p => p.User);
             modelBuilder.Ignore<Staff>();
             modelBuilder.Ignore<Doctor>();
             modelBuilder.Ignore<DoctorServiceAuthorization>();
@@ -116,6 +118,7 @@ public sealed class EkycSessionValidationTests : IDisposable
         {
             ConsentVersion = "ekyc-consent-v1",
             SessionTtlMinutes = 15,
+            HmacKey = "test-hmac-key-session-validation",
         });
         _sessionService = new EkycSessionService(_db, options: ekycOptions);
     }
@@ -126,6 +129,7 @@ public sealed class EkycSessionValidationTests : IDisposable
     {
         ConsentVersion = "ekyc-consent-v1",
         ConsentAccepted = true,
+        IdentityCard = "012345678901",
     };
 
     // ---------------------------------------------------------------
@@ -135,7 +139,12 @@ public sealed class EkycSessionValidationTests : IDisposable
     [Fact]
     public async Task Create_Rejects_WhenConsentNotAccepted()
     {
-        var request = new CreateEkycSessionRequest { ConsentVersion = "ekyc-consent-v1", ConsentAccepted = false };
+        var request = new CreateEkycSessionRequest
+        {
+            ConsentVersion = "ekyc-consent-v1",
+            ConsentAccepted = false,
+            IdentityCard = "012345678901",
+        };
 
         var ex = await Assert.ThrowsAsync<ValidationException>(
             () => _sessionService.CreateAsync(10, request, "127.0.0.1", "agent"));
@@ -146,7 +155,12 @@ public sealed class EkycSessionValidationTests : IDisposable
     [Fact]
     public async Task Create_Rejects_WhenConsentVersionMismatch()
     {
-        var request = new CreateEkycSessionRequest { ConsentVersion = "ekyc-consent-v0-old", ConsentAccepted = true };
+        var request = new CreateEkycSessionRequest
+        {
+            ConsentVersion = "ekyc-consent-v0-old",
+            ConsentAccepted = true,
+            IdentityCard = "012345678901",
+        };
 
         var ex = await Assert.ThrowsAsync<ValidationException>(
             () => _sessionService.CreateAsync(10, request, null, null));
@@ -157,7 +171,12 @@ public sealed class EkycSessionValidationTests : IDisposable
     [Fact]
     public async Task Create_Rejects_WhenConsentVersionMissing()
     {
-        var request = new CreateEkycSessionRequest { ConsentVersion = null, ConsentAccepted = true };
+        var request = new CreateEkycSessionRequest
+        {
+            ConsentVersion = null,
+            ConsentAccepted = true,
+            IdentityCard = "012345678901",
+        };
 
         await Assert.ThrowsAsync<ValidationException>(
             () => _sessionService.CreateAsync(10, request, null, null));
@@ -184,7 +203,9 @@ public sealed class EkycSessionValidationTests : IDisposable
         Assert.Equal(10, session.UserId);
         Assert.Equal("ekyc-consent-v1", session.ConsentVersion);
         Assert.NotNull(session.ConsentAcceptedAt);
-        Assert.Equal(EkycVerificationMethods.EkycVnpt, session.VerificationMethod);
+        Assert.Equal(EkycVerificationModes.SelfService, session.VerificationMode);
+        Assert.Equal(EkycPurposes.AccountActivation, session.Purpose);
+        Assert.NotNull(session.DeclaredIdentificationHmac);
         Assert.Equal(EkycBindingStates.Pending, session.BindingState);
     }
 
@@ -246,7 +267,8 @@ public sealed class EkycSessionValidationTests : IDisposable
         {
             UserId = userId,
             Status = status,
-            VerificationMethod = EkycVerificationMethods.EkycVnpt,
+            VerificationMode = EkycVerificationModes.SelfService,
+            Purpose = EkycPurposes.AccountActivation,
             ExpiresAt = expiresAt,
             BindingState = EkycBindingStates.Pending,
             CreatedAt = DateTime.UtcNow,

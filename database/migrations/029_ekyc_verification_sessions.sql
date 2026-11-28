@@ -1,8 +1,18 @@
--- Migration 029: VNPT eKYC verification sessions (Phase 1, plan v2.1 mục 2).
+-- Migration 029: VNPT eKYC verification sessions (Phase 1, plan v2.1 mục 2 — owner scope 2026-11-28).
 --
--- Adds ONE table "ekyc_verification_sessions" — evidence record for both online
--- eKYC (verification_method = 'EKYC_VNPT') and reception-assisted manual verification
--- ('RECEPTION_MANUAL'), per the discriminator decision in plan v2.1 (không tách 2 bảng).
+-- ONE table "ekyc_verification_sessions" — evidence record for the SINGLE VNPT eKYC engine.
+-- Owner decision (2026-11-28) removed the reception-manual discriminator entirely:
+--   * There is no RECEPTION_MANUAL method and no manual post-review. Reception can only drive
+--     the same eKYC engine; it can never set VERIFIED itself.
+--   * The old verification_method discriminator was dropped. "Who operated the session" is now
+--     verification_mode (SELF_SERVICE / RECEPTION_ASSISTED) and the produced identity artifact
+--     is purpose (ACCOUNT_ACTIVATION / PATIENT_PROFILE).
+--   * verified_by was replaced by performed_by (FK users, NULL for self-service). For
+--     reception-assisted sessions performed_by must be set and must differ from the subject
+--     account user_id. Patient-only sessions have user_id NULL, so the DB constraint protects
+--     the account-subject case; service-level checks cover patient ownership semantics.
+--   * Declared intake identity (full name / DOB / HMAC of CCCD) is stored so finalize can
+--     match OCR against what was declared at the counter even when no patient row existed yet.
 --
 -- DEVIATIONS from plan v2.1 mục 2 (all documented, reviewed):
 --   1. PK/FK type is bigint identity, NOT uuid — matches the v4.1 codebase-wide type
@@ -12,24 +22,23 @@
 --      Migration 017 is the only outlier. Values written by backend are UTC-derived
 --      DateTime stored as Kind=Unspecified, consistent with all sibling tables.
 --   3. registration_session_id has NO foreign key: the registration-scope session
---      mechanism (scope-limited auth token) does not exist yet — it is Phase 1 work
---      item 3 and will introduce the link target. Column reserved now (bigint NULL)
---      to avoid a second migration touching this table in the same release window.
---      auth_sessions was evaluated and rejected as FK target: it models login
---      refresh-token sessions, not registration sessions; a hard FK to it would
---      misrepresent semantics once the real registration-session table lands.
---   4. users table: NO schema change — activation gate is a service-level condition
---      on the existing users.status state machine ('PENDING' → 'ACTIVE'), added in a
---      later slice. Nothing new to persist at rest.
+--      mechanism (scope-limited auth token) does not exist — it is Phase 1 work item 3 and
+--      will introduce the link target. Column reserved now (bigint NULL) to avoid a second
+--      migration touching this table in the same release window.
+--   4. users table: NO schema change — activation gate is a service-level condition on the
+--      existing users.status state machine ('PENDING' → 'ACTIVE').
 --
 -- HARD RULES encoded here:
 --   - No raw images: only OCR fields/verdicts/digest + encrypted payload snapshot.
 --   - evidence_payload_full is bytea encrypted at rest (AES-256-GCM, key from env
 --     Ekyc:EncryptionKeyBase64 — application-level encryption, never plaintext).
---   - identification_hmac is HMAC-SHA256 with server secret — never plain SHA.
---   - verified_by <> user_id (no self-verification, mirrors chk no-self-grant style).
+--   - identification_hmac / declared_identification_hmac are HMAC-SHA256 with server secret —
+--     never plain SHA, never the plaintext CCCD.
+--   - performed_by <> user_id for reception-assisted sessions (no self-verification).
 --
--- 100% idempotent across repeated runs. Never edits rows of other tables.
+-- Idempotent across repeated runs, including upgrade from the earlier unmerged 029 shape
+-- (verification_method + verified_by): old constraints/columns are dropped, values migrated.
+-- Never edits rows of other tables.
 
 BEGIN;
 
@@ -42,25 +51,51 @@ DO $$
 DECLARE
   v_bad_count bigint := 0;
   v_samples text := '';
+  v_has_table boolean := to_regclass('public.ekyc_verification_sessions') IS NOT NULL;
+  v_has_mode boolean := false;
+  v_has_purpose boolean := false;
+  v_has_performed_by boolean := false;
 BEGIN
-  -- 0.1. Re-run guard: status/method tuple must stay within the declared machines.
-  IF to_regclass('public.ekyc_verification_sessions') IS NOT NULL THEN
-    EXECUTE $dyn$
+  IF v_has_table THEN
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'ekyc_verification_sessions' AND column_name = 'verification_mode'
+    ) INTO v_has_mode;
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'ekyc_verification_sessions' AND column_name = 'purpose'
+    ) INTO v_has_purpose;
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'ekyc_verification_sessions' AND column_name = 'performed_by'
+    ) INTO v_has_performed_by;
+
+    EXECUTE format($dyn$
       SELECT COUNT(*), coalesce(string_agg(id::text, ', ' ORDER BY id), '')
       FROM (
         SELECT id
         FROM ekyc_verification_sessions
         WHERE status NOT IN ('INITIATED','DOCUMENT_FRONT_DONE','DOCUMENT_BACK_DONE','FACE_DONE','FINALIZED','VERIFIED','REJECTED','EXPIRED','CONSUMED')
-           OR verification_method NOT IN ('EKYC_VNPT','RECEPTION_MANUAL')
-           OR (verified_by IS NOT NULL AND user_id IS NOT NULL AND verified_by = user_id)
            OR attempt_count < 0
+           %s
         ORDER BY id
         LIMIT 10
       ) s
-    $dyn$ INTO v_bad_count, v_samples;
+    $dyn$,
+      CASE WHEN v_has_mode THEN
+        'OR verification_mode NOT IN (''SELF_SERVICE'',''RECEPTION_ASSISTED'')' ELSE '' END
+      ||
+      CASE WHEN v_has_purpose THEN
+        'OR purpose NOT IN (''ACCOUNT_ACTIVATION'',''PATIENT_PROFILE'')' ELSE '' END
+      ||
+      CASE WHEN v_has_mode AND v_has_performed_by THEN
+        'OR (verification_mode = ''SELF_SERVICE'' AND performed_by IS NOT NULL)'
+        || ' OR (verification_mode = ''RECEPTION_ASSISTED'' AND (performed_by IS NULL OR performed_by = user_id))'
+        ELSE '' END
+    ) INTO v_bad_count, v_samples;
 
     IF v_bad_count > 0 THEN
-      RAISE EXCEPTION '[PREFLIGHT_029_FAILED] ekyc_verification_sessions has rows violating status/method/self-verify/attempt_count invariants (% row(s); sample ids: %). Run database/scripts/preflight_029_audit.sql.',
+      RAISE EXCEPTION '[PREFLIGHT_029_FAILED] ekyc_verification_sessions has rows violating status/mode/purpose/performed_by/attempt_count invariants (% row(s); sample ids: %). Run database/scripts/preflight_029_audit.sql.',
         v_bad_count, v_samples;
     END IF;
   END IF;
@@ -72,12 +107,13 @@ END $$;
 CREATE TABLE IF NOT EXISTS "ekyc_verification_sessions" (
   "id" bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
   "user_id" bigint NULL REFERENCES "users" ("id") ON DELETE RESTRICT,
-  -- Registration-scope session link. NO FK by design (see header deviation 3):
-  -- target table does not exist until registration-scope tokens land (Phase 1 item 3).
+  -- Registration-scope session link. NO FK by design (see header deviation 3).
   "registration_session_id" bigint NULL,
   "patient_id" bigint NULL REFERENCES "patients" ("id") ON DELETE RESTRICT,
   "status" varchar(32) NOT NULL,
-  "verification_method" varchar(32) NOT NULL,
+  -- Who operated the session + which identity artifact it produces (owner scope 2026-11-28).
+  "verification_mode" varchar(32) NOT NULL DEFAULT 'SELF_SERVICE',
+  "purpose" varchar(32) NOT NULL DEFAULT 'ACCOUNT_ACTIVATION',
   -- OCR fields only (full_name/id_number/dob/... + prob scores). NEVER images.
   "ocr_snapshot" jsonb NULL,
   -- card_front/card_back/face/masked verdicts + messages. NEVER images.
@@ -89,17 +125,19 @@ CREATE TABLE IF NOT EXISTS "ekyc_verification_sessions" (
   -- SHA-256 hex digest of the dataBase64 string — allows re-verify without storing payload.
   "evidence_payload_digest" text NULL,
   -- dataBase64 payload, AES-256-GCM encrypted at rest (key from env, never DB).
-  -- Retention-limited; exists for legal re-verification only.
   "evidence_payload_full" bytea NULL,
-  -- HMAC-SHA256 hex of normalized national ID with server secret (Ekyc:HmacKey /
-  -- Identity:HashKey fallback). Dedupe lookup key — never a plain hash.
+  -- HMAC-SHA256 hex of normalized national ID with server secret — dedupe lookup.
   "identification_hmac" varchar(128) NULL,
+  -- Declared intake identity for OCR matching (reception-assisted path). HMAC only for CCCD.
+  "declared_full_name" varchar(200) NULL,
+  "declared_birth_day" date NULL,
+  "declared_identification_hmac" varchar(128) NULL,
   "consent_version" varchar(32) NULL,
   "consent_accepted_at" timestamp without time zone NULL,
   "client_ip" inet NULL,
   "user_agent" text NULL,
-  -- Reception verifier (method = RECEPTION_MANUAL). Must differ from user_id.
-  "verified_by" bigint NULL REFERENCES "users" ("id") ON DELETE RESTRICT,
+  -- Staff who operated a reception-assisted session. NULL for self-service; != user_id.
+  "performed_by" bigint NULL REFERENCES "users" ("id") ON DELETE RESTRICT,
   "failure_reason" text NULL,
   "attempt_count" integer NOT NULL DEFAULT 0,
   "expires_at" timestamp without time zone NOT NULL,
@@ -108,7 +146,53 @@ CREATE TABLE IF NOT EXISTS "ekyc_verification_sessions" (
   "updated_at" timestamp without time zone NOT NULL DEFAULT now()
 );
 
--- 1.1. Check constraints (status machine + method discriminator + no self-verify + attempts).
+-- 1.1. Upgrade path from the earlier unmerged 029 shape (verification_method/verified_by).
+--      The branch was never merged, so an existing dev/test database may carry the old columns.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_verification_method'
+               AND conrelid = '"ekyc_verification_sessions"'::regclass) THEN
+    ALTER TABLE "ekyc_verification_sessions" DROP CONSTRAINT "chk_ekyc_verification_method";
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_no_self_verify'
+               AND conrelid = '"ekyc_verification_sessions"'::regclass) THEN
+    ALTER TABLE "ekyc_verification_sessions" DROP CONSTRAINT "chk_ekyc_no_self_verify";
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_method_verifier_consistency'
+               AND conrelid = '"ekyc_verification_sessions"'::regclass) THEN
+    ALTER TABLE "ekyc_verification_sessions" DROP CONSTRAINT "chk_ekyc_method_verifier_consistency";
+  END IF;
+END $$;
+
+ALTER TABLE "ekyc_verification_sessions"
+  ADD COLUMN IF NOT EXISTS "verification_mode" varchar(32) NOT NULL DEFAULT 'SELF_SERVICE',
+  ADD COLUMN IF NOT EXISTS "purpose" varchar(32) NOT NULL DEFAULT 'ACCOUNT_ACTIVATION',
+  ADD COLUMN IF NOT EXISTS "performed_by" bigint NULL REFERENCES "users" ("id") ON DELETE RESTRICT,
+  ADD COLUMN IF NOT EXISTS "declared_full_name" varchar(200) NULL,
+  ADD COLUMN IF NOT EXISTS "declared_birth_day" date NULL,
+  ADD COLUMN IF NOT EXISTS "declared_identification_hmac" varchar(128) NULL;
+
+-- Carry legacy reception-manual verifier semantics forward before dropping the old columns.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_name = 'ekyc_verification_sessions' AND column_name = 'verified_by') THEN
+    EXECUTE 'UPDATE ekyc_verification_sessions
+                SET performed_by = verified_by,
+                    verification_mode = ''RECEPTION_ASSISTED''
+              WHERE verified_by IS NOT NULL AND performed_by IS NULL';
+    ALTER TABLE "ekyc_verification_sessions" DROP COLUMN "verified_by";
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_name = 'ekyc_verification_sessions' AND column_name = 'verification_method') THEN
+    ALTER TABLE "ekyc_verification_sessions" DROP COLUMN "verification_method";
+  END IF;
+END $$;
+
+-- 1.2. Check constraints (status machine + mode/purpose + performed_by consistency + attempts).
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_status'
@@ -118,18 +202,30 @@ BEGIN
       CHECK ("status" IN ('INITIATED','DOCUMENT_FRONT_DONE','DOCUMENT_BACK_DONE','FACE_DONE','FINALIZED','VERIFIED','REJECTED','EXPIRED','CONSUMED'));
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_verification_method'
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_verification_mode'
                    AND conrelid = '"ekyc_verification_sessions"'::regclass) THEN
     ALTER TABLE "ekyc_verification_sessions"
-      ADD CONSTRAINT "chk_ekyc_verification_method"
-      CHECK ("verification_method" IN ('EKYC_VNPT','RECEPTION_MANUAL'));
+      ADD CONSTRAINT "chk_ekyc_verification_mode"
+      CHECK ("verification_mode" IN ('SELF_SERVICE','RECEPTION_ASSISTED'));
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_no_self_verify'
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_purpose'
                    AND conrelid = '"ekyc_verification_sessions"'::regclass) THEN
     ALTER TABLE "ekyc_verification_sessions"
-      ADD CONSTRAINT "chk_ekyc_no_self_verify"
-      CHECK ("verified_by" IS NULL OR "user_id" IS NULL OR "verified_by" <> "user_id");
+      ADD CONSTRAINT "chk_ekyc_purpose"
+      CHECK ("purpose" IN ('ACCOUNT_ACTIVATION','PATIENT_PROFILE'));
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_performed_by_consistency'
+                   AND conrelid = '"ekyc_verification_sessions"'::regclass) THEN
+    ALTER TABLE "ekyc_verification_sessions"
+      ADD CONSTRAINT "chk_ekyc_performed_by_consistency"
+      CHECK (
+        ("verification_mode" = 'SELF_SERVICE' AND "performed_by" IS NULL)
+        OR ("verification_mode" = 'RECEPTION_ASSISTED'
+            AND "performed_by" IS NOT NULL
+            AND ("user_id" IS NULL OR "performed_by" <> "user_id"))
+      );
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_attempt_count_nonnegative'
@@ -137,18 +233,6 @@ BEGIN
     ALTER TABLE "ekyc_verification_sessions"
       ADD CONSTRAINT "chk_ekyc_attempt_count_nonnegative"
       CHECK ("attempt_count" >= 0);
-  END IF;
-
-  -- RECEPTION_MANUAL records must carry a verifier; EKYC_VNPT records must not
-  -- (verification evidence is the signed VNPT payload, not a staff member).
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_ekyc_method_verifier_consistency'
-                   AND conrelid = '"ekyc_verification_sessions"'::regclass) THEN
-    ALTER TABLE "ekyc_verification_sessions"
-      ADD CONSTRAINT "chk_ekyc_method_verifier_consistency"
-      CHECK (
-        ("verification_method" = 'RECEPTION_MANUAL' AND "verified_by" IS NOT NULL)
-        OR ("verification_method" = 'EKYC_VNPT' AND "verified_by" IS NULL)
-      );
   END IF;
 END $$;
 
@@ -165,6 +249,10 @@ CREATE INDEX IF NOT EXISTS "ix_ekyc_sessions_user_id"
 CREATE INDEX IF NOT EXISTS "ix_ekyc_sessions_patient_id"
   ON "ekyc_verification_sessions" ("patient_id");
 
+-- Quota enforcement: sessions created by one staff member per day.
+CREATE INDEX IF NOT EXISTS "ix_ekyc_sessions_performed_by"
+  ON "ekyc_verification_sessions" ("performed_by");
+
 -- Cleanup sweep: expire stale INITIATED/step sessions by TTL.
 CREATE INDEX IF NOT EXISTS "ix_ekyc_sessions_status_expires_at"
   ON "ekyc_verification_sessions" ("status", "expires_at");
@@ -172,11 +260,12 @@ CREATE INDEX IF NOT EXISTS "ix_ekyc_sessions_status_expires_at"
 COMMIT;
 
 -- ============================================================================
--- Notes for slices implementing service logic (NOT executed here):
+-- Notes for service logic (NOT executed here):
 --   - audit_logs needs NO schema change (action is free-text varchar(100)).
---     New actions used by eKYC flows: EKYC_SESSION_CREATED, EKYC_STEP_SUBMITTED,
---     EKYC_VERIFIED, EKYC_REJECTED, EKYC_RECEPTION_VERIFIED, CLAIM_EKYC_MATCHED.
+--     Actions used by the owner-scope slice: EKYC_SESSION_CREATED, EKYC_STEP_SUBMITTED,
+--     EKYC_VERIFIED, EKYC_REJECTED, EKYC_QUOTA_EXCEEDED, CLAIM_EKYC_MATCHED,
+--     RECEPTION_EKYC_ASSISTED, PATIENT_PROFILE_CREATED_UNVERIFIED.
 --   - system_integrations seed already carries a VNPT_EKYC mock row (003 seed).
 --     Runtime config is resolved from env (VNPT_EKYC_*) + IConfiguration defaults;
---     credentials (token_id/token_key/access_token/public_key_ca) NEVER in DB.
+--     credentials NEVER in DB.
 -- ============================================================================

@@ -29,6 +29,18 @@ public sealed class EkycOptions
     public int MaxAttempts { get; set; } = 5;
 
     /// <summary>
+    /// Maximum eKYC sessions a subject may start per day (owner scope: mặc định 3). Applies to
+    /// self-service and to sessions bound to a patient with an account. 0 disables.
+    /// </summary>
+    public int DailySessionQuotaPerSubject { get; set; } = 3;
+
+    /// <summary>
+    /// Maximum reception-assisted eKYC sessions one staff member may start per day (ca ≈ ngày).
+    /// 0 disables. Exceeding either quota returns code QUOTA_EXHAUSTED (429) + audit.
+    /// </summary>
+    public int DailySessionQuotaPerStaff { get; set; } = 20;
+
+    /// <summary>
     /// Currently active consent text version (Luật 91/2025 + NĐ 356/2025 versioning). Session creation
     /// requires the client to accept exactly this version — bumping the version invalidates older consents.
     /// Non-secret operational config.

@@ -22,14 +22,17 @@ namespace MedFlow.Application.Services.Ekyc;
 ///
 /// Validation chain (ALL must pass, in this order — cheapest/most decisive first):
 /// <list type="number">
-///   <item>(e) ownership + non-terminal + within TTL + not consumed (single-use).</item>
-///   <item>(b) step completeness: document front + back + face + compare present in the session's
-///       signed evidence, document observed before compare (loose ordering otherwise).</item>
-///   <item>(c) binding: session binding_state must be VALID (slice-2 sticky fail-closed marker).</item>
+///   <item>(e) ownership/mode authority + non-terminal + within TTL + not consumed (single-use).</item>
+///   <item>(b) step completeness: OCR document + card liveness are REQUIRED (owner scope 2026-11-28:
+///       CCCD verification needs front/back OCR + card anti-spoofing + tampering verdict). Face
+///       liveness and face compare are OPTIONAL. When compare is present, document must precede it.</item>
+///   <item>(c) binding: required only when compare ran — binding_state must be VALID; no compare →
+///       NOT_APPLICABLE (never a rejection). Compare present with invalid binding stays fail-closed.</item>
 ///   <item>(a) dataSign valid for EVERY captured step payload via PUBLIC_KEY_CA
 ///       (RSA-SHA256/PKCS1v15 over the verbatim dataBase64 string — probe Q2).</item>
-///   <item>(d) policy verdict: liveness pass (card front/back/face), compare.prob ≥ configured
-///       threshold (never hardcoded), tampering is_legal, OCR name+DOB fuzzy-match registration data.</item>
+///   <item>(d) policy verdict: card liveness pass + tampering is_legal + OCR matches declared
+///       name/DOB/CCCD; if optional face steps ran their verdicts must also pass (fail-closed);
+///       compare.prob ≥ configured threshold only when compare ran.</item>
 /// </list>
 /// Atomicity: the session row is locked FOR UPDATE inside a transaction (ADR-0059 level 20);
 /// consumed_at is set exactly once — concurrent finalize is single-winner, loser gets 409.
@@ -44,6 +47,9 @@ namespace MedFlow.Application.Services.Ekyc;
 ///         are NOT auto-accepted — mismatch → REJECTED, user corrects registration or retries.</item>
 ///   <item>DOB: parse-tolerant — VNPT emits dd/MM/yyyy; registration stores DateOnly. Compared as
 ///         calendar dates, never strings. Unparseable OCR date → fail-closed.</item>
+///   <item>CCCD number: OCR id is normalized and HMAC'd with the server secret, then compared in
+///         constant time to the declared identification HMAC (session intake or patient record).
+///         The plaintext declared number is never stored. Missing/mismatched OCR id → fail-closed.</item>
 /// </list>
 /// </summary>
 public sealed class EkycVerificationService : IEkycVerificationService
@@ -125,8 +131,19 @@ public sealed class EkycVerificationService : IEkycVerificationService
             .FirstOrDefaultAsync(s => s.Id == sessionId, ct)
             ?? throw new NotFoundException("EkycVerificationSession", sessionId);
 
-        // Ownership enforcement — never leak existence cross-account.
-        if (session.UserId != actorUserId)
+        // Ownership enforcement — never leak existence cross-account. Reception-assisted sessions
+        // are operated by the staff member who created them (performed_by), and that staff member
+        // must currently hold PATIENT_IDENTITY_VERIFY. The eKYC engine still decides the verdict.
+        if (string.Equals(session.VerificationMode, EkycVerificationModes.ReceptionAssisted, StringComparison.Ordinal))
+        {
+            if (session.PerformedBy != actorUserId)
+            {
+                throw new NotFoundException("EkycVerificationSession", sessionId);
+            }
+
+            await EkycStaffAuthority.RequireIdentityVerifyAsync(_db, actorUserId, _timeProvider, ct);
+        }
+        else if (session.UserId != actorUserId)
         {
             throw new NotFoundException("EkycVerificationSession", sessionId);
         }
@@ -153,19 +170,29 @@ public sealed class EkycVerificationService : IEkycVerificationService
             .ThenBy(l => l.Id)
             .ToListAsync(ct);
 
-        // Registration data for OCR matching: the patient profile created at registration.
-        // Absent patient (edge: pre-activation registration-scope flow, slice-4) → matching skipped
-        // by null overrides, documented as a slice-4 tightening point.
-        var patient = await _db.Patients
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.UserId == actorUserId, ct);
+        // Declared identity for OCR matching (owner scope: name + DOB + CCCD number):
+        //   1. PATIENT_PROFILE sessions bind a patient record directly.
+        //   2. Self-service activation sessions fall back to the account's patient shell.
+        //   3. Session-level declared values (reception intake) take precedence — they are what
+        //      the patient declared at the counter and are immutable evidence for the match.
+        Patient? declaredPatient = null;
+        if (session.PatientId is long patientId)
+        {
+            declaredPatient = await _db.Patients.AsNoTracking().FirstOrDefaultAsync(p => p.Id == patientId, ct);
+        }
+        else if (session.UserId is long sessionUserId)
+        {
+            declaredPatient = await _db.Patients.AsNoTracking().FirstOrDefaultAsync(p => p.UserId == sessionUserId, ct);
+        }
 
         var evaluation = EvaluateEvidence(
             session, logs, config, encryptionKey, hmacKey, actorUserId,
-            expectedNameOverride: patient?.FullName,
-            expectedDobOverride: patient?.DateOfBirth);
+            expectedNameOverride: session.DeclaredFullName ?? declaredPatient?.FullName,
+            expectedDobOverride: session.DeclaredBirthDay ?? declaredPatient?.DateOfBirth,
+            expectedIdentificationHmac: session.DeclaredIdentificationHmac ?? declaredPatient?.IdentificationHashHmac);
 
         EkycDedupeResolution? dedupe = null;
+        string? verifiedPatientStatus = null;
         if (evaluation.Success)
         {
             session.Status = EkycVerificationStatuses.Verified;
@@ -181,37 +208,95 @@ public sealed class EkycVerificationService : IEkycVerificationService
             session.IdentificationHmac = evaluation.IdentificationHmac;
             session.UpdatedAt = nowUtc;
 
+            // Optional face-compare step not run → binding is not applicable (owner scope), NOT a
+            // failure. If compare ran, EvaluateEvidence already required VALID binding.
+            if (evaluation.CompareResult is null
+                && !string.Equals(session.BindingState, EkycBindingStates.Invalid, StringComparison.Ordinal)
+                && !string.Equals(session.BindingState, EkycBindingStates.Unverifiable, StringComparison.Ordinal))
+            {
+                session.BindingState = EkycBindingStates.NotApplicable;
+            }
+
             _db.AuditLogs.Add(BuildAudit(actorUserId, session.Id, EkycConstants.AuditActionVerified,
                 "Xác minh danh tính điện tử thành công.", ipAddress, null));
 
-            // --- Activation gate + dedupe matrix (plan v2.1 mục 3.2/3.3, atomicity mục 3.8) -------
-            // Runs INSIDE this transaction: consume + dedupe + activation commit or roll back
-            // together. Only for pending-activation accounts under mandatory-registration whose
-            // email is verified (the registration-scope token is only issued after OTP verify);
-            // ACTIVE accounts (mature-account verification) skip activation entirely — NOT_APPLICABLE.
-            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == actorUserId, ct);
-            if (user is not null &&
-                user.AccountStatus == Domain.Enums.AccountStatus.PENDING &&
-                user.EmailVerifiedAt is not null &&
-                _options.MandatoryRegistration)
+            if (string.Equals(session.Purpose, EkycPurposes.PatientProfile, StringComparison.Ordinal))
             {
-                var registrationPatient = await _db.Patients
-                    .FirstOrDefaultAsync(p => p.UserId == actorUserId, ct);
+                // Patient identity only — NO account activation. The profile becomes VERIFIED
+                // exclusively here, after the engine passed; reception never sets it directly.
+                var profile = await _db.Patients.FirstOrDefaultAsync(p => p.Id == session.PatientId, ct)
+                    ?? throw new NotFoundException("Patient", session.PatientId ?? 0);
 
-                dedupe = await EkycDedupeResolver.ResolveAsync(
-                    _db, user, registrationPatient, session,
-                    evaluation.IdentificationHmac,
-                    evaluation.OcrFullName,
-                    evaluation.OcrBirthDay,
-                    actorUserId, ipAddress, ct);
-            }
-            else
-            {
+                verifiedPatientStatus = await TryMarkPatientVerifiedAsync(
+                    profile, evaluation.IdentificationHmac, ct);
+
+                _db.AuditLogs.Add(BuildAudit(actorUserId, session.Id, EkycConstants.AuditActionReceptionAssisted,
+                    "Lễ tân điều khiển phiên eKYC và hồ sơ đã được xác minh bởi engine.",
+                    ipAddress, null, new
+                    {
+                        patientId = profile.Id,
+                        purpose = session.Purpose,
+                        verificationMode = session.VerificationMode,
+                        performedBy = session.PerformedBy,
+                        bindingState = session.BindingState,
+                    }));
+
                 dedupe = new EkycDedupeResolution(
                     EkycDedupeOutcomes.NotApplicable,
                     AccountActivated: false,
-                    LinkedPatientId: null,
+                    LinkedPatientId: profile.Id,
                     ReviewReason: null);
+            }
+            else
+            {
+                // --- Activation gate + dedupe matrix (plan v2.1 mục 3.2/3.3, atomicity mục 3.8) --
+                // Runs INSIDE this transaction: consume + dedupe + activation commit or roll back
+                // together. Only self-service pending-activation accounts under mandatory
+                // registration whose email is verified; ACTIVE accounts skip activation. Reception
+                // staff can never activate an account through eKYC.
+                var user = session.UserId is long subjectUserId
+                    ? await _db.Users.FirstOrDefaultAsync(u => u.Id == subjectUserId, ct)
+                    : null;
+
+                if (user is not null
+                    && string.Equals(session.VerificationMode, EkycVerificationModes.SelfService, StringComparison.Ordinal)
+                    && user.AccountStatus == Domain.Enums.AccountStatus.PENDING
+                    && user.EmailVerifiedAt is not null
+                    && _options.MandatoryRegistration)
+                {
+                    var registrationPatient = await _db.Patients
+                        .FirstOrDefaultAsync(p => p.UserId == actorUserId, ct);
+
+                    dedupe = await EkycDedupeResolver.ResolveAsync(
+                        _db, user, registrationPatient, session,
+                        evaluation.IdentificationHmac,
+                        evaluation.OcrFullName,
+                        evaluation.OcrBirthDay,
+                        actorUserId, ipAddress, ct);
+                }
+                else
+                {
+                    dedupe = new EkycDedupeResolution(
+                        EkycDedupeOutcomes.NotApplicable,
+                        AccountActivated: false,
+                        LinkedPatientId: session.PatientId,
+                        ReviewReason: null);
+                }
+
+                // Patient identity status is independent of account activation: whichever patient
+                // record this verified identity resolves to becomes VERIFIED (only here).
+                var verifiedPatient = session.PatientId is long linkedId
+                    ? await _db.Patients.FirstOrDefaultAsync(p => p.Id == linkedId, ct)
+                    : session.UserId is long userId
+                        ? await _db.Patients.FirstOrDefaultAsync(p => p.UserId == userId, ct)
+                        : null;
+
+                if (verifiedPatient is not null)
+                {
+                    verifiedPatientStatus = await TryMarkPatientVerifiedAsync(
+                        verifiedPatient, evaluation.IdentificationHmac, ct);
+                    session.PatientId ??= verifiedPatient.Id;
+                }
             }
         }
         else
@@ -231,7 +316,10 @@ public sealed class EkycVerificationService : IEkycVerificationService
             ConsumedAt: session.ConsumedAt,
             AccountActivated: dedupe?.AccountActivated,
             ActivationOutcome: dedupe?.Outcome,
-            ActivationReviewReason: dedupe?.ReviewReason);
+            ActivationReviewReason: dedupe?.ReviewReason,
+            Purpose: session.Purpose,
+            PatientId: session.PatientId,
+            PatientIdentityStatus: verifiedPatientStatus);
     }
 
     // ------------------------------------------------------------------
@@ -262,7 +350,8 @@ public sealed class EkycVerificationService : IEkycVerificationService
         long actorUserId,
         string? publicKeyCaOverride = null,
         string? expectedNameOverride = null,
-        DateOnly? expectedDobOverride = null)
+        DateOnly? expectedDobOverride = null,
+        string? expectedIdentificationHmac = null)
     {
         var publicKeyCa = publicKeyCaOverride ?? config.PublicKeyCa;
 
@@ -316,9 +405,10 @@ public sealed class EkycVerificationService : IEkycVerificationService
         }
 
         // --- (b) Step completeness --------------------------------------------------------------
-        // Probe-realistic model (Q3 endpoints): document OCR (ocr/id or ocr/id/front — both mặt
-        // in one call), card liveness, face liveness, face compare. All four required.
-        string[] requiredSteps = ["document", "card_liveness", "face_liveness", "compare"];
+        // Owner scope 2026-11-28 (CCCD-only): OCR document (front+back via ocr/id or ocr/id/front)
+        // and card liveness are REQUIRED. Face liveness and face compare are OPTIONAL — their
+        // absence must not reject; if they ran, their verdicts are still enforced below.
+        string[] requiredSteps = ["document", "card_liveness"];
         foreach (var required in requiredSteps)
         {
             if (!steps.ContainsKey(required))
@@ -327,16 +417,17 @@ public sealed class EkycVerificationService : IEkycVerificationService
             }
         }
 
-        // Document-before-compare ordering: first compare capture must come after the document
-        // capture. Loose otherwise (PM ruling — no general ordering enforcement).
-        var firstCompareAt = steps["compare"].Log.CreatedAt;
-        if (steps["document"].Log.CreatedAt > firstCompareAt)
+        var hasCompare = steps.ContainsKey("compare");
+
+        // Document-before-compare ordering only applies when the optional compare step ran.
+        if (hasCompare && steps["document"].Log.CreatedAt > steps["compare"].Log.CreatedAt)
         {
             return Fail(FailMissingStep, "Thứ tự bước xác minh không hợp lệ: giấy tờ phải trước so khớp khuôn mặt.");
         }
 
-        // --- (c) Binding ------------------------------------------------------------------------
-        if (!string.Equals(session.BindingState, EkycBindingStates.Valid, StringComparison.Ordinal))
+        // --- (c) Binding — enforced whenever compare ran; NOT_APPLICABLE otherwise ---------------
+        if (hasCompare
+            && !string.Equals(session.BindingState, EkycBindingStates.Valid, StringComparison.Ordinal))
         {
             return Fail(FailInvalidBinding,
                 "Tài liệu dùng so khớp khuôn mặt không khớp với tài liệu đã tải lên trong phiên.");
@@ -352,10 +443,15 @@ public sealed class EkycVerificationService : IEkycVerificationService
         }
 
         // --- (d) Policy verdict -------------------------------------------------------------------
-        // Liveness: card front/back/face must all pass. VNPT payload shapes (probe Q1):
-        // object.liveness == "success" (string) — anything else is a failure.
+        // Card liveness is mandatory; face liveness is optional but fail-closed when present.
+        // VNPT payload shapes (probe Q1): object.liveness == "success" (string).
         foreach (var stepKey in new[] { "card_liveness", "face_liveness" })
         {
+            if (!steps.ContainsKey(stepKey))
+            {
+                continue; // face_liveness optional when compare did not run
+            }
+
             if (!IsLivenessPass(steps[stepKey].Payload))
             {
                 return Fail(FailLiveness, $"Kiểm tra liveness bước {stepKey} không đạt.");
@@ -368,12 +464,15 @@ public sealed class EkycVerificationService : IEkycVerificationService
             return Fail(FailTampering, "Giấy tờ có dấu hiệu bị chỉnh sửa hoặc không hợp lệ.");
         }
 
-        // Compare prob ≥ configured threshold (never hardcoded).
-        var compareProb = ExtractCompareProb(steps["compare"].Payload);
-        if (compareProb is null || compareProb.Value < config.CompareThreshold)
+        // Compare prob ≥ configured threshold — only when the optional compare step ran.
+        if (hasCompare)
         {
-            return Fail(FailCompareBelowThreshold,
-                "Độ tương đồng khuôn mặt với ảnh thẻ chưa đạt ngưỡng chấp nhận.");
+            var compareProb = ExtractCompareProb(steps["compare"].Payload);
+            if (compareProb is null || compareProb.Value < config.CompareThreshold)
+            {
+                return Fail(FailCompareBelowThreshold,
+                    "Độ tương đồng khuôn mặt với ảnh thẻ chưa đạt ngưỡng chấp nhận.");
+            }
         }
 
         // OCR fields — the front OCR payload carries identity fields.
@@ -383,18 +482,38 @@ public sealed class EkycVerificationService : IEkycVerificationService
             return Fail(FailEvidenceMissing, "Không trích xuất được thông tin định danh từ giấy tờ.");
         }
 
-        // OCR-vs-registration fuzzy matching (rules documented at class level).
-        if (expectedNameOverride is not null || expectedDobOverride is not null)
+        // OCR-vs-declared matching (rules documented at class level): name, DOB and CCCD number.
+        if (expectedNameOverride is not null || expectedDobOverride is not null
+            || !string.IsNullOrWhiteSpace(expectedIdentificationHmac))
         {
             var nameMatches = expectedNameOverride is null
                 || NamesMatch(ocr.Value.Name, expectedNameOverride);
             var dobMatches = expectedDobOverride is null
                 || ocr.Value.BirthDay == expectedDobOverride.Value;
 
-            if (!nameMatches || !dobMatches)
+            var idMatches = true;
+            if (!string.IsNullOrWhiteSpace(expectedIdentificationHmac))
+            {
+                idMatches = false;
+                if (!string.IsNullOrWhiteSpace(ocr.Value.IdNumber))
+                {
+                    try
+                    {
+                        var declaredHmac = EkycCrypto.ComputeIdentificationHmac(
+                            IdentificationNumber.Normalize(ocr.Value.IdNumber), hmacKey);
+                        idMatches = EkycCrypto.FixedTimeEquals(declaredHmac, expectedIdentificationHmac);
+                    }
+                    catch (ValidationException)
+                    {
+                        idMatches = false;
+                    }
+                }
+            }
+
+            if (!nameMatches || !dobMatches || !idMatches)
             {
                 return Fail(FailOcrMismatch,
-                    "Thông tin trên giấy tờ không khớp với thông tin đăng ký tài khoản (họ tên hoặc ngày sinh).");
+                    "Thông tin trên giấy tờ không khớp với thông tin đã khai báo (họ tên, ngày sinh hoặc số CCCD).");
             }
         }
 
@@ -423,7 +542,7 @@ public sealed class EkycVerificationService : IEkycVerificationService
             FailureReason: null,
             OcrSnapshot: BuildOcrSnapshot(ocr.Value),
             LivenessVerdicts: BuildLivenessVerdicts(steps),
-            CompareResult: BuildCompareResultJson(steps["compare"].Payload),
+            CompareResult: hasCompare ? BuildCompareResultJson(steps["compare"].Payload) : null,
             TamperingVerdict: BuildTamperingJson(steps["document"].Payload),
             EvidenceDataSign: evidenceLog.ResponseDataSign,
             EvidencePayloadDigest: EkycCrypto.ComputePayloadDigest(evidenceDataBase64),
@@ -828,7 +947,8 @@ public sealed class EkycVerificationService : IEkycVerificationService
         string action,
         string reason,
         string? ipAddress,
-        string? failureCode)
+        string? failureCode,
+        object? changeData = null)
     {
         return new AuditLog
         {
@@ -837,12 +957,49 @@ public sealed class EkycVerificationService : IEkycVerificationService
             EntityType = EkycConstants.AuditEntityType,
             EntityId = sessionId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             Reason = reason,
-            ChangeData = failureCode is null ? null : JsonSerializer.Serialize(new { failureCode }),
+            ChangeData = changeData is not null
+                ? JsonSerializer.Serialize(changeData)
+                : failureCode is null
+                    ? null
+                    : JsonSerializer.Serialize(new { failureCode }),
             IpAddress = System.Net.IPAddress.TryParse(ipAddress, out var ip) ? ip : null,
             // audit_logs.occurred_at has no explicit EF type mapping → Npgsql timestamptz inference
             // requires Kind=Utc (AuditLogger convention), unlike the ekyc timestamp-without-time-zone columns.
             OccurredAt = _timeProvider.GetUtcNow().UtcDateTime,
         };
+    }
+
+    /// <summary>
+    /// The ONLY writer of <see cref="PatientIdentityStatuses.Verified"/>. Called exclusively from a
+    /// successful finalize inside the locked transaction; never exposed through an API. The CCCD
+    /// HMAC written here is the verified VNPT evidence, not a declaration.
+    ///
+    /// Returns null when the verified identification already belongs to a DIFFERENT patient row:
+    /// the eKYC evidence is still true (session VERIFIED), but identity linkage must be resolved by
+    /// reception (dedupe cases 3/4/5/6) — never by overwriting another profile or violating the
+    /// unique identification index.
+    /// </summary>
+    private async Task<string?> TryMarkPatientVerifiedAsync(
+        Patient patient,
+        string? verifiedIdentificationHmac,
+        CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(verifiedIdentificationHmac))
+        {
+            var heldByAnother = await _db.Patients.AsNoTracking()
+                .AnyAsync(p => p.IdentificationHashHmac == verifiedIdentificationHmac && p.Id != patient.Id, ct);
+            if (heldByAnother)
+            {
+                return null;
+            }
+
+            patient.IdentificationHashHmac = verifiedIdentificationHmac;
+            patient.HashVersion = 1;
+        }
+
+        patient.IdentityStatus = PatientIdentityStatuses.Verified;
+        patient.UnverifiedReason = null;
+        return patient.IdentityStatus;
     }
 
     private IOptions<EkycOptions> OptionsWrapper()

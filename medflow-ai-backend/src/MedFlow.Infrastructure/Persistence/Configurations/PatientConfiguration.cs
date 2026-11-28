@@ -8,7 +8,15 @@ public class PatientConfiguration : IEntityTypeConfiguration<Patient>
 {
     public void Configure(EntityTypeBuilder<Patient> builder)
     {
-        builder.ToTable("patients");
+        builder.ToTable("patients", table =>
+        {
+            table.HasCheckConstraint(
+                "chk_patients_identity_status",
+                "\"identity_status\" IN ('VERIFIED','UNVERIFIED')");
+            table.HasCheckConstraint(
+                "chk_patients_unverified_reason",
+                "\"unverified_reason\" IS NULL OR (\"identity_status\" = 'UNVERIFIED' AND \"unverified_reason\" IN ('CHILD','FOREIGNER','NO_VALID_DOCUMENT','CONSENT_DECLINED','VNPT_UNAVAILABLE','QUOTA_EXHAUSTED'))");
+        });
 
         builder.HasKey(p => p.Id);
         builder.Property(p => p.Id)
@@ -44,6 +52,15 @@ public class PatientConfiguration : IEntityTypeConfiguration<Patient>
             .HasDatabaseName("uq_patients_identification_hash_hmac");
 
         builder.Property(p => p.HashVersion).HasColumnName("hash_version").HasColumnType("smallint");
+
+        builder.Property(p => p.IdentityStatus)
+            .HasColumnName("identity_status")
+            .HasMaxLength(16)
+            .HasDefaultValue(MedFlow.Domain.Constants.PatientIdentityStatuses.Unverified)
+            .IsRequired();
+        builder.Property(p => p.UnverifiedReason).HasColumnName("unverified_reason").HasMaxLength(32);
+        builder.Property(p => p.IdentityNote).HasColumnName("identity_note");
+        builder.HasIndex(p => p.IdentityStatus).HasDatabaseName("ix_patients_identity_status");
 
         builder.Property(p => p.Address).HasColumnName("address");
         builder.Property(p => p.Status).HasColumnName("status").HasMaxLength(16);

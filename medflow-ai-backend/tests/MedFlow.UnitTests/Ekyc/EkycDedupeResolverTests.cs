@@ -145,7 +145,8 @@ public sealed class EkycDedupeResolverTests : IDisposable
         {
             UserId = userId,
             Status = EkycVerificationStatuses.Verified,
-            VerificationMethod = EkycVerificationMethods.EkycVnpt,
+            VerificationMode = EkycVerificationModes.SelfService,
+            Purpose = EkycPurposes.AccountActivation,
             IdentificationHmac = TestHmac,
             ExpiresAt = DateTime.UtcNow.AddMinutes(10),
             CreatedAt = DateTime.UtcNow,

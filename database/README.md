@@ -41,9 +41,10 @@ database/
 │   ├── 026_clinical_revalidation_overdue_approval_and_review_purpose.sql # ADR-0061 Stage E1 diagnostic_orders clinical revalidation, visits overdue return snapshot approval & queue_entries.coordination_purpose
 │   └── 027_queue_enrollment_intents_pharmacy_and_single_active_index.sql # ADR-0061 Stage E2 QUEUE_ENROLL, visits.presence_session_no, queue_entries target bindings + ux_queue_entries_one_active_post_exam_per_visit, pharmacy room/SP seed & payment_enrollment_intents (Level 16c)
 │   ├── 028_clinical_session_recovery_authority.sql # PR #859 F01 Clinical Session Recovery authority: clinical_session_recovery_requests (Level 19), CLINICAL_SESSION_RECOVERY_GRANT/CLINICAL_SESSION_RECOVER catalog-only permissions, single unresolved request per QueueEntry
-│   ├── 029_ekyc_verification_sessions.sql          # VNPT eKYC Phase 1: ekyc_verification_sessions (EKYC_VNPT/RECEPTION_MANUAL discriminator, encrypted evidence payload, HMAC dedupe, no-self-verify)
+│   ├── 029_ekyc_verification_sessions.sql          # VNPT eKYC Phase 1: ekyc_verification_sessions (single EKYC engine: verification_mode SELF_SERVICE/RECEPTION_ASSISTED + purpose ACCOUNT_ACTIVATION/PATIENT_PROFILE + performed_by, encrypted evidence payload, HMAC dedupe)
 │   ├── 030_ekyc_proxy_call_logs.sql                # VNPT eKYC Phase 1 slice 2: ekyc_proxy_call_logs per-call metadata + binding_state/compare_reference_hash columns on sessions
-│   └── 031_ekyc_signed_evidence_capture.sql        # VNPT eKYC Phase 1 slice 3: response_data_sign + response_payload_encrypted on ekyc_proxy_call_logs (trust-anchor evidence capture)
+│   ├── 031_ekyc_signed_evidence_capture.sql        # VNPT eKYC Phase 1 slice 3: response_data_sign + response_payload_encrypted on ekyc_proxy_call_logs (trust-anchor evidence capture)
+│   └── 032_patients_identity_status.sql            # VNPT eKYC Phase 1 slice 5: patients identity_status/unverified_reason/identity_note (patient identity separate from account activation)
 ├── scripts/
 │   ├── preflight_023_audit.sql                    # read-only preflight audit for Migration 023
 │   ├── preflight_024_audit.sql                    # read-only preflight audit for Migration 024
@@ -53,7 +54,8 @@ database/
 │   ├── preflight_028_audit.sql                    # read-only preflight audit for Migration 028
 │   ├── preflight_029_audit.sql                    # read-only preflight audit for Migration 029
 │   ├── preflight_030_audit.sql                    # read-only preflight audit for Migration 030
-│   └── preflight_031_audit.sql                    # read-only preflight audit for Migration 031
+│   ├── preflight_031_audit.sql                    # read-only preflight audit for Migration 031
+│   └── preflight_032_audit.sql                    # read-only preflight audit for Migration 032
 └── README.md
 ```
 

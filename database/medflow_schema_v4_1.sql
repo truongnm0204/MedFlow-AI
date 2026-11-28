@@ -62,12 +62,21 @@ CREATE TABLE "patients" (
     "phone" varchar(30),
     "email" varchar(255),
     "identification_hash" varchar(128),
+    "identity_status" varchar(16) NOT NULL DEFAULT 'UNVERIFIED',
+    "unverified_reason" varchar(32),
+    "identity_note" text,
     "status" varchar(16),
     "address" text,
     "blood_type" varchar(8) CHECK ("blood_type" IS NULL OR "blood_type" IN ('A+','A-','B+','B-','AB+','AB-','O+','O-')),
     "emergency_contact_name" varchar(200),
     "emergency_contact_relationship" varchar(60),
-    "emergency_contact_phone" varchar(30)
+    "emergency_contact_phone" varchar(30),
+    CONSTRAINT "chk_patients_identity_status" CHECK ("identity_status" IN ('VERIFIED','UNVERIFIED')),
+    CONSTRAINT "chk_patients_unverified_reason" CHECK (
+        "unverified_reason" IS NULL
+        OR ("identity_status" = 'UNVERIFIED'
+            AND "unverified_reason" IN ('CHILD','FOREIGNER','NO_VALID_DOCUMENT','CONSENT_DECLINED','VNPT_UNAVAILABLE','QUOTA_EXHAUSTED'))
+    )
 );
 
 CREATE TABLE "patient_family_links" (

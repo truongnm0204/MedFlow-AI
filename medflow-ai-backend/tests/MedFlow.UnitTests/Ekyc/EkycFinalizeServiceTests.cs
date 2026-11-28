@@ -151,7 +151,8 @@ public sealed class EkycFinalizeServiceTests : IDisposable
         {
             UserId = userId,
             Status = status,
-            VerificationMethod = EkycVerificationMethods.EkycVnpt,
+            VerificationMode = EkycVerificationModes.SelfService,
+            Purpose = EkycPurposes.AccountActivation,
             BindingState = bindingState,
             ExpiresAt = expiresAt ?? DateTime.SpecifyKind(DateTime.UtcNow.AddMinutes(10), DateTimeKind.Unspecified),
             CreatedAt = DateTime.SpecifyKind(DateTime.UtcNow.AddMinutes(-5), DateTimeKind.Unspecified),
