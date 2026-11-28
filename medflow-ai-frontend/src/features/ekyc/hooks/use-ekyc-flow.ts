@@ -103,7 +103,8 @@ async function finalizeWithConflictRetry(
  * trust anchor finalize. Điểm DUY NHẤT phụ thuộc chế độ là bước tạo phiên (`acceptConsentAndStart`
  * hiện gọi `createEkycSession` cho self-service registration). Khi backend slice reception chốt
  * contract, thêm một nhánh tạo phiên reception-assisted (ví dụ khác endpoint / kèm patient context,
- * consent do lễ tân xác nhận thay) rồi nạp sessionId+proxyBasePath vào cùng state machine này —
+ * consent do BỆNH NHÂN tự xác nhận trên kiosk hoặc điện thoại — chờ owner chốt — không phải lễ tân)
+ * rồi nạp sessionId+proxyBasePath vào cùng state machine này —
  * các stage capturing/finalizing/verified/rejected không cần đổi. CHƯA implement: chờ backend
  * slice 5 (PM ruling) chốt contract trước.
  */
