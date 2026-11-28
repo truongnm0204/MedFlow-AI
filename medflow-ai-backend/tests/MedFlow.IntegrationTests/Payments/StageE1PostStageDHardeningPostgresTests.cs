@@ -687,6 +687,14 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(o => o.Status, "ORDERED")
                     .SetProperty(o => o.QueueEntryId, dayDQueueEntryId));
+            // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+            // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+            await Db.PaymentEnrollmentIntents
+                .Where(i => i.QueueEntryId == tempClsQueue.Id)
+                .ExecuteDeleteAsync();
+            await Db.ClinicalSessionRecoveryRequests
+                .Where(r => r.QueueEntryId == tempClsQueue.Id)
+                .ExecuteDeleteAsync();
             await Db.QueueEntries.Where(q => q.Id == tempClsQueue.Id).ExecuteDeleteAsync();
 
             // Verify PAID payment & allocation remain 100% intact
@@ -2226,6 +2234,20 @@ public sealed class StageE1PostStageDHardeningPostgresTests : IClassFixture<Test
         {
             await Db.ClinicalSessionRecoveryRequests
                 .Where(r => visitIds.Contains(r.VisitId))
+                .ExecuteDeleteAsync();
+        }
+        var remainingQueueIds = await Db.QueueEntries.AsNoTracking()
+            .Where(q =>
+                (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)) ||
+                (q.ServicePointId.HasValue && fx.AllSpIds.Contains(q.ServicePointId.Value)))
+            .Select(q => q.Id)
+            .ToListAsync();
+        if (remainingQueueIds.Count > 0)
+        {
+            // #863: payment_enrollment_intents.queue_entry_id is ON DELETE RESTRICT; intent rows now exist
+            // for auto-enrolled CLS orders, so they must go before queue_entries.
+            await Db.PaymentEnrollmentIntents
+                .Where(i => i.QueueEntryId.HasValue && remainingQueueIds.Contains(i.QueueEntryId.Value))
                 .ExecuteDeleteAsync();
         }
         await Db.QueueEntries.Where(q =>

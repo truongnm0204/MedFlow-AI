@@ -1491,6 +1491,21 @@ public sealed class Phase06ClinicalDiagnosticAndEmrPostgresConcurrencyTests : Au
         Db.QueueFairnessStates.RemoveRange(
             await Db.QueueFairnessStates.Where(f => spIds.Contains(f.ServicePointId)).ToListAsync());
         await Db.SaveChangesAsync();
+        var queueIdsToDelete = await Db.QueueEntries
+            .Where(q => q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value))
+            .Select(q => q.Id)
+            .ToListAsync();
+        if (queueIdsToDelete.Count > 0)
+        {
+            // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+            // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+            await Db.PaymentEnrollmentIntents
+                .Where(i => i.QueueEntryId.HasValue && queueIdsToDelete.Contains(i.QueueEntryId.Value))
+                .ExecuteDeleteAsync();
+            await Db.ClinicalSessionRecoveryRequests
+                .Where(r => queueIdsToDelete.Contains(r.QueueEntryId))
+                .ExecuteDeleteAsync();
+        }
         Db.QueueEntries.RemoveRange(
             await Db.QueueEntries.Where(q => q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)).ToListAsync());
         await Db.SaveChangesAsync();

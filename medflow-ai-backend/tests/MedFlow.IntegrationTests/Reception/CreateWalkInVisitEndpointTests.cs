@@ -366,6 +366,15 @@ public sealed class CreateWalkInVisitEndpointTests : AuthTestBase
                     .ToListAsync();
                 if (queues.Count > 0)
                 {
+                    // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+                    // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+                    var queueIds = queues.Select(q => q.Id).ToList();
+                    await db.PaymentEnrollmentIntents
+                        .Where(i => i.QueueEntryId.HasValue && queueIds.Contains(i.QueueEntryId.Value))
+                        .ExecuteDeleteAsync();
+                    await db.ClinicalSessionRecoveryRequests
+                        .Where(r => queueIds.Contains(r.QueueEntryId))
+                        .ExecuteDeleteAsync();
                     db.QueueEntries.RemoveRange(queues);
                 }
 

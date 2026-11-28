@@ -308,6 +308,14 @@ public sealed class QueueCancelEndpointTests : AuthTestBase
 
             if (queueIds.Length > 0)
             {
+                // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+                // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+                await Db.PaymentEnrollmentIntents
+                    .Where(i => i.QueueEntryId.HasValue && queueIds.Contains(i.QueueEntryId.Value))
+                    .ExecuteDeleteAsync();
+                await Db.ClinicalSessionRecoveryRequests
+                    .Where(r => queueIds.Contains(r.QueueEntryId))
+                    .ExecuteDeleteAsync();
                 await Db.QueueEntries
                     .Where(q => queueIds.Contains(q.Id))
                     .ExecuteDeleteAsync();

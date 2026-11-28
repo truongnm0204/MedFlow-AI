@@ -2398,6 +2398,18 @@ public sealed class ClinicalSessionRecoveryAuthorityPostgresTests : AuthTestBase
                 .ExecuteDeleteAsync();
         }
 
+        // #863: payment_enrollment_intents.queue_entry_id is ON DELETE RESTRICT; intent rows now exist
+        // for auto-enrolled CLS orders, so they must go before queue_entries.
+        var recoveryQueueIds = await Db.QueueEntries.AsNoTracking()
+            .Where(q => queueIds.Contains(q.Id) || (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)))
+            .Select(q => q.Id)
+            .ToListAsync();
+        if (recoveryQueueIds.Count > 0)
+        {
+            await Db.PaymentEnrollmentIntents
+                .Where(i => i.QueueEntryId.HasValue && recoveryQueueIds.Contains(i.QueueEntryId.Value))
+                .ExecuteDeleteAsync();
+        }
         await Db.QueueEntries.Where(q => queueIds.Contains(q.Id) || (q.VisitId.HasValue && visitIds.Contains(q.VisitId.Value)))
             .ExecuteDeleteAsync();
         if (fx.ExtraPolicyIds.Count > 0)

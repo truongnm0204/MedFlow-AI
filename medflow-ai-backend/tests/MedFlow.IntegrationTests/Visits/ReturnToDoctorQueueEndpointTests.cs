@@ -121,6 +121,21 @@ public sealed class ReturnToDoctorQueueEndpointTests : AuthTestBase
             if (staleSpIds.Count > 0)
             {
                 await Db.QueueFairnessStates.Where(s => staleSpIds.Contains(s.ServicePointId)).ExecuteDeleteAsync();
+                var staleQueueIds = await Db.QueueEntries
+                    .Where(q => q.ServicePointId.HasValue && staleSpIds.Contains(q.ServicePointId.Value))
+                    .Select(q => q.Id)
+                    .ToListAsync();
+                if (staleQueueIds.Count > 0)
+                {
+                    // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+                    // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+                    await Db.PaymentEnrollmentIntents
+                        .Where(i => i.QueueEntryId.HasValue && staleQueueIds.Contains(i.QueueEntryId.Value))
+                        .ExecuteDeleteAsync();
+                    await Db.ClinicalSessionRecoveryRequests
+                        .Where(r => staleQueueIds.Contains(r.QueueEntryId))
+                        .ExecuteDeleteAsync();
+                }
                 await Db.QueueEntries.Where(q => q.ServicePointId.HasValue && staleSpIds.Contains(q.ServicePointId.Value)).ExecuteDeleteAsync();
                 await Db.QueueServicePoints.Where(sp => staleSpIds.Contains(sp.Id)).ExecuteDeleteAsync();
             }
@@ -322,6 +337,21 @@ public sealed class ReturnToDoctorQueueEndpointTests : AuthTestBase
             if (createdServicePointId is long spId)
             {
                 await Db.QueueFairnessStates.Where(s => s.ServicePointId == spId).ExecuteDeleteAsync();
+                var spQueueIds = await Db.QueueEntries
+                    .Where(q => q.ServicePointId == spId || q.CurrentServicePointId == spId)
+                    .Select(q => q.Id)
+                    .ToListAsync();
+                if (spQueueIds.Count > 0)
+                {
+                    // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+                    // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+                    await Db.PaymentEnrollmentIntents
+                        .Where(i => i.QueueEntryId.HasValue && spQueueIds.Contains(i.QueueEntryId.Value))
+                        .ExecuteDeleteAsync();
+                    await Db.ClinicalSessionRecoveryRequests
+                        .Where(r => spQueueIds.Contains(r.QueueEntryId))
+                        .ExecuteDeleteAsync();
+                }
                 await Db.QueueEntries.Where(q => q.ServicePointId == spId || q.CurrentServicePointId == spId).ExecuteDeleteAsync();
             }
 
@@ -329,6 +359,21 @@ public sealed class ReturnToDoctorQueueEndpointTests : AuthTestBase
             {
                 await Db.Payments.Where(p => p.VisitId != null && createdVisitIds.Contains(p.VisitId.Value)).ExecuteDeleteAsync();
                 await Db.VisitCharges.Where(c => c.VisitId != null && createdVisitIds.Contains(c.VisitId.Value)).ExecuteDeleteAsync();
+                var visitQueueIds = await Db.QueueEntries
+                    .Where(q => q.VisitId.HasValue && createdVisitIds.Contains(q.VisitId.Value))
+                    .Select(q => q.Id)
+                    .ToListAsync();
+                if (visitQueueIds.Count > 0)
+                {
+                    // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+                    // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+                    await Db.PaymentEnrollmentIntents
+                        .Where(i => i.QueueEntryId.HasValue && visitQueueIds.Contains(i.QueueEntryId.Value))
+                        .ExecuteDeleteAsync();
+                    await Db.ClinicalSessionRecoveryRequests
+                        .Where(r => visitQueueIds.Contains(r.QueueEntryId))
+                        .ExecuteDeleteAsync();
+                }
                 await Db.QueueEntries.Where(q => q.VisitId.HasValue && createdVisitIds.Contains(q.VisitId.Value)).ExecuteDeleteAsync();
                 await Db.Visits.Where(v => createdVisitIds.Contains(v.Id)).ExecuteDeleteAsync();
             }

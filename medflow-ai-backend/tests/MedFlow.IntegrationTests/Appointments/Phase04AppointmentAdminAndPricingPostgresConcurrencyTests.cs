@@ -495,6 +495,24 @@ public sealed class Phase04AppointmentAdminAndPricingPostgresConcurrencyTests
 
         if (spIds.Count > 0 || apptIds.Count > 0 || visitIds.Count > 0)
         {
+            // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+            // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+            var queueIdsToDelete = await db.QueueEntries.AsNoTracking()
+                .Where(q => (q.ServicePointId != null && spIds.Contains(q.ServicePointId.Value)) ||
+                            (q.CurrentServicePointId != null && spIds.Contains(q.CurrentServicePointId.Value)) ||
+                            (q.AppointmentId != null && apptIds.Contains(q.AppointmentId.Value)) ||
+                            (q.VisitId != null && visitIds.Contains(q.VisitId.Value)))
+                .Select(q => q.Id)
+                .ToListAsync();
+            if (queueIdsToDelete.Count > 0)
+            {
+                await db.PaymentEnrollmentIntents
+                    .Where(i => i.QueueEntryId.HasValue && queueIdsToDelete.Contains(i.QueueEntryId.Value))
+                    .ExecuteDeleteAsync();
+                await db.ClinicalSessionRecoveryRequests
+                    .Where(r => queueIdsToDelete.Contains(r.QueueEntryId))
+                    .ExecuteDeleteAsync();
+            }
             await db.QueueEntries
                 .Where(q => (q.ServicePointId != null && spIds.Contains(q.ServicePointId.Value)) ||
                             (q.CurrentServicePointId != null && spIds.Contains(q.CurrentServicePointId.Value)) ||

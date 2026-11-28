@@ -413,6 +413,14 @@ public sealed class QueueStatusEndpointTests : AuthTestBase
                                 a.EntityId == entityIdStr)
                     .ExecuteDeleteAsync();
 
+                // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+                // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+                await Db.PaymentEnrollmentIntents
+                    .Where(i => i.QueueEntryId == createdQueueId.Value)
+                    .ExecuteDeleteAsync();
+                await Db.ClinicalSessionRecoveryRequests
+                    .Where(r => r.QueueEntryId == createdQueueId.Value)
+                    .ExecuteDeleteAsync();
                 await Db.QueueEntries
                     .Where(q => q.Id == createdQueueId.Value)
                     .ExecuteDeleteAsync();
@@ -430,6 +438,14 @@ public sealed class QueueStatusEndpointTests : AuthTestBase
 
             if (crossHospitalQueueId.HasValue)
             {
+                // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+                // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+                await Db.PaymentEnrollmentIntents
+                    .Where(i => i.QueueEntryId == crossHospitalQueueId.Value)
+                    .ExecuteDeleteAsync();
+                await Db.ClinicalSessionRecoveryRequests
+                    .Where(r => r.QueueEntryId == crossHospitalQueueId.Value)
+                    .ExecuteDeleteAsync();
                 await Db.QueueEntries
                     .Where(q => q.Id == crossHospitalQueueId.Value)
                     .ExecuteDeleteAsync();

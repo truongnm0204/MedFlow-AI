@@ -293,6 +293,14 @@ public sealed class AppointmentQueueTrackingEndpointTests : AuthTestBase
             var vIds = new[] { visit1.Id, visit2.Id, visit3.Id };
             var aIds = new[] { appt1.Id, appt2.Id, appt3.Id };
 
+            // #863: payment_enrollment_intents.queue_entry_id + clinical_session_recovery_requests.queue_entry_id
+            // are ON DELETE RESTRICT; intent rows now exist for auto-enrolled CLS orders, so they must go first.
+            await Db.PaymentEnrollmentIntents
+                .Where(i => i.QueueEntryId.HasValue && qIds.Contains(i.QueueEntryId.Value))
+                .ExecuteDeleteAsync();
+            await Db.ClinicalSessionRecoveryRequests
+                .Where(r => qIds.Contains(r.QueueEntryId))
+                .ExecuteDeleteAsync();
             await Db.QueueEntries.Where(q => qIds.Contains(q.Id)).ExecuteDeleteAsync();
             await Db.Visits.Where(v => vIds.Contains(v.Id)).ExecuteDeleteAsync();
             await Db.Appointments.Where(a => aIds.Contains(a.Id)).ExecuteDeleteAsync();
