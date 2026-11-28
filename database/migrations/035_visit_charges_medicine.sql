@@ -134,9 +134,10 @@ CREATE INDEX IF NOT EXISTS "ix_visit_charges_visit_type"
   ON "visit_charges" ("visit_id", "charge_type");
 
 -- ============================================================================
--- 4. PAYMENT_COLLECT for PHARMACY_STAFF (dev/test seeds ONLY, mirrors migration 024 §6)
---    Production administrators must grant it explicitly (UC58) before the pharmacy
---    counter can collect Cash/QR.
+-- 4. PAYMENT_COLLECT for PHARMACY_STAFF (all environments — owner ruling 29/11,
+--    mirrors migration 033 §PATIENT_IDENTITY_VERIFY grant for RECEPTION).
+--    Grants the permission to the PHARMACY_STAFF role unconditionally so the
+--    pharmacy counter can collect Cash/QR in every environment.
 -- ============================================================================
 INSERT INTO "role_permissions" ("role_id", "permission_id")
 SELECT r."id", p."id"
@@ -144,7 +145,6 @@ FROM "roles" r
 CROSS JOIN "permissions" p
 WHERE p."code" = 'PAYMENT_COLLECT'
   AND r."code" = 'PHARMACY_STAFF'
-  AND EXISTS (SELECT 1 FROM "users" WHERE "email" = 'reception01@medflow.test')
 ON CONFLICT DO NOTHING;
 
 COMMIT;
