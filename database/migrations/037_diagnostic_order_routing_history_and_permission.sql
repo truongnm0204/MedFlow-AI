@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS "diagnostic_order_routing_history" (
   "visit_id" bigint NULL REFERENCES "visits" ("id") ON DELETE SET NULL,
   "hospital_id" bigint NULL REFERENCES "hospitals" ("id") ON DELETE SET NULL,
   "from_service_point_id" bigint NULL REFERENCES "queue_service_points" ("id") ON DELETE SET NULL,
-  "to_service_point_id" bigint NULL REFERENCES "queue_service_points" ("id") ON DELETE SET NULL,
+  -- Lịch sử phải luôn có điểm đích (check constraint bên dưới); xoá điểm sẽ xoá dòng lịch sử tương ứng.
+  "to_service_point_id" bigint NOT NULL REFERENCES "queue_service_points" ("id") ON DELETE CASCADE,
   "source" varchar(32) NOT NULL,
   "reason" text NULL,
   "changed_by_user_id" bigint NULL REFERENCES "users" ("id") ON DELETE SET NULL,

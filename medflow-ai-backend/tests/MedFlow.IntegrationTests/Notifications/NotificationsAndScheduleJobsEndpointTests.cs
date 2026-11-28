@@ -105,7 +105,7 @@ public sealed class NotificationsAndScheduleJobsEndpointTests : AuthTestBase
             Assert.Contains(indexName, existingIndexes);
         }
 
-        // Verify all 3 FKs on notifications strictly remain NO ACTION ('a'), NOT CASCADE ('c')
+        // Verify notifications FKs: existing 3 remain NO ACTION ('a'); recipient_user_id is SET NULL ('n').
         var fkDeleteCodes = await Db.Database
             .SqlQueryRaw<string>("""
                 SELECT confdeltype::text AS "Value"
@@ -115,8 +115,9 @@ public sealed class NotificationsAndScheduleJobsEndpointTests : AuthTestBase
                 """)
             .ToListAsync();
 
-        Assert.Equal(3, fkDeleteCodes.Count);
-        Assert.All(fkDeleteCodes, code => Assert.Equal("a", code));
+        Assert.Equal(4, fkDeleteCodes.Count);
+        Assert.Equal(3, fkDeleteCodes.Count(code => code == "a"));
+        Assert.Equal(1, fkDeleteCodes.Count(code => code == "n"));
     }
 
     [Fact]
