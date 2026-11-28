@@ -34,6 +34,10 @@ public sealed class EkycIdentityMigrationTests
         // Preflights report zero violations.
         await AssertPreflightZeroAsync(tempDb.ConnectionString, "preflight_029_audit.sql");
         await AssertPreflightZeroAsync(tempDb.ConnectionString, "preflight_032_audit.sql");
+        await AssertPreflightZeroAsync(tempDb.ConnectionString, "preflight_033_audit.sql");
+
+        // Migration 033: seeded RECEPTION role holds PATIENT_IDENTITY_VERIFY exactly once.
+        Assert.Equal(1L, await ReceptionGrantCountAsync(tempDb.ConnectionString));
 
         // All seeded pre-eKYC patients are UNVERIFIED by definition.
         await using var conn = new NpgsqlConnection(tempDb.ConnectionString);
@@ -136,9 +140,69 @@ public sealed class EkycIdentityMigrationTests
         Assert.Equal(3L, (long)(await cmd.ExecuteScalarAsync())!);
     }
 
+    [Fact]
+    public async Task Migration033_GrantsReceptionPermission_OnPopulatedDatabase_AndIsIdempotent()
+    {
+        await using var tempDb = await TempPostgresDatabase.CreateAsync(AdminConnectionString);
+        await ApplyMigrationsAsync(tempDb.ConnectionString, includeSeed: true, upToExclusive: "033");
+
+        // Pre-033 baseline: the permission exists (018) and is granted to admins only.
+        Assert.Equal(1L, await ScalarLongAsync(tempDb.ConnectionString,
+            "SELECT COUNT(*) FROM roles WHERE code = 'RECEPTION'"));
+        Assert.Equal(0L, await ScalarLongAsync(tempDb.ConnectionString,
+            "SELECT COUNT(*) FROM roles WHERE code = 'RECEPTIONIST'"));
+        Assert.Equal(0L, await ReceptionGrantCountAsync(tempDb.ConnectionString));
+        Assert.Equal(2L, await ScalarLongAsync(tempDb.ConnectionString,
+            """
+            SELECT COUNT(*)
+            FROM role_permissions rp
+            JOIN roles r ON r.id = rp.role_id
+            JOIN permissions p ON p.id = rp.permission_id
+            WHERE p.code = 'PATIENT_IDENTITY_VERIFY' AND r.code IN ('HOSPITAL_ADMIN','SYSTEM_ADMIN')
+            """));
+
+        for (var i = 0; i < 2; i++)
+        {
+            await ExecuteScriptAsync(tempDb.ConnectionString,
+                await File.ReadAllTextAsync(Path.Combine(RepoRoot, "database", "migrations",
+                    "033_reception_patient_identity_verify_grant.sql")));
+        }
+
+        Assert.Equal(1L, await ReceptionGrantCountAsync(tempDb.ConnectionString));
+
+        // Admin grants untouched; no duplicate rows.
+        Assert.Equal(2L, await ScalarLongAsync(tempDb.ConnectionString,
+            """
+            SELECT COUNT(*)
+            FROM role_permissions rp
+            JOIN roles r ON r.id = rp.role_id
+            JOIN permissions p ON p.id = rp.permission_id
+            WHERE p.code = 'PATIENT_IDENTITY_VERIFY' AND r.code IN ('HOSPITAL_ADMIN','SYSTEM_ADMIN')
+            """));
+        await AssertPreflightZeroAsync(tempDb.ConnectionString, "preflight_033_audit.sql");
+    }
+
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
+
+    private static async Task<long> ReceptionGrantCountAsync(string connectionString)
+        => await ScalarLongAsync(connectionString,
+            """
+            SELECT COUNT(*)
+            FROM role_permissions rp
+            JOIN roles r ON r.id = rp.role_id
+            JOIN permissions p ON p.id = rp.permission_id
+            WHERE r.code = 'RECEPTION' AND p.code = 'PATIENT_IDENTITY_VERIFY'
+            """);
+
+    private static async Task<long> ScalarLongAsync(string connectionString, string sql)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        return (long)(await cmd.ExecuteScalarAsync())!;
+    }
 
     private static async Task ApplyEkycMigrationsAsync(string connectionString)
     {
@@ -148,6 +212,7 @@ public sealed class EkycIdentityMigrationTests
                      "030_ekyc_proxy_call_logs.sql",
                      "031_ekyc_signed_evidence_capture.sql",
                      "032_patients_identity_status.sql",
+                     "033_reception_patient_identity_verify_grant.sql",
                  })
         {
             await ExecuteScriptAsync(connectionString,

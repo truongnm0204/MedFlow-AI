@@ -348,6 +348,27 @@ public sealed class EkycFinalizeEndpointTests : IClassFixture<EkycTestWebAppFact
         Assert.Contains("REJECTED", body);
     }
 
+    [Fact]
+    public async Task Finalize_ExpiredSession_ConflictAndMarksExpired()
+    {
+        var token = await CreatePatientTokenAsync();
+        var (sessionId, proxyBase) = await CreateSessionAsync(token);
+        await RunFullFlowAsync(token, proxyBase);
+
+        // Force TTL expiry after evidence was captured: finalize must reject and persist EXPIRED.
+        var session = await Db.EkycVerificationSessions.FirstAsync(s => s.Id == sessionId);
+        session.ExpiresAt = DateTime.SpecifyKind(DateTime.UtcNow.AddMinutes(-1), DateTimeKind.Unspecified);
+        await Db.SaveChangesAsync();
+        Db.ChangeTracker.Clear();
+
+        var response = await FinalizeAsync(token, sessionId);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var persisted = await Db.EkycVerificationSessions.AsNoTracking().FirstAsync(s => s.Id == sessionId);
+        Assert.Equal(EkycVerificationStatuses.Expired, persisted.Status);
+        Assert.Null(persisted.ConsumedAt);
+    }
+
     // ------------------------------------------------------------------
     // RACE TEST — the critical one: concurrent finalize on real PostgreSQL.
     // FOR UPDATE row lock must serialize exactly one winner.

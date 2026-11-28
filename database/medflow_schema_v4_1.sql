@@ -1497,3 +1497,16 @@ END $$;
 ALTER TABLE "ekyc_proxy_call_logs"
   ADD COLUMN IF NOT EXISTS "response_data_sign" text NULL,
   ADD COLUMN IF NOT EXISTS "response_payload_encrypted" bytea NULL;
+
+-- ============================================================================
+-- Migration 033: RECEPTION may run eKYC identity verification at the counter
+-- (owner decision 2026-11-28). Grants the existing PATIENT_IDENTITY_VERIFY
+-- permission — no new permission code, and no manual VERIFIED path.
+-- ============================================================================
+INSERT INTO "role_permissions" ("role_id", "permission_id")
+SELECT r."id", p."id"
+FROM "roles" r
+CROSS JOIN "permissions" p
+WHERE p."code" = 'PATIENT_IDENTITY_VERIFY'
+  AND r."code" = 'RECEPTION'
+ON CONFLICT DO NOTHING;

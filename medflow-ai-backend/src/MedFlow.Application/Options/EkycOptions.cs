@@ -54,8 +54,14 @@ public sealed class EkycOptions
     /// Feature flag (plan v2.1 mục 3.13): when OFF (default) the registration flow is exactly the
     /// pre-eKYC behavior — OTP verify activates the account immediately. When ON, OTP verify keeps
     /// the account PENDING and issues a registration-scope token; activation happens only after a
-    /// successful eKYC finalize + dedupe resolution. Wired end-to-end in slice 6; this slice
-    /// implements the mechanism so the flag can be flipped without further code changes.
+    /// successful eKYC finalize + dedupe resolution. Wired end-to-end (register / verify-otp /
+    /// login-resume / finalize; refresh only ever accepts full ACTIVE sessions).
+    /// Config: <c>Ekyc:MandatoryRegistration</c> in appsettings.json, env override
+    /// <c>Ekyc__MandatoryRegistration</c>. Enabling the flag never locks or re-verifies existing
+    /// ACTIVE accounts — only new registrations go through the gate (no data backfill/migration).
+    /// Operational caveat: flipping the flag OFF while registrations are PENDING strands them
+    /// (no resume token is issued and finalize's activation branch requires the flag). Drain
+    /// pending registrations or keep the flag ON until they are resolved.
     /// Non-secret operational config.
     /// </summary>
     public bool MandatoryRegistration { get; set; } = false;

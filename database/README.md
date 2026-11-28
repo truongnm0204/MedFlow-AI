@@ -44,7 +44,8 @@ database/
 │   ├── 029_ekyc_verification_sessions.sql          # VNPT eKYC Phase 1: ekyc_verification_sessions (single EKYC engine: verification_mode SELF_SERVICE/RECEPTION_ASSISTED + purpose ACCOUNT_ACTIVATION/PATIENT_PROFILE + performed_by, encrypted evidence payload, HMAC dedupe)
 │   ├── 030_ekyc_proxy_call_logs.sql                # VNPT eKYC Phase 1 slice 2: ekyc_proxy_call_logs per-call metadata + binding_state/compare_reference_hash columns on sessions
 │   ├── 031_ekyc_signed_evidence_capture.sql        # VNPT eKYC Phase 1 slice 3: response_data_sign + response_payload_encrypted on ekyc_proxy_call_logs (trust-anchor evidence capture)
-│   └── 032_patients_identity_status.sql            # VNPT eKYC Phase 1 slice 5: patients identity_status/unverified_reason/identity_note (patient identity separate from account activation)
+│   ├── 032_patients_identity_status.sql            # VNPT eKYC Phase 1 slice 5: patients identity_status/unverified_reason/identity_note (patient identity separate from account activation)
+│   └── 033_reception_patient_identity_verify_grant.sql # VNPT eKYC Phase 1 slice 6: grant PATIENT_IDENTITY_VERIFY to the seeded RECEPTION role (owner decision 2026-11-28)
 ├── scripts/
 │   ├── preflight_023_audit.sql                    # read-only preflight audit for Migration 023
 │   ├── preflight_024_audit.sql                    # read-only preflight audit for Migration 024
@@ -55,7 +56,8 @@ database/
 │   ├── preflight_029_audit.sql                    # read-only preflight audit for Migration 029
 │   ├── preflight_030_audit.sql                    # read-only preflight audit for Migration 030
 │   ├── preflight_031_audit.sql                    # read-only preflight audit for Migration 031
-│   └── preflight_032_audit.sql                    # read-only preflight audit for Migration 032
+│   ├── preflight_032_audit.sql                    # read-only preflight audit for Migration 032
+│   └── preflight_033_audit.sql                    # read-only preflight audit for Migration 033
 └── README.md
 ```
 

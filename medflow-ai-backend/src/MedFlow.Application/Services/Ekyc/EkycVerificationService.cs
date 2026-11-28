@@ -159,6 +159,9 @@ public sealed class EkycVerificationService : IEkycVerificationService
         {
             await RejectAsync(session, actorUserId, "SESSION_EXPIRED",
                 "Phiên đã hết hạn trước khi kết thúc.", ipAddress, nowUtc, ct, expire: true);
+            // Persist EXPIRED + audit before surfacing the conflict; otherwise the transaction
+            // commits nothing and the row stays INITIATED while the client is told it expired.
+            await _db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
             throw new ConflictException(SessionExpiredMessage);
         }

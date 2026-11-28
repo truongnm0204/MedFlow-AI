@@ -111,19 +111,43 @@ public sealed class EkycReceptionEndpointTests : IClassFixture<EkycTestWebAppFac
     }
 
     [Fact]
-    public async Task ReceptionWithoutPermission_CreateUnverifiedProfile_Forbidden()
+    public async Task InactiveStaff_IdentityVerify_Forbidden()
     {
-        var (_, _, token) = await CreateStaffTokenAsync(withVerifyPermission: false);
+        // Migration 033 grants PATIENT_IDENTITY_VERIFY to the seeded RECEPTION role, so the
+        // remaining layer-2 gate is staff/hospital authority. [Authorize(Roles)] passes; the
+        // service must still reject an inactive staff row.
+        var (_, staffId, token) = await CreateStaffTokenAsync(withVerifyPermission: false);
+        var staff = await Db.Staff.FirstAsync(s => s.Id == staffId);
+        staff.Status = "INACTIVE";
+        await Db.SaveChangesAsync();
 
         var response = await PostJsonAsync(token, "/api/v1/reception/ekyc/patients/unverified", new
         {
-            fullName = "Bé Không Quyền",
+            fullName = "Bé Nhân Viên Ngưng",
             dateOfBirth = "2020-01-01",
             gender = "FEMALE",
             reason = "CHILD",
         });
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SeededReceptionRole_WithIdentityVerifyGrant_CanCreateUnverifiedProfile()
+    {
+        // Proves migration 033 is effective in the live test DB: no dedicated test role is used
+        // here — only the seeded RECEPTION role.
+        var (_, _, token) = await CreateStaffTokenAsync(withVerifyPermission: false);
+
+        var response = await PostJsonAsync(token, "/api/v1/reception/ekyc/patients/unverified", new
+        {
+            fullName = "Bé Lễ Tân Xác Minh",
+            dateOfBirth = "2021-02-02",
+            gender = "FEMALE",
+            reason = "CHILD",
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
     [Fact]
@@ -163,6 +187,16 @@ public sealed class EkycReceptionEndpointTests : IClassFixture<EkycTestWebAppFac
         var persisted = await Db.Patients.AsNoTracking().FirstAsync(p => p.Id == profile.PatientId);
         Assert.Equal(PatientIdentityStatuses.Unverified, persisted.IdentityStatus);
         Assert.Equal(PatientUnverifiedReasons.ConsentDeclined, persisted.UnverifiedReason);
+
+        // Owner "Done means": UNVERIFIED profile creation is audited with its reason.
+        var createdAudit = await Db.AuditLogs.AsNoTracking()
+            .Where(a => a.Action == EkycConstants.AuditActionPatientProfileCreatedUnverified
+                        && a.ActorUserId == staffUserId)
+            .OrderByDescending(a => a.Id)
+            .FirstOrDefaultAsync();
+        Assert.NotNull(createdAudit);
+        Assert.Contains(profile.PatientCode, createdAudit!.ChangeData!);
+        Assert.Contains(PatientUnverifiedReasons.ConsentDeclined, createdAudit.ChangeData!);
 
         // 2. Start reception-assisted eKYC for that profile.
         var createSession = await PostJsonAsync(token,
@@ -211,6 +245,169 @@ public sealed class EkycReceptionEndpointTests : IClassFixture<EkycTestWebAppFac
         Assert.Null(verified.UserId);
         Assert.True(await Db.AuditLogs.AnyAsync(a =>
             a.Action == EkycConstants.AuditActionReceptionAssisted && a.ActorUserId == staffUserId));
+    }
+
+    [Fact]
+    public async Task UnverifiedProfile_DuplicateIdentity_Conflict()
+    {
+        await CleanupStubHmacPatientsAsync();
+        var (_, _, token) = await CreateStaffTokenAsync(withVerifyPermission: true);
+
+        var first = await PostJsonAsync(token, "/api/v1/reception/ekyc/patients/unverified", new
+        {
+            fullName = "NGUYEN VAN EKYC",
+            dateOfBirth = "1995-06-15",
+            gender = "MALE",
+            reason = "CONSENT_DECLINED",
+            identityCard = "012345678901",
+        });
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+
+        // Dedupe runs BEFORE creation: the same CCCD must not create a second profile.
+        var duplicate = await PostJsonAsync(token, "/api/v1/reception/ekyc/patients/unverified", new
+        {
+            fullName = "Nguyen Van Ekyc Khac",
+            dateOfBirth = "1995-06-15",
+            gender = "MALE",
+            reason = "CONSENT_DECLINED",
+            identityCard = "012345678901",
+        });
+        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+
+        // Leave no stub-HMAC row behind for later suites sharing medflow_test.
+        await CleanupStubHmacPatientsAsync();
+    }
+
+    [Fact]
+    public async Task ReceptionTamperedFinalize_EngineRejects_PatientStaysUnverified()
+    {
+        // Reception has the permission but cannot set VERIFIED directly: a tampered document is
+        // rejected by the eKYC engine and the patient profile stays UNVERIFIED.
+        await CleanupStubHmacPatientsAsync();
+        var (staffUserId, _, token) = await CreateStaffTokenAsync(withVerifyPermission: true);
+
+        var createProfile = await PostJsonAsync(token, "/api/v1/reception/ekyc/patients/unverified", new
+        {
+            fullName = "NGUYEN VAN EKYC",
+            dateOfBirth = "1995-06-15",
+            gender = "MALE",
+            reason = "CONSENT_DECLINED",
+            identityCard = "012345678901",
+        });
+        Assert.Equal(HttpStatusCode.Created, createProfile.StatusCode);
+        var profile = await createProfile.Content.ReadFromJsonAsync<UnverifiedProfileShape>();
+
+        var createSession = await PostJsonAsync(token,
+            $"/api/v1/reception/ekyc/patients/{profile!.PatientId}/sessions", new
+            {
+                consentVersion = "ekyc-consent-v1",
+                consentAccepted = true,
+                identityCard = "012345678901",
+            });
+        Assert.Equal(HttpStatusCode.Created, createSession.StatusCode);
+        var session = await createSession.Content.ReadFromJsonAsync<SessionShape>();
+
+        _factory.VnptHandler.PayloadOverrides["ocr/id"] =
+            """{"object":{"id":"012345678901","name":"NGUYEN VAN EKYC","birth_day":"15/06/1995","gender":"Nam","tampering":{"is_legal":"no","warning":["edited"]}},"type_document":9,"challengeCode":"11111"}""";
+        try
+        {
+            await ProxyPostAsync(token, session!.ProxyBasePath, "/file-service/v1/addFile", "fake-upload");
+            await ProxyPostAsync(token, session.ProxyBasePath, "/ai/v1/web/ocr/id/front",
+                "{\"img_front\":\"idg20261127/IDG01_stubbed_upload\"}");
+            await ProxyPostAsync(token, session.ProxyBasePath, "/ai/v1/web/card/liveness",
+                "{\"img\":\"idg20261127/IDG01_stubbed_upload\"}");
+        }
+        finally
+        {
+            _factory.VnptHandler.PayloadOverrides.TryRemove("ocr/id", out _);
+        }
+
+        using var finalize = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/v1/ekyc/sessions/{session.SessionId}/finalize");
+        finalize.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var finalizeResponse = await _client.SendAsync(finalize);
+        Assert.Equal(HttpStatusCode.OK, finalizeResponse.StatusCode);
+        var body = await finalizeResponse.Content.ReadAsStringAsync();
+        Assert.Contains(EkycVerificationStatuses.Rejected, body);
+        Assert.Contains("TAMPERING_DETECTED", body);
+
+        Db.ChangeTracker.Clear();
+        var patient = await Db.Patients.AsNoTracking().FirstAsync(p => p.Id == profile.PatientId);
+        Assert.Equal(PatientIdentityStatuses.Unverified, patient.IdentityStatus);
+        Assert.False(await Db.AuditLogs.AnyAsync(a =>
+            a.Action == EkycConstants.AuditActionVerified && a.ActorUserId == staffUserId
+            && a.EntityId == session.SessionId));
+    }
+
+    [Fact]
+    public async Task ReceptionSession_ForOwnLinkedAccount_Forbidden()
+    {
+        // performed_by must differ from the subject account (no self-verification at the counter).
+        var (staffUserId, _, token) = await CreateStaffTokenAsync(withVerifyPermission: true);
+
+        var ownPatient = new Patient
+        {
+            PatientCode = $"P-SELF-{Guid.NewGuid():N}"[..20],
+            FullName = "Nhan Vien Tu Xac Minh",
+            DateOfBirth = new DateOnly(1990, 1, 1),
+            UserId = staffUserId,
+            Status = "ACTIVE",
+        };
+        Db.Patients.Add(ownPatient);
+        await Db.SaveChangesAsync();
+
+        var response = await PostJsonAsync(token,
+            $"/api/v1/reception/ekyc/patients/{ownPatient.Id}/sessions", new
+            {
+                consentVersion = "ekyc-consent-v1",
+                consentAccepted = true,
+                identityCard = "012345678901",
+            });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReceptionSession_ForeignOperator_FinalizeNotFound()
+    {
+        // Only the staff member recorded as performed_by may finalize a reception session.
+        await CleanupStubHmacPatientsAsync();
+        var (_, _, operatorToken) = await CreateStaffTokenAsync(withVerifyPermission: true);
+        var (_, _, foreignToken) = await CreateStaffTokenAsync(withVerifyPermission: true);
+
+        var createProfile = await PostJsonAsync(operatorToken, "/api/v1/reception/ekyc/patients/unverified", new
+        {
+            fullName = "NGUYEN VAN EKYC",
+            dateOfBirth = "1995-06-15",
+            gender = "MALE",
+            reason = "CONSENT_DECLINED",
+            identityCard = "012345678901",
+        });
+        Assert.Equal(HttpStatusCode.Created, createProfile.StatusCode);
+        var profile = await createProfile.Content.ReadFromJsonAsync<UnverifiedProfileShape>();
+
+        var createSession = await PostJsonAsync(operatorToken,
+            $"/api/v1/reception/ekyc/patients/{profile!.PatientId}/sessions", new
+            {
+                consentVersion = "ekyc-consent-v1",
+                consentAccepted = true,
+                identityCard = "012345678901",
+            });
+        Assert.Equal(HttpStatusCode.Created, createSession.StatusCode);
+        var session = await createSession.Content.ReadFromJsonAsync<SessionShape>();
+
+        await ProxyPostAsync(operatorToken, session!.ProxyBasePath, "/file-service/v1/addFile", "fake-upload");
+        await ProxyPostAsync(operatorToken, session.ProxyBasePath, "/ai/v1/web/ocr/id/front",
+            "{\"img_front\":\"idg20261127/IDG01_stubbed_upload\"}");
+        await ProxyPostAsync(operatorToken, session.ProxyBasePath, "/ai/v1/web/card/liveness",
+            "{\"img\":\"idg20261127/IDG01_stubbed_upload\"}");
+
+        using var finalize = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/v1/ekyc/sessions/{session.SessionId}/finalize");
+        finalize.Headers.Authorization = new AuthenticationHeaderValue("Bearer", foreignToken);
+        var response = await _client.SendAsync(finalize);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     /// <summary>Shared medflow_test DB: null-out prior stub-CCCD rows (unique HMAC index).</summary>

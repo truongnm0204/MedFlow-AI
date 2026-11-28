@@ -127,6 +127,35 @@ public sealed class EkycProxyEndpointTests : IClassFixture<EkycTestWebAppFactory
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Fact]
+    public async Task CreateSession_SubjectDailyQuotaExceeded_Returns429QuotaCodeAndAudits()
+    {
+        var token = await CreatePatientTokenAsync();
+
+        // Owner scope: default 3 sessions per subject per day.
+        for (var i = 0; i < 3; i++)
+        {
+            var (_, _) = await CreateSessionAsync(token);
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/ekyc/sessions")
+        {
+            Content = JsonContent.Create(new
+            {
+                consentVersion = "ekyc-consent-v1",
+                consentAccepted = true,
+                identityCard = "012345678901",
+            }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains(EkycErrorCodes.QuotaExhausted, body);
+        Assert.True(await Db.AuditLogs.AnyAsync(a => a.Action == EkycConstants.AuditActionQuotaExceeded));
+    }
+
     // ------------------------------------------------------------------
     // Proxy forwarding end-to-end
     // ------------------------------------------------------------------

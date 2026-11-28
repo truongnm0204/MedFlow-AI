@@ -6,6 +6,7 @@ using MedFlow.Application.Services.Ekyc;
 using MedFlow.Domain.Constants;
 using MedFlow.Domain.Enums;
 using MedFlow.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -308,6 +309,98 @@ public sealed class EkycRegistrationDedupeEndpointTests : IDisposable
         probe.Headers.Authorization = new AuthenticationHeaderValue("Bearer", body.AccessToken);
         var probeResponse = await _client.SendAsync(probe);
         Assert.Equal(HttpStatusCode.Forbidden, probeResponse.StatusCode);
+    }
+
+    // ------------------------------------------------------------------
+    // Flag ON: existing ACTIVE accounts are not locked or re-gated
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task FlagOn_ExistingActiveAccount_LoginRefreshAndPatientApisUnaffected()
+    {
+        // Plan v2.1 mục 3.13 migration policy: enabling mandatory eKYC never backfills, locks or
+        // re-verifies existing ACTIVE accounts. Only new registrations go through the gate.
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var email = $"ekyc-existing-{suffix}@example.com";
+        var hasher = new PasswordHasher<MedFlow.Domain.Entities.User>();
+        var user = new MedFlow.Domain.Entities.User
+        {
+            Email = email,
+            AuthProvider = "LOCAL",
+            AccountStatus = AccountStatus.ACTIVE,
+            EmailVerifiedAt = DateTime.UtcNow,
+        };
+        user.PasswordHash = hasher.HashPassword(user, "MedFlow@2026");
+        Db.Users.Add(user);
+        await Db.SaveChangesAsync();
+        var patientRole = await Db.Roles.AsNoTracking().FirstAsync(r => r.Code == RoleNames.Patient);
+        Db.UserRoles.Add(new MedFlow.Domain.Entities.UserRole { UserId = user.Id, RoleId = patientRole.Id });
+        Db.Patients.Add(new MedFlow.Domain.Entities.Patient
+        {
+            PatientCode = $"P-EXIST-{suffix}",
+            FullName = "Nguyen Van Existing",
+            DateOfBirth = new DateOnly(1988, 3, 3),
+            UserId = user.Id,
+            Status = "ACTIVE",
+        });
+        await Db.SaveChangesAsync();
+
+        var login = await _client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "MedFlow@2026" });
+        login.EnsureSuccessStatusCode();
+        var loginBody = await login.Content.ReadFromJsonAsync<LoginShape>();
+        Assert.False(loginBody!.RequiresEkycVerification);
+        Assert.NotEmpty(loginBody.RefreshToken);
+
+        var refresh = await _client.PostAsJsonAsync("/api/v1/auth/refresh",
+            new { refreshToken = loginBody.RefreshToken });
+        refresh.EnsureSuccessStatusCode();
+
+        using var profileRequest = new HttpRequestMessage(HttpMethod.Get, "/api/v1/patients/me/profile");
+        profileRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", loginBody.AccessToken);
+        var profileResponse = await _client.SendAsync(profileRequest);
+        Assert.Equal(HttpStatusCode.OK, profileResponse.StatusCode);
+
+        Db.ChangeTracker.Clear();
+        Assert.Equal(AccountStatus.ACTIVE, (await Db.Users.AsNoTracking().FirstAsync(u => u.Id == user.Id)).AccountStatus);
+    }
+
+    [Fact]
+    public async Task FlagOff_PendingVerifiedEmailAccount_LoginStillRejected()
+    {
+        // Login-resume is flag-gated: with the flag OFF a PENDING account (even email-verified)
+        // must not receive a registration-scope token. Legacy behavior stays byte-identical.
+        using var factory = new EkycTestWebAppFactory();
+        using var client = factory.CreateClient();
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MedFlowDbContext>();
+
+        var email = $"ekyc-offpending-{Guid.NewGuid():N}@example.com";
+        var hasher = new PasswordHasher<MedFlow.Domain.Entities.User>();
+        var user = new MedFlow.Domain.Entities.User
+        {
+            Email = email,
+            AuthProvider = "LOCAL",
+            AccountStatus = AccountStatus.PENDING,
+            EmailVerifiedAt = DateTime.UtcNow,
+        };
+        user.PasswordHash = hasher.HashPassword(user, "MedFlow@2026");
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        var login = await client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = "MedFlow@2026" });
+        Assert.Equal(HttpStatusCode.Unauthorized, login.StatusCode);
+    }
+
+    [Fact]
+    public async Task RegistrationToken_CannotBeUsedAsRefreshToken()
+    {
+        var (_, verify) = await RegisterAndVerifyOtpAsync();
+        var registrationToken = verify.AccessToken!;
+
+        var refresh = await _client.PostAsJsonAsync("/api/v1/auth/refresh",
+            new { refreshToken = registrationToken });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, refresh.StatusCode);
     }
 
     // ------------------------------------------------------------------
