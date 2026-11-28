@@ -432,7 +432,9 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
             .ToListAsync(ct);
 
         // Validate batches and per-batch aggregated stocks
-        var preparedItemsData = new List<(PrescriptionItem Item, Medicine Medicine, MedicineBatch Batch, decimal PickedQty, string? ShortageReason)>();
+        // BR-BF03-03: no partial preparation — request.ShortageReason is kept only for contract
+        // backward-compatibility and is deliberately ignored (it can never relax quantity checks or be persisted).
+        var preparedItemsData = new List<(PrescriptionItem Item, Medicine Medicine, MedicineBatch Batch, decimal PickedQty)>();
         var totalPickedByBatchId = new Dictionary<long, decimal>();
 
         foreach (var reqItem in request.Items)
@@ -479,22 +481,30 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
             var availableStock = batch.QuantityOnHand ?? 0;
             if (availableStock < cumulativeForBatch)
             {
-                throw new ConflictException($"Lô thuốc {batch.BatchNumber} không đủ tồn kho khả dụng ({availableStock} < {cumulativeForBatch}) cho thuốc {med.Name}.");
+                throw new ConflictException($"Lô thuốc {batch.BatchNumber} không đủ tồn kho khả dụng ({availableStock} < {cumulativeForBatch}) cho thuốc {med.Name}. Vui lòng báo bệnh nhân và kết thúc luồng cấp phát.");
             }
 
             totalPickedByBatchId[batch.Id] = cumulativeForBatch;
-            preparedItemsData.Add((pi, med, batch, reqItem.PickedQuantity, reqItem.ShortageReason));
+            preparedItemsData.Add((pi, med, batch, reqItem.PickedQuantity));
         }
 
+        // BR-BF03-03: bắt buộc soạn đủ 100% số lượng kê đơn — không cho phép soạn thiếu (kể cả có lý do) hoặc soạn thừa.
         foreach (var group in preparedItemsData.GroupBy(x => x.Item.Id))
         {
             var first = group.First();
             var prescribedQty = first.Item.PrescribedQuantity ?? 0m;
             var totalPickedForItem = group.Sum(x => x.PickedQty);
-            var hasShortageReason = group.Any(x => !string.IsNullOrWhiteSpace(x.ShortageReason));
-            if (totalPickedForItem != prescribedQty && !hasShortageReason)
+
+            if (totalPickedForItem < prescribedQty)
             {
-                throw new ValidationException($"Số lượng thực soạn ({totalPickedForItem}) chưa khớp y lệnh ({prescribedQty}) cho thuốc {first.Medicine.Name}. Vui lòng nhập lý do nếu thiếu thuốc.");
+                throw new ValidationException(
+                    $"Số lượng thực soạn ({totalPickedForItem:0.###}) thiếu so với y lệnh ({prescribedQty:0.###}) cho thuốc {first.Medicine.Name}. Không đủ tồn kho để soạn đủ — vui lòng báo bệnh nhân và kết thúc luồng cấp phát.");
+            }
+
+            if (totalPickedForItem > prescribedQty)
+            {
+                throw new ValidationException(
+                    $"Số lượng thực soạn ({totalPickedForItem:0.###}) vượt quá y lệnh ({prescribedQty:0.###}) cho thuốc {first.Medicine.Name}. Chỉ được soạn đúng 100% số lượng kê đơn.");
             }
         }
 
@@ -554,7 +564,7 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
                 existingMatch.MedicineBatchId = prep.Batch.Id;
                 existingMatch.PlannedQuantity = prep.PickedQty;
                 existingMatch.DispensedQuantity = null;
-                existingMatch.ShortageReason = prep.ShortageReason;
+                existingMatch.ShortageReason = null;
             }
             else
             {
@@ -565,7 +575,6 @@ public sealed class PrepareMedicinesService : IPrepareMedicinesService
                     MedicineBatchId = prep.Batch.Id,
                     PlannedQuantity = prep.PickedQty,
                     DispensedQuantity = null,
-                    ShortageReason = prep.ShortageReason,
                 };
                 _db.DispenseItems.Add(newDi);
             }

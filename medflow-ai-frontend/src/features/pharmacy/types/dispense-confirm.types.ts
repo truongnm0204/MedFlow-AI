@@ -61,7 +61,6 @@ export interface ConfirmDispenseItemPayload {
   prescriptionItemId: number;
   medicineBatchId?: number | null;
   dispensedQuantity?: number | null;
-  shortageReason?: string | null;
 }
 
 export interface ConfirmDispensePayload {

@@ -48,6 +48,30 @@ function isValidationOrConflictError(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Nhận diện lỗi backend do thiếu tồn / cấp thiếu (issue #864, contract từ PR #881).
+ * Backend trả đúng các chuỗi tiếng Việt sau:
+ *  - 400 thiếu so với kê đơn: "thiếu so với số lượng kê đơn"
+ *  - 400 vượt kê đơn: "vượt quá số lượng kê đơn"
+ *  - 409 thiếu tồn kho: "Không đủ tồn kho để cấp phát đầy đủ"
+ *  - 400 soạn thiếu/thừa: "thiếu so với y lệnh" / "vượt quá y lệnh"
+ * Các lỗi này có nghĩa là không thể cấp phát đủ — phải báo bệnh nhân và kết thúc luồng.
+ */
+function isShortageError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : '') || '';
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('thiếu so với số lượng kê') ||
+    lower.includes('vượt quá số lượng kê') ||
+    lower.includes('không đủ tồn kho') ||
+    lower.includes('thiếu so với y lệnh') ||
+    lower.includes('vượt quá y lệnh')
+  );
+}
+
+const SHORTAGE_GUIDANCE_SUFFIX =
+  ' Không đủ thuốc để cấp phát — vui lòng báo bệnh nhân và kết thúc luồng cấp phát.';
+
 export function DispenseConfirmPage() {
   const params = useParams<{ prescriptionCode?: string }>();
   const [searchParams] = useSearchParams();
@@ -171,24 +195,6 @@ export function DispenseConfirmPage() {
     });
   };
 
-  const handleChangeShortageReason = (medId: string, reason: string) => {
-    if (isServerBlocked || !activeRxCode) return;
-    rotateIdempotencyAttempt(prescriptionScopeKey);
-    setLineEditsByRx((prev) => {
-      const rxEdits = prev[activeRxCode] ?? {};
-      return {
-        ...prev,
-        [activeRxCode]: {
-          ...rxEdits,
-          [medId]: {
-            ...rxEdits[medId],
-            shortageReason: reason,
-          },
-        },
-      };
-    });
-  };
-
   const handleConfirmDispense = async () => {
     if (!ctx || isServerBlocked) return;
 
@@ -221,12 +227,10 @@ export function DispenseConfirmPage() {
         const defaultQty = m.dispensedQuantity ?? m.prescribedQuantity ?? null;
         const resolvedQty =
           edit?.dispensedQuantity !== undefined ? edit.dispensedQuantity : defaultQty;
-        const trimmedReason = edit?.shortageReason?.trim() || undefined;
         return {
           prescriptionItemId: m.prescriptionItemId as number,
           medicineBatchId: m.batchId ?? null,
           dispensedQuantity: resolvedQty,
-          shortageReason: trimmedReason ?? null,
           prescribedQuantity: m.prescribedQuantity ?? 0,
           drugName: m.drugName,
         };
@@ -244,28 +248,37 @@ export function DispenseConfirmPage() {
       }
     }
 
-    // Group by prescriptionItemId to enforce shortageReason when total dispensed < prescribed (including 0)
+    // Cấm cấp phát thiếu (issue #864): mọi khoản thuốc phải xuất đủ 100% số lượng kê.
+    // Thiếu tồn → hiển thị rõ "không đủ thuốc, báo bệnh nhân" và KHÔNG xác nhận cấp phát.
     const groupedByPi = new Map<
       number,
-      { prescribed: number; dispensed: number; hasReason: boolean; drugName: string }
+      { prescribed: number; dispensed: number; drugName: string }
     >();
     for (const row of itemsPayload) {
       const prev = groupedByPi.get(row.prescriptionItemId);
       groupedByPi.set(row.prescriptionItemId, {
         prescribed: row.prescribedQuantity || prev?.prescribed || 0,
         dispensed: (prev?.dispensed ?? 0) + (row.dispensedQuantity ?? 0),
-        hasReason: Boolean(prev?.hasReason || row.shortageReason),
         drugName: row.drugName,
       });
     }
 
     for (const [, summary] of groupedByPi) {
-      if (summary.dispensed < summary.prescribed && !summary.hasReason) {
+      if (summary.dispensed < summary.prescribed) {
         rotateIdempotencyAttempt(prescriptionScopeKey);
         setNoticeState({
           rxCode: activeRxCode,
           tone: 'error',
-          message: `Thuốc ${summary.drugName} có số lượng thực xuất (${summary.dispensed}) nhỏ hơn kê đơn (${summary.prescribed}). Vui lòng nhập lý do cấp thiếu thuốc.`,
+          message: `Thuốc ${summary.drugName} không đủ số lượng cấp phát (thực xuất ${summary.dispensed} so với kê đơn ${summary.prescribed}). Không thể cấp phát — vui lòng báo bệnh nhân và kết thúc luồng.`,
+        });
+        return;
+      }
+      if (summary.dispensed > summary.prescribed) {
+        rotateIdempotencyAttempt(prescriptionScopeKey);
+        setNoticeState({
+          rxCode: activeRxCode,
+          tone: 'error',
+          message: `Thuốc ${summary.drugName} có số lượng thực xuất (${summary.dispensed}) vượt quá số lượng kê đơn (${summary.prescribed}). Vui lòng điều chỉnh về đúng số lượng kê.`,
         });
         return;
       }
@@ -287,7 +300,6 @@ export function DispenseConfirmPage() {
           prescriptionItemId: item.prescriptionItemId,
           medicineBatchId: item.medicineBatchId,
           dispensedQuantity: item.dispensedQuantity,
-          ...(item.shortageReason ? { shortageReason: item.shortageReason } : {}),
         })),
       });
 
@@ -321,11 +333,14 @@ export function DispenseConfirmPage() {
       if (isValidationOrConflictError(error)) {
         rotateIdempotencyAttempt(prescriptionScopeKey);
       }
+      const baseMessage =
+        error instanceof Error ? error.message : 'Không thể xác nhận bàn giao thuốc lúc này.';
+      // Khi backend chặn vì thiếu tồn, nêu rõ hành động: báo bệnh nhân, kết thúc luồng.
+      const message = isShortageError(error) ? baseMessage + SHORTAGE_GUIDANCE_SUFFIX : baseMessage;
       setNoticeState({
         rxCode: activeRxCode,
         tone: 'error',
-        message:
-          error instanceof Error ? error.message : 'Không thể xác nhận bàn giao thuốc lúc này.',
+        message,
       });
     }
   };
@@ -467,7 +482,6 @@ export function DispenseConfirmPage() {
                   onToggleCheck={handleToggleCheck}
                   lineEdits={activeLineEdits}
                   onChangeLineQuantity={handleChangeLineQuantity}
-                  onChangeShortageReason={handleChangeShortageReason}
                   disabled={isDispensed || isServerBlocked || confirmMutation.isPending}
                 />
               </div>
