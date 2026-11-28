@@ -145,7 +145,7 @@ public sealed class CreatePatientAtReceptionServiceTests : IDisposable
             IdentificationNumber.ComputeHmac("012345678901", "unit-test-identity-key"),
             saved.IdentificationHashHmac);
         Assert.Equal(IdentificationNumber.CurrentHashVersion, saved.HashVersion);
-        Assert.Equal(result.Id, saved.Id);
+        Assert.Equal(result.PatientId, saved.Id);
     }
 
     [Fact]

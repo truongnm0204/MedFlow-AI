@@ -32,6 +32,24 @@ export interface LoginResponse {
   refreshToken: string;
   refreshTokenExpiresIn: number;
   user: UserDto;
+  /**
+   * `true` khi tài khoản đang PENDING (đăng ký bắt buộc eKYC): backend trả registration-scope
+   * access token, KHÔNG cấp refresh token — người dùng phải hoàn tất eKYC trước khi đăng nhập thật.
+   */
+  requiresEkycVerification: boolean;
+}
+
+/**
+ * `POST /auth/verify-otp` response.
+ * Khi bật cờ đăng ký bắt buộc eKYC, tài khoản vẫn PENDING và backend cấp một registration-scope
+ * access token (không có refresh token) để gọi các endpoint eKYC.
+ */
+export interface VerifyOtpResponse {
+  userId: number;
+  message: string;
+  accessToken?: string | null;
+  accessTokenExpiresIn?: number | null;
+  requiresEkycVerification: boolean;
 }
 
 export interface RefreshRequest {

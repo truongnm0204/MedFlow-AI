@@ -82,7 +82,7 @@ public sealed class CreatePatientAtReceptionEndpointTests : AuthTestBase
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<CreatePatientResponseDto>();
         Assert.NotNull(body);
-        Assert.True(body.Id > 0);
+        Assert.True(body.PatientId > 0);
         Assert.StartsWith($"BN-{DateTime.UtcNow.Year}-", body.PatientCode);
         Assert.Equal("Trần Thị Bình", body.FullName);
         Assert.Equal("********" + payload.IdentityCard![^4..], body.IdentityCardMasked);

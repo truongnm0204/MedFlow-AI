@@ -5,3 +5,7 @@ coverage
 package-lock.json
 playwright-report
 test-results
+
+# Vendored third-party VNPT eKYC SDK assets (obfuscated bundles + vendor JSON).
+# Never reformatted: they are shipped as-is and must not be rewritten by Prettier.
+public/ekyc-sdk/

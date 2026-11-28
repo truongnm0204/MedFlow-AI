@@ -1,7 +1,7 @@
 namespace MedFlow.Application.DTOs.Reception;
 
 public sealed record CreatePatientResponseDto(
-    long Id,
+    long PatientId,
     string PatientCode,
     string FullName,
     DateOnly? DateOfBirth,

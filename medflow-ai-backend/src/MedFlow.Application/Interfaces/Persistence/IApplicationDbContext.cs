@@ -54,6 +54,8 @@ public interface IApplicationDbContext
     DbSet<DiagnosticResultVersion> DiagnosticResultVersions => throw new NotSupportedException("DiagnosticResultVersions DbSet is not configured in this test context.");
     DbSet<Notification> Notifications => throw new NotSupportedException("Notifications DbSet is not configured in this test context.");
     DbSet<ClinicalSessionRecoveryRequest> ClinicalSessionRecoveryRequests => throw new NotSupportedException("ClinicalSessionRecoveryRequests DbSet is not configured in this test context.");
+    DbSet<EkycVerificationSession> EkycVerificationSessions => throw new NotSupportedException("EkycVerificationSessions DbSet is not configured in this test context.");
+    DbSet<EkycProxyCallLog> EkycProxyCallLogs => throw new NotSupportedException("EkycProxyCallLogs DbSet is not configured in this test context.");
 
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken ct = default);
@@ -164,5 +166,9 @@ public interface IApplicationDbContext
     Task<bool> TryLockClinicalSessionRecoveryRequestForUpdateAsync(long requestId, CancellationToken ct = default)
         => Task.FromResult(false);
     Task<bool> TryLockClinicalSessionRecoveryRequestsForUpdateAsync(IReadOnlyCollection<long> requestIds, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    // Level 20: ekyc_verification_sessions — finalize takes this lock so concurrent finalize is single-winner.
+    Task<bool> TryLockEkycVerificationSessionForUpdateAsync(long sessionId, CancellationToken ct = default)
         => Task.FromResult(false);
 }

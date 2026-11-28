@@ -25,6 +25,7 @@ public class AuthService : IAuthService
     private readonly AuthSecurityOptions _options;
     private readonly TimeProvider _timeProvider;
     private readonly IRealtimeAccessRevoker _accessRevoker;
+    private readonly EkycOptions _ekycOptions;
     private readonly PasswordHasher<User> _passwordHasher = new();
 
     public AuthService(
@@ -36,7 +37,8 @@ public class AuthService : IAuthService
         IAuditLogger audit,
         IOptions<AuthSecurityOptions>? authOptions = null,
         TimeProvider? timeProvider = null,
-        IRealtimeAccessRevoker? accessRevoker = null)
+        IRealtimeAccessRevoker? accessRevoker = null,
+        IOptions<EkycOptions>? ekycOptions = null)
     {
         _db = db;
         _jwtService = jwtService;
@@ -47,6 +49,7 @@ public class AuthService : IAuthService
         _options = authOptions?.Value ?? new AuthSecurityOptions();
         _timeProvider = timeProvider ?? TimeProvider.System;
         _accessRevoker = accessRevoker ?? MedFlow.Application.Services.Realtime.NullRealtimeAccessRevoker.Instance;
+        _ekycOptions = ekycOptions?.Value ?? new EkycOptions();
     }
 
     // ── Register ──────────────────────────────────────────────────────────
@@ -218,10 +221,23 @@ public class AuthService : IAuthService
         // Generic message chống enumeration
         var invalidMsg = "Sai thông tin đăng nhập";
 
-        if (user is null || user.AccountStatus != AccountStatus.ACTIVE)
+        // Registration-resume path (plan v2.1 mục 3.1): with mandatory-eKYC ON, a PENDING LOCAL
+        // account whose email is verified and that proves password knowledge receives a
+        // registration-scope token to continue the interrupted eKYC verification — never a full
+        // session. Email verification is required first so the account's recovery channel is
+        // proven; password verification happens with the same failed-attempt accounting as normal
+        // login, so this is not an auth weakening. Flag OFF → byte-identical behavior to before.
+        var pendingEkycResume = user is not null &&
+            user.AccountStatus == AccountStatus.PENDING &&
+            _ekycOptions.MandatoryRegistration &&
+            user.EmailVerifiedAt is not null &&
+            string.Equals(user.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(user.PasswordHash);
+
+        if (user is null || (user.AccountStatus != AccountStatus.ACTIVE && !pendingEkycResume))
             throw new UnauthorizedAccessException(invalidMsg);
 
-        if (!string.Equals(user.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase) ||
+        if (!string.Equals(user!.AuthProvider, "LOCAL", StringComparison.OrdinalIgnoreCase) ||
             string.IsNullOrWhiteSpace(user.PasswordHash))
         {
             throw new UnauthorizedAccessException(invalidMsg);
@@ -239,6 +255,22 @@ public class AuthService : IAuthService
 
         user.FailedLoginAttempts = 0;
         user.LockedUntil = null;
+
+        if (pendingEkycResume)
+        {
+            var registrationToken = _jwtService.GenerateRegistrationScopeToken(user, sessionId: null);
+            var nowUtc = HospitalClock.GetUtcNow(_timeProvider);
+            _audit.Add(user.Id, "LOGIN_REGISTRATION_RESUME", "USER", user.Id.ToString(), null, ipAddress);
+            await _db.SaveChangesAsync(ct);
+
+            return new LoginResponse(
+                registrationToken.AccessToken,
+                (int)(registrationToken.ExpiresAt - nowUtc).TotalSeconds,
+                RefreshToken: string.Empty,
+                RefreshTokenExpiresIn: 0,
+                BuildUserDto(user, []),
+                RequiresEkycVerification: true);
+        }
 
         var tokens = await IssueTokensAsync(user, ipAddress, ct);
         var roleIds = user.UserRoles.Select(ur => ur.RoleId).ToArray();

@@ -654,13 +654,15 @@ public sealed class Phase02AuthFamilyPhiSignalRPostgresTests(TestWebAppFactory f
             createdClaim = (await validClaimRes.Content.ReadFromJsonAsync<IdentityClaimResponse>())!;
         }
 
-        // BUG-P2-06: Default RECEPTION staff without PATIENT_IDENTITY_VERIFY gets 403 on queue & approve & family-links verify
-        var (_, _, receptionToken) = await CreateStaffTokenAsync("RECEPTION", hospitalId, suffix);
+        // BUG-P2-06: staff WITHOUT PATIENT_IDENTITY_VERIFY gets 403 on queue & approve & family-links verify.
+        // Migration 033 grants the permission to seeded RECEPTION by owner decision (eKYC slice 6),
+        // so the negative actor here is DOCTOR — still lacks the permission.
+        var (_, _, doctorToken) = await CreateStaffTokenAsync("DOCTOR", hospitalId, suffix);
         var (_, _, adminToken) = await CreateStaffTokenAsync("HOSPITAL_ADMIN", hospitalId, suffix);
 
         using (var recQueueReq = new HttpRequestMessage(HttpMethod.Get, "/api/v1/reception/patient-identity-claims"))
         {
-            recQueueReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", receptionToken);
+            recQueueReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", doctorToken);
             var recQueueRes = await Client.SendAsync(recQueueReq);
             Assert.Equal(HttpStatusCode.Forbidden, recQueueRes.StatusCode);
         }
@@ -689,7 +691,7 @@ public sealed class Phase02AuthFamilyPhiSignalRPostgresTests(TestWebAppFactory f
             Assert.Equal($"appointment-queue:{minorAppointment.Id}", revokedPayload.GetProperty("resourceKey").GetString());
         }
 
-        // Default RECEPTION gets 403 on family-links/{linkId}/verify
+        // Staff without PATIENT_IDENTITY_VERIFY gets 403 on family-links/{linkId}/verify
         using (var recVerifyLinkReq = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/v1/reception/patient-identity-claims/family-links/{guardianPatient.Id}:{minorCreated.MemberPatientId}/verify")
@@ -697,7 +699,7 @@ public sealed class Phase02AuthFamilyPhiSignalRPostgresTests(TestWebAppFactory f
             Content = JsonContent.Create(new VerifyFamilyLinkRequest()),
         })
         {
-            recVerifyLinkReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", receptionToken);
+            recVerifyLinkReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", doctorToken);
             var recVerifyLinkRes = await Client.SendAsync(recVerifyLinkReq);
             Assert.Equal(HttpStatusCode.Forbidden, recVerifyLinkRes.StatusCode);
         }

@@ -30,6 +30,9 @@ public class AuthOtpService
     private readonly AuthSecurityOptions _options;
     private readonly TimeProvider _timeProvider;
 
+    private readonly IJwtTokenService? _jwtTokenService;
+    private readonly EkycOptions _ekycOptions;
+
     public AuthOtpService(
         IApplicationDbContext db,
         IEmailSender emailSender,
@@ -37,7 +40,9 @@ public class AuthOtpService
         ILogger<AuthOtpService> logger,
         IAuditLogger audit,
         IOptions<AuthSecurityOptions>? authOptions = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IJwtTokenService? jwtTokenService = null,
+        IOptions<EkycOptions>? ekycOptions = null)
     {
         _db = db;
         _emailSender = emailSender;
@@ -46,6 +51,8 @@ public class AuthOtpService
         _audit = audit;
         _options = authOptions?.Value ?? new AuthSecurityOptions();
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _jwtTokenService = jwtTokenService;
+        _ekycOptions = ekycOptions?.Value ?? new EkycOptions();
     }
 
     public async Task<VerifyOtpResponse> VerifyOtpAsync(VerifyOtpRequest request, CancellationToken ct = default)
@@ -125,6 +132,35 @@ public class AuthOtpService
         }
 
         await MarkChallengeVerifiedSingleUseAsync(challenge, maxAttempts, nowUtc, tx, "OTP đã hết hạn hoặc không tồn tại", ct);
+
+        // Feature flag (plan v2.1 mục 3.1/3.13): when mandatory-eKYC registration is ON, email
+        // verification does NOT activate the account — it transitions to pending-activation and the
+        // user receives a registration-scope token (whitelist: email verification, eKYC endpoints,
+        // status). Activation happens exclusively through the eKYC finalize + dedupe path. When OFF
+        // the behavior is byte-identical to before: immediate ACTIVE, no token issued here.
+        // A missing token service under a mandatory-eKYC config is a misconfiguration — fail loudly
+        // rather than silently activating without the eKYC gate.
+        if (_ekycOptions.MandatoryRegistration)
+        {
+            var jwtTokenService = _jwtTokenService
+                ?? throw new InvalidOperationException(
+                    "Ekyc:MandatoryRegistration bật nhưng IJwtTokenService chưa được đăng ký — không thể cấp registration-scope token.");
+
+            user.EmailVerifiedAt = nowUtc;
+
+            _audit.Add(user.Id, "OTP_VERIFY", "USER", user.Id.ToString(), null, null);
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+
+            var registrationToken = jwtTokenService.GenerateRegistrationScopeToken(user, sessionId: null);
+            var expiresIn = (int)(registrationToken.ExpiresAt - nowUtc).TotalSeconds;
+            return new VerifyOtpResponse(
+                user.Id,
+                Message: "Xác thực email thành công. Vui lòng hoàn tất xác minh danh tính để kích hoạt tài khoản.",
+                AccessToken: registrationToken.AccessToken,
+                AccessTokenExpiresIn: expiresIn,
+                RequiresEkycVerification: true);
+        }
 
         user.AccountStatus = AccountStatus.ACTIVE;
         user.EmailVerifiedAt = nowUtc;

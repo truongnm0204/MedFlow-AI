@@ -551,6 +551,9 @@ interface PatientDetailResponseDto {
   phone: string;
   bhytNumber: string | null;
   healthInsuranceNumber: string | null;
+  /** Backend detail DTO exposes a bool flag, not the raw status enum. */
+  isIdentityVerified?: boolean;
+  identityCardMasked?: string | null;
   address: string;
   emergencyContact: EmergencyContactDto | null;
   todayAppointment: TodayAppointmentDetailDto | null;
@@ -589,6 +592,9 @@ function mapPatientDetail(data: PatientDetailResponseDto): PatientDetail {
     phone: data.phone,
     bhytNumber: data.bhytNumber ?? data.healthInsuranceNumber ?? null,
     address: data.address,
+    identityStatus: data.isIdentityVerified === true ? 'VERIFIED' : 'UNVERIFIED',
+    unverifiedReason: null,
+    identityNote: null,
     emergencyContact: data.emergencyContact
       ? {
           name: data.emergencyContact.name,

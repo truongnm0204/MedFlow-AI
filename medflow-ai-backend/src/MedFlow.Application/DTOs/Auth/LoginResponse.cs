@@ -5,4 +5,5 @@ public sealed record LoginResponse(
     int AccessTokenExpiresIn,
     string RefreshToken,
     int RefreshTokenExpiresIn,
-    UserDto User);
+    UserDto User,
+    bool RequiresEkycVerification = false);

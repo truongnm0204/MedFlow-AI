@@ -51,6 +51,15 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddApplication();
 builder.Services.Configure<MedFlow.Application.Options.IdentityHashOptions>(
     builder.Configuration.GetSection("Identity"));
+builder.Services.AddOptions<MedFlow.Application.Options.EkycOptions>()
+    .Bind(builder.Configuration.GetSection(MedFlow.Application.Options.EkycOptions.SectionName))
+    .Validate(
+        o => o.SessionTtlMinutes > 0 &&
+             o.MaxAttempts > 0 &&
+             o.CompareThreshold is > 0d and <= 100d &&
+             !string.IsNullOrWhiteSpace(o.BackendUrl),
+        "Ekyc options must specify positive SessionTtlMinutes/MaxAttempts, CompareThreshold in (0,100] and a non-empty BackendUrl.")
+    .ValidateOnStart();
 builder.Services.AddOptions<MedFlow.Application.Options.AuthSecurityOptions>()
     .Bind(builder.Configuration.GetSection(MedFlow.Application.Options.AuthSecurityOptions.SectionName))
     .Validate(
@@ -285,6 +294,17 @@ builder.Services.AddRateLimiter(options =>
         RateLimitPartition.GetFixedWindowLimiter(
             ResolveUserOrClientIpPartitionKey(httpContext, "ai-recommend"),
             _ => BuildFixedWindowOptions(httpContext, "AiRecommendPermitLimit", 15)));
+
+    options.AddPolicy("ekyc-session-create", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ResolveUserOrClientIpPartitionKey(httpContext, "ekyc-session-create"),
+            _ => BuildFixedWindowOptions(httpContext, "EkycSessionCreatePermitLimit", 5)));
+
+    options.AddPolicy("ekyc-proxy", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ResolveUserOrClientIpPartitionKey(httpContext, "ekyc-proxy"),
+            _ => BuildFixedWindowOptions(httpContext, "EkycProxyPermitLimit", 30)));
+
 });
 
 var configuredCorsOrigins = builder.Configuration
@@ -341,6 +361,7 @@ if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))
 app.UseCors("Frontend");
 
 app.UseAuthentication();
+app.UseMiddleware<MedFlow.API.Middleware.RegistrationScopeMiddleware>();
 app.UseAuthorization();
 
 // Bỏ rate limit trong môi trường Test mặc định để integration tests không bị 429,

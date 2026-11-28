@@ -30,6 +30,6 @@ public sealed class ReceptionCreatePatientController : ControllerBase
         CancellationToken ct)
     {
         var result = await _service.CreatePatientAsync(request, ct);
-        return Created($"/api/v1/reception/patients/{result.Id}", result);
+        return Created($"/api/v1/reception/patients/{result.PatientId}", result);
     }
 }

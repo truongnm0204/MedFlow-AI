@@ -42,6 +42,14 @@ public class ExceptionMiddleware
                 new ProblemDetails { Status = 401, Title = "Không được phép", Detail = ua.Message }),
             ForbiddenException fe => (HttpStatusCode.Forbidden,
                 new ProblemDetails { Status = 403, Title = "Không có quyền truy cập", Detail = fe.Message }),
+            EkycServiceException ekyc => ((HttpStatusCode)ekyc.StatusCode,
+                new ProblemDetails
+                {
+                    Status = ekyc.StatusCode,
+                    Title = "Không thể thực hiện xác minh danh tính",
+                    Detail = ekyc.Message,
+                    Extensions = { ["code"] = ekyc.Code },
+                }),
             ConflictException ce => (HttpStatusCode.Conflict,
                 new ProblemDetails { Status = 409, Title = "Xung đột dữ liệu", Detail = ce.Message }),
             DbUpdateConcurrencyException => (HttpStatusCode.Conflict,

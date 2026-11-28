@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { getValidAccessTokenForRealtime } from '@/shared/lib/axios';
+import { ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } from '@/shared/lib/auth-storage';
 import { notifyAuthSessionInvalidated } from '@/shared/lib/navigation-guard-manager';
 
 import * as authApi from '../api/auth.api';
@@ -15,6 +16,22 @@ import type {
 } from '../types/auth.types';
 import { resolvePostLoginRedirect } from '../utils/role-landing';
 
+/** Trang xác minh danh tính cho tài khoản đăng ký đang PENDING (chưa có UserDto đầy đủ). */
+const REGISTRATION_EKYC_PATH = '/register/verify-identity';
+
+/**
+ * Đăng ký bắt buộc eKYC: backend cấp registration-scope access token nhưng KHÔNG cấp refresh
+ * token, và tài khoản chưa có UserDto hoàn chỉnh — vì vậy KHÔNG gọi `setAuth` (không tạo user
+ * giả, store vẫn coi là chưa đăng nhập). Chỉ ghi access token vào đúng storage key mà interceptor
+ * của `apiClient` đọc, để các lời gọi /ekyc được xác thực. Refresh token cũ (nếu có) bị xoá để
+ * không vô tình refresh bằng phiên của tài khoản khác.
+ */
+function persistRegistrationAccessToken(accessToken: string) {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+}
+
 /** Login → lưu tokens + user → điều hướng về returnUrl hoặc '/'. */
 export function useLogin() {
   const navigate = useNavigate();
@@ -24,6 +41,15 @@ export function useLogin() {
   return useMutation({
     mutationFn: (payload: LoginRequest) => authApi.login(payload),
     onSuccess: (data) => {
+      // Tài khoản PENDING quay lại đăng nhập (ví dụ đã đóng trình duyệt giữa chừng): backend trả
+      // registration-scope token + requiresEkycVerification. Tiếp tục eKYC thay vì coi là đăng nhập.
+      if (data.requiresEkycVerification) {
+        if (data.accessToken) {
+          persistRegistrationAccessToken(data.accessToken);
+        }
+        navigate(REGISTRATION_EKYC_PATH, { replace: true });
+        return;
+      }
       setAuth({
         user: data.user,
         accessToken: data.accessToken,
@@ -47,13 +73,22 @@ export function useRegister() {
   });
 }
 
-/** Verify OTP → điều hướng về /login?verified=1. */
+/** Verify OTP → nếu bắt buộc eKYC thì sang trang xác minh, ngược lại về /login?verified=1. */
 export function useVerifyOtp() {
   const navigate = useNavigate();
 
   return useMutation({
     mutationFn: (payload: VerifyOtpRequest) => authApi.verifyOtp(payload),
-    onSuccess: () => navigate('/login?verified=1'),
+    onSuccess: (data) => {
+      if (data.requiresEkycVerification) {
+        if (data.accessToken) {
+          persistRegistrationAccessToken(data.accessToken);
+        }
+        navigate(REGISTRATION_EKYC_PATH, { replace: true });
+        return;
+      }
+      navigate('/login?verified=1');
+    },
   });
 }
 

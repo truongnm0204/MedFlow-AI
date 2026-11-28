@@ -14,6 +14,23 @@ public class Patient
     public string? IdentificationHash { get; set; }
     public string? IdentificationHashHmac { get; set; }
     public short? HashVersion { get; set; }
+
+    /// <summary>
+    /// Identity verification state. VERIFIED is written ONLY by a successful eKYC finalize
+    /// (migration 032); no manual API can set it.
+    /// </summary>
+    public string IdentityStatus { get; set; } = Constants.PatientIdentityStatuses.Unverified;
+
+    /// <summary>
+    /// Owner-approved reason for creating this profile without eKYC
+    /// (<see cref="Constants.PatientUnverifiedReasons"/>). NULL while UNVERIFIED for profiles
+    /// whose eKYC is still in progress.
+    /// </summary>
+    public string? UnverifiedReason { get; set; }
+
+    /// <summary>Free-text operational note accompanying an UNVERIFIED creation (optional).</summary>
+    public string? IdentityNote { get; set; }
+
     public string Status { get; set; } = "ACTIVE";
     public string? Address { get; set; }
     public string? BloodType { get; set; }
