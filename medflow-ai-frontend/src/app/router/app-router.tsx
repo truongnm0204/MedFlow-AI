@@ -134,6 +134,13 @@ const ServicePricingPage = withRouteSuspense(
     })),
   ),
 );
+const MedicinePricePage = withRouteSuspense(
+  lazy(() =>
+    import('@/features/admin-medicine-prices/pages/medicine-price-page').then((m) => ({
+      default: m.MedicinePricePage,
+    })),
+  ),
+);
 const RoomListPage = withRouteSuspense(
   lazy(() =>
     import('@/features/admin-rooms/pages/room-list-page').then((m) => ({
@@ -1713,6 +1720,26 @@ function AppRoutes() {
           <RequireAuth>
             <RequireAdmin>
               <ServicePricingPage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/medicine-prices"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <MedicinePricePage />
+            </RequireAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/medicine-pricing"
+        element={
+          <RequireAuth>
+            <RequireAdmin>
+              <MedicinePricePage />
             </RequireAdmin>
           </RequireAuth>
         }

@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   ListOrdered,
   Phone,
+  Pill,
   Plug,
   ShieldCheck,
   SlidersHorizontal,
@@ -40,6 +41,7 @@ export type AdminPortalTab =
   | 'Bác sĩ & Nhân sự Y tế'
   | 'Danh mục Dịch vụ & Kỹ thuật'
   | 'Bảng giá & Biểu phí'
+  | 'Giá thuốc'
   | 'Quản lý Slot khám'
   | 'Chính sách hẹn'
   | 'Chính sách hàng đợi'
@@ -72,6 +74,7 @@ const TABS: { name: AdminPortalTab; href?: string; icon: LucideIcon }[] = [
   { name: 'Bác sĩ & Nhân sự Y tế', href: '/admin/doctors', icon: UserCheck },
   { name: 'Danh mục Dịch vụ & Kỹ thuật', href: '/admin/services', icon: ClipboardList },
   { name: 'Bảng giá & Biểu phí', href: '/admin/pricing', icon: CreditCard },
+  { name: 'Giá thuốc', href: '/admin/medicine-prices', icon: Pill },
   { name: 'Quản lý Slot khám', href: '/admin/slots', icon: CalendarClock },
   { name: 'Chính sách hẹn', href: '/admin/policies', icon: SlidersHorizontal },
   { name: 'Chính sách hàng đợi', href: '/admin/queue-policy', icon: ListOrdered },
