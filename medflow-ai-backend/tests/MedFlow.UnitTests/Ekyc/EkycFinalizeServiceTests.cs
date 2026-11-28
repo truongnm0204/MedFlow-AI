@@ -79,6 +79,12 @@ public sealed class EkycFinalizeServiceTests : IDisposable
             modelBuilder.Entity<Patient>().Property(p => p.Id).ValueGeneratedOnAdd();
             modelBuilder.Entity<AuditLog>().HasKey(a => a.Id);
             modelBuilder.Entity<AuditLog>().Property(a => a.Id).ValueGeneratedOnAdd();
+            modelBuilder.Entity<User>().HasKey(u => u.Id);
+            modelBuilder.Entity<User>().Property(u => u.Id).ValueGeneratedOnAdd();
+            modelBuilder.Entity<User>().Ignore(u => u.Patient);
+            modelBuilder.Entity<User>().Ignore(u => u.Staff);
+            modelBuilder.Entity<User>().Ignore(u => u.UserRoles);
+            modelBuilder.Entity<User>().Ignore(u => u.AuthSessions);
             modelBuilder.Ignore<Role>();
             modelBuilder.Ignore<Permission>();
             modelBuilder.Ignore<UserRole>();
@@ -101,7 +107,6 @@ public sealed class EkycFinalizeServiceTests : IDisposable
             modelBuilder.Ignore<Visit>();
             modelBuilder.Ignore<QueueEntry>();
             modelBuilder.Ignore<Payment>();
-            modelBuilder.Ignore<User>();
         }
     }
 

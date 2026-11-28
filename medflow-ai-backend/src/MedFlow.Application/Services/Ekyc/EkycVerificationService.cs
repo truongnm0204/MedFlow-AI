@@ -165,6 +165,7 @@ public sealed class EkycVerificationService : IEkycVerificationService
             expectedNameOverride: patient?.FullName,
             expectedDobOverride: patient?.DateOfBirth);
 
+        EkycDedupeResolution? dedupe = null;
         if (evaluation.Success)
         {
             session.Status = EkycVerificationStatuses.Verified;
@@ -182,6 +183,36 @@ public sealed class EkycVerificationService : IEkycVerificationService
 
             _db.AuditLogs.Add(BuildAudit(actorUserId, session.Id, EkycConstants.AuditActionVerified,
                 "Xác minh danh tính điện tử thành công.", ipAddress, null));
+
+            // --- Activation gate + dedupe matrix (plan v2.1 mục 3.2/3.3, atomicity mục 3.8) -------
+            // Runs INSIDE this transaction: consume + dedupe + activation commit or roll back
+            // together. Only for pending-activation accounts under mandatory-registration whose
+            // email is verified (the registration-scope token is only issued after OTP verify);
+            // ACTIVE accounts (mature-account verification) skip activation entirely — NOT_APPLICABLE.
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == actorUserId, ct);
+            if (user is not null &&
+                user.AccountStatus == Domain.Enums.AccountStatus.PENDING &&
+                user.EmailVerifiedAt is not null &&
+                _options.MandatoryRegistration)
+            {
+                var registrationPatient = await _db.Patients
+                    .FirstOrDefaultAsync(p => p.UserId == actorUserId, ct);
+
+                dedupe = await EkycDedupeResolver.ResolveAsync(
+                    _db, user, registrationPatient, session,
+                    evaluation.IdentificationHmac,
+                    evaluation.OcrFullName,
+                    evaluation.OcrBirthDay,
+                    actorUserId, ipAddress, ct);
+            }
+            else
+            {
+                dedupe = new EkycDedupeResolution(
+                    EkycDedupeOutcomes.NotApplicable,
+                    AccountActivated: false,
+                    LinkedPatientId: null,
+                    ReviewReason: null);
+            }
         }
         else
         {
@@ -197,7 +228,10 @@ public sealed class EkycVerificationService : IEkycVerificationService
             Status: session.Status,
             FailureReason: evaluation.Success ? null : evaluation.FailureReason,
             FailureCode: evaluation.Success ? null : evaluation.FailureCode,
-            ConsumedAt: session.ConsumedAt);
+            ConsumedAt: session.ConsumedAt,
+            AccountActivated: dedupe?.AccountActivated,
+            ActivationOutcome: dedupe?.Outcome,
+            ActivationReviewReason: dedupe?.ReviewReason);
     }
 
     // ------------------------------------------------------------------
@@ -215,7 +249,9 @@ public sealed class EkycVerificationService : IEkycVerificationService
         string? EvidenceDataSign,
         string? EvidencePayloadDigest,
         byte[]? EvidencePayloadFull,
-        string? IdentificationHmac);
+        string? IdentificationHmac,
+        string? OcrFullName,
+        DateOnly? OcrBirthDay);
 
     internal static EvaluationResult EvaluateEvidence(
         EkycVerificationSession session,
@@ -392,7 +428,9 @@ public sealed class EkycVerificationService : IEkycVerificationService
             EvidenceDataSign: evidenceLog.ResponseDataSign,
             EvidencePayloadDigest: EkycCrypto.ComputePayloadDigest(evidenceDataBase64),
             EvidencePayloadFull: evidenceLog.ResponsePayloadEncrypted,
-            IdentificationHmac: identificationHmac);
+            IdentificationHmac: identificationHmac,
+            OcrFullName: ocr.Value.Name,
+            OcrBirthDay: ocr.Value.BirthDay);
     }
 
     // ------------------------------------------------------------------
@@ -811,5 +849,5 @@ public sealed class EkycVerificationService : IEkycVerificationService
         => Microsoft.Extensions.Options.Options.Create(_options);
 
     private static EvaluationResult Fail(string code, string reason)
-        => new(false, code, reason, null, null, null, null, null, null, null, null);
+        => new(false, code, reason, null, null, null, null, null, null, null, null, null, null);
 }

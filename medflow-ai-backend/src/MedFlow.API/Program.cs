@@ -361,6 +361,7 @@ if (!app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Test"))
 app.UseCors("Frontend");
 
 app.UseAuthentication();
+app.UseMiddleware<MedFlow.API.Middleware.RegistrationScopeMiddleware>();
 app.UseAuthorization();
 
 // Bỏ rate limit trong môi trường Test mặc định để integration tests không bị 429,

@@ -38,6 +38,16 @@ public sealed class EkycOptions
     /// <summary>Upstream timeout (seconds) for one VNPT proxy call. No retries — see service docs.</summary>
     public int UpstreamTimeoutSeconds { get; set; } = 30;
 
+    /// <summary>
+    /// Feature flag (plan v2.1 mục 3.13): when OFF (default) the registration flow is exactly the
+    /// pre-eKYC behavior — OTP verify activates the account immediately. When ON, OTP verify keeps
+    /// the account PENDING and issues a registration-scope token; activation happens only after a
+    /// successful eKYC finalize + dedupe resolution. Wired end-to-end in slice 6; this slice
+    /// implements the mechanism so the flag can be flipped without further code changes.
+    /// Non-secret operational config.
+    /// </summary>
+    public bool MandatoryRegistration { get; set; } = false;
+
     /// <summary>SECRET — base64-encoded 32-byte AES-256 key. From env/secret store only.</summary>
     public string? EncryptionKeyBase64 { get; set; }
 

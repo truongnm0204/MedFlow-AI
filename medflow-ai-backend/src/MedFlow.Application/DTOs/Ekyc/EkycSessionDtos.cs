@@ -41,4 +41,7 @@ public sealed record FinalizeEkycSessionResponse(
     string Status,
     string? FailureReason,
     string? FailureCode,
-    DateTime? ConsumedAt);
+    DateTime? ConsumedAt,
+    bool? AccountActivated = null,
+    string? ActivationOutcome = null,
+    string? ActivationReviewReason = null);

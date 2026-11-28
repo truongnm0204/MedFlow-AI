@@ -117,13 +117,16 @@ public sealed class StubVnptUpstreamHandler : HttpMessageHandler
 /// and the "vnpt-ekyc" HttpClient rewired to an in-process stub upstream — zero real network.
 /// Credentials are test-only fakes; the assertions verify they are the values being injected.
 /// </summary>
-public sealed class EkycTestWebAppFactory : WebApplicationFactory<Program>
+public class EkycTestWebAppFactory : WebApplicationFactory<Program>
 {
     private const string DefaultTestConnection =
         "Host=localhost;Port=5433;Database=medflow_test;Username=postgres;Password=medflow_dev";
 
     public MedFlow.IntegrationTests.Auth.FakeEmailSender EmailSender { get; } = new();
     public StubVnptUpstreamHandler VnptHandler { get; } = new();
+
+    /// <summary>Overridden by the mandatory-registration variant — slice-4 tests.</summary>
+    protected virtual bool MandatoryRegistration => false;
 
     public EkycTestWebAppFactory()
     {
@@ -162,6 +165,7 @@ public sealed class EkycTestWebAppFactory : WebApplicationFactory<Program>
                 ["Ekyc:PublicKeyCa"] = VnptHandler.PublicKeyBase64,
                 ["Ekyc:EncryptionKeyBase64"] = Convert.ToBase64String(new byte[32]),
                 ["Ekyc:HmacKey"] = "integration-ekyc-hmac-key",
+                ["Ekyc:MandatoryRegistration"] = MandatoryRegistration ? "true" : "false",
             }));
 
         builder.ConfigureTestServices(services =>
@@ -180,4 +184,10 @@ public sealed class EkycTestWebAppFactory : WebApplicationFactory<Program>
                 .ConfigurePrimaryHttpMessageHandler(() => VnptHandler);
         });
     }
+}
+
+/// <summary>Flag-ON variant: mandatory eKYC registration (slice-4 end-to-end tests).</summary>
+public sealed class EkycMandatoryRegistrationTestWebAppFactory : EkycTestWebAppFactory
+{
+    protected override bool MandatoryRegistration => true;
 }

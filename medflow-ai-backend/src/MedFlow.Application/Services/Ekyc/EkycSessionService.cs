@@ -15,11 +15,10 @@ namespace MedFlow.Application.Services.Ekyc;
 
 /// <summary>
 /// eKYC session lifecycle: creation (consent-gated) and status reads.
-/// TODO(slice-4 registration-scope): creation currently requires a fully authenticated patient
-/// account. Plan v2.1 mục 3.1 requires pre-activation registration-scope sessions (scope-limited
-/// token) — when that mechanism lands, this service must accept the registration-scope principal
-/// and bind <see cref="EkycVerificationSession.RegistrationSessionId"/> instead of UserId.
-/// The TODO is explicit at the auth-resolution site below; nothing is faked.
+/// Slice-4 registration scope: the registration-in-progress account is the PENDING user itself —
+/// it carries a scope-limited token (<c>scope=ekyc-registration</c>) and may create/read eKYC
+/// sessions while still pending activation (plan v2.1 mục 3.1). No separate registration-session
+/// entity is introduced; <see cref="EkycVerificationSession.RegistrationSessionId"/> stays null.
 /// </summary>
 public sealed class EkycSessionService : IEkycSessionService
 {
@@ -80,8 +79,8 @@ public sealed class EkycSessionService : IEkycSessionService
         }
 
         // --- Actor validation ------------------------------------------------------------------
-        // TODO(slice-4): registration-scope principal path — accept scope-limited registration
-        // tokens here and bind RegistrationSessionId instead of requiring an ACTIVE patient user.
+        // ACTIVE = mature account; PENDING = registration-in-progress (scope-limited token).
+        // Both may run eKYC; only PENDING sessions feed the activation gate on finalize.
         var user = await _db.Users
             .AsNoTracking()
             .FirstOrDefaultAsync(u => u.Id == actorUserId, ct)

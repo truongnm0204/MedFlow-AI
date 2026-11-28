@@ -64,4 +64,49 @@ public class JwtTokenService : IJwtTokenService
             ExpiresAt = expiresAt,
         };
     }
+
+    /// <summary>
+    /// Registration-scope token (plan v2.1 mục 3.1): <c>scope=ekyc-registration</c> claim, NO role
+    /// claims. Same signing key/issuer/expiry as full tokens — differentiation is purely the scope
+    /// claim, enforced by <c>RegistrationScopeMiddleware</c> plus natural role-gate failure.
+    /// </summary>
+    public JwtTokenResult GenerateRegistrationScopeToken(User user, long? sessionId)
+    {
+        var key = _configuration["Jwt:Secret"]
+            ?? throw new InvalidOperationException("Jwt:Secret not configured.");
+        var issuer = _configuration["Jwt:Issuer"] ?? "MedFlow";
+        var audience = _configuration["Jwt:Audience"] ?? "MedFlow";
+        var expiryMinutes = int.TryParse(_configuration["Jwt:AccessTokenExpiryMinutes"], out var m) ? m : 60;
+        var nowUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var expiresAt = nowUtc.AddMinutes(expiryMinutes);
+
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, user.Id.ToString(CultureInfo.InvariantCulture)),
+            new(JwtRegisteredClaimNames.Email, user.Email),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(MedFlow.Domain.Constants.AuthTokenScopes.ClaimType, MedFlow.Domain.Constants.AuthTokenScopes.EkycRegistration),
+        };
+        if (sessionId is > 0)
+        {
+            claims.Add(new Claim(SessionIdClaimType, sessionId.Value.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        var credentials = new SigningCredentials(
+            new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)),
+            SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            issuer: issuer,
+            audience: audience,
+            claims: claims,
+            expires: expiresAt,
+            signingCredentials: credentials);
+
+        return new JwtTokenResult
+        {
+            AccessToken = new JwtSecurityTokenHandler().WriteToken(token),
+            ExpiresAt = expiresAt,
+        };
+    }
 }
