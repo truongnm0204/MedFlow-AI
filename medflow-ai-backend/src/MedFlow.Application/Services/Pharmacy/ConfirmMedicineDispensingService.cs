@@ -22,22 +22,26 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
 {
     private const string PharmacyStaffRoleCode = RoleNames.PharmacyStaff;
     private const string MedicineDispensePermissionCode = PermissionCodes.MedicineDispense;
+    private const string MedicineChargeBackfillAuditAction = "MEDICINE_CHARGE_BACKFILLED";
 
     private readonly IApplicationDbContext _db;
     private readonly TimeProvider _timeProvider;
     private readonly IVisitChargeSettlementReader _settlementReader;
     private readonly IRealtimeNotificationPublisher _realtimePublisher;
+    private readonly IMedicinePriceResolver _medicinePriceResolver;
 
     public ConfirmMedicineDispensingService(
         IApplicationDbContext dbContext,
         TimeProvider? timeProvider = null,
         IVisitChargeSettlementReader? settlementReader = null,
-        IRealtimeNotificationPublisher? realtimePublisher = null)
+        IRealtimeNotificationPublisher? realtimePublisher = null,
+        IMedicinePriceResolver? medicinePriceResolver = null)
     {
         _db = dbContext;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _settlementReader = settlementReader ?? new VisitChargeSettlementReader(dbContext, _timeProvider);
         _realtimePublisher = realtimePublisher ?? NullRealtimeNotificationPublisher.Instance;
+        _medicinePriceResolver = medicinePriceResolver ?? new MedicinePriceResolver(dbContext, _timeProvider);
     }
 
     public async Task<DispenseConfirmContextDto> GetDispenseContextAsync(
@@ -56,6 +60,10 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             ?? throw new NotFoundException("Visit", prescription.VisitId ?? 0);
 
         EnsureVisitActiveForPharmacy(visit);
+
+        // #867: READY orders created before the MEDICINE-charge feature (or whose items were skipped
+        // because no price existed) get their charges materialised here, idempotently, before the gate.
+        await TryBackfillMedicineChargesAsync(prescription, hospital.Id, actorUserId, nowLocal, ct);
 
         var patient = await _db.Patients.AsNoTracking().FirstOrDefaultAsync(p => p.Id == visit.PatientId, ct)
             ?? throw new NotFoundException("Patient", visit.PatientId ?? 0);
@@ -140,7 +148,10 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
                 clearance = medicineClearance;
         }
 
-        var hasPaidPayment = visitPayments.Any(p => string.Equals(p.Status, "PAID", StringComparison.OrdinalIgnoreCase));
+        var paidPayments = visitPayments
+            .Where(p => string.Equals(p.Status, "PAID", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var hasPaidPayment = paidPayments.Count > 0;
         var isBlockedByPayment = !clearance.IsUnlocked;
 
         var isAlreadyDispensed = string.Equals(prescription.Status, "DISPENSED", StringComparison.OrdinalIgnoreCase) ||
@@ -157,18 +168,21 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
             disabledReason = $"Chặn xuất kho: {clearance.Message ?? "Chờ xác nhận thanh toán trước khi xuất kho."}";
         }
 
-        var totalPaid = visitPayments.Where(p => string.Equals(p.Status, "PAID", StringComparison.OrdinalIgnoreCase)).Sum(p => p.Amount ?? 0m);
+        var totalPaid = paidPayments.Sum(p => p.Amount ?? 0m);
         var totalPaidFormatted = totalPaid > 0
             ? FormatVndPrice(totalPaid)
-            : (clearance.IsUnlocked ? "Miễn phí / BHYT" : "Chưa có dữ liệu");
-        var paymentMethodLabel = hasPaidPayment
-            ? "VietQR (Đã thanh toán)"
-            : (isBlockedByPayment ? "Chờ thanh toán" : "Miễn phí / BHYT");
-        var paymentStatus = hasPaidPayment
-            ? "PAID"
-            : (isBlockedByPayment
-                ? (clearance.StatusCode == VisitChargeSettlementReader.StatusMismatch ? "MISMATCH" : "PENDING")
-                : "NOT_REQUIRED");
+            : (isBlockedByPayment ? "Chưa thanh toán" : "0 ₫");
+
+        // #867: never show "Miễn phí / BHYT" (BHYT is out of scope). Report the real payment state:
+        // blocked until paid, otherwise the actual paid methods or an explicit no-transaction state.
+        var paymentMethodLabel = isBlockedByPayment
+            ? "Chờ thanh toán"
+            : hasPaidPayment
+                ? FormatPaidPaymentMethodLabel(paidPayments)
+                : "Chưa có giao dịch thanh toán";
+        var paymentStatus = isBlockedByPayment
+            ? (clearance.StatusCode == VisitChargeSettlementReader.StatusMismatch ? "MISMATCH" : "PENDING")
+            : (hasPaidPayment ? "PAID" : "UNPAID");
 
         var counselingItems = new List<DispenseMedicationCounselingItemDto>(items.Count);
         var orderCounter = 0;
@@ -366,6 +380,10 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
 
         long confirmedDispenseId;
         long? completedPharmacyServicePointId = null;
+
+        // #867: hand-over backfill. Persisted BEFORE the dispense transaction so a blocked payment gate
+        // does not roll the newly materialised MEDICINE charges back.
+        await TryBackfillMedicineChargesAsync(preLockPrescription, hospital.Id, actorUserId, nowLocal, ct);
 
         await using (var tx = await _db.BeginTransactionAsync(ct))
         {
@@ -1421,6 +1439,93 @@ public sealed class ConfirmMedicineDispensingService : IConfirmMedicineDispensin
         {
             throw new ConflictException("Đơn thuốc đã bị thay thế bởi đơn thuốc mới hơn.");
         }
+    }
+
+    /// <summary>
+    /// #867: materialise MEDICINE charges for an order that reached READY/ISSUED before the gate existed
+    /// (or whose lines were skipped while unpriced). Idempotent; persisted before the hand-over transaction so
+    /// a payment-blocked confirm never rolls the new charges back. Never blocks or cancels the prescription.
+    /// </summary>
+    private async Task TryBackfillMedicineChargesAsync(
+        Prescription prescription,
+        long hospitalId,
+        long actorUserId,
+        DateTime nowLocal,
+        CancellationToken ct)
+    {
+        try
+        {
+            if (string.Equals(prescription.Status, "DISPENSED", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var result = await MedicineChargeProvisioner.EnsureForPrescriptionAsync(
+                _db,
+                _medicinePriceResolver,
+                prescription,
+                hospitalId,
+                actorUserId,
+                nowLocal,
+                ct);
+
+            if (result.CreatedCount == 0 && result.MissingPriceMedicineIds.Count == 0)
+                return;
+
+            if (result.CreatedCount > 0)
+            {
+                _db.AuditLogs.Add(new AuditLog
+                {
+                    ActorUserId = actorUserId,
+                    HospitalId = hospitalId,
+                    Action = MedicineChargeBackfillAuditAction,
+                    EntityType = "PRESCRIPTION",
+                    EntityId = prescription.Id.ToString(CultureInfo.InvariantCulture),
+                    Reason = "Tạo khoản phí thuốc bù khi bàn giao đơn thuốc đã soạn trước khi bật cổng thanh toán.",
+                    ChangeData = JsonSerializer.Serialize(new
+                    {
+                        prescriptionId = prescription.Id,
+                        prescriptionCode = prescription.PrescriptionCode,
+                        visitId = prescription.VisitId,
+                        hospitalId,
+                        createdCount = result.CreatedCount,
+                        missingPriceMedicineIds = result.MissingPriceMedicineIds,
+                        source = "HANDOVER_BACKFILL",
+                        occurredAtLocal = nowLocal,
+                    }),
+                    OccurredAt = _timeProvider.GetUtcNow().UtcDateTime,
+                });
+            }
+
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (NotSupportedException)
+        {
+            // Minimal unit-test DbContext double without VisitCharges/MedicinePrices DbSets.
+        }
+        catch (DbUpdateException ex) when (PostgresConcurrencyException.IsUniqueViolation(ex))
+        {
+            // A concurrent context/confirm already materialised the same prescription line.
+            if (_db is DbContext trackerCtx)
+                trackerCtx.ChangeTracker.Clear();
+        }
+    }
+
+    private static string FormatPaidPaymentMethodLabel(IReadOnlyList<Payment> paidPayments)
+    {
+        var labels = paidPayments
+            .Select(p => p.PaymentMethod?.Trim().ToUpperInvariant())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m switch
+            {
+                PaymentMethods.Cash => "Tiền mặt",
+                PaymentMethods.VietQr => "VietQR",
+                _ => "Thanh toán",
+            })
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return labels.Count == 0
+            ? "Đã thanh toán"
+            : $"{string.Join(" + ", labels)} (Đã thanh toán)";
     }
 
     private static void EnsureVisitActiveForPharmacy(Visit visit)

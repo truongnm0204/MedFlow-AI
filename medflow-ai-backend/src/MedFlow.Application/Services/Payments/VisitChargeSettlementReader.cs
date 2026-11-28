@@ -299,9 +299,20 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
         return gate;
     }
 
-    public async Task<VisitChargeGateResult> CheckPharmacyVisitClearanceAsync(
+    public Task<VisitChargeGateResult> CheckPharmacyVisitClearanceAsync(
         long visitId,
         CancellationToken ct = default)
+        => EvaluatePharmacyClearanceAsync(visitId, includeMedicineCharges: true, ct);
+
+    public Task<VisitChargeGateResult> CheckPharmacyQueueClearanceAsync(
+        long visitId,
+        CancellationToken ct = default)
+        => EvaluatePharmacyClearanceAsync(visitId, includeMedicineCharges: false, ct);
+
+    private async Task<VisitChargeGateResult> EvaluatePharmacyClearanceAsync(
+        long visitId,
+        bool includeMedicineCharges,
+        CancellationToken ct)
     {
         if (visitId <= 0)
         {
@@ -351,27 +362,67 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
                 persistedAllocations);
 
             var examCharges = charges.Where(IsExaminationCharge).ToList();
-            var activeExam = examCharges.FirstOrDefault(c => IsChargeActive(c.Status));
-            if (activeExam is null)
+            VisitChargeGateResult? examGate = null;
+
+            if (examCharges.Count > 0)
             {
-                var cancelledExam = examCharges.FirstOrDefault();
+                var activeExam = examCharges.FirstOrDefault(c => IsChargeActive(c.Status));
+                if (activeExam is null)
+                {
+                    var cancelledExam = examCharges.FirstOrDefault();
+                    return new VisitChargeGateResult(
+                        false,
+                        cancelledExam is not null && IsStatus(cancelledExam.Status, VisitChargeStatuses.CancelledRefundPending)
+                            ? StatusMismatch
+                            : StatusChargeCancelled,
+                        cancelledExam?.Id,
+                        cancelledExam?.UnitPrice,
+                        "Khoản phí khám của lượt khám đã bị hủy hoặc đang chờ đối soát.");
+                }
+
+                examGate = EvaluatePersistedCharge(
+                    activeExam,
+                    charges,
+                    payments,
+                    effectiveAllocations,
+                    allocatedPaymentIds,
+                    allowLegacyFallback: true);
+
+                if (!examGate.IsUnlocked)
+                    return examGate;
+            }
+            else if (!includeMedicineCharges || !charges.Any(IsMedicineCharge))
+            {
+                // No examination charge and nothing medicine-specific to evaluate: keep the legacy
+                // "exam fee cancelled/missing" response for the queue-enrollment gate.
                 return new VisitChargeGateResult(
                     false,
-                    cancelledExam is not null && IsStatus(cancelledExam.Status, VisitChargeStatuses.CancelledRefundPending)
-                        ? StatusMismatch
-                        : StatusChargeCancelled,
-                    cancelledExam?.Id,
-                    cancelledExam?.UnitPrice,
+                    StatusChargeCancelled,
+                    null,
+                    null,
                     "Khoản phí khám của lượt khám đã bị hủy hoặc đang chờ đối soát.");
             }
 
-            return EvaluatePersistedCharge(
-                activeExam,
+            if (!includeMedicineCharges)
+                return examGate ?? new VisitChargeGateResult(true, StatusWaived, null, null);
+
+            var activeMedicineCharges = charges
+                .Where(IsMedicineCharge)
+                .Where(c => IsChargeActive(c.Status))
+                .ToList();
+
+            if (activeMedicineCharges.Count == 0)
+                return examGate ?? new VisitChargeGateResult(true, StatusWaived, null, null);
+
+            // #867 / BR-BF03-08: medicine is payable before hand-over. A visit with only MEDICINE charges
+            // (no examination charge) is evaluated here instead of being reported as a cancelled exam fee.
+            return EvaluateMedicineCharges(
+                activeMedicineCharges,
                 charges,
                 payments,
                 effectiveAllocations,
                 allocatedPaymentIds,
-                allowLegacyFallback: true);
+                allowLegacyFallback: false);
         }
 
         return await EvaluateLegacyDerivedVisitAsync(visit, payments, forPharmacyFallback: true, ct);
@@ -441,35 +492,55 @@ public sealed class VisitChargeSettlementReader : IVisitChargeSettlementReader
                 payments,
                 persistedAllocations);
 
-            decimal total = 0m;
-            foreach (var charge in medicineCharges)
-            {
-                var gate = EvaluatePersistedCharge(
-                    charge,
-                    charges,
-                    payments,
-                    effectiveAllocations,
-                    allocatedPaymentIds,
-                    allowLegacyFallback: false);
-
-                if (!gate.IsUnlocked)
-                {
-                    var message = gate.StatusCode == StatusUnpaid
-                        ? "Chưa thanh toán tiền thuốc. Vui lòng thu tiền thuốc tại quầy thuốc trước khi bàn giao."
-                        : $"Tiền thuốc: {gate.Message ?? "chưa thể xác nhận thanh toán."}";
-                    return gate with { Message = message };
-                }
-
-                total += charge.UnitPrice ?? 0m;
-            }
-
-            return new VisitChargeGateResult(true, StatusPaid, null, total);
+            return EvaluateMedicineCharges(
+                medicineCharges,
+                charges,
+                payments,
+                effectiveAllocations,
+                allocatedPaymentIds,
+                allowLegacyFallback: false);
         }
         catch (NotSupportedException)
         {
             // Minimal unit-test DbContext double without VisitCharges DbSet.
             return new VisitChargeGateResult(true, StatusWaived, null, null);
         }
+    }
+
+    private static VisitChargeGateResult EvaluateMedicineCharges(
+        IReadOnlyList<VisitCharge> medicineCharges,
+        IReadOnlyList<VisitCharge> allVisitCharges,
+        IReadOnlyList<Payment> allVisitPayments,
+        IReadOnlyList<EffectiveChargeAllocation> allAllocations,
+        IReadOnlySet<long> allocatedPaymentIds,
+        bool allowLegacyFallback)
+    {
+        if (medicineCharges.Count == 0)
+            return new VisitChargeGateResult(true, StatusWaived, null, null);
+
+        decimal total = 0m;
+        foreach (var charge in medicineCharges)
+        {
+            var gate = EvaluatePersistedCharge(
+                charge,
+                allVisitCharges,
+                allVisitPayments,
+                allAllocations,
+                allocatedPaymentIds,
+                allowLegacyFallback);
+
+            if (!gate.IsUnlocked)
+            {
+                var message = gate.StatusCode == StatusUnpaid
+                    ? "[MEDICINE_PAYMENT_REQUIRED] Chưa thanh toán tiền thuốc. Vui lòng thu tiền thuốc tại quầy thuốc trước khi bàn giao."
+                    : $"Tiền thuốc: {gate.Message ?? "chưa thể xác nhận thanh toán."}";
+                return gate with { Message = message };
+            }
+
+            total += charge.UnitPrice ?? 0m;
+        }
+
+        return new VisitChargeGateResult(true, StatusPaid, null, total);
     }
 
     private static VisitChargeGateResult EvaluatePersistedCharge(

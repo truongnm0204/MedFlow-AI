@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MedFlow.Application.DTOs.Payments;
+using MedFlow.Application.DTOs.Pharmacy;
 using MedFlow.Application.Interfaces.Services;
 using MedFlow.Application.Services.Payments;
 using MedFlow.Domain.Constants;
@@ -260,6 +261,171 @@ public sealed class MedicineChargeEndpointTests : AuthTestBase
             await CleanupAsync(seed);
         }
     }
+
+    [Fact]
+    public async Task DispenseContext_ReadyPrescriptionWithoutCharge_BackfillsAndBlocksUntilPaid()
+    {
+        var seed = await SeedReadyPrescriptionWithoutChargeAsync();
+        try
+        {
+            using (var scope = Factory.Services.CreateScope())
+            {
+                var service = scope.ServiceProvider.GetRequiredService<IConfirmMedicineDispensingService>();
+                var dto = await service.GetDispenseContextAsync(9, seed.PrescriptionCode);
+
+                Assert.False(dto.CanDispense);
+                Assert.Equal("PENDING", dto.PaymentStatus);
+                Assert.Equal("Chờ thanh toán", dto.PaymentMethodLabel);
+                Assert.Contains("tiền thuốc", dto.DisabledReason!, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("Miễn phí", dto.PaymentMethodLabel);
+                Assert.DoesNotContain("Miễn phí", dto.TotalPaidFormatted);
+            }
+
+            Db.ChangeTracker.Clear();
+            var charge = await Db.VisitCharges.AsNoTracking()
+                .SingleAsync(c => c.PrescriptionId == seed.PrescriptionId);
+            Assert.Equal(VisitChargeTypes.Medicine, charge.ChargeType);
+            Assert.Equal(seed.MedicineId, charge.MedicineId);
+            Assert.Equal(2m, charge.Quantity);
+            Assert.Equal(12_500m, charge.MedicineUnitPrice);
+            Assert.Equal(25_000m, charge.UnitPrice);
+            Assert.Equal(VisitChargeStatuses.Active, charge.Status);
+
+            var medicinePayment = Payment.CreateForCharge(
+                seed.VisitId,
+                charge.Id,
+                25_000m,
+                DateTime.Now,
+                PaymentStatuses.Paid);
+            medicinePayment.PaymentCode = $"PAY867-{Guid.NewGuid():N}"[..20];
+            medicinePayment.PaymentMethod = PaymentMethods.VietQr;
+            medicinePayment.PaidAt = DateTime.Now;
+            Db.Payments.Add(medicinePayment);
+            await Db.SaveChangesAsync();
+
+            using (var scope = Factory.Services.CreateScope())
+            {
+                var service = scope.ServiceProvider.GetRequiredService<IConfirmMedicineDispensingService>();
+                var dto = await service.GetDispenseContextAsync(9, seed.PrescriptionCode);
+
+                Assert.True(dto.CanDispense, dto.DisabledReason);
+                Assert.Equal("PAID", dto.PaymentStatus);
+                Assert.Contains("VietQR", dto.PaymentMethodLabel, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("Đã thanh toán", dto.PaymentMethodLabel, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("Miễn phí", dto.PaymentMethodLabel);
+            }
+        }
+        finally
+        {
+            await CleanupBackfillSeedAsync(seed);
+        }
+    }
+
+    private async Task<BackfillSeed> SeedReadyPrescriptionWithoutChargeAsync()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var seededAt = new DateTime(2026, 11, 29, 9, 0, 0);
+
+        var hospitalId = await Db.Staff.AsNoTracking()
+            .Where(s => s.UserId == 5)
+            .Select(s => s.HospitalId)
+            .FirstAsync();
+
+        var room = new HospitalRoom
+        {
+            HospitalId = hospitalId!.Value,
+            RoomCode = $"B867{suffix}"[..12],
+            Name = "Phòng test backfill #867",
+            RoomType = "EXAMINATION",
+            Status = "ACTIVE",
+        };
+        Db.HospitalRooms.Add(room);
+        await Db.SaveChangesAsync();
+
+        var medicine = new Medicine
+        {
+            HospitalId = hospitalId.Value,
+            MedicineCode = $"MED867-{suffix}",
+            Name = $"Thuốc backfill {suffix}",
+            DispensingUnit = "viên",
+            IsActive = true,
+        };
+        Db.Medicines.Add(medicine);
+        await Db.SaveChangesAsync();
+
+        Db.MedicinePrices.Add(new MedicinePrice
+        {
+            HospitalId = hospitalId.Value,
+            MedicineId = medicine.Id,
+            PriceAmount = 12_500m,
+            EffectiveFrom = new DateTime(2020, 1, 1),
+            CreatedAt = seededAt,
+        });
+        await Db.SaveChangesAsync();
+
+        var visit = new Visit
+        {
+            VisitCode = $"VC867-{suffix}",
+            PatientId = 1,
+            Status = "CHECKED_IN",
+            ExaminationRoomId = room.Id,
+            CheckedInAt = seededAt,
+        };
+        Db.Visits.Add(visit);
+        await Db.SaveChangesAsync();
+
+        var prescription = new Prescription
+        {
+            PrescriptionCode = $"RX867-{suffix}",
+            VisitId = visit.Id,
+            FulfillmentChoice = "HOSPITAL",
+            Status = "READY",
+            IssuedAt = seededAt,
+            CreatedAt = seededAt,
+        };
+        Db.Prescriptions.Add(prescription);
+        await Db.SaveChangesAsync();
+
+        Db.PrescriptionItems.Add(new PrescriptionItem
+        {
+            PrescriptionId = prescription.Id,
+            MedicineId = medicine.Id,
+            PrescribedQuantity = 2m,
+            SingleDoseQuantity = 1m,
+            SingleDoseUnit = "viên",
+            Instructions = "Uống 1 viên/lần",
+        });
+        await Db.SaveChangesAsync();
+
+        return new BackfillSeed(
+            visit.Id,
+            room.Id,
+            prescription.Id,
+            prescription.PrescriptionCode!,
+            medicine.Id);
+    }
+
+    private async Task CleanupBackfillSeedAsync(BackfillSeed seed)
+    {
+        Db.ChangeTracker.Clear();
+        await Db.PaymentAllocations.Where(a => a.VisitId == seed.VisitId).ExecuteDeleteAsync();
+        await Db.PaymentEnrollmentIntents.Where(i => i.VisitId == seed.VisitId).ExecuteDeleteAsync();
+        await Db.Payments.Where(p => p.VisitId == seed.VisitId).ExecuteDeleteAsync();
+        await Db.VisitCharges.Where(c => c.VisitId == seed.VisitId).ExecuteDeleteAsync();
+        await Db.PrescriptionItems.Where(i => i.PrescriptionId == seed.PrescriptionId).ExecuteDeleteAsync();
+        await Db.Prescriptions.Where(p => p.Id == seed.PrescriptionId).ExecuteDeleteAsync();
+        await Db.MedicinePrices.Where(p => p.MedicineId == seed.MedicineId).ExecuteDeleteAsync();
+        await Db.Medicines.Where(m => m.Id == seed.MedicineId).ExecuteDeleteAsync();
+        await Db.Visits.Where(v => v.Id == seed.VisitId).ExecuteDeleteAsync();
+        await Db.HospitalRooms.Where(r => r.Id == seed.RoomId).ExecuteDeleteAsync();
+    }
+
+    private sealed record BackfillSeed(
+        long VisitId,
+        long RoomId,
+        long PrescriptionId,
+        string PrescriptionCode,
+        long MedicineId);
 
     private async Task<Seed> SeedAsync(bool includeExaminationCharge = false, bool withQrPolicy = false)
     {

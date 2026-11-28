@@ -256,6 +256,34 @@ public sealed class MedicineChargeProvisionerTests
     }
 
     [Fact]
+    public async Task EnsureForPrescription_ReadyStatus_BackfillsMissingCharge()
+    {
+        await using var db = CreateDb();
+        var prescription = IssuedPrescription();
+        prescription.Status = "READY";
+        db.PrescriptionItems.Add(new PrescriptionItem { Id = 1, PrescriptionId = 700, MedicineId = 11, PrescribedQuantity = 2m });
+        AddPrice(db, 11, 12_500m);
+        await db.SaveChangesAsync();
+
+        var result = await MedicineChargeProvisioner.EnsureForPrescriptionAsync(
+            db,
+            new MedicinePriceResolver(db),
+            prescription,
+            hospitalId: 1,
+            actorUserId: 20,
+            atHospitalLocal: AtLocal);
+        await db.SaveChangesAsync();
+
+        Assert.Equal(1, result.CreatedCount);
+        var charge = await db.VisitCharges.SingleAsync();
+        Assert.Equal(VisitChargeTypes.Medicine, charge.ChargeType);
+        Assert.Equal(700, charge.PrescriptionId);
+        Assert.Equal(1, charge.PrescriptionItemId);
+        Assert.Equal(25_000m, charge.UnitPrice);
+        Assert.Equal(12_500m, charge.MedicineUnitPrice);
+    }
+
+    [Fact]
     public async Task EnsureForPrescription_ExternalPharmacy_DoesNotCreateCharges()
     {
         await using var db = CreateDb();

@@ -910,7 +910,7 @@ public sealed class VisitQueueEnrollmentService : IVisitQueueEnrollmentService
                     excludeQueueEntryId: null,
                     ct: ct);
 
-                var clearance = await _settlementReader.CheckPharmacyVisitClearanceAsync(visitId, ct);
+                var clearance = await _settlementReader.CheckPharmacyQueueClearanceAsync(visitId, ct);
                 if (!clearance.IsUnlocked)
                 {
                     throw new ConflictException(
